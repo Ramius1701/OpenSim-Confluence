@@ -856,14 +856,17 @@
     ;; the region ports use UDP.
     ; http_listener_port = 9000
 
+    ;; the following option will allow you to bind this instance to a specific IP, for the HTTP portion of the instance.
+    ; http_listener_address = <some ip assigned to this system>
+
     ; optional main server secure http (ssl)
-    ; to use ssl you need a ssl certificate in PKCS12 format that validates the ExternalHostnames 
+    ; to use ssl you need a ssl certificate in PKCS12 format that validates the ExternalHostnames
     ; or their domains
     ; some viewers by default only accept certificates signed by a oficial CA
     ; to use others like self signed certificates with those viewers,
     ; their debug option NoVerifySSLCert needs to be set true, You need to inform users about this
     ; the main unsecure port will still open for some services. this may change in future.
-    
+
     ; set http_listener_ssl to enable main server ssl. it will replace unsecure port on most functions
     ;# {http_listener_ssl}{} {enable main server ssl port} {} false
     ;http_listener_ssl = false
