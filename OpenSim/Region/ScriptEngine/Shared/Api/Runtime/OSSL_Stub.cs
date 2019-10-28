@@ -1868,5 +1868,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         {
             return m_OSSL_Functions.osListAsRotation(src, index);
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer osPermissionToCall(string name)
+        {
+            return m_OSSL_Functions.osPermissionToCall(name);
+        }
     }
 }

@@ -6879,5 +6879,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             }
             return LSL_Rotation.Identity;
         }
+
+        // Returns true(1) if an OSSL function (by string name) can be called without
+        // generating a permission error; always false for functions above Severe threat level.
+        public LSL_Integer osPermissionToCall(string function)
+        {
+            m_host.AddScriptLPS(1);
+            if (!m_OSFunctionsEnabled)
+                return 0;
+            string reason = CheckThreatLevelTest(ThreatLevel.Severe + 1, function);
+            return string.IsNullOrEmpty(reason);
+        }
     }
 }
