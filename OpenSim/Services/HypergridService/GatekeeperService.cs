@@ -57,6 +57,7 @@ namespace OpenSim.Services.HypergridService
         private static ISimulationService m_SimulationService;
         private static IGridUserService m_GridUserService;
         private static IBansService m_BansService;
+        private static IAccessControlService m_AccessControlService;
 
         private static Regex m_AllowedClientsRegex = null;
         private static Regex m_DeniedClientsRegex = null;
@@ -94,6 +95,8 @@ namespace OpenSim.Services.HypergridService
                 string simulationService = serverConfig.GetString("SimulationService", string.Empty);
                 string gridUserService = serverConfig.GetString("GridUserService", string.Empty);
                 string bansService = serverConfig.GetString("BansService", string.Empty);
+                string accessControlService = serverConfig.GetString("AccessControlService", string.Empty);
+
                 // These are mandatory, the others aren't
                 if (gridService.Length == 0 || presenceService.Length == 0)
                     throw new Exception("Incomplete specifications, Gatekeeper Service cannot function.");
@@ -144,6 +147,8 @@ namespace OpenSim.Services.HypergridService
                     m_GridUserService = ServerUtils.LoadPlugin<IGridUserService>(gridUserService, args);
                 if (!string.IsNullOrEmpty(bansService))
                     m_BansService = ServerUtils.LoadPlugin<IBansService>(bansService, args);
+                if (!string.IsNullOrEmpty(accessControlService))
+                    m_AccessControlService = ServerUtils.LoadPlugin<IAccessControlService>(accessControlService, args);
 
                 if (simService is not null)
                     m_SimulationService = simService;
@@ -454,6 +459,18 @@ namespace OpenSim.Services.HypergridService
                 reason = "You are banned from this world";
                 m_log.InfoFormat("[GATEKEEPER SERVICE]: Login failed, reason: user {0} is banned", uui);
                 return false;
+            }
+
+            // Check if the hardware or IP is banned
+            if (m_AccessControlService != null)
+            {
+                if(m_AccessControlService.IsHardwareBanned(aCircuit.Mac, aCircuit.Id0) ||
+                    m_AccessControlService.IsIPBanned(aCircuit.IPAddress))
+                {
+                    reason = "You are banned from this grid.";
+                    m_log.InfoFormat("[GATEKEEPER SERVICE] Login failed for {0}, reason: hardware or ip is banned", aCircuit.AgentID);
+                    return false;
+                }
             }
 
             UUID agentID = aCircuit.AgentID;
