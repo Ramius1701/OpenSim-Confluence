@@ -537,7 +537,8 @@ namespace OpenSim.Region.Framework.Scenes.Serialization
 
             {"SOPAnims", ProcessSOPAnims },
 
-            {"SitActRange", ProcessSitActRange }
+            {"SitActRange", ProcessSitActRange },
+            {"LinksetData", ProcessLinksetData }
         }.ToFrozenDictionary();
 
         private static readonly FrozenDictionary<string, Action<TaskInventoryItem, XmlReader>> m_TaskInventoryXmlProcessors = new Dictionary<string, Action<TaskInventoryItem, XmlReader>>()
@@ -835,6 +836,24 @@ namespace OpenSim.Region.Framework.Scenes.Serialization
         private static void ProcessSitActRange(SceneObjectPart obj, XmlReader reader)
         {
             obj.SitActiveRange = reader.ReadElementContentAsFloat("SitActRange", string.Empty);
+        }
+
+        private static void ProcessLinksetData(SceneObjectPart obj, XmlReader reader)
+        {
+            try
+            {
+                string data = reader.ReadElementContentAsString();
+                if (string.IsNullOrEmpty(data))
+                    return;
+
+                obj.DeserializeLinksetData(data);
+            }
+            catch 
+            {
+                m_log.DebugFormat(
+                   "[SceneObjectSerializer]: Exception while processing linksetdata for object part {0} {1}.",
+                   obj.Name, obj.UUID);
+            }
         }
 
         private static void ProcessVehicle(SceneObjectPart obj, XmlReader reader)
@@ -1690,6 +1709,9 @@ namespace OpenSim.Region.Framework.Scenes.Serialization
             }
             if(Math.Abs(sop.SitActiveRange) > 1e-5)
                 writer.WriteElementString("SitActRange", sop.SitActiveRange.ToString(Culture.FormatProvider));
+
+            writer.WriteElementString("LinksetData", sop.SerializeLinksetData());  
+            
             writer.WriteEndElement();
         }
 
