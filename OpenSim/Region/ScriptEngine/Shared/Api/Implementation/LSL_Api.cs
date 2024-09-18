@@ -15878,6 +15878,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 ScenePresence presence = World.GetScenePresence(key);
                 if (presence != null)
                 {
+                    var dnm = World.RequestModuleInterface<IDisplayNameModule>();
+
+                    if(dnm is not null)
+                    {
+                        return dnm.GetDisplayName(key);
+                    }
+
                     return presence.Name;
                 }
             }
@@ -15889,26 +15896,21 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             if (!UUID.TryParse(id, out UUID key) || key.IsZero())
                 return string.Empty;
 
-            ScenePresence lpresence = World.GetScenePresence(key);
-            if (lpresence != null)
-            {
-                string lname = lpresence.Name;
-                string ftid = m_AsyncCommands.DataserverPlugin.RequestWithImediatePost(m_host.LocalId,
-                                                                   m_item.ItemID, lname);
-                return ftid;
-            }
-
             void act(string eventID)
             {
+<<<<<<< HEAD
                 string name = string.Empty;
                 ScenePresence presence = World.GetScenePresence(key);
                 if (presence is not null)
+=======
+                string name = String.Empty;
+
+                var dnm = World.RequestModuleInterface<IDisplayNameModule>();
+
+                if (dnm is not null)
+>>>>>>> 0e0953667c (Display Names (#94))
                 {
-                    name = presence.Name;
-                }
-                else if (World.TryGetSceneObjectPart(key, out SceneObjectPart sop))
-                {
-                    name = sop.Name;
+                    name = dnm.GetDisplayName(key);
                 }
                 else
                 {

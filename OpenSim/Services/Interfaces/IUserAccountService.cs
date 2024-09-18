@@ -99,13 +99,35 @@ namespace OpenSim.Services.Interfaces
 
         public int Created;
 
+        public string DisplayName;
+        public uint NameChanged;
+
         public string Name
         {
             get { return FirstName + " " + LastName; }
         }
 
+        public string FormattedName
+        {
+            get
+            {
+                bool is_resident = LastName.ToLower() == "resident";
+
+                if (string.IsNullOrWhiteSpace(DisplayName))
+                {
+                    return is_resident ? FirstName : $"{FirstName} {LastName}";
+                }
+                else
+                {
+                    var username = is_resident ? FirstName : $"{FirstName}.{LastName}";
+                    return $"{DisplayName} ({username.ToLower()})";
+                }
+            }
+        }
+
         public UserAccount(Dictionary<string, object> kvp)
         {
+<<<<<<< HEAD
             object otmp;
             if (kvp.TryGetValue("FirstName", out otmp))
                 FirstName = otmp.ToString();
@@ -127,6 +149,32 @@ namespace OpenSim.Services.Interfaces
                 UserCountry = otmp.ToString();
             if (kvp.TryGetValue("LocalToGrid", out otmp))
                 _ = bool.TryParse(otmp.ToString(), out LocalToGrid);
+=======
+            if (kvp.ContainsKey("FirstName"))
+                FirstName = kvp["FirstName"].ToString();
+            if (kvp.ContainsKey("LastName"))
+                LastName = kvp["LastName"].ToString();
+            if (kvp.ContainsKey("Email"))
+                Email = kvp["Email"].ToString();
+            if (kvp.ContainsKey("PrincipalID"))
+                UUID.TryParse(kvp["PrincipalID"].ToString(), out PrincipalID);
+            if (kvp.ContainsKey("ScopeID"))
+                UUID.TryParse(kvp["ScopeID"].ToString(), out ScopeID);
+            if (kvp.ContainsKey("UserLevel"))
+                UserLevel = Convert.ToInt32(kvp["UserLevel"].ToString());
+            if (kvp.ContainsKey("UserFlags"))
+                UserFlags = Convert.ToInt32(kvp["UserFlags"].ToString());
+            if (kvp.ContainsKey("UserTitle"))
+                UserTitle = kvp["UserTitle"].ToString();
+            if (kvp.ContainsKey("UserCountry"))
+                UserCountry = kvp["UserCountry"].ToString();
+            if (kvp.ContainsKey("LocalToGrid"))
+                Boolean.TryParse(kvp["LocalToGrid"].ToString(), out LocalToGrid);
+            if (kvp.ContainsKey("DisplayName"))
+                DisplayName = kvp["DisplayName"].ToString();
+            if (kvp.ContainsKey("NameChanged"))
+                NameChanged = Convert.ToUInt32(kvp["NameChanged"].ToString());
+>>>>>>> 0e0953667c (Display Names (#94))
 
             if (kvp.TryGetValue("Created", out otmp))
                 Created = Convert.ToInt32(otmp.ToString());
@@ -148,7 +196,27 @@ namespace OpenSim.Services.Interfaces
 
         public Dictionary<string, object> ToKeyValuePairs()
         {
+<<<<<<< HEAD
             Dictionary<string, object> result = new()
+=======
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            result["FirstName"] = FirstName;
+            result["LastName"] = LastName;
+            result["Email"] = Email;
+            result["PrincipalID"] = PrincipalID.ToString();
+            result["ScopeID"] = ScopeID.ToString();
+            result["Created"] = Created.ToString();
+            result["UserLevel"] = UserLevel.ToString();
+            result["UserFlags"] = UserFlags.ToString();
+            result["UserTitle"] = UserTitle;
+            result["UserCountry"] = UserCountry;
+            result["LocalToGrid"] = LocalToGrid.ToString();
+            result["DisplayName"] = DisplayName;
+            result["NameChanged"] = NameChanged.ToString();
+
+            string str = string.Empty;
+            foreach (KeyValuePair<string, object> kvp in ServiceURLs)
+>>>>>>> 0e0953667c (Display Names (#94))
             {
                 ["FirstName"] = FirstName,
                 ["LastName"] = LastName,
@@ -188,6 +256,8 @@ namespace OpenSim.Services.Interfaces
         UserAccount GetUserAccount(UUID scopeID, UUID userID);
         UserAccount GetUserAccount(UUID scopeID, string FirstName, string LastName);
         UserAccount GetUserAccount(UUID scopeID, string Email);
+
+        bool SetDisplayName(UUID agentID, string displayName);
 
         /// <summary>
         /// Returns the list of avatars that matches both the search criterion and the scope ID passed
