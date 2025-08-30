@@ -941,7 +941,12 @@ namespace OpenSim.Region.CoreModules.Framework.InventoryAccess
             InventoryItemBase item = m_Scene.InventoryService.GetItem(remoteClient.AgentId, itemID);
 
             if (item is null)
-                return null;
+            {
+                item = m_Scene.LibraryService.GetItem(itemID);
+
+                if (item == null)
+                    return null;
+            }
 
             if (attachment && (item.Flags & (uint)InventoryItemFlags.ObjectHasMultipleItems) != 0)
             {

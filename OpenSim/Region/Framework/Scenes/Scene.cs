@@ -491,6 +491,10 @@ namespace OpenSim.Region.Framework.Scenes
         protected int m_lastHealth = -1;
         protected int m_lastUsers = -1;
 
+        // Added for Generating Maptiles if they are missing
+        // Original patch from Consortium
+        private bool m_generateMaptilesIfMissing = false;
+
         #endregion Fields
 
         #region Properties
@@ -1056,6 +1060,9 @@ namespace OpenSim.Region.Framework.Scenes
                     = Util.GetConfigVarFromSections<bool>(config, "MaptileDeferIfAgentsPresent", possibleMapConfigSections, true);
                 m_mapGenerationForceGC
                     = Util.GetConfigVarFromSections<bool>(config, "MaptileForceGC", possibleMapConfigSections, false);
+
+                m_generateMaptilesIfMissing 
+                    = Util.GetConfigVarFromSections<bool>(config, "OnlyGenerateIfMissing", possibleMapConfigSections, false);
 
                 if (m_generateMaptiles)
                 {
@@ -2319,7 +2326,17 @@ namespace OpenSim.Region.Framework.Scenes
             //// rendering can be expensive, so the default is now to register immediately
             //// and regenerate/reregister the finished maptile in the background.
             if (m_generateMaptiles && !m_generateMaptilesInBackground)
-                RegenerateMaptile();
+            {
+                bool regenerate = true;
+                if (m_generateMaptilesIfMissing)
+                {
+                    var info = this.GridService.GetRegionByUUID(UUID.Zero, RegionInfo.RegionID);
+                    regenerate = info == null || info.TerrainImage == UUID.Zero;
+                }
+
+                if (regenerate)
+                    RegenerateMaptile();
+            }
 
             GridRegion region = new(RegionInfo);
             string error = GridService.RegisterRegion(RegionInfo.ScopeID, region);
