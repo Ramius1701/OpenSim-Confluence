@@ -5073,11 +5073,11 @@ namespace OpenSim.Region.Framework.Scenes
             {
                 lock (scriptedcontrols)
                 {
+                    scriptedcontrols.Clear();
+                    IgnoredControls = ScriptControlled.CONTROL_ZERO;
+
                     if (cAgent.Controllers != null)
                     {
-                        scriptedcontrols.Clear();
-                        IgnoredControls = ScriptControlled.CONTROL_ZERO;
-
                         foreach (ControllerData c in cAgent.Controllers)
                         {
                             ScriptControllers sc = new()
@@ -5104,6 +5104,8 @@ namespace OpenSim.Region.Framework.Scenes
 
             if (cAgent.MovementAnimationOverRides != null)
                 Overrides.CopyAOPairsFrom(cAgent.MovementAnimationOverRides);
+            else
+                Overrides.Clear();
 
             if (ControllingClient == null)
                 return;
