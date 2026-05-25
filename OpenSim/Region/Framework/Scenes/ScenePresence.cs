@@ -3831,6 +3831,7 @@ namespace OpenSim.Region.Framework.Scenes
 
             TargetVelocity = direc;
             Animator.UpdateMovementAnimations();
+            Animator.ResendMovementAnimationIfNeeded();
         }
 
         #endregion
