@@ -12284,6 +12284,14 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                         }
                         break;
 
+                    case ScriptBaseClass.PRIM_ALLOW_UNSIT:
+                        res.Add(new LSL_Integer(part.HasLslSitFlag(ScriptBaseClass.SIT_FLAG_ALLOW_UNSIT) ? 1 : 0));
+                        break;
+
+                    case ScriptBaseClass.PRIM_SCRIPTED_SIT_ONLY:
+                        res.Add(new LSL_Integer(part.HasLslSitFlag(ScriptBaseClass.SIT_FLAG_SCRIPTED_ONLY) ? 1 : 0));
+                        break;
+
                     case ScriptBaseClass.PRIM_NORMAL:
                     case ScriptBaseClass.PRIM_SPECULAR:
                     case ScriptBaseClass.PRIM_ALPHA_MODE:
@@ -17842,6 +17850,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                         case ScriptBaseClass.PRIM_TEMP_ON_REZ:
                         case ScriptBaseClass.PRIM_NAME:
                         case ScriptBaseClass.PRIM_DESC:
+                        case ScriptBaseClass.PRIM_ALLOW_UNSIT:
+                        case ScriptBaseClass.PRIM_SCRIPTED_SIT_ONLY:
                             if (remain < 1)
                                 return new LSL_List();
                             idx++;
@@ -21093,25 +21103,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         public LSL_Integer llGetLinkSitFlags(LSL_Integer linknum)
         {
             SceneObjectPart part = linknum == ScriptBaseClass.LINK_THIS ? m_host : m_host.ParentGroup.GetLinkNumPart(linknum);
-            if (part is not null)
-            {
-                int flags = ScriptBaseClass.SIT_FLAG_OPENSIMFORCED;
-                if(part.IsSitTargetSet)
-                    flags |= 0x01;
-                return new LSL_Integer(flags);
-            }
-            return new LSL_Integer(0);
+            return part is not null ? new LSL_Integer(part.GetLslSitFlags()) : new LSL_Integer(0);
         }
 
         public void llSetLinkSitFlags(LSL_Integer linknum, LSL_Integer flags)
         {
-            // does nothing since we do not have any of the flags
-            /*
             SceneObjectPart part = linknum == ScriptBaseClass.LINK_THIS ? m_host : m_host.ParentGroup.GetLinkNumPart(linknum);
-            if (part is not null)
-            {
-            }
-            */
+            part?.SetLslSitFlags(flags);
         }
 
         public LSL_String llComputeHash(LSL_String message, LSL_String algo)
