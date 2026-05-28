@@ -1298,7 +1298,7 @@ namespace OpenSim.Region.Framework.Scenes
             ControllingClient.OnCompleteMovementToRegion += CompleteMovement;
             ControllingClient.OnAgentUpdate += HandleAgentUpdate;
             ControllingClient.OnAgentCameraUpdate += HandleAgentCamerasUpdate;
-            ControllingClient.OnAgentRequestSit += HandleAgentRequestSitEvent;
+            ControllingClient.OnAgentRequestSit += HandleAgentRequestSit;
             ControllingClient.OnAgentSit += HandleAgentSit;
             ControllingClient.OnSetAlwaysRun += HandleSetAlwaysRun;
             ControllingClient.OnStartAnim += HandleStartAnim;
@@ -1319,7 +1319,7 @@ namespace OpenSim.Region.Framework.Scenes
             ControllingClient.OnCompleteMovementToRegion -= CompleteMovement;
             ControllingClient.OnAgentUpdate -= HandleAgentUpdate;
             ControllingClient.OnAgentCameraUpdate -= HandleAgentCamerasUpdate;
-            ControllingClient.OnAgentRequestSit -= HandleAgentRequestSitEvent;
+            ControllingClient.OnAgentRequestSit -= HandleAgentRequestSit;
             ControllingClient.OnAgentSit -= HandleAgentSit;
             ControllingClient.OnSetAlwaysRun -= HandleSetAlwaysRun;
             ControllingClient.OnStartAnim -= HandleStartAnim;
@@ -3443,12 +3443,12 @@ namespace OpenSim.Region.Framework.Scenes
             //m_scene.EventManager.TriggerParcelPrimCountTainted(); // update select/ sat on
         }
 
-        private void HandleAgentRequestSitEvent(IClientAPI remoteClient, UUID agentID, UUID targetID, Vector3 offset)
+        public void HandleAgentRequestSit(IClientAPI remoteClient, UUID agentID, UUID targetID, Vector3 offset)
         {
             HandleAgentRequestSit(remoteClient, agentID, targetID, offset, false);
         }
 
-        public void HandleAgentRequestSit(IClientAPI remoteClient, UUID agentID, UUID targetID, Vector3 offset, bool scriptedSit = false)
+        public void HandleAgentRequestSit(IClientAPI remoteClient, UUID agentID, UUID targetID, Vector3 offset, bool scriptedSit)
         {
             if (IsChildAgent)
                 return;
