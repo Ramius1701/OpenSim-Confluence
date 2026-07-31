@@ -37,5 +37,10 @@ namespace OpenSim.Services.Interfaces
         Byte[] MuteListRequest(UUID agent, uint crc);
         bool UpdateMute(MuteData mute);
         bool RemoveMute(UUID agentID, UUID muteID, string muteName);
+
+        /// <summary>
+        /// Returns true if muterID has mutedID on their mute list.
+        /// </summary>
+        bool IsMuted(UUID muterID, UUID mutedID);
     }
 }

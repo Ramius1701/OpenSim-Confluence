@@ -148,6 +148,39 @@ namespace OpenSim.Services.Connectors
             return doSimplePost(ServerUtils.BuildQueryString(sendData), "remove");
         }
 
+        public bool IsMuted(UUID muterID, UUID mutedID)
+        {
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["METHOD"] = "ismuted";
+            sendData["muterid"] = muterID.ToString();
+            sendData["mutedid"] = mutedID.ToString();
+
+            try
+            {
+                string reply = SynchronousRestFormsRequester.MakeRequest("POST", m_ServerURI,
+                                    ServerUtils.BuildQueryString(sendData), m_Auth);
+                if (reply != string.Empty)
+                {
+                    Dictionary<string, object> replyData = ServerUtils.ParseXmlResponse(reply);
+
+                    if (replyData.ContainsKey("result"))
+                        return replyData["result"].ToString() == "true";
+
+                    m_log.DebugFormat("[MUTELIST CONNECTOR]: ismuted reply data does not contain result field");
+                }
+                else
+                    m_log.DebugFormat("[MUTELIST CONNECTOR]: ismuted received empty reply");
+            }
+            catch (Exception e)
+            {
+                m_log.DebugFormat("[MUTELIST CONNECTOR]: Exception when contacting server at {0}: {1}", m_ServerURI, e.Message);
+            }
+
+            // Fail open: never block a message just because the mute
+            // service could not be reached.
+            return false;
+        }
+
         #endregion IMuteListService
 
         private bool doSimplePost(string reqString, string meth)

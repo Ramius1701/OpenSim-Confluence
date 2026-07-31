@@ -35,6 +35,7 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Services.Interfaces;
 
 namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 {
@@ -166,6 +167,13 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
             if(im.timestamp == 0)
                 im.timestamp = (uint)Util.UnixTimeSinceEpoch();
 
+            if ((im.dialog == (byte)InstantMessageDialog.MessageFromAgent ||
+                 im.dialog == (byte)InstantMessageDialog.MessageFromObject) &&
+                IsSenderMuted(im))
+            {
+                return;
+            }
+
             m_TransferModule.SendInstantMessage(im,
                 delegate(bool success)
                 {
@@ -191,6 +199,29 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
                         );
                 }
             );
+        }
+
+        private bool IsSenderMuted(GridInstantMessage im)
+        {
+            if (m_scenes.Count == 0)
+                return false;
+
+            IMuteListService muteList = m_scenes[0].RequestModuleInterface<IMuteListService>();
+            if (muteList == null)
+                return false;
+
+            UUID toAgentID = new UUID(im.toAgentID);
+            UUID fromAgentID = new UUID(im.fromAgentID);
+
+            try
+            {
+                return muteList.IsMuted(toAgentID, fromAgentID);
+            }
+            catch (Exception e)
+            {
+                m_log.DebugFormat("[INSTANT MESSAGE]: Exception checking mute list for {0}: {1}", toAgentID, e.Message);
+                return false;
+            }
         }
 
         /// <summary>

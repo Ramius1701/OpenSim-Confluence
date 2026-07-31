@@ -123,5 +123,23 @@ namespace OpenSim.Services.EstateService
                 return false;
             return m_database.Delete(agentID, muteID, muteName);
         }
+
+        public bool IsMuted(UUID muterID, UUID mutedID)
+        {
+            if(m_database == null)
+                return false;
+
+            MuteData[] mutes = m_database.Get(muterID);
+            if (mutes == null || mutes.Length == 0)
+                return false;
+
+            foreach (MuteData mute in mutes)
+            {
+                if (mute.MuteID == mutedID)
+                    return true;
+            }
+
+            return false;
+        }
     }
 }

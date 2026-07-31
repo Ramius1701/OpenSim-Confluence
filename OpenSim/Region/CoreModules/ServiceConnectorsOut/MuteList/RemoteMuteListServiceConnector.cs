@@ -137,6 +137,13 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.MuteList
             return m_remoteConnector.RemoveMute(agentID, muteID, muteName);
         }
 
+        public bool IsMuted(UUID muterID, UUID mutedID)
+        {
+            if (!m_Enabled)
+                return false;
+            return m_remoteConnector.IsMuted(muterID, mutedID);
+        }
+
         #endregion IMuteListService
 
     }

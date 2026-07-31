@@ -86,6 +86,8 @@ namespace OpenSim.Server.Handlers.GridUser
                         return updatemute(request);
                     case "delete":
                         return deletemute(request);
+                    case "ismuted":
+                        return ismuted(request);
                 }
                 m_log.DebugFormat("[MUTELIST HANDLER]: unknown method request: {0}", method);
             }
@@ -191,6 +193,28 @@ namespace OpenSim.Server.Handlers.GridUser
                muteName = String.Empty;
 
             return m_service.RemoveMute(agentID, muteID, muteName) ? SuccessResult() : FailureResult();
+        }
+
+        byte[] ismuted(Dictionary<string, object> request)
+        {
+            if(!request.ContainsKey("muterid") || !request.ContainsKey("mutedid"))
+                return FailureResult();
+
+            UUID muterID;
+            if(!UUID.TryParse(request["muterid"].ToString(), out muterID))
+                return FailureResult();
+
+            UUID mutedID;
+            if(!UUID.TryParse(request["mutedid"].ToString(), out mutedID))
+                return FailureResult();
+
+            bool isMuted = m_service.IsMuted(muterID, mutedID);
+
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            result["result"] = isMuted ? "true" : "false";
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
         }
 
         private byte[] SuccessResult()
