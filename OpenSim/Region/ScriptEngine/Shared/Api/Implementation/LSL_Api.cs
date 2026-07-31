@@ -15898,17 +15898,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
             void act(string eventID)
             {
-<<<<<<< HEAD
-                string name = string.Empty;
-                ScenePresence presence = World.GetScenePresence(key);
-                if (presence is not null)
-=======
                 string name = String.Empty;
 
                 var dnm = World.RequestModuleInterface<IDisplayNameModule>();
 
                 if (dnm is not null)
->>>>>>> 0e0953667c (Display Names (#94))
                 {
                     name = dnm.GetDisplayName(key);
                 }

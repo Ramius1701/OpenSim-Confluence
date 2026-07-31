@@ -232,8 +232,6 @@ namespace OpenSim.Services.UserAccountService
                         System.Web.HttpUtility.UrlDecode(parts[1]);
                 }
             }
-<<<<<<< HEAD
-=======
             else
                 u.ServiceURLs = new Dictionary<string, object>();
 
@@ -245,7 +243,6 @@ namespace OpenSim.Services.UserAccountService
             if (d.Data.ContainsKey("NameChanged") && d.Data["NameChanged"] != null)
                 uint.TryParse(d.Data["NameChanged"], out u.NameChanged);
 
->>>>>>> 0e0953667c (Display Names (#94))
             return u;
         }
 
