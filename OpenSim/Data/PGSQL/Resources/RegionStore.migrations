@@ -1309,8 +1309,3 @@ COMMIT;
 BEGIN;
 ALTER TABLE `prims` ADD COLUMN `StartStr` TEXT;
 COMMIT;
-
-:VERSION 53         #----- add linkset data storage column
-BEGIN;
-ALTER TABLE `prims` ADD COLUMN `linksetdata` varchar default NULL;
-COMMIT;
