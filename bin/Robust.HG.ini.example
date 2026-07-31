@@ -143,6 +143,10 @@
 
     MuteListConnector = "${Const|PrivatePort}/OpenSim.Server.Handlers.dll:MuteListServiceConnector"
 
+    ;; Also needs a [Modules] AbuseReportsService = RemoteAbuseReportsServicesConnector
+    ;; on the region side, and an [AbuseReportsService] section below.
+    ; AbuseReportsServiceConnector = "${Const|PrivatePort}/OpenSim.Server.Handlers.dll:AbuseReportsServiceConnector"
+
     ;; Additions for Hypergrid
 
     GatekeeperServiceInConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:GatekeeperServiceInConnector"
@@ -887,3 +891,11 @@
 
 [MuteListService]
 	LocalServiceModule = "OpenSim.Services.MuteListService.dll:MuteListService"
+
+[AbuseReportsService]
+    LocalServiceModule = "OpenSim.Services.AbuseReportsService.dll:AbuseReportsService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAbuseReportsData"
+
+    ;; Separate secret gating report *retrieval* (getreports/getreport, an
+    ;; admin-tool concern) from whatever auth gates report submission above.
+    ; AdminSecret = ""
