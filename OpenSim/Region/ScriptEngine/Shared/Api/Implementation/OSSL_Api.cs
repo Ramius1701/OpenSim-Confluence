@@ -1650,7 +1650,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 case "year_length":
                     return 365;
                 case "day_night_offset":
-                    return 0;
+                    return m_envModule is null ? 0 : m_envModule.GetDayOffset(m_host.AbsolutePosition);
                 case "update_interval":
                     return 0.1;
                 case "day_time_sun_hour_scale":

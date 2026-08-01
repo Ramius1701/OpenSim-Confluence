@@ -50,7 +50,7 @@ namespace OpenSim.Region.CoreModules.World.LightShare
 {
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "EnvironmentModule")]
 
-    public class EnvironmentModule : INonSharedRegionModule, IEnvironmentModule
+    public class EnvironmentModule : INonSharedRegionModule, IEnvironmentModule, ISunModule
     {
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -116,6 +116,7 @@ namespace OpenSim.Region.CoreModules.World.LightShare
                 return;
 
             scene.RegisterModuleInterface<IEnvironmentModule>(this);
+            scene.RegisterModuleInterface<ISunModule>(this);
             m_scene = scene;
             regionID = scene.RegionInfo.RegionID;
         }
@@ -260,6 +261,61 @@ namespace OpenSim.Region.CoreModules.World.LightShare
             StoreOnRegion(null);
             WindlightRefresh(0);
         }
+
+        #region ISunModule
+
+        // Legacy classic-Windlight sun API (osGetSunParam/osSetSunParam), backed by the
+        // same region environment (EEP) data as everything else in this module rather
+        // than a separate simulated sun. "year_length"/"update_interval" have no EEP
+        // equivalent, so they're accepted but not backed by real state.
+        public double GetSunParameter(string param)
+        {
+            ViewerEnvironment env = GetRegionEnvironment();
+            switch (param.ToLower())
+            {
+                case "day_length":
+                    return env.DayLength;
+                case "day_night_offset":
+                    return env.DayOffset;
+                case "year_length":
+                    return 365;
+                case "update_interval":
+                    return 0.1;
+                case "day_time_sun_hour_scale":
+                    return 1;
+                default:
+                    return 0;
+            }
+        }
+
+        public void SetSunParameter(string param, double value)
+        {
+            if (!Enabled)
+                return;
+
+            ViewerEnvironment env = GetRegionEnvironment();
+            switch (param.ToLower())
+            {
+                case "day_length":
+                    env.DayLength = (int)value;
+                    break;
+                case "day_night_offset":
+                    env.DayOffset = (int)value;
+                    break;
+                default:
+                    return;
+            }
+
+            StoreOnRegion(env);
+            WindlightRefresh(0);
+        }
+
+        public float GetCurrentSunHour()
+        {
+            return 24f * GetRegionDayFractionTime();
+        }
+
+        #endregion
 
         public void WindlightRefresh(int interpolate, bool forRegion = true)
         {
