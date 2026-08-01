@@ -1870,9 +1870,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public LSL_Integer osPermissionToCall(string name)
+        public LSL_Integer osPerm2Use(string name)
         {
-            return m_OSSL_Functions.osPermissionToCall(name);
+            return m_OSSL_Functions.osPerm2Use(name);
         }
     }
 }

@@ -6882,7 +6882,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         // Returns true(1) if an OSSL function (by string name) can be called without
         // generating a permission error; always false for functions above Severe threat level.
-        public LSL_Integer osPermissionToCall(string function)
+        public LSL_Integer osPerm2Use(string function)
         {
             m_host.AddScriptLPS(1);
             if (!m_OSFunctionsEnabled)

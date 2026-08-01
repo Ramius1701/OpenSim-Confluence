@@ -938,6 +938,6 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
         //ApiDesc Returns a Perlin Noise2D
         LSL_Float osPerlinNoise2D(LSL_Float x, LSL_Float y, LSL_Integer octaves, LSL_Float persistence);
         //ApiDesc Returns whether the named OSSL function can be called without generating a permission error.
-        LSL_Integer osPermissionToCall(string name);
+        LSL_Integer osPerm2Use(string name);
     }
 }
