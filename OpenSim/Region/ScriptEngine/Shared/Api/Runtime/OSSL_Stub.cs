@@ -1075,6 +1075,18 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osReturnObjects(LSL_Integer type)
+        {
+            m_OSSL_Functions.osReturnObjects(type);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osReturnObject(LSL_Key userID)
+        {
+            m_OSSL_Functions.osReturnObject(userID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public LSL_List osGetPrimitiveParams(LSL_Key prim, LSL_List rules)
         {
             return m_OSSL_Functions.osGetPrimitiveParams(prim, rules);

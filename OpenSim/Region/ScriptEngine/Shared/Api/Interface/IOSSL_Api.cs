@@ -567,6 +567,10 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
        LSL_Integer osGetAvatarForceFly(string avatar);
         //ApiDesc Forces a given avatar into or out of flight, regardless of their own input.
               void osSetAvatarForceFly(string avatar, LSL_Integer force);
+        //ApiDesc Returns objects on the parcel the host is on: 0 = parcel owner's own objects, 1 = everyone else's, 2 = the parcel's group's objects.
+              void osReturnObjects(LSL_Integer type);
+        //ApiDesc Returns a specific owner's objects on the parcel the host is on.
+              void osReturnObject(LSL_Key userID);
         //ApiDesc Returns a list of primitive params of a given primitive (object UUID).
           LSL_List osGetPrimitiveParams(LSL_Key prim, LSL_List rules);
         //ApiDesc Sets primitive params of a given primitive (object UUID).

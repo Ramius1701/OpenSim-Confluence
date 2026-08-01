@@ -1199,6 +1199,60 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 presence.ForceFly = force != 0;
         }
 
+        /// <summary>
+        /// Returns objects on the parcel the host prim is on, filtered by owner:
+        /// 0 = the parcel owner's own objects, 1 = everyone else's, 2 = the parcel's group's objects.
+        /// </summary>
+        public void osReturnObjects(LSL_Integer type)
+        {
+            CheckThreatLevel(ThreatLevel.VeryHigh, "osReturnObjects");
+
+            ILandObject land = World.LandChannel.GetLandObject(m_host.AbsolutePosition);
+            if (land is null)
+                return;
+
+            if (!World.Permissions.CanEditParcelProperties(m_host.OwnerID, land, GroupPowers.LandOptions, false))
+            {
+                OSSLShoutError("script owner does not have permission to return objects on this parcel");
+                return;
+            }
+
+            ObjectReturnType returnType = type.value switch
+            {
+                0 => ObjectReturnType.Owner,
+                1 => ObjectReturnType.Other,
+                2 => ObjectReturnType.Group,
+                _ => ObjectReturnType.None,
+            };
+            if (returnType == ObjectReturnType.None)
+                return;
+
+            land.ReturnLandObjects((uint)returnType, null, null, null);
+        }
+
+        /// <summary>
+        /// Returns a specific owner's objects on the parcel the host prim is on.
+        /// </summary>
+        public void osReturnObject(LSL_Key userID)
+        {
+            CheckThreatLevel(ThreatLevel.VeryHigh, "osReturnObject");
+
+            if (!UUID.TryParse(userID, out UUID ownerID))
+                return;
+
+            ILandObject land = World.LandChannel.GetLandObject(m_host.AbsolutePosition);
+            if (land is null)
+                return;
+
+            if (!World.Permissions.CanEditParcelProperties(m_host.OwnerID, land, GroupPowers.LandOptions, false))
+            {
+                OSSLShoutError("script owner does not have permission to return objects on this parcel");
+                return;
+            }
+
+            land.ReturnLandObjects((uint)ObjectReturnType.List, new UUID[] { ownerID }, null, null);
+        }
+
         // Get a list of all the avatars/agents in the region
         public LSL_List osGetAgents()
         {
