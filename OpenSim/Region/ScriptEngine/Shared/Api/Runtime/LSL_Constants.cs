@@ -695,6 +695,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         public const int OBJECT_SCALE = 47;
         public const int OBJECT_TEXT_COLOR = 48;
         public const int OBJECT_TEXT_ALPHA = 49;
+        public const int OBJECT_HEALTH = 50;
+        public const int OBJECT_DAMAGE = 51;
+        public const int OBJECT_DAMAGE_TYPE = 52;
+        public const int OBJECT_PERMS = 53;
+        public const int OBJECT_PERMS_COMBINED = 54;
 
 
         // Pathfinding types
