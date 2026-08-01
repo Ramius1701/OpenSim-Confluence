@@ -34,6 +34,8 @@ namespace OpenSim.Region.ClientStack.Linden
 
         private IUserManagement m_UserManager = null;
 
+        private bool m_commandsRegistered = false;
+
         #region IRegionModuleBase implementation
 
         public void Initialise(IConfigSource config)
@@ -86,8 +88,22 @@ namespace OpenSim.Region.ClientStack.Linden
                 enabled = false;
                 return;
             }
-            
+
             scene.EventManager.OnRegisterCaps += RegisterCaps;
+
+            if (!m_commandsRegistered)
+            {
+                m_commandsRegistered = true;
+                MainConsole.Instance.Commands.AddCommand(
+                    "Users", false, "abuse reports list",
+                    "abuse reports list [<start>] [<count>]",
+                    "List submitted abuse reports, newest first", HandleAbuseReportsList);
+
+                MainConsole.Instance.Commands.AddCommand(
+                    "Users", false, "abuse reports show",
+                    "abuse reports show <report-id>",
+                    "Show the full details of a single abuse report", HandleAbuseReportsShow);
+            }
         }
 
         public void RemoveRegion(Scene scene)
@@ -127,6 +143,76 @@ namespace OpenSim.Region.ClientStack.Linden
             IRequestHandler SendUserReportWithScreenshotHandler = new RestStreamHandler(
                 "POST", "/CAPS/" + UUID.Random(), (v, w, x, y, z) => SendUserReportWithScreenshot(v, w, x, y, z, caps), "SendUserReportWithScreenshot", null);
             caps.RegisterHandler("SendUserReportWithScreenshot", SendUserReportWithScreenshotHandler);
+        }
+
+        #endregion
+
+        #region Console Commands
+
+        private void HandleAbuseReportsList(string module, string[] args)
+        {
+            int start = 0;
+            int count = 25;
+
+            if (args.Length > 3 && !int.TryParse(args[3], out start))
+            {
+                MainConsole.Instance.Output("Usage: abuse reports list [<start>] [<count>]");
+                return;
+            }
+            if (args.Length > 4 && !int.TryParse(args[4], out count))
+            {
+                MainConsole.Instance.Output("Usage: abuse reports list [<start>] [<count>]");
+                return;
+            }
+
+            List<AbuseReportData> reports = m_Connector.GetAbuseReports(start, count);
+            if (reports.Count == 0)
+            {
+                MainConsole.Instance.Output("No abuse reports found.");
+                return;
+            }
+
+            MainConsole.Instance.Output(string.Format("{0,-6} {1,-20} {2,-20} {3,-15} {4}",
+                "ID", "Reporter", "Abuser", "Region", "Summary"));
+            foreach (AbuseReportData r in reports)
+            {
+                string summary = r.Summary ?? string.Empty;
+                if (summary.Length > 40)
+                    summary = summary.Substring(0, 37) + "...";
+
+                MainConsole.Instance.Output(string.Format("{0,-6} {1,-20} {2,-20} {3,-15} {4}",
+                    r.ReportID, r.SenderName, r.AbuserName, r.AbuseRegionName, summary));
+            }
+        }
+
+        private void HandleAbuseReportsShow(string module, string[] args)
+        {
+            if (args.Length < 4 || !int.TryParse(args[3], out int reportID))
+            {
+                MainConsole.Instance.Output("Usage: abuse reports show <report-id>");
+                return;
+            }
+
+            AbuseReportData r = m_Connector.GetAbuseReport(reportID);
+            if (r == null)
+            {
+                MainConsole.Instance.Output($"No abuse report found with ID {reportID}.");
+                return;
+            }
+
+            MainConsole.Instance.Output($"Report ID:    {r.ReportID}");
+            MainConsole.Instance.Output($"Reporter:     {r.SenderName} ({r.SenderID})");
+            MainConsole.Instance.Output($"Abuser:       {r.AbuserName} ({r.AbuserID})");
+            MainConsole.Instance.Output($"Category:     {r.Category}");
+            MainConsole.Instance.Output($"Region:       {r.AbuseRegionName} ({r.AbuseRegionID})");
+            MainConsole.Instance.Output($"Position:     {r.Position}");
+            if (r.ObjectID.IsNotZero())
+                MainConsole.Instance.Output($"Object:       {r.ObjectID}");
+            MainConsole.Instance.Output($"Summary:      {r.Summary}");
+            MainConsole.Instance.Output($"Details:      {r.Details}");
+            MainConsole.Instance.Output($"Viewer:       {r.Version}");
+            if (r.ImageData is not null && r.ImageData.Length > 0)
+                MainConsole.Instance.Output("Screenshot:   attached");
         }
 
         #endregion
