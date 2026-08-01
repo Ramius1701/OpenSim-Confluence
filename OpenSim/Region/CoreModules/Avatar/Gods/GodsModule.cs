@@ -54,9 +54,14 @@ namespace OpenSim.Region.CoreModules.Avatar.Gods
 
         protected Scene m_scene;
         protected IDialogModule m_dialogModule;
+        protected IRegionArchiverModule m_archiverModule;
+        protected string m_saveStateDirectory = string.Empty;
 
         public void Initialise(IConfigSource source)
         {
+            IConfig godsConfig = source.Configs["GodsModule"];
+            if (godsConfig != null)
+                m_saveStateDirectory = godsConfig.GetString("SaveStateDirectory", m_saveStateDirectory);
         }
 
         public void AddRegion(Scene scene)
@@ -79,6 +84,7 @@ namespace OpenSim.Region.CoreModules.Avatar.Gods
         public void RegionLoaded(Scene scene)
         {
             m_dialogModule = m_scene.RequestModuleInterface<IDialogModule>();
+            m_archiverModule = m_scene.RequestModuleInterface<IRegionArchiverModule>();
         }
 
         public void Close() {}
@@ -93,12 +99,35 @@ namespace OpenSim.Region.CoreModules.Avatar.Gods
         {
             client.OnGodKickUser += KickUser;
             client.OnRequestGodlikePowers += RequestGodlikePowers;
+            client.OnSaveState += SaveState;
         }
 
         public void UnsubscribeFromClientEvents(IClientAPI client)
         {
             client.OnGodKickUser -= KickUser;
             client.OnRequestGodlikePowers -= RequestGodlikePowers;
+            client.OnSaveState -= SaveState;
+        }
+
+        /// <summary>
+        /// Handles the viewer's god-mode "save region state" command by saving an OAR
+        /// of the current region to disk.
+        /// </summary>
+        public void SaveState(IClientAPI client, UUID agentID)
+        {
+            if (!m_scene.Permissions.IsGod(agentID))
+                return;
+
+            if (m_archiverModule is null)
+                return;
+
+            string filename = $"{m_scene.RegionInfo.RegionName}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.oar";
+            string path = string.IsNullOrEmpty(m_saveStateDirectory)
+                ? filename
+                : System.IO.Path.Combine(m_saveStateDirectory, filename);
+
+            m_log.InfoFormat("[GOD]: {0} requested a region state save to {1}", agentID, path);
+            m_archiverModule.ArchiveRegion(path, new System.Collections.Generic.Dictionary<string, object>());
         }
 
         private void OnRegisterCaps(UUID agentID, Caps caps)
