@@ -1913,6 +1913,26 @@ namespace OpenSim.Region.PhysicsModule.ubOde
                     {
                         vec.Z += (target_altitude - _position.Z) * PID_P * 5.0f;
                     }
+
+                    // Look ahead in the direction of horizontal travel so we start correcting
+                    // before flying into rising ground, not after already clipping it.
+                    float horizSpeed = MathF.Sqrt(ctv.X * ctv.X + ctv.Y * ctv.Y);
+                    if (horizSpeed > 0.05f)
+                    {
+                        const float lookaheadDistance = 3f;
+                        float lookaheadX = _position.X + ctv.X / horizSpeed * lookaheadDistance;
+                        float lookaheadY = _position.Y + ctv.Y / horizSpeed * lookaheadDistance;
+                        float lookaheadTerrain = m_parent_scene.GetTerrainHeightAtXY(lookaheadX, lookaheadY);
+                        float lookahead_altitude = lookaheadTerrain + MinimumGroundFlightOffset;
+
+                        if (_position.Z < lookahead_altitude)
+                        {
+                            // Climbing into rising ground: correct harder. Deliberately descending
+                            // (negative target Z): correct softer so we don't fight a landing.
+                            float scale = ctv.Z < -0.05f ? 0.5f : 3.0f;
+                            vec.Z += (lookahead_altitude - _position.Z) * PID_P * scale;
+                        }
+                    }
                     // end add Kitto Flora
                 }
             }
