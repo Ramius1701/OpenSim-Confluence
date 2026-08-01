@@ -1145,6 +1145,60 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                     part.SitTargetPosition, true);
         }
 
+        /// <summary>
+        /// Prevents the given avatar from moving under their own input, until osAvatarThaw is called.
+        /// Silent fail if agent not found.
+        /// </summary>
+        public void osAvatarFreeze(string avatar)
+        {
+            CheckThreatLevel(ThreatLevel.VeryHigh, "osAvatarFreeze");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                presence.AllowMovement = false;
+        }
+
+        public void osAvatarThaw(string avatar)
+        {
+            CheckThreatLevel(ThreatLevel.VeryHigh, "osAvatarThaw");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                presence.AllowMovement = true;
+        }
+
+        public LSL_Integer osGetAvatarFlyDisabled(string avatar)
+        {
+            CheckThreatLevel(ThreatLevel.None, "osGetAvatarFlyDisabled");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                return presence.FlyDisabled ? 1 : 0;
+            return 0;
+        }
+
+        public void osSetAvatarFlyDisabled(string avatar, LSL_Integer disabled)
+        {
+            CheckThreatLevel(ThreatLevel.VeryHigh, "osSetAvatarFlyDisabled");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                presence.FlyDisabled = disabled != 0;
+        }
+
+        public LSL_Integer osGetAvatarForceFly(string avatar)
+        {
+            CheckThreatLevel(ThreatLevel.None, "osGetAvatarForceFly");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                return presence.ForceFly ? 1 : 0;
+            return 0;
+        }
+
+        public void osSetAvatarForceFly(string avatar, LSL_Integer force)
+        {
+            CheckThreatLevel(ThreatLevel.VeryHigh, "osSetAvatarForceFly");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                presence.ForceFly = force != 0;
+        }
+
         // Get a list of all the avatars/agents in the region
         public LSL_List osGetAgents()
         {

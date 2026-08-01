@@ -1039,6 +1039,42 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osAvatarFreeze(string avatar)
+        {
+            m_OSSL_Functions.osAvatarFreeze(avatar);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osAvatarThaw(string avatar)
+        {
+            m_OSSL_Functions.osAvatarThaw(avatar);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer osGetAvatarFlyDisabled(string avatar)
+        {
+            return m_OSSL_Functions.osGetAvatarFlyDisabled(avatar);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osSetAvatarFlyDisabled(string avatar, LSL_Integer disabled)
+        {
+            m_OSSL_Functions.osSetAvatarFlyDisabled(avatar, disabled);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer osGetAvatarForceFly(string avatar)
+        {
+            return m_OSSL_Functions.osGetAvatarForceFly(avatar);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osSetAvatarForceFly(string avatar, LSL_Integer force)
+        {
+            m_OSSL_Functions.osSetAvatarForceFly(avatar, force);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public LSL_List osGetPrimitiveParams(LSL_Key prim, LSL_List rules)
         {
             return m_OSSL_Functions.osGetPrimitiveParams(prim, rules);

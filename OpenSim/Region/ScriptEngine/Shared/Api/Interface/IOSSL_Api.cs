@@ -555,6 +555,18 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
               void osForceOtherSit(string avatar);
         //ApiDesc Forces a given avatar to sit on a given target (object UUID) bypassing permissions.
               void osForceOtherSit(string avatar, string target);
+        //ApiDesc Prevents a given avatar from moving under their own input, until osAvatarThaw is called.
+              void osAvatarFreeze(string avatar);
+        //ApiDesc Restores movement to a given avatar previously frozen with osAvatarFreeze.
+              void osAvatarThaw(string avatar);
+        //ApiDesc Returns whether a given avatar is currently prevented from flying.
+       LSL_Integer osGetAvatarFlyDisabled(string avatar);
+        //ApiDesc Prevents or allows a given avatar to fly.
+              void osSetAvatarFlyDisabled(string avatar, LSL_Integer disabled);
+        //ApiDesc Returns whether a given avatar is currently forced into flight.
+       LSL_Integer osGetAvatarForceFly(string avatar);
+        //ApiDesc Forces a given avatar into or out of flight, regardless of their own input.
+              void osSetAvatarForceFly(string avatar, LSL_Integer force);
         //ApiDesc Returns a list of primitive params of a given primitive (object UUID).
           LSL_List osGetPrimitiveParams(LSL_Key prim, LSL_List rules);
         //ApiDesc Sets primitive params of a given primitive (object UUID).
