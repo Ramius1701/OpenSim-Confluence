@@ -106,3 +106,12 @@ alter table assets
   alter column "creatorid" type varchar(128);
 
 Commit;
+
+:VERSION 10
+
+BEGIN TRANSACTION;
+
+ALTER TABLE assets ALTER COLUMN "name" TYPE varchar(96);
+ALTER TABLE assets ALTER COLUMN "description" TYPE varchar(128);
+
+COMMIT;

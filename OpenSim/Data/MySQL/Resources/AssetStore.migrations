@@ -4,8 +4,8 @@
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS `assets` (
-  `name` varchar(64) NOT NULL,
-  `description` varchar(64) NOT NULL,
+  `name` varchar(96) NOT NULL,
+  `description` varchar(128) NOT NULL,
   `assetType` tinyint(4) NOT NULL,
   `local` tinyint(1) NOT NULL,
   `temporary` tinyint(1) NOT NULL,
@@ -17,5 +17,14 @@ CREATE TABLE IF NOT EXISTS `assets` (
   `CreatorID` varchar(128) NOT NULL DEFAULT '',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+COMMIT;
+
+:VERSION 11
+
+BEGIN;
+
+ALTER TABLE `assets` MODIFY `name` varchar(96) NOT NULL;
+ALTER TABLE `assets` MODIFY `description` varchar(128) NOT NULL;
 
 COMMIT;

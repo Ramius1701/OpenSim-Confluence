@@ -5,8 +5,8 @@ BEGIN;
 
 CREATE TABLE `fsassets` (
   `id` char(36) NOT NULL,
-  `name` varchar(64) NOT NULL DEFAULT '',
-  `description` varchar(64) NOT NULL DEFAULT '',
+  `name` varchar(96) NOT NULL DEFAULT '',
+  `description` varchar(128) NOT NULL DEFAULT '',
   `type` int(11) NOT NULL,
   `hash` char(80) NOT NULL,
   `create_time` int(11) NOT NULL DEFAULT '0',
@@ -14,5 +14,14 @@ CREATE TABLE `fsassets` (
   `asset_flags` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+COMMIT;
+
+:VERSION 2
+
+BEGIN;
+
+ALTER TABLE `fsassets` MODIFY `name` varchar(96) NOT NULL DEFAULT '';
+ALTER TABLE `fsassets` MODIFY `description` varchar(128) NOT NULL DEFAULT '';
 
 COMMIT;
