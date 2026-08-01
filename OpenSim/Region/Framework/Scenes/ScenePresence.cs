@@ -1298,7 +1298,7 @@ namespace OpenSim.Region.Framework.Scenes
             ControllingClient.OnCompleteMovementToRegion += CompleteMovement;
             ControllingClient.OnAgentUpdate += HandleAgentUpdate;
             ControllingClient.OnAgentCameraUpdate += HandleAgentCamerasUpdate;
-            ControllingClient.OnAgentRequestSit += HandleAgentRequestSit;
+            ControllingClient.OnAgentRequestSit += HandleAgentRequestSitEvent;
             ControllingClient.OnAgentSit += HandleAgentSit;
             ControllingClient.OnSetAlwaysRun += HandleSetAlwaysRun;
             ControllingClient.OnStartAnim += HandleStartAnim;
@@ -1319,7 +1319,7 @@ namespace OpenSim.Region.Framework.Scenes
             ControllingClient.OnCompleteMovementToRegion -= CompleteMovement;
             ControllingClient.OnAgentUpdate -= HandleAgentUpdate;
             ControllingClient.OnAgentCameraUpdate -= HandleAgentCamerasUpdate;
-            ControllingClient.OnAgentRequestSit -= HandleAgentRequestSit;
+            ControllingClient.OnAgentRequestSit -= HandleAgentRequestSitEvent;
             ControllingClient.OnAgentSit -= HandleAgentSit;
             ControllingClient.OnSetAlwaysRun -= HandleSetAlwaysRun;
             ControllingClient.OnStartAnim -= HandleStartAnim;
@@ -3443,6 +3443,11 @@ namespace OpenSim.Region.Framework.Scenes
             //m_scene.EventManager.TriggerParcelPrimCountTainted(); // update select/ sat on
         }
 
+        private void HandleAgentRequestSitEvent(IClientAPI remoteClient, UUID agentID, UUID targetID, Vector3 offset)
+        {
+            HandleAgentRequestSit(remoteClient, agentID, targetID, offset, false);
+        }
+
         public void HandleAgentRequestSit(IClientAPI remoteClient, UUID agentID, UUID targetID, Vector3 offset, bool scriptedSit = false)
         {
             if (IsChildAgent)
@@ -3498,7 +3503,7 @@ namespace OpenSim.Region.Framework.Scenes
                 StandUp();
 
 
-            SendSitResponse(part.UUID, part.SitTargetPositionLL, part.SitTargetOrientationLL);
+            SendSitResponse(part.UUID, part.SitTargetPositionLL, part.SitTargetOrientationLL, true);
         }
 
         // returns  false if does not suport so older sit can be tried

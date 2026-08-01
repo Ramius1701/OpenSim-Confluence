@@ -127,9 +127,6 @@ namespace OpenSim.Region.Framework.Scenes
         public const int LslSitFlagNoCollide = 0x10;
         public const int LslSitFlagNoDamage = 0x20;
 
-        private const int LslStoredSitFlagsMask =
-            LslSitFlagAllowUnsit | LslSitFlagScriptedOnly | LslSitFlagNoCollide | LslSitFlagNoDamage;
-
         private const int LslDefaultSitFlags =
             LslSitFlagAllowUnsit | LslSitFlagNoCollide | LslSitFlagNoDamage;
 
@@ -182,10 +179,19 @@ namespace OpenSim.Region.Framework.Scenes
             }
         }
 
+        // AllowUnsit/ScriptedSitOnly are the single source of truth (persisted via
+        // the AllowUnsit/ScriptedSitOnly properties, DB columns and XML
+        // serialization) so llSetLinkSitFlags/llGetLinkSitFlags and
+        // PRIM_ALLOW_UNSIT/PRIM_SCRIPTED_SIT_ONLY stay consistent with each other.
+        // Only NoCollide/NoDamage are actually stored in DynAttrs.
+        private const int LslDynAttrsSitFlagsMask = LslSitFlagNoCollide | LslSitFlagNoDamage;
+
         private int GetStoredLslSitFlags()
         {
+            int flags = (AllowUnsit ? LslSitFlagAllowUnsit : 0) | (ScriptedSitOnly ? LslSitFlagScriptedOnly : 0);
+
             if (DynAttrs == null)
-                return LslDefaultSitFlags;
+                return flags | (LslDefaultSitFlags & LslDynAttrsSitFlagsMask);
 
             lock (DynAttrs)
             {
@@ -193,11 +199,11 @@ namespace OpenSim.Region.Framework.Scenes
                     && store != null
                     && store.TryGetValue(LslSitFlagsDynAttrsKey, out OSD flagsOSD))
                 {
-                    return flagsOSD.AsInteger() & LslStoredSitFlagsMask;
+                    return flags | (flagsOSD.AsInteger() & LslDynAttrsSitFlagsMask);
                 }
             }
 
-            return LslDefaultSitFlags;
+            return flags | (LslDefaultSitFlags & LslDynAttrsSitFlagsMask);
         }
 
         public int GetLslSitFlags()
@@ -215,6 +221,9 @@ namespace OpenSim.Region.Framework.Scenes
 
         public void SetLslSitFlags(int flags)
         {
+            AllowUnsit = (flags & LslSitFlagAllowUnsit) != 0;
+            ScriptedSitOnly = (flags & LslSitFlagScriptedOnly) != 0;
+
             DynAttrs ??= new DAMap();
 
             lock (DynAttrs)
@@ -225,7 +234,7 @@ namespace OpenSim.Region.Framework.Scenes
                     store = new OSDMap();
                 }
 
-                store[LslSitFlagsDynAttrsKey] = new OSDInteger(flags & LslStoredSitFlagsMask);
+                store[LslSitFlagsDynAttrsKey] = new OSDInteger(flags & LslDynAttrsSitFlagsMask);
                 DynAttrs.SetStore(LslSitFlagsDynAttrsNamespace, LslSitFlagsDynAttrsStore, store);
             }
 
