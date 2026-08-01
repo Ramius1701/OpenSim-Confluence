@@ -670,7 +670,8 @@ namespace OpenSim.Services.LLLoginService
                 //
                 // Finally, fill out the response and return it
     
-                processedMessage = m_WelcomeMessage.Replace("<USERNAME>", firstName + " " + lastName);
+                string username = lastName.ToLower() == "resident" ? firstName : firstName + " " + lastName;
+                processedMessage = m_WelcomeMessage.Replace("<USERNAME>", username);
 
                 // Get active gestures
                 List<InventoryItemBase> gestures = m_InventoryService.GetActiveGestures(account.PrincipalID);
