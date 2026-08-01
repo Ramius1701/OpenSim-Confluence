@@ -764,6 +764,7 @@ namespace OpenSim.Region.CoreModules.Framework.UserManagement
                                     userdata.HomeURL = host.URI;
                                     userdata.LastName = "@" + host.HostAndPort;
                                     userdata.IsLocal = false;
+                                    FetchForeignDisplayName(uuid, userdata);
                                 }
 
                                 userdata.IsUnknownUser = false;
@@ -885,6 +886,33 @@ namespace OpenSim.Region.CoreModules.Framework.UserManagement
         {
             if(m_userCacheByID.TryGetValue(id, out UserData u))
                 u.LastWebFail = Util.GetTimeStamp();
+        }
+
+        // Fetches the visitor's custom display name from their home grid, since GridUserInfo
+        // only carries their legacy first/last name across the Hypergrid boundary.
+        private void FetchForeignDisplayName(UUID uuid, UserData userdata)
+        {
+            string homeuri = userdata.HomeURL.ToLower();
+            if (WebUtil.GlobalExpiringBadURLs.ContainsKey(homeuri))
+                return;
+
+            try
+            {
+                UserAgentServiceConnector uConn = new UserAgentServiceConnector(homeuri);
+                Dictionary<string, object> hgInfo = uConn.GetUserInfo(uuid);
+                if (hgInfo.TryGetValue("user_displayname", out object dn) && dn != null
+                        && !string.IsNullOrWhiteSpace(dn.ToString()))
+                    userdata.DisplayName = dn.ToString();
+            }
+            catch (System.Net.Http.HttpRequestException e)
+            {
+                m_log.DebugFormat("[USER MANAGEMENT MODULE]: GetUserInfo call failed {0}", e.Message);
+                WebUtil.GlobalExpiringBadURLs.Add(homeuri, BADURLEXPIRE * 1000);
+            }
+            catch (Exception e)
+            {
+                m_log.Debug($"[USER MANAGEMENT MODULE]: GetUserInfo call failed {e.Message}");
+            }
         }
 
         public virtual string GetUserServerURL(UUID userID, string serverType, out bool recentFail)
@@ -1062,6 +1090,7 @@ namespace OpenSim.Region.CoreModules.Framework.UserManagement
                                 userdata.LastName = "@" + host.HostAndPort;
                                 userdata.IsLocal = false;
                                 userdata.IsUnknownUser = false;
+                                FetchForeignDisplayName(uuid, userdata);
                             }
                         }
                     }
