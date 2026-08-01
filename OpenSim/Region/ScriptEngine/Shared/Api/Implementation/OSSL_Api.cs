@@ -6884,7 +6884,6 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         // generating a permission error; always false for functions above Severe threat level.
         public LSL_Integer osPerm2Use(string function)
         {
-            m_host.AddScriptLPS(1);
             if (!m_OSFunctionsEnabled)
                 return 0;
             string reason = CheckThreatLevelTest(ThreatLevel.Severe + 1, function);
