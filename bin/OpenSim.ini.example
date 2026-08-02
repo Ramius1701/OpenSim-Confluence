@@ -1480,6 +1480,33 @@
     ;; the single pinhead mound - "mainland" fills the region out to the edges (blended
     ;; down to near water height at the borders), "island" masks the edges underwater.
 
+[SimProtection]
+    ;; Watches region FPS and progressively disables scripts, then physics, if it drops too
+    ;; far below the configured baseline for too long, restoring them once FPS recovers.
+    ;; Disabled by default.
+    ; Enabled = false
+
+    ;; What "normal" FPS looks like for this region. Percent thresholds below are relative to this.
+    ; BaseRateFramesPerSecond = 45
+
+    ;; Below this percent of baseline FPS, scripts are disabled.
+    ; ShutdownScriptsPercent = 20
+
+    ;; Below this percent of baseline FPS, physics is also disabled.
+    ; ShutdownPhysicsPercent = 10
+
+    ;; Above this percent of baseline FPS, scripts/physics are re-enabled.
+    ; RecoverPercent = 60
+
+    ;; How often to check FPS.
+    ; CheckIntervalSeconds = 15
+
+    ;; If FPS stays near zero for this many seconds, schedule a region restart. Set to 0 to disable.
+    ; KillTimerSeconds = 300
+
+    ;; Warning time given to any connected users before the auto-restart happens.
+    ; RestartWarningSeconds = 30
+
 [LandManagement]
     ;; set this to false to not display parcel ban lines
     ;ShowParcelBansLines = true
