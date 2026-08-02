@@ -38,8 +38,18 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.AbuseReports
 
         public void Initialise(IConfigSource source)
         {
-			m_remoteConnector = new AbuseReportsServicesConnector(source);
-			m_Enabled = true;
+            IConfig moduleConfig = source.Configs["Modules"];
+            if (moduleConfig == null)
+                return;
+
+            string name = moduleConfig.GetString("AbuseReportsService", "");
+            if (name != Name)
+                return;
+
+            m_remoteConnector = new AbuseReportsServicesConnector(source);
+            m_Enabled = true;
+
+            m_log.Info("[ABUSE REPORTS CONNECTOR]: Remote AbuseReportsService enabled");
         }
 
         public void PostInitialise()
