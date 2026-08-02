@@ -78,10 +78,21 @@ namespace OpenSim.Region.Framework.Scenes
         public TerrainChannel(String type, int pX, int pY, int pZ)
         {
             m_terrainData = new TerrainData(pX, pY, pZ);
-            if (type.Equals("flat"))
-                FlatLand();
-            else
-                PinHeadIsland();
+            switch (type.ToLowerInvariant())
+            {
+                case "flat":
+                    FlatLand();
+                    break;
+                case "mainland":
+                    GenerateNoiseTerrain(mainland: true);
+                    break;
+                case "island":
+                    GenerateNoiseTerrain(mainland: false);
+                    break;
+                default:
+                    PinHeadIsland();
+                    break;
+            }
         }
 
         // Create channel passed a heightmap and expected dimensions of the region.
@@ -576,6 +587,22 @@ namespace OpenSim.Region.Framework.Scenes
         private void FlatLand()
         {
             m_terrainData.ClearLand();
+        }
+
+        // Natural-looking default terrain via multi-octave Perlin noise, instead of a flat
+        // plane or a single pinhead mound.
+        // "Mainland" fills the region out to the edges, blended down to near water height at
+        // the borders. "Island" masks the terrain with a radial gradient so the edges sit
+        // underwater.
+        private void GenerateNoiseTerrain(bool mainland)
+        {
+            float[][] map = mainland
+                ? TerrainPerlin.GenerateMainlandTerrain(Width, Height, 18f, 45f)
+                : TerrainPerlin.GenerateIslandTerrain(Width, Height, 2f, 35f);
+
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    m_terrainData[x, y] = map[x][y];
         }
     }
 }
