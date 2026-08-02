@@ -1474,8 +1474,11 @@
 
 
 [Terrain]
-    ;# {InitialTerrain} {} {Initial terrain type} {pinhead-island flat} pinhead-island
+    ;# {InitialTerrain} {} {Initial terrain type} {pinhead-island flat mainland island} pinhead-island
     ; InitialTerrain = "pinhead-island"
+    ;; "mainland" and "island" generate natural-looking Perlin-noise terrain instead of
+    ;; the single pinhead mound - "mainland" fills the region out to the edges (blended
+    ;; down to near water height at the borders), "island" masks the edges underwater.
 
 [LandManagement]
     ;; set this to false to not display parcel ban lines
