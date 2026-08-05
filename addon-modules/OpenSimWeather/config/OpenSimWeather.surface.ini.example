@@ -10,7 +10,8 @@
     EstateManagerOnly = true
 
     CoverageMode = Region
-    EmitterGrid = 8
+    EmitterGrid = 0
+    EmitterSpacingMeters = 24.0
 
     RainTexture =
     StormTexture =

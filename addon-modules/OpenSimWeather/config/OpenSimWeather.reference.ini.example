@@ -22,30 +22,57 @@
     ;; WEATHER COVERAGE AND VAR-REGIONS
     ;; ------------------------------------------------------------------------
 
-    ;; Region is the compatibility/default mode. It scales a fixed emitter grid
-    ;; across the actual standard or variable-sized region. ActiveArea remains
-    ;; available as an explicit object-count optimization near root agents.
+    ;; Three coverage modes:
+    ;;   Region     - a grid of emitters spread across the whole region.
+    ;;                Best for small/legacy regions or showcase builds where
+    ;;                weather should be visible from anywhere.
+    ;;   ActiveArea - only maintains emitters around connected avatars. Cheap
+    ;;                regardless of region size; nothing renders where nobody
+    ;;                is standing.
+    ;;   Wandering  - a fixed-size pool of emitters (WanderingBatchSize) that
+    ;;                periodically relocate to new random spots, so weather
+    ;;                looks like drifting, patchy cells rather than a uniform
+    ;;                static grid. Pool size is independent of region size, so
+    ;;                startup stays fast and coverage stays bounded even on
+    ;;                very large var regions - coverage is probabilistic, not
+    ;;                guaranteed everywhere at once. Recommended over Region
+    ;;                for large var regions.
     CoverageMode = Region
 
-    ;; Default fixed count per axis. The emitter positions, spacing, and particle
-    ;; radius are recalculated from RegionSizeX and RegionSizeY, so the same
-    ;; object count covers standard regions and varregions. Set 0 to use the
-    ;; fixed-metre spacing mode below.
-    EmitterGrid = 8
+    ;; Region mode only. EmitterGrid=0 scales the emitter COUNT to
+    ;; RegionSizeX/RegionSizeY using EmitterSpacingMeters below, which keeps
+    ;; each emitter's particle burst radius sane on variable-sized regions.
+    ;; A fixed non-zero EmitterGrid instead scales spacing (and burst radius)
+    ;; up with region size, and radius silently exceeds the viewer's ~50m
+    ;; PSYS_SRC_BURST_RADIUS limit on var regions of 1024m or larger (the
+    ;; module clamps to 50m as a safety net, but coverage gets sparse well
+    ;; before that) - only use a fixed grid count on legacy 256m regions.
+    EmitterGrid = 0
 
-    ;; Advanced fixed-metre spacing mode, used only when EmitterGrid=0. The
-    ;; module calculates independent X and Y cell counts from the region size.
+    ;; Used by Region mode when EmitterGrid=0, and always by ActiveArea and
+    ;; Wandering modes. The module calculates independent X and Y cell counts
+    ;; (or pool positions) from the region size and this spacing.
     EmitterSpacingMeters = 24.0
 
-    ;; Safety ceiling for both Region spacing mode and ActiveArea mode. A fixed
-    ;; EmitterGrid is also reduced when its requested object count exceeds this.
+    ;; Safety ceiling on emitter object count for Region spacing mode and
+    ;; ActiveArea mode. A fixed EmitterGrid is also reduced when its
+    ;; requested object count exceeds this.
     MaxEmitters = 384
 
     ;; ActiveArea radius around each root agent and refresh interval.
     ActiveAreaRadiusMeters = 96.0
     ActiveAreaRefreshSeconds = 3
 
+    ;; Wandering mode only. Pool size stays constant regardless of region
+    ;; size; WanderingChurnFraction of the pool relocates every
+    ;; WanderingRefreshSeconds.
+    WanderingBatchSize = 40
+    WanderingRefreshSeconds = 20
+    WanderingChurnFraction = 0.25
+
     ;; Particle burst radius as a fraction of the calculated cell spacing.
+    ;; Hard-clamped to 50m (the viewer's practical PSYS_SRC_BURST_RADIUS
+    ;; limit) regardless of this scale or the computed spacing.
     EmitterRadiusScale = 0.62
 
     ;; Height above local terrain used for the invisible emitter object.

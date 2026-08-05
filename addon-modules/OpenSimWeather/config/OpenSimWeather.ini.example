@@ -15,12 +15,42 @@
     CommandChannel = 89
     EstateManagerOnly = true
 
-    ;; Region restores the original full-region behavior. EmitterGrid is scaled
-    ;; across RegionSizeX and RegionSizeY, including variable-sized regions.
+    ;; CoverageMode chooses how emitters are placed:
+    ;;   Region     - fills the whole region with a static grid of emitters.
+    ;;                EmitterGrid=0 scales the emitter COUNT to RegionSizeX/
+    ;;                RegionSizeY using EmitterSpacingMeters, which keeps each
+    ;;                emitter's particle burst radius sane on variable-sized
+    ;;                regions. A fixed non-zero EmitterGrid instead scales
+    ;;                spacing (and burst radius) up with region size, and
+    ;;                radius silently exceeds the viewer's ~50m
+    ;;                PSYS_SRC_BURST_RADIUS limit on var regions of 1024m or
+    ;;                larger - only use a fixed grid count on legacy 256m
+    ;;                regions. Best for small/legacy regions or showcase
+    ;;                builds where weather should be visible from anywhere.
+    ;;   ActiveArea - only maintains emitters around connected avatars.
+    ;;                Cheap regardless of region size; nothing renders where
+    ;;                nobody is standing.
+    ;;   Wandering  - keeps a fixed-size pool of emitters (WanderingBatchSize)
+    ;;                that periodically relocate to new random spots across
+    ;;                the region, so weather looks like drifting, patchy
+    ;;                cells rather than a uniform static grid. Pool size is
+    ;;                independent of region size, so startup stays fast and
+    ;;                coverage stays bounded even on very large var regions -
+    ;;                the tradeoff is that coverage is probabilistic, not
+    ;;                guaranteed everywhere at once. Recommended for large
+    ;;                var regions instead of Region coverage.
     CoverageMode = Region
-    EmitterGrid = 8
+    EmitterGrid = 0
+    EmitterSpacingMeters = 24
     EmitterHeight = 18.0
     Intensity = 1.0
+
+    ;; Wandering coverage only. Pool size stays constant regardless of region
+    ;; size; WanderingChurnFraction of the pool relocates every
+    ;; WanderingRefreshSeconds.
+    WanderingBatchSize = 40
+    WanderingRefreshSeconds = 20
+    WanderingChurnFraction = 0.25
 
     ;; Upload suitable alpha textures and paste their asset UUIDs here.
     RainTexture =

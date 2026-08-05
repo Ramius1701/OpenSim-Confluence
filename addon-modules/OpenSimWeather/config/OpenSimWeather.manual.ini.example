@@ -7,7 +7,8 @@
     EstateManagerOnly = true
 
     CoverageMode = Region
-    EmitterGrid = 8
+    EmitterGrid = 0
+    EmitterSpacingMeters = 24.0
     EmitterHeight = 18.0
     Intensity = 1.0
 
