@@ -1,0 +1,17 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS banned_macs (
+	mac varchar(32) NOT NULL PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS banned_id0s (
+	id0 varchar(32) NOT NULL PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS banned_ips (
+	ip varchar(15) NOT NULL PRIMARY KEY
+);
+
+COMMIT;
