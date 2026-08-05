@@ -340,7 +340,18 @@ internal class MoneyServerBase : BaseOpenSimServer, IMoneyServiceCore
 
         ReadIniConfig();
 
-        // MoneyServer creates its own LocalConsole, so it must also connect the
+        // LocalConsole needs a real OS console handle (TTY) and throws when run
+        // headless (services, containers, piped output). Match Robust/OpenSim's
+        // [Startup] console = "basic" switch so MoneyServer can run in the same
+        // environments they do.
+        string consoleType = Config.Configs["Startup"]?.GetString("console", "local") ?? "local";
+        if (consoleType == "basic")
+        {
+            m_console = new CommandConsole("MoneyServer ");
+            MainConsole.Instance = m_console;
+        }
+
+        // MoneyServer creates its own console, so it must also connect the
         // standard OpenSim Console appender to that console.  LocalConsole.Output()
         // then clears the active prompt, writes asynchronous output, and redraws
         // "MoneyServer #" beneath it instead of printing through the prompt line.

@@ -1541,6 +1541,7 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
             TransactionData transactionData = new TransactionData();
             transactionData.TransUUID = transactionID;
             string sql = string.Empty;
+            bool found = false;
 
             sql = "SELECT * FROM " + Table_of_Transactions + " WHERE UUID = ?transID;";
             MySqlCommand cmd = new MySqlCommand(sql, dbcon);
@@ -1550,6 +1551,7 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
             {
                 if (r.Read())
                 {
+                    found = true;
                     try
                     {
                         transactionData.Sender = (string)r["sender"];
@@ -1584,6 +1586,12 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
             }
 
             cmd.Dispose();
+
+            // No matching row - callers (e.g. stipend idempotency checks) rely on
+            // null meaning "this transaction doesn't exist yet", not a stub object.
+            if (!found)
+                return null;
+
             return transactionData;
         }
 

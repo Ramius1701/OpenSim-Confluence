@@ -1186,16 +1186,14 @@ namespace OpenSim.Grid.MoneyServer
 
             string canonicalAvatarID = avatarID.ToString();
 
-            if (m_CurrencyGroupOnly)
+            // Only enforce the group restriction when a real group has been configured.
+            // A blank/zero CurrencyGroupID means the operator hasn't set one up, so the
+            // restriction is treated as inactive rather than blocking every purchase.
+            if (m_CurrencyGroupOnly
+                && !string.IsNullOrWhiteSpace(m_CurrencyGroupID)
+                && UUID.TryParse(m_CurrencyGroupID, out UUID groupID)
+                && groupID != UUID.Zero)
             {
-                if (string.IsNullOrWhiteSpace(m_CurrencyGroupID) ||
-                    !UUID.TryParse(m_CurrencyGroupID, out UUID groupID) ||
-                    groupID == UUID.Zero)
-                {
-                    message = "Currency purchasing is restricted, but CurrencyGroupID is not configured.";
-                    return false;
-                }
-
                 if (!IsUserInGroup(canonicalAvatarID, groupID.ToString()))
                 {
                     message = "You are not a member of the group permitted to purchase currency.";

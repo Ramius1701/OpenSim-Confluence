@@ -110,6 +110,13 @@ namespace OpenSim.Modules.Currency
         private bool m_sellEnabled = false;
         private bool m_enable_server = true;   // enable Money Server
 
+        // True only when [Economy] EconomyModule actually names this module. AddRegion
+        // must bail out entirely when this is false - otherwise it registers itself as
+        // the scene's IMoneyModule and hooks OnValidateLandBuy/OnLandBuy/etc regardless,
+        // silently taking over money handling from whichever module was actually selected
+        // (e.g. Gloebit), even though this module never got a CurrencyServer URL configured.
+        private bool m_isSelectedEconomyModule = false;
+
         private IConfigSource m_config;
 
         private string m_moneyServURL = string.Empty;
@@ -223,6 +230,7 @@ namespace OpenSim.Modules.Currency
                     return;
                 }
 
+                m_isSelectedEconomyModule = true;
                 m_log.InfoFormat("[MONEY MODULE]: Initialise - DTL/NSL MoneyModule is enabled.");
 
                 // Konfiguration für Verkauf und MoneyServer-URL
@@ -319,6 +327,15 @@ namespace OpenSim.Modules.Currency
         /// <param name="scene">A <see cref="T:OpenSim.Region.Framework.Scenes.Scene" /></param>
         public void AddRegion(Scene scene)
         {
+            if (!m_isSelectedEconomyModule)
+            {
+                // Not the configured [Economy] EconomyModule (e.g. Gloebit is selected
+                // instead) - stay fully inert. Registering IMoneyModule or hooking
+                // OnValidateLandBuy/OnLandBuy/etc here would silently take over money
+                // handling from whichever module is actually selected.
+                return;
+            }
+
             m_log.InfoFormat("[MONEY MODULE]: AddRegion:");
 
             if (scene == null) return;
