@@ -2965,5 +2965,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         {
             m_LSL_Functions.llSetRenderMaterial(material, face);
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void llSetLinkRenderMaterial(LSL_Integer link, LSL_String material, LSL_Integer face)
+        {
+            m_LSL_Functions.llSetLinkRenderMaterial(link, material, face);
+        }
     }
 }

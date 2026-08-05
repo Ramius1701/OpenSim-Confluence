@@ -21712,67 +21712,81 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         public void llSetRenderMaterial(LSL_String materialstr, LSL_Integer lsl_face)
         {
-            if(m_materialsModule is null)
+            SetRenderMaterial(m_host, materialstr, lsl_face, "llSetRenderMaterial");
+        }
+
+        public void llSetLinkRenderMaterial(LSL_Integer linknum, LSL_String materialstr, LSL_Integer lsl_face)
+        {
+            foreach (SceneObjectPart part in GetLinkParts(linknum.value))
+                SetRenderMaterial(part, materialstr, lsl_face, "llSetLinkRenderMaterial");
+        }
+
+        private void SetRenderMaterial(SceneObjectPart part, LSL_String materialstr, LSL_Integer lsl_face, string originFunc)
+        {
+            if(part is null || m_materialsModule is null)
                 return;
 
             if(string.IsNullOrEmpty(materialstr.m_string))
-            { 
-                Error("llSetRenderMaterial", "material \"\" not found");
+            {
+                Error(originFunc, "material \"\" not found");
                 return;
             }
 
             int face = lsl_face.value;
+            if(face < 0 && face != ScriptBaseClass.ALL_SIDES)
+                return;
+
             bool changed;
 
             if(UUID.ZeroString.Equals(materialstr.m_string, StringComparison.OrdinalIgnoreCase))
             {
-                if(m_host.Shape.RenderMaterials is null || m_host.Shape.RenderMaterials.entries is null || m_host.Shape.RenderMaterials.entries.Length == 0)
+                if(part.Shape.RenderMaterials is null || part.Shape.RenderMaterials.entries is null || part.Shape.RenderMaterials.entries.Length == 0)
                     return;
 
-                changed = m_materialsModule.CleanMaterialOverrides(ref m_host.Shape.RenderMaterials.overrides, face);
+                changed = m_materialsModule.CleanMaterialOverrides(ref part.Shape.RenderMaterials.overrides, face);
                 if(face == ScriptBaseClass.ALL_SIDES)
                 {
-                    m_host.Shape.RenderMaterials.entries = null;
+                    part.Shape.RenderMaterials.entries = null;
                     changed = true;
                 }
                 else
-                    changed |= m_materialsModule.RemoveMaterialEntry(ref m_host.Shape.RenderMaterials.entries, face);
+                    changed |= m_materialsModule.RemoveMaterialEntry(ref part.Shape.RenderMaterials.entries, face);
 
                 if(changed)
-                { 
-                    m_host.ParentGroup.HasGroupChanged = true;
-                    m_host.ScheduleUpdate(PrimUpdateFlags.MaterialOvr | PrimUpdateFlags.FullUpdate);
-                    m_host.TriggerScriptChangedEvent(Changed.MATERIAL);
+                {
+                    part.ParentGroup.HasGroupChanged = true;
+                    part.ScheduleUpdate(PrimUpdateFlags.MaterialOvr | PrimUpdateFlags.FullUpdate);
+                    part.TriggerScriptChangedEvent(Changed.MATERIAL);
                 }
                 return;
             }
 
-            UUID matID = ScriptUtils.GetAssetIdFromItemName(m_host, materialstr.m_string, (int)AssetType.Material);
+            UUID matID = ScriptUtils.GetAssetIdFromItemName(part, materialstr.m_string, (int)AssetType.Material);
             if (matID.IsZero())
             {
                 if (!UUID.TryParse(materialstr.m_string, out matID) || matID.IsZero())
-                { 
-                    Error("llSetRenderMaterial", $"material \"{materialstr.m_string}\" not found");
+                {
+                    Error(originFunc, $"material \"{materialstr.m_string}\" not found");
                     return;
                 }
             }
 
-            int nsides = GetNumberOfSides(m_host);
+            int nsides = GetNumberOfSides(part);
             if(face >= nsides)
                 return;
 
-            m_host.Shape.RenderMaterials ??= new();
-            m_host.Shape.RenderMaterials.entries ??= new Primitive.RenderMaterials.RenderMaterialEntry[1];
+            part.Shape.RenderMaterials ??= new();
+            part.Shape.RenderMaterials.entries ??= new Primitive.RenderMaterials.RenderMaterialEntry[1];
 
-            changed = m_materialsModule.CleanMaterialOverrides(ref m_host.Shape.RenderMaterials.overrides, face);
+            changed = m_materialsModule.CleanMaterialOverrides(ref part.Shape.RenderMaterials.overrides, face);
             if(face == ScriptBaseClass.ALL_SIDES)
             {
-                if(m_host.Shape.RenderMaterials.entries is null || m_host.Shape.RenderMaterials.entries.Length != nsides)
+                if(part.Shape.RenderMaterials.entries is null || part.Shape.RenderMaterials.entries.Length != nsides)
                 {
-                    m_host.Shape.RenderMaterials.entries = new Primitive.RenderMaterials.RenderMaterialEntry[nsides];
-                    for (int i = 0; i < m_host.Shape.RenderMaterials.entries.Length; i++)
+                    part.Shape.RenderMaterials.entries = new Primitive.RenderMaterials.RenderMaterialEntry[nsides];
+                    for (int i = 0; i < part.Shape.RenderMaterials.entries.Length; i++)
                     {
-                        m_host.Shape.RenderMaterials.entries[i] = new()
+                        part.Shape.RenderMaterials.entries[i] = new()
                         {
                             te_index = (byte)i,
                             id = matID
@@ -21782,12 +21796,12 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
                 else
                 {
-                    for (int i = 0; i < m_host.Shape.RenderMaterials.entries.Length; i++)
+                    for (int i = 0; i < part.Shape.RenderMaterials.entries.Length; i++)
                     {
-                        if(matID.NotEqual(m_host.Shape.RenderMaterials.entries[i].id))
-                        { 
+                        if(matID.NotEqual(part.Shape.RenderMaterials.entries[i].id))
+                        {
                             changed = true;
-                            m_host.Shape.RenderMaterials.entries[i].id = matID;
+                            part.Shape.RenderMaterials.entries[i].id = matID;
                         }
                     }
                 }
@@ -21795,23 +21809,23 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             else
             {
                 int indx = 0;
-                for( ; indx < m_host.Shape.RenderMaterials.entries.Length; indx++)
+                for( ; indx < part.Shape.RenderMaterials.entries.Length; indx++)
                 {
-                    if (m_host.Shape.RenderMaterials.entries[indx].te_index == face)
+                    if (part.Shape.RenderMaterials.entries[indx].te_index == face)
                     {
-                        if(matID.NotEqual(m_host.Shape.RenderMaterials.entries[indx].id))
-                        { 
+                        if(matID.NotEqual(part.Shape.RenderMaterials.entries[indx].id))
+                        {
                             changed = true;
-                            m_host.Shape.RenderMaterials.entries[indx].id = matID;
+                            part.Shape.RenderMaterials.entries[indx].id = matID;
                         }
                         break;
                     }
                 }
-                if(indx == m_host.Shape.RenderMaterials.entries.Length)
+                if(indx == part.Shape.RenderMaterials.entries.Length)
                 {
-                    Array.Resize(ref m_host.Shape.RenderMaterials.entries, m_host.Shape.RenderMaterials.entries.Length + 1);
+                    Array.Resize(ref part.Shape.RenderMaterials.entries, part.Shape.RenderMaterials.entries.Length + 1);
 
-                    m_host.Shape.RenderMaterials.entries[indx] = new()
+                    part.Shape.RenderMaterials.entries[indx] = new()
                     {
                         te_index = (byte)face,
                         id = matID
@@ -21820,10 +21834,10 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
             }
             if(changed)
-            { 
-                m_host.ParentGroup.HasGroupChanged = true;
-                m_host.ScheduleUpdate(PrimUpdateFlags.MaterialOvr | PrimUpdateFlags.FullUpdate);
-                m_host.TriggerScriptChangedEvent(Changed.MATERIAL);
+            {
+                part.ParentGroup.HasGroupChanged = true;
+                part.ScheduleUpdate(PrimUpdateFlags.MaterialOvr | PrimUpdateFlags.FullUpdate);
+                part.TriggerScriptChangedEvent(Changed.MATERIAL);
             }
         }
 
