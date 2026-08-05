@@ -17627,7 +17627,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 return;
             }
 
-            if (scenePresence.GodController.GodLevel < 100)
+            if (scenePresence.GodController.GodLevel < 200)
             {
                 Error("llGodLikeRezObject", "Owner is not in GodMode");
                 return;

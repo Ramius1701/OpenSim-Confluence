@@ -351,6 +351,23 @@ namespace OpenSim.ApplicationPlugins.RemoteController
 
                 m_log.Info("[RADMIN]: Request to restart Region.");
 
+                // ScheduleRestart only sends the standard, viewer-localized countdown
+                // notice; it has no way to carry a caller-supplied string. Broadcast
+                // the caller's message separately so a "message" param isn't silently
+                // dropped for callers that relied on it.
+                if (requestData.ContainsKey("message"))
+                {
+                    string customMessage = requestData["message"].ToString();
+                    if (!string.IsNullOrEmpty(customMessage))
+                    {
+                        foreach (Scene s in (restartAll ? m_application.SceneManager.Scenes : new List<Scene>() { rebootedScene }))
+                        {
+                            IDialogModule dm = s.RequestModuleInterface<IDialogModule>();
+                            dm?.SendGeneralAlert(customMessage + "\n");
+                        }
+                    }
+                }
+
                 if (startupConfig.GetBoolean("SkipDelayOnEmptyRegion", false))
                 {
                     m_log.Info("[RADMIN]: Counting affected avatars");
@@ -392,7 +409,7 @@ namespace OpenSim.ApplicationPlugins.RemoteController
                 else
                     restartList = new List<Scene>() { rebootedScene };
 
-                foreach (Scene s in m_application.SceneManager.Scenes)
+                foreach (Scene s in restartList)
                 {
                     restartModule = s.RequestModuleInterface<IRestartModule>();
                     if (restartModule != null)

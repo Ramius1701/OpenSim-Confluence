@@ -661,7 +661,17 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         private void RegionRestart(double seconds, string msg)
         {
             IRestartModule restartModule = World.RequestModuleInterface<IRestartModule>();
-            
+
+            // ScheduleRestart only sends the standard, viewer-localized countdown
+            // notice (name + seconds remaining); it has no way to carry a custom
+            // string. Send the caller's own message separately so it isn't
+            // silently dropped.
+            if (!string.IsNullOrEmpty(msg))
+            {
+                IDialogModule dm = World.RequestModuleInterface<IDialogModule>();
+                dm?.SendGeneralAlert(msg + "\n");
+            }
+
             restartModule.ScheduleRestart(UUID.Zero, (int)seconds);
         }
 
@@ -1197,6 +1207,23 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
             if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
                 presence.ForceFly = force != 0;
+        }
+
+        public LSL_Integer osGetAvatarWalkDisabled(string avatar)
+        {
+            CheckThreatLevel(ThreatLevel.None, "osGetAvatarWalkDisabled");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                return presence.WalkDisabled ? 1 : 0;
+            return 0;
+        }
+
+        public void osSetAvatarWalkDisabled(string avatar, LSL_Integer disabled)
+        {
+            CheckThreatLevel(ThreatLevel.VeryHigh, "osSetAvatarWalkDisabled");
+
+            if (UUID.TryParse(avatar, out UUID agentID) && World.GetScenePresence(agentID) is ScenePresence presence)
+                presence.WalkDisabled = disabled != 0;
         }
 
         /// <summary>

@@ -1075,6 +1075,18 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer osGetAvatarWalkDisabled(string avatar)
+        {
+            return m_OSSL_Functions.osGetAvatarWalkDisabled(avatar);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osSetAvatarWalkDisabled(string avatar, LSL_Integer disabled)
+        {
+            m_OSSL_Functions.osSetAvatarWalkDisabled(avatar, disabled);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void osReturnObjects(LSL_Integer type)
         {
             m_OSSL_Functions.osReturnObjects(type);
