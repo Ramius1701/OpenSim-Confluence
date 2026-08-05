@@ -37,41 +37,47 @@ lot of this originated).
   confirmation UUIDs, banker/transfer/group controls) — this session
   additionally fixed several real bugs in this area, see PROJECT_LOG.md.
 
-### Confirmed MISSING despite RegionWeb's docs claiming otherwise
+### Was MISSING, now ported from Gunthar's fork (2026-08-06)
 RegionWeb's in-world documentation page
 (`addon-modules/RegionWeb/RegionWebModule/RegionWebModule.cs`, 148
 documented functions) was copied from Gunthar's docs page, but the actual
-implementations behind a large chunk of it were never merged into
-Casperia. Verified by grepping for the real method definitions in
-`OpenSim/Region/ScriptEngine/...` — these exist on `gunthar/master` but
-not here:
+implementations behind a large chunk of it had never been merged into
+Casperia. Ported directly from `gunthar/master` (not cherry-picked —
+his commits were too entangled with his own Experience-Lite permission
+system, so these were hand-extracted and adapted to sit alongside our
+own Experience Tools instead):
 
 - **RSA signing:** `llSignRSA`, `llVerifyRSA`.
 - **Pathfinding (entire suite):** `llCreateCharacter`, `llUpdateCharacter`,
   `llDeleteCharacter`, `llExecCharacterCmd`, `llNavigateTo`,
   `llWanderWithin`, `llPatrolPoints`, `llPursue`, `llEvade`, `llFleeFrom`,
-  `llGetStaticPath`, `llGetClosestNavPoint`.
+  `llGetStaticPath`, `llGetClosestNavPoint` — backed by a self-contained
+  region-local A* navmesh engine (`BakedNavMesh`/`CharacterNavState`),
+  reusing the existing `KeyframeMotion` system for actual movement.
 - **Combat2:** `llDamage`, `llAdjustDamage`, `llDetectedDamage`,
-  `llDetectedRezzer`, object-health support, `on_damage`/`final_damage`/
-  `on_death`.
-- **Region-level EEP scripting:** `llGetEnvironment`, `llSetEnvironment`,
-  `llReplaceEnvironment` (only the per-agent variants made it in).
-- **GLTF / rendering:** `llSetLinkGLTFOverrides`, `llSetLinkRenderMaterial`.
+  `llDetectedRezzer`, persisted object-health via `DynAttrs`,
+  `on_damage`/`final_damage`/`on_death` events.
+- **GLTF / rendering:** `llSetLinkGLTFOverrides` (full PBR material
+  override read/write pipeline — glTF JSON extraction, compact
+  key-value encoding, KHR texture transforms), `llSetLinkRenderMaterial`.
 - **Sculpt-map animation:** `llSetSculptAnim`.
-- **Misc parcel/inventory/LSL:** `llGiveAgentInventory`,
-  `llSetParcelForSale`, `llGetAttachedListFiltered`,
-  `llFindNotecardTextSync`, `llMatchGroup`, `llSetGroundTexture`,
-  `llReturnObjectsByID`, `llReturnObjectsByOwner`, `llSetAgentRot`.
-- `llOpenFloater` (a stub even in upstream Continuum) — not present at all
-  here, not even as a stub.
-- `InternalPort = MATCHING` region config and RSA-key login auth —
-  unverified, likely tied to the missing RSA signing implementation above.
 
-**Action needed:** either cherry-pick the real implementations from
-`gunthar/master` (it has them — see `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs`
-and friends), or trim RegionWeb's doc page so it stops advertising
-scripting functions that don't exist yet. Right now a builder reading the
-in-world docs would be told these work when they don't.
+Deliberately left out of this pass (see PROJECT_LOG.md for the full
+rationale): Gunthar's Experience-Lite permission/trust/KVP-store system
+(competes with our own Experience Tools), region-level `llGetEnvironment`/
+`llSetEnvironment`/`llReplaceEnvironment` (entangled with Experience-Lite
+trust checks in his implementation), `llOpenFloater` (a stub even
+upstream), and the misc parcel/inventory functions (`llGiveAgentInventory`,
+`llSetParcelForSale`, `llGetAttachedListFiltered`, `llFindNotecardTextSync`,
+`llMatchGroup`, `llSetGroundTexture`, `llReturnObjectsByID`,
+`llReturnObjectsByOwner`, `llSetAgentRot`) — none of these were in the
+approved scope for this pass.
+
+Also ported but currently unreachable: `ApplyGltfPrimitiveParams` and its
+texture/transform helpers, meant to back `PRIM_GLTF_*` codes in
+`llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast`. Nothing dispatches
+to them yet — wiring that in is a separate task, and OpenSim-Continuum's
+own README lists that specific path as unsupported.
 
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly

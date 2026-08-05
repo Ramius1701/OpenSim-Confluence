@@ -22,13 +22,6 @@ testing is done.**
   Mobius / WhiteCore-Dev do it first and model after that rather than
   inventing new behavior.
 
-## Open / uncommitted
-
-- `OpenSim/ApplicationPlugins/RemoteController/RemoteAdminPlugin.cs` has an
-  unstaged, uncommitted diff (18 insertions) sitting on top of commit
-  `7e5aa31e` ("Cleaned up patches from Consortium #117"). Not yet reviewed
-  in a session — figure out what it is before losing it.
-
 ---
 
 ## Feature parity audit (Gunthar / Tranquillity / Mobius / WhiteCore-Dev) — done
@@ -215,6 +208,102 @@ Key files: `OpenSim/Region/ClientStack/Linden/Caps/ExperienceModule.cs`,
 `OpenSim/Region/Framework/Interfaces/IExperienceModule.cs`,
 `OpenSim/Region/CoreModules/ServiceConnectorsOut/Experience/RemoteExperienceServiceConnector.cs`,
 `OpenSim/Region/CoreModules/Framework/UserManagement/UserManagementModule.cs`.
+
+---
+
+## Gunthar LSL/OSSL scripting-compatibility port (done, merged 2026-08-06)
+
+Triggered by the OpenSim-Continuum README comparison (see
+FEATURES_VS_MASTER.md) — RegionWeb's in-world docs advertised RSA
+signing, Pathfinding, Combat2, GLTF overrides, and sculpt animation, but
+none of it was actually implemented. Scope was explicitly narrowed to
+just those five areas — not Gunthar's Experience-Lite permission system,
+not his Vanilla Sim branding/PayPal wallet/multi-grid HUD work.
+
+**Why hand-port instead of cherry-pick:** the first real cherry-pick
+attempt (`181bf4ad1b`, "Expand LSL compatibility surface") hit a deep
+architectural conflict — Gunthar's EEP scripting functions
+(`llReplaceAgentEnvironment` etc.) are built on his own "Experience-Lite"
+script-trust system (`IsScriptExperienceTrusted()`), which is a
+different, competing design from the Experience Tools system built
+earlier this session (`ExperienceID`-based, tied to `IExperienceModule`).
+Whole-commit cherry-picks kept dragging in that competing system. Switched
+to extracting just the genuinely-missing method implementations straight
+from `gunthar/master`'s tip and adapting them to our own codebase,
+verifying with a targeted `dotnet build` of
+`OpenSim.Region.ScriptEngine.Shared.Api.csproj` after each piece
+(seconds, vs. minutes for a full solution build).
+
+Delivered, in order:
+1. **RSA signing** — `llSignRSA`/`llVerifyRSA`, `RSA.SignData`/`VerifyData`
+   over PEM keys, PKCS1 padding. Fully self-contained.
+2. **Combat2** — `llDamage`, `llAdjustDamage` (both overloads),
+   `llDetectedDamage`, `llDetectedRezzer`. Added persisted object health
+   (`SceneObjectPart.GetLslHealth`/`SetLslHealth`/`GetLslDamageType`/
+   `SetLslDamageType`, stored via `DynAttrs` using the same pattern as the
+   existing LSL sit-flags code) and `DetectParams.Rezzer`/`Damage`/
+   `OriginalDamage`/`DamageType` fields, wired from
+   `SceneObjectGroup.RezzerID`. Damage resolution runs through an async
+   `CombatDamageTransaction` window so an `on_damage` handler can call
+   `llAdjustDamage` to override the amount before `final_damage`/`on_death`
+   fire. Extended `llGetHealth` to also resolve object (not just avatar)
+   health.
+3. **Sculpt animation** — `llSetSculptAnim`, persisted via `DynAttrs`,
+   mirrored through the existing texture-animation LLUDP block as a visible
+   fallback (OpenSim has no dedicated sculpt-animation wire field).
+4. **GLTF overrides** — `llSetLinkRenderMaterial` (refactored the existing
+   `llSetRenderMaterial` into a `SceneObjectPart`-parameterized helper,
+   then wrapped it in a `GetLinkParts` loop) and `llSetLinkGLTFOverrides`
+   plus a full ~1150-line PBR material pipeline: reads a material asset's
+   glTF JSON (LLSD-XML or raw JSON, `GetGltfMaterialAssetData`/
+   `TryExtractGltfJson`/`TryCompactGltfMaterialJson`) and reduces it to a
+   compact hand-rolled key-value string (not JSON — cheaper to store/parse
+   per prim face) covering base color, metallic/roughness, emissive, alpha
+   mode/cutoff, double-sided, texture IDs, and KHR texture transforms.
+   `ApplyGltfOverrides` merges `OVERRIDE_GLTF_*` op-coded changes into that
+   string. Added the `OVERRIDE_GLTF_*` constants to LSL_Constants.cs (they
+   didn't exist; `PRIM_GLTF_*` already did). Also ported (but left
+   unreachable — nothing calls them) `ApplyGltfPrimitiveParams` and its
+   texture/transform helpers, which back `PRIM_GLTF_*` codes in
+   `llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast`; wiring that
+   dispatch is a separate task, and Continuum's own README lists it as
+   unsupported anyway.
+5. **Pathfinding** — the full 12-function suite (`llCreateCharacter`,
+   `llUpdateCharacter`, `llDeleteCharacter`, `llExecCharacterCmd`,
+   `llNavigateTo`, `llWanderWithin`, `llPatrolPoints`, `llPursue`,
+   `llEvade`, `llFleeFrom`, `llGetStaticPath`, `llGetClosestNavPoint`),
+   backed by a self-contained region-local pathfinding engine:
+   `BakedNavMesh` (2m-cell grid sampled from terrain height, cached and
+   rebaked on a hashed terrain-signature change or after 30s), A* search
+   with obstacle avoidance (other objects, optionally avatars via
+   `AVOID_CHARACTERS`) and step-height limits, path simplification by
+   collapsing collinear-enough waypoints, and `CharacterNavState` (per-root-prim
+   pathfinding parameters — speed, radius, accel/decel, turn radius,
+   avoidance mode, stay-within-parcel). Path following reuses the existing
+   `KeyframeMotion` system rather than a new movement engine, posting
+   `path_update` events on completion via a background task keyed by a
+   per-motion UUID so stale completions from a since-replaced path are
+   dropped.
+
+Every piece was hand-extracted from `gunthar/master`'s tip (not a specific
+commit — the same logical function was sometimes split/refactored across
+several of his commits), then adapted: dropped his Experience-Lite trust
+gating where it appeared, renamed `m_host`-hardcoded helpers to take a
+`SceneObjectPart part` parameter where a `Link` variant was needed to
+match his own factoring pattern.
+
+Built and merged: developed in an isolated worktree/branch
+(`gunthar-lsl-compat`, `S:\Github\Casperia-gunthar-lsl-compat`) off
+`merge-experiment`, one full-solution `dotnet build OpenSim.sln` at the
+end (0 errors), then fast-forward merged into `merge-experiment`
+(`c54a115946..9b9f0304e5`). **Not yet tested in-world** — only compiled,
+not run against Casperia-Dev.
+
+Key files: `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs`
+(the bulk of it), `.../Interface/ILSL_Api.cs`, `.../Runtime/LSL_Stub.cs`,
+`.../Runtime/LSL_Constants.cs`, `OpenSim/Region/ScriptEngine/Shared/Helpers.cs`
+(DetectParams fields), `OpenSim/Region/Framework/Scenes/SceneObjectPart.cs`
+(health/damage-type persistence).
 
 ---
 
