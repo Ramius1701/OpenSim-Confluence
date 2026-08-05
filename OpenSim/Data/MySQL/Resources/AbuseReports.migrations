@@ -26,3 +26,15 @@ CREATE TABLE `AbuseReports` (
 
 COMMIT;
 
+:VERSION 2
+
+BEGIN;
+
+-- Category is a string on the wire (viewers send names like "Harassment",
+-- not numeric codes) and on the C# AbuseReportData model, but this table
+-- declared it as an int column - any real submission with a text category
+-- was rejected outright ("Incorrect integer value"). Widen to match reality.
+ALTER TABLE `AbuseReports` MODIFY `Category` varchar(45) CHARACTER SET utf8mb4 DEFAULT NULL;
+
+COMMIT;
+

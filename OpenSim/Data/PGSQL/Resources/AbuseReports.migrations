@@ -1,0 +1,26 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS AbuseReports (
+	"ReportID" serial NOT NULL,
+	"SenderID" uuid NOT NULL,
+	"SenderName" varchar(64) NULL,
+	"Time" integer NOT NULL,
+	"AbuseRegionID" uuid NOT NULL,
+	"AbuseRegionName" varchar(45) NULL,
+	"AbuserID" uuid NOT NULL,
+	"AbuserName" varchar(128) NULL,
+	"Category" varchar(45) NULL,
+	"CheckFlags" integer NOT NULL,
+	"Details" varchar(1280) NULL,
+	"ObjectID" uuid NOT NULL,
+	"Position" varchar(45) NULL,
+	"ReportType" integer NOT NULL,
+	"Summary" varchar(4608) NULL,
+	"Version" varchar(256) NULL,
+	"ImageData" bytea NULL,
+	PRIMARY KEY ("ReportID")
+);
+
+COMMIT;

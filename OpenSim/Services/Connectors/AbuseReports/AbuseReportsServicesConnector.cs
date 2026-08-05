@@ -73,9 +73,9 @@ namespace OpenSim.Services.Connectors
             sendData["version"] = report.Version;
             sendData["details"] = report.Details;
             sendData["object-id"] = report.ObjectID.ToString();
-            sendData["position"] = report.Position.ToString();
+            sendData["position"] = report.Position;
             sendData["report-type"] = report.ReportType.ToString();
-            sendData["image-data"] = Convert.ToBase64String(report.ImageData);
+            sendData["image-data"] = Convert.ToBase64String(report.ImageData ?? Array.Empty<byte>());
 
             return doSimplePost(ServerUtils.BuildQueryString(sendData), "report");
          }

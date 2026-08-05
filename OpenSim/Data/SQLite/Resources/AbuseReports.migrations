@@ -1,0 +1,25 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS AbuseReports (
+	ReportID INTEGER PRIMARY KEY AUTOINCREMENT,
+	SenderID varchar(36) NOT NULL,
+	SenderName varchar(64) NULL,
+	Time integer NOT NULL,
+	AbuseRegionID varchar(36) NOT NULL,
+	AbuseRegionName varchar(45) NULL,
+	AbuserID varchar(36) NOT NULL,
+	AbuserName varchar(128) NULL,
+	Category varchar(45) NULL,
+	CheckFlags integer NOT NULL,
+	Details varchar(1280) NULL,
+	ObjectID varchar(36) NOT NULL,
+	Position varchar(45) NULL,
+	ReportType integer NOT NULL,
+	Summary varchar(4608) NULL,
+	Version varchar(256) NULL,
+	ImageData blob NULL
+);
+
+COMMIT;

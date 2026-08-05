@@ -30,16 +30,18 @@ namespace OpenSim.Data.MySQL
                     names.Add(fi.Name);
                     values.Add("?" + fi.Name);
 
-                    if (fi.GetValue(row) == null)
-                        throw new NullReferenceException(
-                            string.Format(
-                                "[MYSQL GENERIC TABLE HANDLER]: Trying to store field {0} for {1} which is unexpectedly null",
-                                fi.Name, row));
+                    // Several fields (ImageData, Category, Details, Summary,
+                    // Version, ...) are only conditionally set by the viewer
+                    // caps handler (e.g. reports submitted without a
+                    // screenshot never set ImageData), so null here is
+                    // expected rather than exceptional - fall back to safe
+                    // empty defaults instead of throwing.
+                    object value = fi.GetValue(row);
 
-                    if(fi.Name == "ImageData")
-                        cmd.Parameters.Add("ImageData", MySqlDbType.Blob).Value = fi.GetValue(row);
+                    if (fi.Name == "ImageData")
+                        cmd.Parameters.Add("ImageData", MySqlDbType.Blob).Value = value ?? Array.Empty<byte>();
                     else
-                        cmd.Parameters.AddWithValue(fi.Name, fi.GetValue(row).ToString());
+                        cmd.Parameters.AddWithValue(fi.Name, value?.ToString() ?? string.Empty);
                 }
 
                 query = String.Format("replace into {0} (`", m_Realm) + String.Join("`,`", names.ToArray()) + "`) values (" + String.Join(",", values.ToArray()) + ")";
