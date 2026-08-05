@@ -1573,8 +1573,11 @@ namespace OpenSim
 
                         if (response == String.Empty)
                         {
+                            // estateId is the estate actually modified, which is not necessarily the
+                            // current scene's own estate - look it up rather than assuming they match.
+                            EstateSettings targetEstate = scene.EstateDataService.LoadEstateSettings(estateId);
                             response = String.Format("Estate Manager {0} {1} ({2}) has been added to the estate {3}",
-                                account.FirstName, account.LastName, account.PrincipalID, scene.RegionInfo.EstateSettings.EstateName);
+                                account.FirstName, account.LastName, account.PrincipalID, targetEstate.EstateName);
                         }
                     }
                 }
@@ -1642,8 +1645,11 @@ namespace OpenSim
 
                         if (response == String.Empty)
                         {
+                            // estateId is the estate actually modified, which is not necessarily the
+                            // current scene's own estate - look it up rather than assuming they match.
+                            EstateSettings targetEstate = scene.EstateDataService.LoadEstateSettings(estateId);
                             response = String.Format("User {0} {1} ({2}) has been removed from the list of estate managers of the estate {3}",
-                                account.FirstName, account.LastName, account.PrincipalID, scene.RegionInfo.EstateSettings.EstateName);
+                                account.FirstName, account.LastName, account.PrincipalID, targetEstate.EstateName);
                         }
                     }
                 }

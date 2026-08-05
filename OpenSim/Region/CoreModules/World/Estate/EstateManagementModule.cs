@@ -349,7 +349,7 @@ namespace OpenSim.Region.CoreModules.World.Estate
             string response;
 
             EstateSettings dbSettings = Scene.EstateDataService.LoadEstateSettings(estateID);
-            if (dbSettings.EstateID == 0)
+            if (dbSettings == null || dbSettings.EstateID == 0)
             {
                 response = String.Format("No estate found with ID {0}", estateID);
             }
@@ -393,7 +393,7 @@ namespace OpenSim.Region.CoreModules.World.Estate
             string response;
 
             EstateSettings dbSettings = Scene.EstateDataService.LoadEstateSettings(estateID);
-            if (dbSettings.EstateID == 0)
+            if (dbSettings == null || dbSettings.EstateID == 0)
             {
                 response = String.Format("No estate found with ID {0}", estateID);
             }
@@ -438,7 +438,7 @@ namespace OpenSim.Region.CoreModules.World.Estate
 
             // get the current settings from DB
             EstateSettings dbSettings = Scene.EstateDataService.LoadEstateSettings(estateID);
-            if (dbSettings.EstateID == 0)
+            if (dbSettings == null || dbSettings.EstateID == 0)
             {
                 response = String.Format("No estate found with ID {0}", estateID);
             }
@@ -475,7 +475,7 @@ namespace OpenSim.Region.CoreModules.World.Estate
             // get the current settings from DB
             EstateSettings dbSettings = Scene.EstateDataService.LoadEstateSettings(estateID);
 
-            if (dbSettings.EstateID == 0)
+            if (dbSettings == null || dbSettings.EstateID == 0)
             {
                 response = String.Format("No estate found with ID {0}", estateID);
             }
@@ -524,7 +524,7 @@ namespace OpenSim.Region.CoreModules.World.Estate
             {
                 // get the current settings from DB
                 EstateSettings dbSettings = Scene.EstateDataService.LoadEstateSettings(estateID);
-                if (dbSettings.EstateID == 0)
+                if (dbSettings == null || dbSettings.EstateID == 0)
                 {
                     response = String.Format("No estate found with ID {0}", estateID);
                 }
