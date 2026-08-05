@@ -548,6 +548,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
          LSL_Vector llWorldPosToHUD(LSL_Vector WorldPosition);
                void llSetRenderMaterial(LSL_String material, LSL_Integer face);
                void llSetLinkRenderMaterial(LSL_Integer link, LSL_String material, LSL_Integer face);
+               void llSetLinkGLTFOverrides(LSL_Integer link, LSL_Integer face, LSL_List overrides);
 
       void llRequestExperiencePermissions(string agent_id, string unused);
       LSL_Integer llAgentInExperience(string agent_id);
