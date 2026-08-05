@@ -26,6 +26,9 @@ namespace OpenSim.Region.Framework.Interfaces
 
         ExperienceInfo UpdateExperienceInfo(ExperienceInfo info);
 
+        bool TryCreateExperience(UUID agentID, out ExperienceInfo info, out string failureReason);
+        bool CanCreateExperience(UUID agentID);
+
         bool IsExperienceAdmin(UUID agent_id, UUID experience_id);
         bool IsExperienceContributor(UUID agent_id, UUID experience_id);
 

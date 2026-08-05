@@ -42,6 +42,14 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
         private int CacheTimeout = 1 * 60;
 
+        // Resident self-service experience creation. Fee is charged via
+        // whichever IMoneyModule is active (Gloebit, DTLNSLMoneyModule, etc.),
+        // so real-money-vs-local-currency is purely a consequence of which
+        // economy module the operator has configured, not something this
+        // code branches on.
+        private int m_creationFee = 0;
+        private int m_maxExperiencesPerResident = 3;
+
         public void Initialise(IConfigSource source)
         {
             IConfig config = source.Configs["Experience"];
@@ -55,6 +63,9 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
             if (!m_Enabled)
                 return;
+
+            m_creationFee = config.GetInt("CreationFee", m_creationFee);
+            m_maxExperiencesPerResident = config.GetInt("MaxExperiencesPerResident", m_maxExperiencesPerResident);
 
             m_log.Info("[Experience] Plugin enabled!");
         }
@@ -129,7 +140,14 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             caps.RegisterHandler("GetExperiences", new GetExperiencesGetHandler(agent, this));
             caps.RegisterHandler("GetAdminExperiences", new GetAdminExperiencesGetHandler(agent, this));
             caps.RegisterHandler("GetCreatorExperiences", new GetCreatorExperiencesGetHandler(agent, this));
-            caps.RegisterHandler("AgentExperiences", new AgentExperiencesGetHandler(agent, this));
+            // GET lists owned experiences; POST (empty body) creates a new one -
+            // matches the real SL viewer protocol, which uses this same
+            // capability for both (see LLFloaterExperiences::sendPurchaseRequest).
+            caps.RegisterSimpleHandler("AgentExperiences",
+                new SimpleStreamHandler(string.Format("/caps/{0}", UUID.Random()), delegate (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
+                {
+                    HandleAgentExperiences(httpRequest, httpResponse, agent);
+                }));
             caps.RegisterHandler("GetExperienceInfo", new GetExperienceInfoGetHandler(agent, this));
             caps.RegisterHandler("IsExperienceAdmin", new IsExperienceAdminGetHandler(agent, this));
             caps.RegisterHandler("IsExperienceContributor", new IsExperienceContributorGetHandler(agent, this));
@@ -146,6 +164,70 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                 }));
         }
 
+
+        private void HandleAgentExperiences(IOSHttpRequest request, IOSHttpResponse response, UUID agentID)
+        {
+            switch (request.HttpMethod)
+            {
+                case "GET":
+                    WriteAgentExperiencesResponse(response, agentID);
+                    return;
+                case "POST":
+                    HandleCreateAgentExperience(response, agentID);
+                    return;
+                default:
+                    response.StatusCode = (int)HttpStatusCode.MethodNotAllowed;
+                    return;
+            }
+        }
+
+        private void WriteAgentExperiencesResponse(IOSHttpResponse response, UUID agentID)
+        {
+            string response_str = "<llsd><map><key>experience_ids</key>";
+
+            UUID[] agent_experiences = GetAgentExperiences(agentID);
+
+            if (agent_experiences.Length > 0)
+            {
+                response_str += "<array>";
+
+                foreach (UUID id in agent_experiences)
+                    response_str += string.Format("<uuid>{0}</uuid>", id);
+
+                response_str += "</array>";
+            }
+            else
+            {
+                response_str += "<undef />";
+            }
+
+            // Viewer only checks for this key's presence to decide whether to
+            // enable the "Acquire an Experience" button - value is unused.
+            if (CanCreateExperience(agentID))
+            {
+                response_str += "<key>purchase</key><map />";
+            }
+
+            response_str += "</map></llsd>";
+
+            response.RawBuffer = Encoding.UTF8.GetBytes(response_str);
+            response.StatusCode = (int)HttpStatusCode.OK;
+        }
+
+        private void HandleCreateAgentExperience(IOSHttpResponse response, UUID agentID)
+        {
+            if (!TryCreateExperience(agentID, out ExperienceInfo info, out string failureReason))
+            {
+                m_log.InfoFormat("[EXPERIENCE]: TryCreateExperience failed for {0}: {1}", agentID, failureReason);
+                response.StatusCode = (int)HttpStatusCode.PaymentRequired;
+                response.RawBuffer = Encoding.UTF8.GetBytes("<llsd><map><key>experience_ids</key><undef /></map></llsd>");
+                return;
+            }
+
+            // Return the full updated owned-experiences list so the viewer can
+            // detect the newly created element and open its edit profile.
+            WriteAgentExperiencesResponse(response, agentID);
+        }
 
         private void HandleExperiencePreferences(IOSHttpRequest request, IOSHttpResponse response, UUID agentID)
         {
@@ -420,6 +502,75 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                 m_ExperienceInfoCache.AddOrUpdate(updated.public_id, updated, CacheTimeout);
             }
             return updated;
+        }
+
+        public bool CanCreateExperience(UUID agentID)
+        {
+            if (m_ExperienceService == null)
+                return false;
+
+            if (m_maxExperiencesPerResident <= 0)
+                return true;
+
+            return GetAgentExperiences(agentID).Length < m_maxExperiencesPerResident;
+        }
+
+        public bool TryCreateExperience(UUID agentID, out ExperienceInfo info, out string failureReason)
+        {
+            info = null;
+            failureReason = string.Empty;
+
+            if (m_ExperienceService == null)
+            {
+                failureReason = "Experience service is not available.";
+                return false;
+            }
+
+            int existingCount = GetAgentExperiences(agentID).Length;
+            if (m_maxExperiencesPerResident > 0 && existingCount >= m_maxExperiencesPerResident)
+            {
+                failureReason = string.Format("You may only own {0} experience(s).", m_maxExperiencesPerResident);
+                return false;
+            }
+
+            if (m_creationFee > 0)
+            {
+                IMoneyModule money = m_scene?.RequestModuleInterface<IMoneyModule>();
+                if (money == null)
+                {
+                    failureReason = "No currency module is active; cannot charge the creation fee.";
+                    return false;
+                }
+
+                if (!money.AmountCovered(agentID, m_creationFee))
+                {
+                    failureReason = string.Format("Creating an experience costs {0}; insufficient funds.", m_creationFee);
+                    return false;
+                }
+
+                UUID payTo = m_scene.RegionInfo.EstateSettings.EstateOwner;
+                if (!money.MoveMoney(agentID, payTo, m_creationFee, MoneyTransactionType.GroupCreate, "Experience creation fee"))
+                {
+                    failureReason = "Payment for the experience creation fee failed.";
+                    return false;
+                }
+            }
+
+            ExperienceInfo new_info = new ExperienceInfo
+            {
+                public_id = UUID.Random(),
+                owner_id = agentID
+            };
+
+            ExperienceInfo stored = UpdateExperienceInfo(new_info);
+            if (stored == null)
+            {
+                failureReason = "Unable to create the experience.";
+                return false;
+            }
+
+            info = stored;
+            return true;
         }
 
         public UUID[] GetAdminExperiences(UUID agent_id)
@@ -856,7 +1007,24 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
             ExperienceInfo currentInfo = m_ExperienceModule.GetExperienceInfo(public_id);
 
-            bool is_admin = m_ExperienceModule.IsExperienceAdmin(m_AgentID, public_id);
+            bool is_admin;
+            if (public_id == UUID.Zero || currentInfo == null)
+            {
+                // No existing experience referenced - the viewer is asking to
+                // create a new one (resident self-service, matching real SL).
+                if (!m_ExperienceModule.TryCreateExperience(m_AgentID, out currentInfo, out string failureReason))
+                {
+                    //m_log.InfoFormat("[EXPERIENCE] TryCreateExperience failed for {0}: {1}", m_AgentID, failureReason);
+                    httpResponse.StatusCode = (int)HttpStatusCode.PaymentRequired;
+                    return Encoding.UTF8.GetBytes("<llsd><map><key>experience_keys</key><array /></map></llsd>");
+                }
+
+                is_admin = true;
+            }
+            else
+            {
+                is_admin = m_ExperienceModule.IsExperienceAdmin(m_AgentID, public_id);
+            }
 
             if(is_admin)
             {
@@ -1174,53 +1342,6 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             string response_str = "<llsd><map><key>experience_ids</key>";
 
             UUID[] agent_experiences = m_ExperienceModule.GetAdminExperiences(m_AgentID);
-
-            if (agent_experiences.Length > 0)
-            {
-                response_str += "<array>";
-
-                foreach (UUID id in agent_experiences)
-                    response_str += string.Format("<uuid>{0}</uuid>", id);
-
-                response_str += "</array>";
-            }
-            else
-            {
-                response_str += "<undef />";
-            }
-
-            response_str += "</map></llsd>";
-
-            return Encoding.UTF8.GetBytes(response_str);
-        }
-    }
-
-    public class AgentExperiencesGetHandler : BaseStreamHandler
-    {
-        //private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
-
-        private UUID m_AgentID = UUID.Zero;
-        private IExperienceModule m_ExperienceModule = null;
-
-        public AgentExperiencesGetHandler(UUID agent_id, IExperienceModule experienceModule)
-            : this(string.Format("/caps/{0}", UUID.Random()), agent_id, experienceModule)
-        {
-        }
-
-        public AgentExperiencesGetHandler(string path, UUID agent_id, IExperienceModule experienceModule)
-            : base("GET", path, null, null)
-        {
-            m_AgentID = agent_id;
-            m_ExperienceModule = experienceModule;
-        }
-
-        protected override byte[] ProcessRequest(string path, Stream request, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
-        {
-            //m_log.InfoFormat("[EXPERIENCE] AgentExperiences request on {0}", path);
-
-            string response_str = "<llsd><map><key>experience_ids</key>";
-
-            UUID[] agent_experiences = m_ExperienceModule.GetAgentExperiences(m_AgentID);
 
             if (agent_experiences.Length > 0)
             {

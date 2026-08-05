@@ -1118,6 +1118,8 @@ namespace OpenSim.Region.CoreModules.Framework.UserManagement
             user.IsUnknownUser = false;
             user.HasGridUserTried = true;
             user.IsLocal = local;
+            user.DisplayName = account.DisplayName;
+            user.NameChanged = Utils.UnixTimeToDateTime(account.NameChanged);
             m_userCacheByID.Add(id, user, local ? LOCALEXPIRE : HGEXPIRE);
         }
 
