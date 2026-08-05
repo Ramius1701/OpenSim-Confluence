@@ -419,6 +419,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
               void llSetText(string text, LSL_Vector color, double alpha);
               void llSetTexture(string texture, int face);
               void llSetTextureAnim(int mode, int face, int sizex, int sizey, double start, double length, double rate);
+              void llSetSculptAnim(LSL_Integer mode, LSL_Integer sizex, LSL_Integer sizey, LSL_Integer start_frame, LSL_Integer end_frame, LSL_Float rate, LSL_Integer texture_sync);
               void llSetTimerEvent(double sec);
               void llSetTorque(LSL_Vector torque, int local);
               void llSetTouchText(string text);
