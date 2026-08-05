@@ -68,6 +68,16 @@ namespace OpenSim.Services.EstateService
                 connString = muteConfig.GetString("ConnectionString", connString);
             }
 
+            // [MuteListService] is the section name actually documented in
+            // every shipped .ini (Robust.ini.example, GridCommon.ini, etc.),
+            // so it must win over [MuteListStore] - which nothing ever wrote.
+            IConfig muteServiceConfig = config.Configs["MuteListService"];
+            if (muteServiceConfig != null)
+            {
+                dllName = muteServiceConfig.GetString("StorageProvider", dllName);
+                connString = muteServiceConfig.GetString("ConnectionString", connString);
+            }
+
             // We tried, but this doesn't exist. We can't proceed
             if (dllName.Length == 0)
                 throw new Exception("No StorageProvider configured");
