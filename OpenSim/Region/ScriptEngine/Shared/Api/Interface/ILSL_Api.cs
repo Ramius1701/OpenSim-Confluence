@@ -534,6 +534,18 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
 
         LSL_Integer llIsFriend(LSL_Key agent_id);
         LSL_Integer llDerezObject(LSL_Key objectUUID, LSL_Integer flag);
+              void llCreateCharacter(LSL_List options);
+              void llUpdateCharacter(LSL_List options);
+              void llDeleteCharacter();
+              void llExecCharacterCmd(LSL_Integer command, LSL_List options);
+              void llNavigateTo(LSL_Vector goal, LSL_List options);
+              void llWanderWithin(LSL_Vector origin, LSL_Vector distance, LSL_List options);
+              void llPatrolPoints(LSL_List patrol_points, LSL_List options);
+              void llPursue(LSL_Key target, LSL_List options);
+              void llEvade(LSL_Key target, LSL_List options);
+              void llFleeFrom(LSL_Vector source, LSL_Float distance, LSL_List options);
+          LSL_List llGetStaticPath(LSL_Vector start, LSL_Vector end, LSL_Float radius, LSL_List parameters);
+        LSL_Vector llGetClosestNavPoint(LSL_Vector point, LSL_List options);
 
             LSL_Key llRezObjectWithParams(string inventory, LSL_List lparam);
          LSL_String llGetStartString();

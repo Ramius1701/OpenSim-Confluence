@@ -730,6 +730,65 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         //ApiDesc not supported
         public const int OPT_EXCLUSION_VOLUME = 6;
 
+        // Pathfinding character options and statuses
+        public const int CHARACTER_DESIRED_SPEED = 1;
+        public const int CHARACTER_RADIUS = 2;
+        public const int CHARACTER_LENGTH = 3;
+        public const int CHARACTER_ORIENTATION = 4;
+        public const int CHARACTER_AVOIDANCE_MODE = 5;
+        public const int CHARACTER_TYPE = 6;
+        public const int TRAVERSAL_TYPE = 7;
+        public const int CHARACTER_MAX_ACCEL = 8;
+        public const int CHARACTER_MAX_DECEL = 9;
+        public const int CHARACTER_MAX_TURN_RADIUS = 10;
+        public const int CHARACTER_DESIRED_TURN_SPEED = 12;
+        public const int CHARACTER_MAX_SPEED = 13;
+        public const int CHARACTER_ACCOUNT_FOR_SKIPPED_FRAMES = 14;
+        public const int CHARACTER_STAY_WITHIN_PARCEL = 15;
+
+        public const int HORIZONTAL = 0;
+        public const int VERTICAL = 1;
+        public const int AVOID_NONE = 0;
+        public const int AVOID_CHARACTERS = 1;
+        public const int AVOID_DYNAMIC_OBSTACLES = 2;
+        public const int CHARACTER_TYPE_A = 0;
+        public const int CHARACTER_TYPE_B = 1;
+        public const int CHARACTER_TYPE_C = 2;
+        public const int CHARACTER_TYPE_D = 3;
+        public const int CHARACTER_TYPE_NONE = 4;
+        public const int TRAVERSAL_TYPE_SLOW = 0;
+        public const int TRAVERSAL_TYPE_FAST = 1;
+        public const int TRAVERSAL_TYPE_NONE = 2;
+
+        public const int CHARACTER_CMD_STOP = 0x00;
+        public const int CHARACTER_CMD_JUMP = 0x01;
+        public const int CHARACTER_CMD_SMOOTH_STOP = 0x02;
+
+        public const int FORCE_DIRECT_PATH = 1;
+        public const int PURSUIT_OFFSET = 1;
+        public const int REQUIRE_LINE_OF_SIGHT = 2;
+        public const int PURSUIT_FUZZ_FACTOR = 3;
+        public const int PURSUIT_INTERCEPT = 4;
+        public const int PURSUIT_GOAL_TOLERANCE = 5;
+        public const int WANDER_PAUSE_AT_WAYPOINTS = 0;
+        public const int PATROL_PAUSE_AT_WAYPOINTS = 0;
+        public const int GCNP_RADIUS = 0;
+        public const int GCNP_STATIC = 1;
+
+        public const int PU_SLOWDOWN_DISTANCE_REACHED = 0x00;
+        public const int PU_GOAL_REACHED = 0x01;
+        public const int PU_FAILURE_INVALID_START = 0x02;
+        public const int PU_FAILURE_INVALID_GOAL = 0x03;
+        public const int PU_FAILURE_UNREACHABLE = 0x04;
+        public const int PU_FAILURE_TARGET_GONE = 0x05;
+        public const int PU_FAILURE_NO_VALID_DESTINATION = 0x06;
+        public const int PU_EVADE_HIDDEN = 0x07;
+        public const int PU_EVADE_SPOTTED = 0x08;
+        public const int PU_FAILURE_NO_NAVMESH = 0x09;
+        public const int PU_FAILURE_DYNAMIC_PATHFINDING_DISABLED = 0x0A;
+        public const int PU_FAILURE_PARCEL_UNREACHABLE = 0x0B;
+        public const int PU_FAILURE_OTHER = 0xF4240;
+
         // for llGetAgentList
         public const int AGENT_LIST_PARCEL = 0x1;
         public const int AGENT_LIST_PARCEL_OWNER = 2;
