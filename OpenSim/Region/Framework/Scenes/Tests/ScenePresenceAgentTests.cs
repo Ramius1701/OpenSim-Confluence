@@ -201,6 +201,57 @@ namespace OpenSim.Region.Framework.Scenes.Tests
 //            TestHelpers.DisableLogging();
         }
 
+        /// <summary>
+        /// Verifies that ScenePresence.WalkDisabled blocks ground movement input
+        /// but leaves flight untouched, exercising the exact HandleAgentUpdate
+        /// code path a real client's movement packets drive - not just the
+        /// property get/set osGetAvatarWalkDisabled/osSetAvatarWalkDisabled wrap.
+        /// </summary>
+        [Test]
+        public void TestWalkDisabledBlocksGroundMovementButNotFlight()
+        {
+            TestHelpers.InMethod();
+
+            UUID spUuid = TestHelpers.ParseTail(0x1);
+            TestScene scene = new SceneHelpers().SetupScene();
+            ScenePresence sp = SceneHelpers.AddScenePresence(scene, spUuid);
+            sp.AbsolutePosition = new Vector3(128, 128, 30);
+
+            AgentUpdateArgs moveArgs = new AgentUpdateArgs();
+            moveArgs.BodyRotation = Quaternion.Identity;
+            moveArgs.ControlFlags =
+                (uint)(AgentManager.ControlFlags.AGENT_CONTROL_AT_POS | AgentManager.ControlFlags.AGENT_CONTROL_FAST_AT);
+
+            // Baseline: confirm ground movement works normally before WalkDisabled is set.
+            Vector3 startPos = sp.AbsolutePosition;
+            sp.HandleAgentUpdate(sp.ControllingClient, moveArgs);
+            for (int i = 0; i < 10; i++)
+                scene.Update(1);
+            Assert.That(sp.AbsolutePosition, Is.Not.EqualTo(startPos),
+                "Precondition failed: avatar did not move under normal ground movement input");
+
+            // WalkDisabled should block that same ground movement input.
+            sp.WalkDisabled = true;
+            Vector3 blockedPos = sp.AbsolutePosition;
+            sp.HandleAgentUpdate(sp.ControllingClient, moveArgs);
+            for (int i = 0; i < 10; i++)
+                scene.Update(1);
+            Assert.That(sp.AbsolutePosition, Is.EqualTo(blockedPos),
+                "Avatar moved on the ground while WalkDisabled was true");
+
+            // Flight should still work while WalkDisabled remains true.
+            moveArgs.ControlFlags = (uint)(AgentManager.ControlFlags.AGENT_CONTROL_AT_POS
+                | AgentManager.ControlFlags.AGENT_CONTROL_FAST_AT
+                | AgentManager.ControlFlags.AGENT_CONTROL_FLY);
+            Vector3 flyStartPos = sp.AbsolutePosition;
+            sp.HandleAgentUpdate(sp.ControllingClient, moveArgs);
+            for (int i = 0; i < 10; i++)
+                scene.Update(1);
+            Assert.That(sp.Flying, Is.True, "Avatar did not enter flight while WalkDisabled was true");
+            Assert.That(sp.AbsolutePosition, Is.Not.EqualTo(flyStartPos),
+                "Avatar did not move while flying, even though WalkDisabled should only block ground movement");
+        }
+
         [Test]
         public void TestCreateChildScenePresence()
         {

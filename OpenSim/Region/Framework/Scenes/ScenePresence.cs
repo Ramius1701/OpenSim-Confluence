@@ -1113,6 +1113,17 @@ namespace OpenSim.Region.Framework.Scenes
             set { m_flyDisabled = value; }
         }
 
+        // Blocks ground movement input only; flight is unaffected. Distinct from
+        // AllowMovement (osAvatarFreeze, blocks everything) and FlyDisabled
+        // (blocks flight, not walking).
+        private bool m_walkDisabled;
+
+        public bool WalkDisabled
+        {
+            get { return m_walkDisabled; }
+            set { m_walkDisabled = value; }
+        }
+
         public string Viewer
         {
             get { return Util.GetViewerName(m_scene.AuthenticateHandler.GetAgentCircuitData(ControllingClient.CircuitCode)); }
@@ -2791,6 +2802,14 @@ namespace OpenSim.Region.Framework.Scenes
                 {
                     actor.Flying = newFlying;
                     update_movementflag = true;
+                }
+
+                // Ground locomotion only - leave vertical (fly ascend/descend) input
+                // alone so an avatar can still lift off and fly away while disabled.
+                if (WalkDisabled && !actor.Flying)
+                {
+                    agent_control_v3.X = 0f;
+                    agent_control_v3.Y = 0f;
                 }
 
                 // Detect AGENT_CONTROL_STOP state changes
