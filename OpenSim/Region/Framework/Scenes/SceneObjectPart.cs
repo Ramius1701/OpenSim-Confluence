@@ -254,6 +254,87 @@ namespace OpenSim.Region.Framework.Scenes
             SetLslSitFlags(storedFlags);
         }
 
+        private const string LslCombatDynAttrsNamespace = "OpenSim";
+        private const string LslCombatDynAttrsStore = "LSLCombat";
+        private const string LslCombatHealthKey = "health";
+        private const string LslCombatDamageTypeKey = "damage_type";
+
+        public float GetLslHealth()
+        {
+            if (DynAttrs == null)
+                return 0f;
+
+            lock (DynAttrs)
+            {
+                if (DynAttrs.TryGetStore(LslCombatDynAttrsNamespace, LslCombatDynAttrsStore, out OSDMap store)
+                    && store != null
+                    && store.TryGetValue(LslCombatHealthKey, out OSD healthOSD))
+                {
+                    return (float)healthOSD.AsReal();
+                }
+            }
+
+            return 0f;
+        }
+
+        public void SetLslHealth(float health)
+        {
+            DynAttrs ??= new DAMap();
+
+            lock (DynAttrs)
+            {
+                if (!DynAttrs.TryGetStore(LslCombatDynAttrsNamespace, LslCombatDynAttrsStore, out OSDMap store)
+                    || store == null)
+                {
+                    store = new OSDMap();
+                }
+
+                store[LslCombatHealthKey] = OSD.FromReal(health);
+                DynAttrs.SetStore(LslCombatDynAttrsNamespace, LslCombatDynAttrsStore, store);
+            }
+
+            if (ParentGroup != null)
+                ParentGroup.HasGroupChanged = true;
+        }
+
+        public int GetLslDamageType()
+        {
+            if (DynAttrs == null)
+                return 0;
+
+            lock (DynAttrs)
+            {
+                if (DynAttrs.TryGetStore(LslCombatDynAttrsNamespace, LslCombatDynAttrsStore, out OSDMap store)
+                    && store != null
+                    && store.TryGetValue(LslCombatDamageTypeKey, out OSD damageTypeOSD))
+                {
+                    return damageTypeOSD.AsInteger();
+                }
+            }
+
+            return 0;
+        }
+
+        public void SetLslDamageType(int damageType)
+        {
+            DynAttrs ??= new DAMap();
+
+            lock (DynAttrs)
+            {
+                if (!DynAttrs.TryGetStore(LslCombatDynAttrsNamespace, LslCombatDynAttrsStore, out OSDMap store)
+                    || store == null)
+                {
+                    store = new OSDMap();
+                }
+
+                store[LslCombatDamageTypeKey] = OSD.FromInteger(damageType);
+                DynAttrs.SetStore(LslCombatDynAttrsNamespace, LslCombatDynAttrsStore, store);
+            }
+
+            if (ParentGroup != null)
+                ParentGroup.HasGroupChanged = true;
+        }
+
         #region Fields
 
         public bool AllowedDrop;
