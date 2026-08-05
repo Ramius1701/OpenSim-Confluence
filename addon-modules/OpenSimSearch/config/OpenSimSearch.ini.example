@@ -1,0 +1,31 @@
+;; OpenSimSearch configuration example
+;;
+;; Put this [Search] section in OpenSim.ini, or in a file explicitly included
+;; by OpenSim.ini.
+;;
+;; OpenSimSearch answers the viewer's in-world Search floater for places,
+;; land, popular picks, events and classifieds. It is a thin client: every
+;; query is relayed over XML-RPC (dir_places_query, dir_land_query,
+;; dir_popular_query, dir_events_query, dir_classified_query,
+;; event_info_query, classifieds_info_query) to SearchURL. This module does
+;; not include or host a search backend - SearchURL must point at a
+;; separately deployed search website/database (the classic community
+;; "OpenSimSearch" PHP+MySQL server, or an equivalent implementing the same
+;; XML-RPC protocol). People/group search is handled separately by the
+;; built-in AvatarPickerSearchModule and does not need this section.
+;;
+;; This module and the built-in BasicSearchModule (selected via
+;; [Modules] SearchModule) both implement ISearchModule. Only enable this
+;; one if you have a real SearchURL to point at, so both don't respond to
+;; the same query.
+
+[Search]
+    ;; Leave this section absent, or SearchURL empty, to leave this module
+    ;; disabled (the default) and fall back to BasicSearchModule.
+
+    ;; URL of the search backend that answers the XML-RPC queries above.
+    ; SearchURL = "http://search.example.com/query.php"
+
+    ;; Only needed if more than one ISearchModule implementation might try
+    ;; to load; defaults to this module's own name.
+    ; Module = "OpenSimSearch"

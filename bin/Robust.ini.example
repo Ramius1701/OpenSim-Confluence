@@ -219,6 +219,13 @@
 
 
 [DatabaseService]
+    ; SQLite
+    ; Uncomment this line if you want to use SQLite storage - each Robust
+    ; service gets its own local .db file (see the include for the list)
+    ; rather than sharing one file, so no single service's traffic can
+    ; overwhelm the others.
+    ;Include-Storage = "config-include/storage/SQLiteRobust.ini"
+
     ; PGSQL
     ; Uncomment these lines if you want to use PGSQL storage
     ; Change the connection string to your db details
@@ -482,6 +489,12 @@
     SimulationService ="OpenSim.Services.Connectors.dll:SimulationServiceConnector"
     LibraryService = "OpenSim.Services.InventoryService.dll:LibraryService"
     FriendsService = "OpenSim.Services.FriendsService.dll:FriendsService"
+
+    ;; Uncomment to enforce IP/MAC/hardware-ID0 bans at login (see the
+    ;; "ban ip"/"ban mac"/"ban id0" console commands, Access category).
+    ;; Uses [DatabaseService]'s StorageProvider, or override in
+    ;; [AccessControlService] below.
+    ; AccessControlService = "OpenSim.Services.AccessControlService.dll:AccessControlService"
 
     ; The minimum user level required for a user to be able to login.  0 by default
     ; If you disable a particular user's account then you can set their login level below this number.

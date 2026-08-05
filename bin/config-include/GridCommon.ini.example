@@ -79,6 +79,10 @@
     ;; Authorization is not on by default, as it depends on external php
     ;AuthorizationServices = "RemoteAuthorizationServicesConnector"
 
+    ;; Uncomment to enable Experience Tools, backed by the ROBUST-hosted
+    ;; ExperienceService (see [ExperienceService] below).
+    ; ExperienceService = "LocalExperienceServicesConnector"
+
 [AssetService]
     DefaultAssetLoader = "OpenSim.Framework.AssetLoader.Filesystem.dll"
     AssetLoaderArgs = "assets/AssetSets.xml"
@@ -236,7 +240,8 @@
     MuteListServerURI = "${Const|PrivURL}:${Const|PrivatePort}"
 
 [ExperienceService]
-    LocalServiceModule = "OpenSim.Services.Connectors.dll:RemoteExperienceServiceConnector"
+    ;; Only needed if [Modules] ExperienceService above is uncommented.
+    LocalServiceModule = "OpenSim.Services.Connectors.dll:ExperienceServicesConnector"
 
     ;
     ; Change this to your grid-wide experience server
