@@ -47,6 +47,10 @@ using OpenSim.Region.Framework.Scenes;
 using OpenSim.Server.Base;
 using OpenSim.Services.Interfaces;
 
+[assembly: Addin("OpenSim.Addons.RegionCurrency", "1.0")]
+[assembly: AddinDescription("Avatar wallet + PayPal token purchase front-end for a configured money module")]
+[assembly: AddinDependency("OpenSim.Region.Framework", OpenSim.VersionInfo.VersionNumber)]
+
 namespace OpenSim.Region.OptionalModules.World.RegionCurrency
 {
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "RegionCurrencyModule")]

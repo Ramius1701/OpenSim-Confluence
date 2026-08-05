@@ -436,7 +436,7 @@ namespace OpenSim.Server.Base
                         sb.Append('&');
                     sb.Append(SWH.UrlEncode(kvp.Key));
 
-                    pvalue = kvp.Value.ToString();
+                    pvalue = kvp.Value?.ToString();
                     if (!string.IsNullOrEmpty(pvalue))
                     {
                         sb.Append('=');

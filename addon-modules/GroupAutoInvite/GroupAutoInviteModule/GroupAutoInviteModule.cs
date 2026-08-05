@@ -38,6 +38,10 @@ using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 
+[assembly: Addin("OpenSim.Addons.GroupAutoInvite", "1.0")]
+[assembly: AddinDescription("Automatically invites arriving avatars to a configured group")]
+[assembly: AddinDependency("OpenSim.Region.Framework", OpenSim.VersionInfo.VersionNumber)]
+
 namespace OpenSim.Region.OptionalModules.Avatar.GroupAutoInvite
 {
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "GroupAutoInviteModule")]

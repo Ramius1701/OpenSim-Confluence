@@ -48,6 +48,10 @@ using OpenSim.Region.ScriptEngine.Shared.Api.Interfaces;
 using OpenSim.Server.Base;
 using OpenSim.Services.Interfaces;
 
+[assembly: Addin("OpenSim.Addons.RegionWeb", "1.0")]
+[assembly: AddinDescription("Per-region homepage/blog/LSL-docs web front-end")]
+[assembly: AddinDependency("OpenSim.Region.Framework", OpenSim.VersionInfo.VersionNumber)]
+
 namespace OpenSim.Region.OptionalModules.World.RegionWeb
 {
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "RegionWebModule")]
