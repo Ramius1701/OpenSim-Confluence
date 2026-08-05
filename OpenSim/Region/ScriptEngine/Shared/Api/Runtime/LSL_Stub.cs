@@ -2895,6 +2895,18 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String llSignRSA(LSL_String private_key, LSL_String msg, LSL_String algorithm)
+        {
+            return m_LSL_Functions.llSignRSA(private_key, msg, algorithm);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llVerifyRSA(LSL_String public_key, LSL_String msg, LSL_String signature, LSL_String algorithm)
+        {
+            return m_LSL_Functions.llVerifyRSA(public_key, msg, signature, algorithm);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public LSL_String llGetRenderMaterial(LSL_Integer face)
         {
             return m_LSL_Functions.llGetRenderMaterial(face);
