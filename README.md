@@ -1,117 +1,392 @@
-Welcome to OpenSimulator (OpenSim for short)!
+# Casperia
 
-# Overview
+Casperia is a maintained downstream fork of the official
+[OpenSimulator](https://github.com/opensim/opensim) development branch.
+It started from OpenSim Continuum's foundation and has since absorbed
+selected grid, identity, scripting, environment, simulator, web, economy,
+and reliability enhancements cherry-picked and hand-ported from several
+other OpenSim forks (Gunthar's fork, Tranquillity, Mobius, and
+WhiteCore-Dev). Official OpenSimulator remains the authoritative upstream
+baseline.
 
-OpenSim is a BSD Licensed Open Source project to develop a functioning
-virtual worlds server platform capable of supporting multiple clients
-and servers in a heterogeneous grid structure. OpenSim is written in
-C#, and can run under Mono or the Microsoft .NET runtimes.
+## Project status
 
-This is considered an alpha release.  Some stuff works, a lot doesn't.
-If it breaks, you get to keep *both* pieces.
+| Item | Status |
+|---|---|
+| Upstream baseline | `origin/master` (`opensim/opensim`) |
+| Active integration branch | `merge-experiment` — this is where all current work lives; `master` is stale and predates this round of work |
+| Windows build | Successful — full solution build verified clean (0 errors) as of the latest commit |
+| GitHub Actions | `.github/workflows/msbuildnet.yml` present; not yet exercised on a pushed repo |
 
-# Compiling OpenSim
+The complete solution builds successfully, including OpenSim, Robust,
+MoneyServer, and the included add-on modules, verified repeatedly
+throughout development via isolated git worktrees, targeted project
+builds, and full-solution builds.
 
-Please see BUILDING.md
+**A successful compile does not mean everything has been tested in-world.**
+Almost everything below has been build-verified but not yet exercised
+against a running region with a viewer. See "Progress and roadmap" below.
 
-# Running OpenSim on Windows
+## Project goals
 
-You will need dotnet 8.0 runtime (https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
+- Stay close enough to official OpenSimulator to accept continuing upstream work.
+- Preserve useful enhancements that are difficult to maintain as loose patches.
+- Keep optional functionality in `addon-modules` whenever practical.
+- Avoid grid-specific hardcoding.
+- Support standalone and Robust/grid deployments.
+- Retain Windows build and deployment support.
+- Provide configuration examples without silently enabling services.
+- When porting from another fork, verify with a real build rather than
+  trusting a commit message or a docs page.
 
+## Included enhancements
 
-To run OpenSim from a command prompt
+### Display Names and identity
 
- * cd to the bin/ directory where you unpacked OpenSim
- * review and change configuration files (.ini) for your needs. see the "Configuring OpenSim" section
- * run OpenSim.exe
+- Viewer-compatible Display Names for local users.
+- Display Name CAPS and viewer protocol handling.
+- Display Name storage and account-service integration, including a fix
+  so display names survive region restarts and cross-sim hops.
+- Hypergrid Display Name lookup and federation.
+- Single-name and `username` login handling.
+- Terms-of-service acceptance during login.
 
+**Not yet implemented** (referenced in older project docs, verified absent
+by direct code search): RSA-key login authentication, and
+`InternalPort = MATCHING` region configuration. Both are real Mobius
+features not yet ported. See "Progress and roadmap."
 
-# Running OpenSim on Linux/Mac
+### Abuse Reports
 
-You will need
+- Viewer Abuse Reports CAPS.
+- Local and remote service connectors.
+- Robust handlers.
+- MySQL, PostgreSQL, and SQLite storage and migrations (PGSQL/SQLite
+  parity added on top of the original MySQL-only implementation).
+- Region-side submission support.
 
- * [dotnet 8.0 Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
- * libgdiplus 
- 
- if you have mono 6.x complete, you already have libgdiplus, otherwise you need to install it
- using a package manager for your operating system, like apt, brew, macports, etc
- for example on debian:
- 
- `apt-get update && apt-get install -y apt-utils libgdiplus libc6-dev`
- 
-To run OpenSim, from the unpacked distribution type:
+### Parcel, terrain, inventory, and object control
 
- * cd bin
- * review and change configuration files (.ini) for your needs. see the "Configuring OpenSim" section
- * run ./opensim.sh
+- `osTriggerSoundAtPos`
+- Parcel auto-return access through `PARCEL_DETAILS_OBJECT_RETURN` and
+  `PARCEL_DETAILS_TELEPORT_ROUTING`
+- `osReturnObjects` / `osReturnObject` for scripted parcel auto-return
+- In-world terrain console commands
+- Script-controlled terrain textures and height ranges
+- Sculpt-map animation support (`llSetSculptAnim`)
+- Hardware/IP/MAC banning, with PGSQL/SQLite parity
 
+**Not yet implemented**: `llSetAgentRot`, `llReturnObjectsByID`/
+`llReturnObjectsByOwner` (LSL versions — the OSSL equivalents above are
+implemented), `llSetGroundTexture`, `llGiveAgentInventory`, `llMatchGroup`,
+`llSetParcelForSale`, `llGetAttachedListFiltered`, `llFindNotecardTextSync`.
+Deliberately deferred, not forgotten — see roadmap.
 
-# Configuring OpenSim
+### Expanded LSL and OSSL compatibility
 
-When OpenSim starts for the first time, you will be prompted with a
-series of questions that look something like:
+- `llSignRSA` / `llVerifyRSA` — RSA signing/verification over PEM keys.
+- `llGetRegionTimeOfDay`, `llTransferOwnership`, `llSitOnLink`.
+- `llSetLinkRenderMaterial`, `llSetLinkGLTFOverrides` — a full PBR
+  material override read/write pipeline (glTF JSON extraction, compact
+  key-value encoding, KHR texture transforms). The `PRIM_GLTF_*`
+  primitive-parameter helpers exist in the codebase but are not yet wired
+  into `llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast` — dormant,
+  not dispatched.
+- `llIsExperienceTrusted`, `llGetExperiencePermissions`,
+  `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats` —
+  Experience introspection queries backed by Casperia's own Experience
+  Tools system (see below).
+- `osPerlinNoise2D`.
 
-	[09-17 03:54:40] DEFAULT REGION CONFIG: Simulator Name [OpenSim Test]:
+A significant class of bug was found and fixed while building this out:
+several LSL/OSSL functions (the entire Experience function family, plus
+`osPerlinNoise2D`) were fully implemented and declared in their interface
+but never wired into the runtime dispatch layer that compiled scripts
+actually call through — meaning they were unreachable from any script
+despite the backend working correctly. All known instances of this bug
+have been found and fixed, verified by a mechanical sweep of every
+interface declaration against its dispatch stub.
 
-For all the options except simulator name, you can safely hit enter to accept
-the default if you want to connect using a client on the same machine or over
-your local network.
+### Combat2 scripting
 
-You will then be asked "Do you wish to join an existing estate?".  If you're
-starting OpenSim for the first time then answer no (which is the default) and
-provide an estate name.
+- `llDamage`, `llAdjustDamage`, `llDetectedDamage`, `llDetectedRezzer`.
+- Persisted object-health support (via prim dynamic attributes).
+- `on_damage`, `final_damage`, `on_death` events.
+- Damage adjustment runs through a short async transaction window so an
+  `on_damage` handler can call `llAdjustDamage` to override the amount
+  before `final_damage`/`on_death` fire.
 
-Shortly afterwards, you will then be asked to enter an estate owner first name,
-last name, password and e-mail (which can be left blank).  Do not forget these
-details, since initially only this account will be able to manage your region
-in-world.  You can also use these details to perform your first login.
+### EEP environment scripting
 
-Once you are presented with a prompt that looks like:
+- `llGetEnvironment`, `llSetEnvironment`, `llReplaceEnvironment` —
+  region- and parcel-level, gated by standard OpenSim estate/parcel
+  permissions (`CanIssueEstateCommand` / `CanEditParcelProperties`).
+- `llSetAgentEnvironment`, `llReplaceAgentEnvironment` — per-agent,
+  gated by Casperia's own Experience Tools permission system.
+- Region and parcel sky/water access.
 
-	Region (My region name) #
+### Pathfinding
 
-You have successfully started OpenSim.
+- `llCreateCharacter`, `llUpdateCharacter`, `llDeleteCharacter`,
+  `llExecCharacterCmd`, `llNavigateTo`, `llWanderWithin`,
+  `llPatrolPoints`, `llPursue`, `llEvade`, `llFleeFrom`,
+  `llGetStaticPath`, `llGetClosestNavPoint`.
 
-If you want to create another user account to login rather than the estate
-account, then type "create user" on the OpenSim console and follow the prompts.
+The implementation is a self-contained region-local A* engine: a baked
+navmesh sampled from terrain height (cached, rebaked on terrain/size
+change), obstacle avoidance against other objects and optionally
+avatars, and path-following that reuses the existing `KeyframeMotion`
+system rather than a new movement engine. It is not a physics-engine-native
+or Linden-proprietary navmesh service.
 
-Helpful resources:
- * http://opensimulator.org/wiki/Configuration
- * http://opensimulator.org/wiki/Configuring_Regions
+### Experience Tools
 
-# Connecting to your OpenSim
+Casperia has its own Experience Tools implementation — not Second Life's
+full Experience service, and not the smaller "Experience-Lite" design
+used by some sibling forks, but a real, backend-persisted system:
 
-By default your sim will be available for login on port 9000.  You can login by
-adding -loginuri http://127.0.0.1:9000 to the command that starts Second Life
-(e.g. in the Target: box of the client icon properties on Windows).  You can
-also login using the network IP address of the machine running OpenSim (e.g.
-http://192.168.1.2:9000)
+- Residents can create their own Experiences from the viewer (matching
+  real SL's protocol, verified against the SL viewer's own open-source
+  `llfloaterexperiences.cpp`), with a configurable one-time creation fee
+  (paid through whichever `IMoneyModule` is active — Gloebit or
+  MoneyServer) and a configurable per-resident cap.
+- A real, backend-persisted key-value store
+  (`llCreateKeyValue`/`llReadKeyValue`/`llUpdateKeyValue`/
+  `llDeleteKeyValue`/`llKeyCountKeyValue`/`llKeysKeyValue`/
+  `llDataSizeKeyValue`), not an in-memory dictionary.
+- Permission grants and trust checks
+  (`llRequestExperiencePermissions`/`llAgentInExperience`/
+  `llGetExperienceDetails`/`llGetExperienceErrorMessage`), plus the
+  introspection queries listed above.
+- `llOpenFloater` is not implemented at all (not even as a stub) —
+  OpenSimulator has no viewer-hosted floater service to back it.
 
-To login, use the avatar details that you gave for your estate ownership or the
-one you set up using the "create user" command.
+### Sit targets and avatar animation
 
-# Bug reports
+- Enforcement of scripted-only sit targets.
+- Storage and lookup for LSL sit flags.
+- Configurable male and female walk-animation overrides.
+- Movement-animation resend protection.
 
-In the very likely event of bugs biting you (err, your OpenSim) we
-encourage you to see whether the problem has already been reported on
-the [OpenSim mantis system](http://opensimulator.org/mantis/main_page.php).
+### Region crossing and attachment reliability
 
-If your bug has already been reported, you might want to add to the
-bug description and supply additional information.
+- Configurable transfer and cleanup timeouts.
+- Optional preservation of crossing velocity.
+- Reduced attachment detach/reattach flashing.
+- Duplicate and failed attachment cleanup.
+- Coordinated queued attachment-script restarts.
 
-If your bug has not been reported yet, file a bug report ("opening a
-mantis"). Useful information to include:
- * description of what went wrong
- * stack trace
- * OpenSim.log (attach as file)
- * OpenSim.ini (attach as file)
+### Background map-tile generation
 
+- Background rendering, non-blocking region startup and grid registration.
+- Exact-geometry rendering (mesh/sculpt, alpha texture cards, water depth
+  shading) rather than placeholder/fallback boxes.
 
-# More Information on OpenSim
+### Weather
 
-More extensive information on building, running, and configuring
-OpenSim, as well as how to report bugs, and participate in the OpenSim
-project can always be found at http://opensimulator.org.
+`OpenSimWeather` (rain, snow, storms, lightning, thunder, wind, clouds)
+received an end-to-end fix pass: precipitation no longer auto-deletes
+after ~60 seconds, lightning no longer strikes underground, all four
+weather profiles were retuned against real `RegionLightShareData`
+defaults (the "Sunny" profile was badly washed out due to an
+undocumented ×3 ambient-conversion factor in the EEP bridge), sky
+changes now apply before precipitation emitters, and two real bugs that
+made the sun/moon appear to freeze after using weather commands are
+fixed. Still reasonably described as experimental — not scientifically
+simulated weather.
 
-Thanks for trying OpenSim, we hope it is a pleasant experience.
+### Physics realism (ubODE)
 
+Extensive tuning pass: buoyant floating-prim water physics, boat wave
+response, rubber bounce and material density, rolling resistance,
+avatar/object contact smoothing, and friendly avatar social physics.
+
+## Included add-on modules
+
+All modules are under `addon-modules`. They are generated into the
+solution but are not necessarily enabled by default.
+
+- **Gloebit** — optional Gloebit economy integration.
+- **GroupAutoInvite** — configurable automatic group invitations.
+- **HoloPhysicsGuard** — reduces idle physics load when regions are empty.
+- **OpenSimMarketplace** — portable Direct Delivery marketplace system.
+- **OpenSimMutelist** — external mute-list service integration.
+- **OpenSimSearch** — external viewer search integration.
+- **OpenSimTide** — configurable tide and water-level simulation.
+- **OpenSimWeather** — rain, snow, storms, lightning, thunder, wind,
+  clouds; see "Weather" above.
+- **RegionCurrency** — web front end for an existing `IMoneyModule`
+  (avatar wallet, balance/statement, PayPal token purchases, admin
+  dashboard).
+- **RegionWeb** — per-region web pages, protected estate administration,
+  an in-world LSL/OSSL compatibility reference (auto-discovered from the
+  script API plus hand-written notes), and its own separate currency/wallet
+  portal (see note below).
+
+**Known duplication:** RegionCurrency and RegionWeb's `/currency` portal
+are two independent PayPal/wallet implementations that both exist in the
+tree. This wasn't a deliberate architecture choice — RegionCurrency was
+split out of RegionWeb by an earlier AI-assisted session, not by design —
+and the two haven't been reconciled. RegionWeb's PayPal integration ships
+present but unconfigured/dormant (gated by its own `IsPayPalConfigured()`
+check), reserved for future use rather than active.
+
+Detailed Marketplace documentation is located at:
+
+```text
+addon-modules/OpenSimMarketplace/README.md
+```
+
+## MoneyServer enhancements
+
+The included MoneyServer integration provides:
+
+- MoneyServer, region currency module, and MySQL data wrapper.
+- Viewer currency purchases without an external `currency.php` helper.
+- Configurable daily, weekly, and monthly purchase limits.
+- Idempotent confirmation UUID handling.
+- Retained banker, transfer, group, email-lock, object-payment,
+  upload-charge, and land-sale controls.
+
+Real bugs fixed on top of the original implementation:
+
+- `DTLNSLMoneyModule` was activating as `IMoneyModule` even when it
+  wasn't the selected economy module, hijacking Gloebit's role.
+- A Nini config case-sensitivity mismatch (`EconomyModule` vs.
+  `economymodule`) meant different modules reading the same conceptual
+  key could silently disagree.
+- `CurrencyGroupOnly`'s group-restriction check rejected purchases
+  instead of skipping the check when `CurrencyGroupID` was the
+  placeholder zero UUID.
+- `MoneyServer.dll.config`'s console appender had a duplicated
+  `%newline`, causing blank console lines.
+- MoneyServer can now start a basic `CommandConsole` (`[Startup] console
+  = "basic"`) to run headless, matching Robust/OpenSim.
+
+The repository does not replace a live `bin/MoneyServer.ini`. Review the
+included examples before production use.
+
+## Building
+
+### Requirements
+
+- .NET 8 SDK or a newer SDK capable of targeting .NET 8
+- Visual Studio 2022 or later is optional on Windows
+
+### Windows
+
+```bat
+runprebuild.bat
+dotnet build OpenSim.sln --configuration Release
+```
+
+### Linux or macOS
+
+```bash
+./runprebuild.sh
+dotnet build OpenSim.sln --configuration Release
+```
+
+See `BUILDING.md` for the official base requirements.
+
+## Configuration
+
+Casperia does not install live configuration automatically.
+
+Review:
+
+- `bin/OpenSim.ini.example`
+- `bin/Robust.ini.example`
+- `bin/Robust.HG.ini.example`
+- `bin/config-include/GridCommon.ini.example`
+- `bin/config-include/storage/SQLiteRobust.ini`
+- module-specific `.ini.example` files under `addon-modules`
+
+Optional modules should remain disabled until dependencies, database
+schema, service endpoints, credentials, and runtime behavior have been
+validated.
+
+## Progress and roadmap
+
+Full narrative history of what's been done, why, and which files were
+touched lives in [`PROJECT_LOG.md`](PROJECT_LOG.md). A categorized
+feature comparison against upstream OpenSim and the OpenSim-Continuum
+README this project started from lives in
+[`FEATURES_VS_MASTER.md`](FEATURES_VS_MASTER.md). Keep both updated as
+work continues — don't let them go stale.
+
+**Known gaps, roughly in priority order:**
+
+- Nothing in this round of work has been tested in-world yet — only
+  compiled. That's the immediate next step.
+- RSA-key login authentication and `InternalPort = MATCHING` (both real
+  Mobius features) are not implemented.
+- The misc LSL/OSSL functions listed as "not yet implemented" above.
+- `PRIM_GLTF_*` primitive-parameter dispatch is dormant — the backing
+  code exists but nothing calls it from `llSetPrimitiveParams`/
+  `llSetLinkPrimitiveParamsFast`.
+- RegionCurrency vs. RegionWeb's currency portal duplication is
+  unreconciled.
+- Mobius, Tranquillity, and WhiteCore-Dev have not received the same
+  exhaustive feature-parity audit that Gunthar's fork got in this round —
+  further portable improvements likely exist in those repos and haven't
+  been checked yet.
+- Grid-level control-panel features (per-region Hypergrid open/close
+  toggle, on-demand maptile regeneration, OAR/IAR backup workflows, and
+  general admin coverage) live in a separate companion project
+  (`OpenSim-Grid-Interface`), not this repository, and have their own
+  open items there.
+
+## Repository model
+
+| Reference | Purpose |
+|---|---|
+| `merge-experiment` | Active integration branch — everything described above lives here |
+| `master` | Stale; predates this round of work |
+| `origin/master` | Official OpenSimulator development branch |
+
+Feature work happens in short-lived isolated git worktrees/branches
+(build-verified before merging), fast-forward merged into
+`merge-experiment`, then cleaned up. This keeps history readable and
+avoids leaving half-finished work on the integration branch.
+
+## Known limitations
+
+- Some database migrations remain MySQL-specific in places PGSQL/SQLite
+  parity hasn't been added yet.
+- Experience Tools is not full Second Life Experience-service
+  compatibility.
+- `llOpenFloater` is not implemented, not even as a stub.
+- `PRIM_GLTF_*` primitive parameters are present but not dispatched.
+- Pathfinding is region-local and approximate, not a physics-engine-native
+  or Linden-proprietary navmesh service.
+- Weather is meaningfully improved but still reasonably called
+  experimental.
+- RegionWeb's PayPal integration is unconfigured/dormant and duplicates
+  RegionCurrency's separate implementation.
+- A listed feature may still be disabled in configuration.
+- Build success does not replace controlled runtime testing — most of
+  this has not yet been tested in-world.
+
+## Attribution and support
+
+Casperia retains the OpenSimulator license and source history, and
+started from OpenSim Continuum's consolidation work. Portable
+improvements have been cherry-picked and, where architecturally
+incompatible with a straight cherry-pick, hand-ported from:
+
+- [Gunthar's OpenSim fork](https://github.com/GuntharDeNiro/opensim)
+- [Tranquillity](https://github.com/OpenSim-NGC/OpenSim-Tranquillity)
+- [Mobius](https://github.com/Mobius-Team/Mobius)
+- [WhiteCore-Dev](https://github.com/WhiteCoreSim/WhiteCore-Dev)
+
+Historical source provenance remains available in Git history.
+
+Report Casperia-specific problems in this repository. Problems
+reproducible on an unmodified official OpenSimulator build should be
+reported to the official OpenSimulator project.
+
+## License
+
+Casperia is distributed under the same BSD-style license as
+OpenSimulator. See `LICENSE.txt`.
