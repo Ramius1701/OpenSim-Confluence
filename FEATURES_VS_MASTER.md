@@ -160,11 +160,12 @@ One confirmed gap, since ported:
   registered commands against the in-world console. **Not yet tested
   in-world.**
 
-Unconfirmed, flagged for a possible follow-up: Mobius serves actual
-LSL/OSSL syntax-highlighting data to viewers via a CAP; Casperia's
-`SimulatorFeaturesModule.cs` advertises an `LSLSyntaxId` capability UUID
-but nothing was found that actually serves content for it — possibly a
-dangling advertised-but-unimplemented feature, not yet verified.
+Follow-up check (2026-08-06): the audit's "possibly dangling `LSLSyntaxId`"
+flag was a false alarm — `SimulatorFeaturesModule.cs` has a complete,
+working `LSLSyntax` CAP (`HandleSyntaxRequest`) that serves real syntax
+data read from `bin/ScriptSyntax.xml` (present, 345KB) at startup, with
+`[SimulatorFeatures] ScriptSyntax` defaulting to enabled. No gap here;
+Casperia already matches Mobius on this one.
 
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly

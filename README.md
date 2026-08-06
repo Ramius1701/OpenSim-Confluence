@@ -332,12 +332,6 @@ work continues — don't let them go stale.
   terrain console commands (ported from Mobius) haven't been tested
   in-world yet — console commands and connector wiring are unexercised
   against a live grid.
-- Whether `SimulatorFeaturesModule.cs`'s advertised `LSLSyntaxId`
-  capability actually serves anything is unverified — Mobius has a real
-  implementation behind the equivalent capability, but Casperia's audit
-  didn't find one, which may mean this is dangling and unimplemented.
-  Needs a follow-up look before deciding whether to port Mobius's
-  version.
 - Grid-level control-panel features (per-region Hypergrid open/close
   toggle, on-demand maptile regeneration, OAR/IAR backup workflows, and
   general admin coverage) live in a separate companion project
