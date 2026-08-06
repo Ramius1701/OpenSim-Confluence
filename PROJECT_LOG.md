@@ -361,6 +361,74 @@ above, plus `OpenSim/Framework/ViewerEnvironment.cs` and
 
 ---
 
+## Full RegionWeb import from Gunthar's fork (done, merged 2026-08-06)
+
+Requested directly, separate from the LSL-compatibility work above.
+`RegionWebModule.cs` was 4835 lines vs. gunthar/master's 7230 - re-audited
+its in-world LSL-docs page first (148 documented functions), then
+diffed the whole file to find the real shape of the gap.
+
+**Doc-page audit result:** 15 of 148 documented functions don't actually
+exist. 4 are genuinely completable Experience Tools queries
+(`llIsExperienceTrusted`, `llGetExperiencePermissions`,
+`llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats`) - a
+real surprise finding here: Casperia already has its own working,
+backend-persisted Experience Key-Value store and permission system
+(`llCreateKeyValue`/`llAgentInExperience`/`llRequestExperiencePermissions`
+etc. all already existed, gated by `World.ExperienceModule` +
+`m_item.ExperienceID` - a more proper implementation than Gunthar's
+in-memory-dictionary Experience-Lite). These 4 are just small read-only
+queries against that same already-working system - **still not
+implemented, left open, see below.** The other 11 (10 previously-excluded
+misc parcel/inventory functions + `llOpenFloater`, a stub even upstream)
+remain accurate as "not implemented."
+
+**Whole-file diff result:** the 2395-line gap was almost entirely one
+subsystem - a currency/wallet portal (`SendCurrencyPortal` + ~20
+supporting methods: avatar balance viewing, transaction statements,
+admin CSV exports, and full PayPal order creation/capture/checkout via
+PayPal's live API).
+
+This overlaps with the separate `RegionCurrency` addon-module, which
+already has its own working PayPal/wallet implementation (3115 lines).
+Per the user: RegionCurrency was only split out of RegionWeb by a prior
+AI session (ChatGPT/Copilot), not a deliberate Casperia design decision -
+so importing gunthar's version back into RegionWeb was the right call
+even though it now duplicates RegionCurrency. Both exist in parallel for
+now; deduplicating them was explicitly not asked for and wasn't touched.
+
+**PayPal specifically:** ships present but dormant - gated by the
+existing `IsPayPalConfigured()` check (same as gunthar's own code), no
+live credentials wired up. Reserved for future use per the user, not
+active.
+
+**Branding:** replaced all 66 occurrences of gunthar's "Vanilla Sim"
+product name with neutral defaults matching Casperia's existing
+convention - `"My OpenSim Estate"` for the configurable default title
+(3 assignment sites), `"This estate"` for body-copy references (59
+occurrences), `"RegionWeb"` as the in-world notification sender name (4
+`SendBlueBoxMessage` calls, was `"Vanilla Sim"`). Kept our own
+`[assembly: Addin(...)]` registration attributes (required for
+Mono.Addins to load this as a standalone addon-module - gunthar's copy
+lives in his core tree under a different registration mechanism, ours
+needs it explicitly).
+
+Given the file had no deep architectural conflict with the rest of
+Casperia (unlike LSL_Api.cs's Experience-Lite entanglement), this was a
+wholesale import (copy gunthar's file, patch branding + Addin
+attributes back in) rather than a hand-ported piece-by-piece merge.
+Built clean on the first attempt, both targeted and full-solution (0
+errors). Fast-forward merged into `merge-experiment`
+(`c0b86a2490..7f29f2688c`). **Not yet tested in-world.**
+
+**Still open:** the 4 completable Experience Tools query functions
+(`llIsExperienceTrusted` etc.) - deferred when the RegionWeb import took
+priority, not yet implemented.
+
+Key file: `addon-modules/RegionWeb/RegionWebModule/RegionWebModule.cs`.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.
