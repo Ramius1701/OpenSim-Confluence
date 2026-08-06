@@ -104,6 +104,34 @@ One genuinely portable feature was found and ported:
   `Description` in the HTTP connector). Full detail in PROJECT_LOG.md.
   **Not yet tested in-world.**
 
+### WhiteCore-Dev feature-parity audit (2026-08-06)
+Unlike Gunthar's fork or Tranquillity, WhiteCore-Dev shares no git
+history at all with vanilla OpenSim (Aurora-Sim lineage, fully
+restructured internals — `WhiteCore/DataManager`, its own
+`WhiteCore/ScriptEngine`, `WhiteCore/BotManager`, etc.), so this was a
+feature-level comparison rather than a cherry-pick. Most of what it has
+either duplicates something Casperia already covers (BotManager vs.
+core `osNpc*` + Gunthar's ported Pathfinding suite; its WebInterface vs.
+the already-imported RegionWeb; `aaWindlight*` vs. the already-ported
+EEP functions) or is welded to its own DataManager/ScriptEngine closely
+enough that porting would mean a rewrite, not a port (Scheduled
+Payments/stipend economy, grid-wide viewer ban by IP/MAC hash, on-demand
+soft-start regions). Two features cleared the bar:
+
+- **Land Auction** — a real bid-based parcel auction flow. Casperia had
+  `AuctionID`/`SnapshotID` fields on `LandData` but no working mechanism
+  behind them. Ported as a self-contained module with console-driven
+  start/bid/end/show commands.
+- **Team Combat** — team membership, a shared combat respawn point,
+  teleport-block while in combat, and configurable health regen for team
+  members. Reduced in scope from WhiteCore's original specifically to
+  avoid colliding with two damage/health systems Casperia already has
+  (vanilla collision damage and Gunthar's Combat2 `llDamage` pipeline) —
+  see PROJECT_LOG.md for the full design rationale. Team-kill damage
+  mitigation was dropped from scope for the same reason.
+
+Both **not yet tested in-world**. Full detail in PROJECT_LOG.md.
+
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly
 in Casperia:

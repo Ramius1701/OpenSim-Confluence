@@ -525,6 +525,90 @@ Key files: `OpenSim/Services/Interfaces/IUserAliasService.cs`,
 
 ---
 
+## Land Auction and Team Combat modules, ported from WhiteCore-Dev (done, merged 2026-08-06)
+
+Follow-up to the WhiteCore-Dev feature-parity audit. WhiteCore-Dev turned
+out to be a much bigger architectural departure than Gunthar or
+Tranquillity - an Aurora-Sim-derived fork with no shared git history with
+vanilla OpenSim at all (`git merge-base` returns nothing) and a fully
+restructured internal layout (`WhiteCore/DataManager` instead of the
+`Data`/`Services` split, its own `WhiteCore/ScriptEngine`, etc.), so the
+audit was a feature-level comparison rather than a commit-diff
+cherry-pick. Of everything it found, two were genuinely portable:
+
+**Land Auction** (`IAuctionModule`/`AuctionModule`) - a real bid-based
+parcel auction: start/bid/end/show via new console commands
+(`land auction start/bid/end/show <local id>`), highest bidder wins via
+the existing `ILandObject.UpdateLandSold`, winner notified via
+`IMessageTransferModule`. Casperia already had `AuctionID`/`SnapshotID`
+fields on `LandData` but no working mechanism behind them. Bids are
+tracked in-memory in the module (not persisted on `LandData`), keeping
+this a self-contained, single-file addition with no DB schema changes.
+WhiteCore's viewer-native "start auction" flow (an `IClientAPI` event +
+CAPS handler, triggered from the About Land floater) was left out -
+Casperia's `LLClientView` has no equivalent packet wired up at all, and
+adding new LLUDP packet handling was out of scope for this pass; console
+commands are the pragmatic substitute.
+
+**Team Combat** (`ITeamCombatModule`/`TeamCombatModule`) - team
+membership (`combat team join/leave/show` console commands), a shared
+combat respawn point instead of teleport-home for team members, a
+teleport block while a team member hasn't left combat, and a
+configurable health regen rate for team members. This one needed real
+design work before porting: WhiteCore's original `CombatModule` tracks
+its **own separate avatar health field** and its **own physics-collision
+damage detection**, both of which would collide with systems Casperia
+already has - vanilla `ScenePresence` already decrements `Health` on
+collision with a `Damage`-bearing prim, and Gunthar's Combat2 port
+already drives `Health` through `llDamage`/`llAdjustDamage` with its own
+death/respawn handling (`CompleteDamageToPresence` in `LSL_Api.cs`,
+which bypasses the `OnAvatarKilled` event entirely). Porting WhiteCore's
+module unmodified would have meant two independently-tracked health
+values both calling `SendHealth()` on the same avatar.
+
+Given the user's explicit choice (asked directly, since this needed a
+scope decision before writing code) to keep this integration surgical
+rather than touching the already-merged Combat2 pipeline, the port
+carries over only the team/respawn/teleport-block/regen layer, all of
+which needs zero involvement in damage application:
+- Team regen rate reuses `ScenePresence.HealRate` (already exists,
+  already HP/sec, built for exactly this - no core-file edit needed).
+- Teleport-block reuses the existing `scene.Permissions.OnTeleport` hook.
+- Respawn-point override needed one small, additive edit to vanilla
+  `OpenSim/Region/CoreModules/Avatar/Combat/CombatModule.cs`: its
+  `KillAvatar` handler unconditionally teleports the dead avatar home,
+  which would otherwise race against a team module's own teleport call
+  for the same avatar. It now checks for a loaded `ITeamCombatModule`
+  first and defers to it for team members; behaviour is byte-for-byte
+  unchanged when the module isn't loaded or the avatar isn't on a team.
+  This only affects the classic collision-based death path (which
+  fires `OnAvatarKilled`) - Combat2's scripted `llDamage` deaths bypass
+  that event entirely and are unaffected either way.
+- WhiteCore's own parcel-enter invulnerability toggle was dropped as
+  redundant - `OpenSim/Region/CoreModules/World/Land/LandObject.cs`
+  already does this from the parcel `AllowDamage` flag.
+- Dropped from scope: WhiteCore's team-kill damage mitigation
+  (`AllowTeamKilling`/`DamageToTeamKillers`), since that specifically
+  needs the damage-pipeline hook the user chose to avoid touching this
+  pass. Team join/leave is console-only for now, not scriptable - no
+  new LSL/OSSL functions were added in this port.
+
+Off by default in `OpenSimDefaults.ini` (`[TeamCombatModule] Enabled =
+false`) since it changes teleport/respawn behaviour for anyone placed on
+a team. `[AuctionModule]` defaults to enabled since it's inert unless an
+admin runs the console commands.
+
+Verified with targeted builds (`OpenSim.Region.OptionalModules`, which
+transitively covers `OpenSim.Region.CoreModules`) and a full solution
+build (0 errors). Fast-forward merged into `merge-experiment`
+(`a0882d9b34..4a64c30cb6`). **Not yet tested in-world.**
+
+Key files: `OpenSim/Region/CoreModules/World/Land/AuctionModule.cs`,
+`OpenSim/Region/OptionalModules/Avatar/Combat/TeamCombatModule.cs`,
+`OpenSim/Region/CoreModules/Avatar/Combat/CombatModule.cs`.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.
