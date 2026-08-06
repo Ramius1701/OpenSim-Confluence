@@ -1401,6 +1401,12 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Float osPerlinNoise2D(LSL_Float x, LSL_Float y, LSL_Integer octaves, LSL_Float persistence)
+        {
+            return m_OSSL_Functions.osPerlinNoise2D(x, y, octaves, persistence);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void osStopSound(LSL_Integer linknum)
         {
             m_OSSL_Functions.osStopSound(linknum);
