@@ -1,0 +1,15 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS "UserAlias" (
+	"Id" serial NOT NULL,
+	"AliasID" uuid NOT NULL UNIQUE,
+	"UserID" uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+	"Description" varchar(80) NULL,
+	PRIMARY KEY ("Id")
+);
+
+CREATE INDEX IF NOT EXISTS idx_useralias_userid ON "UserAlias" ("UserID");
+
+COMMIT;
