@@ -132,6 +132,40 @@ soft-start regions). Two features cleared the bar:
 
 Both **not yet tested in-world**. Full detail in PROJECT_LOG.md.
 
+### Mobius feature-parity audit (2026-08-06)
+Mobius (discontinued; successor is "NGC/OpenSim-Sasquatch", not audited)
+also shares no git history with vanilla OpenSim, but unlike WhiteCore-Dev
+its layout is normal vanilla-OpenSim-shaped, so this was a more direct
+file-level comparison. Its own README is a detailed beta-by-beta
+changelog naming several candidate features — of those, all but one
+turned out to already be in Casperia, in some cases more advanced than
+Mobius's own version:
+
+- Hardware/IP ban service — `AccessControlService.cs` and friends are
+  byte-identical between Mobius and Casperia, already fully wired.
+- `PARCEL_DETAILS_TELEPORT_ROUTING`/`OBJECT_RETURN`/`LANDING_POINT` —
+  already present (different numeric IDs, same capability), plus more
+  of the family than Mobius has.
+- `osTriggerSoundAtPos` — present and correctly wired.
+- Top Scripts floater stats — Casperia's version reports more
+  (native per-script memory tracking, more filter parsing).
+- Region restart notification — matches, plus Casperia has a
+  "restart immediately if region is empty" optimization Mobius lacks.
+
+One confirmed gap, since ported:
+- **In-world terrain console commands** (`terrain elevate/lower/fill`,
+  `terrain load texture <uuid>`) — Casperia already had all the
+  supporting plumbing (`IRegionConsole`, the existing
+  `InterfaceElevateTerrain`/etc. helpers); `TerrainModule.cs` just never
+  registered commands against the in-world console. **Not yet tested
+  in-world.**
+
+Unconfirmed, flagged for a possible follow-up: Mobius serves actual
+LSL/OSSL syntax-highlighting data to viewers via a CAP; Casperia's
+`SimulatorFeaturesModule.cs` advertises an `LSLSyntaxId` capability UUID
+but nothing was found that actually serves content for it — possibly a
+dangling advertised-but-unimplemented feature, not yet verified.
+
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly
 in Casperia:

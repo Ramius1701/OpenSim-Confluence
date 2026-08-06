@@ -609,6 +609,49 @@ Key files: `OpenSim/Region/CoreModules/World/Land/AuctionModule.cs`,
 
 ---
 
+## Terrain console commands, ported from Mobius (done, merged 2026-08-06)
+
+Follow-up to the Mobius feature-parity audit — the one confirmed gap
+found. Mobius has no shared git history with vanilla OpenSim either
+(same as WhiteCore-Dev), but unlike WhiteCore its layout is normal
+vanilla-OpenSim-shaped, so this was a much more direct file-level port
+than the WhiteCore work. Everything else the audit checked (hardware/IP
+banning, `PARCEL_DETAILS_*` constants, `osTriggerSoundAtPos`, Top
+Scripts floater stats, region restart notification) turned out to
+already be present in Casperia, in several cases in a more advanced
+form than Mobius's own version.
+
+Adds `terrain elevate/lower/fill <meters>` and `terrain load texture
+<uuid>` as commands estate managers/owners (or gods) can run from the
+viewer's **in-world** region console, not just the server console.
+Registers against the existing `IRegionConsole` — `RegionConsoleModule`
+already gates that CAP to estate managers/owners or gods, so the new
+commands inherit that access check for free with no additional
+permission logic needed. The three numeric commands are thin wrappers
+around `InterfaceElevateTerrain`/`InterfaceLowerTerrain`/
+`InterfaceFillTerrain`, helpers Casperia's `TerrainModule.cs` already
+had (used by the classic server-console `terrain` commands) — no new
+terrain-modification logic, just a second, in-world way to reach it.
+`terrain load texture` decodes an uploaded square texture matching the
+region's dimensions into a heightmap PNG and feeds it through the
+existing `LoadFromStream` path.
+
+Two small hardening fixes applied while porting (present in Mobius's
+original, neither introduced here): swapped a raw `UUID` constructor
+for `UUID.TryParse` on the texture-UUID argument (avoided an unhandled
+exception on a malformed argument), and used `using` declarations for
+the `Bitmap`/`EncoderParameters`/`MemoryStream` used during texture
+decode so they're disposed on every path, including early returns
+(the original leaked all three on every early-return branch).
+
+Verified with a targeted `OpenSim.Region.CoreModules` build and a full
+solution build (0 errors). Fast-forward merged into `merge-experiment`
+(`833f5dbfab..c011c5c11c`). **Not yet tested in-world.**
+
+Key file: `OpenSim/Region/CoreModules/World/Terrain/TerrainModule.cs`.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.
