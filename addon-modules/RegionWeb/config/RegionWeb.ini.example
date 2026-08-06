@@ -1,9 +1,6 @@
-; RegionWeb - per-region homepage/blog/LSL-docs, ported from
+; RegionWeb - per-region homepage/blog/LSL-docs web front-end, avatar
+; wallet/currency portal, and estate config admin portal, ported from
 ; GuntharDeNiro/opensim as a standalone addon-module.
-;
-; The Currency/PayPal wallet system that originally lived inside this same
-; module has been split out into a separate RegionCurrency addon-module
-; (own login, own config) - see addon-modules/RegionCurrency/ instead.
 ;
 ; Picked up automatically via the addon-modules Include-modules glob in
 ; OpenSimDefaults.ini.
@@ -32,14 +29,6 @@
     ; Estate title shown in the nav bar and page titles.
     EstateTitle = My OpenSim Estate
 
-    ; Optional: if you've also deployed the separate RegionCurrency
-    ; addon-module (its own login, own config - see
-    ; addon-modules/RegionCurrency/), point this at its public path so the
-    ; region economy stats section shows an "Open avatar wallet" link.
-    ; Left blank (no link shown) by default since RegionWeb has no way to
-    ; know whether RegionCurrency is installed.
-    ; CurrencyPortalUrl = /currency/
-
     ; Inventory-backed image carousel (region owners drop snapshots into an
     ; in-world inventory folder; they show up as a homepage carousel).
     InventoryCarouselEnabled = true
@@ -47,3 +36,67 @@
     RegionInventoryCarouselFolderTemplate = RegionWeb {RegionName} Carousel
     InventoryCarouselLimit = 12
     InventoryCarouselCacheSeconds = 300
+
+    ; --------------------------------------------------------------------
+    ; Avatar wallet / currency portal (served at <PublicPath>/currency/).
+    ;
+    ; This is a full, self-contained wallet system built into RegionWeb
+    ; itself - NOT a link out to the separate RegionCurrency addon-module.
+    ; If you also run RegionCurrency (addon-modules/RegionCurrency/, own
+    ; login, own config), the two are independent and will duplicate each
+    ; other; that duplication is a known, accepted limitation rather than
+    ; something either module resolves automatically. Only enable one, or
+    ; accept running both if you have a reason to.
+    ; --------------------------------------------------------------------
+    CurrencyPortalEnabled = true
+    CurrencyBuyEnabled = true
+    CurrencyTransferEnabled = true
+
+    ; Login-challenge (email/IM-style one-time code) behaviour for the
+    ; wallet's own session login, separate from the viewer login.
+    CurrencyChallengeMinutes = 10
+    CurrencyChallengeCooldownSeconds = 20
+    CurrencySessionHours = 12
+
+    ; How many rows the wallet statement / balances CSV exports show.
+    CurrencyStatementLimit = 30
+
+    ; Ceiling on a single currency purchase/grant, in this grid's tokens.
+    CurrencyBuyLimit = 100000
+
+    ; How a "buy currency" request is fulfilled:
+    ;   grant    - instantly grants the requested amount (no real payment;
+    ;              suitable for testing or grids that don't charge real money)
+    ;   request  - queues the request for an admin to approve manually from
+    ;              the estate admin portal, no payment processor involved
+    ;   paypal   - routes through the PayPal checkout flow below
+    ;   disabled - the buy-currency flow is turned off entirely
+    CurrencyBuyMode = grant
+
+    ; Where pending/approved purchase requests are recorded (TSV file,
+    ; relative to bin/ or absolute).
+    CurrencyPurchaseStorage = Currency/regionweb-purchases.tsv
+
+    ; --------------------------------------------------------------------
+    ; PayPal checkout (only relevant when CurrencyBuyMode = paypal).
+    ; Ships dormant - PayPalEnabled defaults to false and PayPalClientID/
+    ; PayPalClientSecret default to empty, so no real payment processing
+    ; happens until you deliberately configure real PayPal API credentials
+    ; here.
+    ; --------------------------------------------------------------------
+    PayPalEnabled = false
+    ; sandbox (default, for testing) or live
+    PayPalEnvironment = sandbox
+    ; PayPalClientID =
+    ; PayPalClientSecret =
+    ; ISO 4217 currency code, e.g. EUR, USD.
+    PayPalCurrencyCode = EUR
+    ; Grid tokens purchased per unit of PayPalCurrencyCode.
+    PayPalPricePerToken = 0.01
+    ; Base URL PayPal redirects back to after checkout (e.g.
+    ; https://your-simulator:port/regionweb) - required for PayPal to work,
+    ; left blank by default since it's environment-specific.
+    ; PayPalReturnBaseUrl =
+    ; Where completed/pending PayPal orders are recorded (TSV file,
+    ; relative to bin/ or absolute).
+    PayPalOrderStorage = Currency/regionweb-paypal-orders.tsv
