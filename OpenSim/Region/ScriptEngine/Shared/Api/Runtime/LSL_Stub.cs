@@ -3067,5 +3067,118 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         {
             return m_LSL_Functions.llSetEnvironment(position, parameters);
         }
+
+        // The functions below were fully implemented in LSL_Api.cs/declared in
+        // ILSL_Api.cs but never wired into this dispatch layer, meaning no
+        // compiled script could actually call any of them despite the backend
+        // working - found while adding the four llIsExperienceTrusted-family
+        // functions below and wiring them alongside.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void llRequestExperiencePermissions(string agent_id, string unused)
+        {
+            m_LSL_Functions.llRequestExperiencePermissions(agent_id, unused);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llIsExperienceTrusted()
+        {
+            return m_LSL_Functions.llIsExperienceTrusted();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llGetExperiencePermissions()
+        {
+            return m_LSL_Functions.llGetExperiencePermissions();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llExperienceCanAutoGrant(LSL_Integer permissions)
+        {
+            return m_LSL_Functions.llExperienceCanAutoGrant(permissions);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List llGetExperienceKeyValueStoreStats()
+        {
+            return m_LSL_Functions.llGetExperienceKeyValueStoreStats();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llAgentInExperience(string agent_id)
+        {
+            return m_LSL_Functions.llAgentInExperience(agent_id);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List llGetExperienceDetails(string experience_key)
+        {
+            return m_LSL_Functions.llGetExperienceDetails(experience_key);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String llGetExperienceErrorMessage(LSL_Integer error)
+        {
+            return m_LSL_Functions.llGetExperienceErrorMessage(error);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llSitOnLink(string agent_id, LSL_Integer link)
+        {
+            return m_LSL_Functions.llSitOnLink(agent_id, link);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key llCreateKeyValue(string key, string value)
+        {
+            return m_LSL_Functions.llCreateKeyValue(key, value);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key llDeleteKeyValue(string key)
+        {
+            return m_LSL_Functions.llDeleteKeyValue(key);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key llReadKeyValue(string key)
+        {
+            return m_LSL_Functions.llReadKeyValue(key);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key llUpdateKeyValue(string key, string value, LSL_Integer check, string original)
+        {
+            return m_LSL_Functions.llUpdateKeyValue(key, value, check, original);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key llKeyCountKeyValue()
+        {
+            return m_LSL_Functions.llKeyCountKeyValue();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key llKeysKeyValue(LSL_Integer first, LSL_Integer count)
+        {
+            return m_LSL_Functions.llKeysKeyValue(first, count);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key llDataSizeKeyValue()
+        {
+            return m_LSL_Functions.llDataSizeKeyValue();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llSetAgentEnvironment(LSL_Key agent_id, LSL_Float transition, LSL_List param_list)
+        {
+            return m_LSL_Functions.llSetAgentEnvironment(agent_id, transition, param_list);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer llReplaceAgentEnvironment(LSL_Key agent_id, LSL_Float transition, LSL_String environment)
+        {
+            return m_LSL_Functions.llReplaceAgentEnvironment(agent_id, transition, environment);
+        }
     }
 }

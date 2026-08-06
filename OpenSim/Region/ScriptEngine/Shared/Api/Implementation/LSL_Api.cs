@@ -21313,6 +21313,90 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             m_host.TaskInventory.LockItemsForWrite(false);
         }
 
+        // Permissions an estate-trusted (Key) Experience may auto-grant without a
+        // viewer prompt. Matches real SL's documented safe set - PERMISSION_DEBIT
+        // and any ownership/permission-changing bits are deliberately excluded.
+        private const int ExperienceAutoGrantPermissions =
+            ScriptBaseClass.PERMISSION_TRIGGER_ANIMATION |
+            ScriptBaseClass.PERMISSION_TAKE_CONTROLS |
+            ScriptBaseClass.PERMISSION_CONTROL_CAMERA |
+            ScriptBaseClass.PERMISSION_ATTACH |
+            ScriptBaseClass.PERMISSION_TRACK_CAMERA |
+            ScriptBaseClass.PERMISSION_TELEPORT |
+            ScriptBaseClass.PERMISSION_OVERRIDE_ANIMATIONS;
+
+        private bool IsScriptExperienceTrusted()
+        {
+            if (World.ExperienceModule == null || m_item.ExperienceID == UUID.Zero)
+                return false;
+
+            if (!World.ExperienceModule.IsExperienceEnabled(m_item.ExperienceID))
+                return false;
+
+            if (World.ExperienceModule.IsExperienceAdmin(m_host.OwnerID, m_item.ExperienceID))
+                return true;
+
+            UUID[] keyExperiences = World.ExperienceModule.GetEstateKeyExperiences();
+            return keyExperiences != null && Array.IndexOf(keyExperiences, m_item.ExperienceID) >= 0;
+        }
+
+        public LSL_Integer llIsExperienceTrusted()
+        {
+            return IsScriptExperienceTrusted() ? 1 : 0;
+        }
+
+        public LSL_Integer llGetExperiencePermissions()
+        {
+            return IsScriptExperienceTrusted() ? ExperienceAutoGrantPermissions : 0;
+        }
+
+        public LSL_Integer llExperienceCanAutoGrant(LSL_Integer permissions)
+        {
+            if (!IsScriptExperienceTrusted())
+                return 0;
+
+            return (permissions.value & ~ExperienceAutoGrantPermissions) == 0 ? 1 : 0;
+        }
+
+        public LSL_List llGetExperienceKeyValueStoreStats()
+        {
+            LSL_List result = new LSL_List();
+            bool enabled = World.ExperienceModule != null && m_item.ExperienceID != UUID.Zero;
+            bool trusted = IsScriptExperienceTrusted();
+
+            int keyCount = 0;
+            int usedBytes = 0;
+            if (enabled)
+            {
+                keyCount = World.ExperienceModule.GetKeyCount(m_item.ExperienceID);
+                usedBytes = World.ExperienceModule.GetSize(m_item.ExperienceID);
+            }
+
+            result.Add(new LSL_String("enabled"));
+            result.Add(new LSL_Integer(enabled ? 1 : 0));
+            result.Add(new LSL_String("trusted"));
+            result.Add(new LSL_Integer(trusted ? 1 : 0));
+            // Casperia's Experience key-value store has no configured capacity
+            // ceiling to report, unlike Gunthar's local dictionary-backed store -
+            // -1 signals "no limit exposed by this build" rather than a fabricated number.
+            result.Add(new LSL_String("max_keys"));
+            result.Add(new LSL_Integer(-1));
+            result.Add(new LSL_String("max_key_bytes"));
+            result.Add(new LSL_Integer(-1));
+            result.Add(new LSL_String("max_value_bytes"));
+            result.Add(new LSL_Integer(-1));
+            result.Add(new LSL_String("max_store_bytes"));
+            result.Add(new LSL_Integer(-1));
+            result.Add(new LSL_String("key_count"));
+            result.Add(new LSL_Integer(keyCount));
+            result.Add(new LSL_String("used_bytes"));
+            result.Add(new LSL_Integer(usedBytes));
+            result.Add(new LSL_String("free_bytes"));
+            result.Add(new LSL_Integer(-1));
+
+            return result;
+        }
+
         public LSL_Integer llAgentInExperience(string agent)
         {
             if (World.ExperienceModule == null)
