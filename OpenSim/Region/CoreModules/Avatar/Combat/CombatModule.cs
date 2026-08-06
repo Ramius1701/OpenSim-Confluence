@@ -153,7 +153,14 @@ namespace OpenSim.Region.CoreModules.Avatar.Combat.CombatModule
             { }
 
             deadAvatar.setHealthWithUpdate(100.0f);
-            deadAvatar.Scene.TeleportClientHome(deadAvatar.UUID, deadAvatar.ControllingClient);
+
+            // A loaded TeamCombatModule gets first refusal on where a team
+            // member respawns (its configured combat respawn point rather
+            // than home). Falls through to the original teleport-home
+            // behaviour for everyone else, or if that module isn't loaded.
+            ITeamCombatModule teamCombat = deadAvatar.Scene.RequestModuleInterface<ITeamCombatModule>();
+            if (teamCombat == null || !teamCombat.TryHandleRespawn(deadAvatar))
+                deadAvatar.Scene.TeleportClientHome(deadAvatar.UUID, deadAvatar.ControllingClient);
         }
     }
 }
