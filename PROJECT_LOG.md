@@ -307,6 +307,60 @@ Key files: `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs`
 
 ---
 
+## Region-level EEP scripting: llGetEnvironment/llSetEnvironment/llReplaceEnvironment (done, merged 2026-08-06)
+
+Follow-up to the Gunthar port above. FEATURES_VS_MASTER.md had flagged
+these three as "entangled with Experience-Lite trust checks" based on
+the `llReplaceAgentEnvironment`/`llSetAgentEnvironment` conflict hit
+earlier — but checking gunthar/master directly showed that assumption was
+wrong for the region/parcel-level functions specifically: they're gated
+by plain OpenSim permissions, not his Experience-Lite system at all.
+
+- `llGetEnvironment` — read-only, no permission gate (environment is
+  public info, same as real SL). Reads sky/water/day-cycle data at a
+  position via a large rule-code switch.
+- `llSetEnvironment`/`llReplaceEnvironment` — write to either the whole
+  region (`World.Permissions.CanIssueEstateCommand`) or a specific
+  parcel (`CanEditParcelProperties(..., GroupPowers.AllowEnvironment,
+  ...)`), selected by a negative x/y position meaning "whole region."
+  `llSetEnvironment` applies individual sky/water parameter rules via
+  `ApplyEnvironmentParameters`; `llReplaceEnvironment` swaps in a whole
+  settings asset and/or adjusts day length/offset via
+  `llReplaceEnvironment`'s own asset-loading path.
+
+Required two small, purely-additive extensions to shared framework
+classes used elsewhere in the codebase (confirmed via diff against
+gunthar's versions - no existing methods touched, so no risk to the
+Weather module or anything else already using these files):
+- `OpenSim/Framework/ViewerEnvironment.cs`: `GetWater()`/`EnsureWater()`
+  (find-or-create the active water frame), `EnsureSkyTargets()` and its
+  helpers (resolve which sky frame(s) a parameter change applies to, for
+  a given altitude or all tracks at once).
+- `OpenSim/Framework/ViewerSky.cs`: `CloudTexture`/`MoonTexture`/
+  `SunTexture` PascalCase property wrappers over the existing
+  `cloud_id`/`moon_id`/`sun_id` fields, plus `IsDefaultBloomTexture()`
+  and four siblings (used by `llGetEnvironment`'s `SKY_TEXTURE_DEFAULTS`
+  readback).
+
+Added 6 previously-missing constants to LSL_Constants.cs
+(`ENV_NO_PERMISSIONS`, `SKY_TEXTURE_DEFAULTS`, `SKY_LIGHT`,
+`SKY_TRACKS`, `WATER_TEXTURE_DEFAULTS`, `ENVIRONMENT_DAYINFO`) —
+everything else these functions need (the `SKY_*`/`WATER_*` rule codes,
+`ENV_INVALID_RULE`/`ENV_VALIDATION_FAIL`/`ENV_NO_ENVIRONMENT`,
+`SortAltitudes()`/`InvalidateCaches()`) already existed from the
+per-agent EEP work.
+
+Same workflow as before: isolated worktree/branch (`eep-region-scripting`),
+targeted `dotnet build` after each file, one full-solution build (0
+errors) before merging. Fast-forward merged into `merge-experiment`
+(`83bd2e8814..2792b26c10`). **Not yet tested in-world.**
+
+Key files: same LSL_Api.cs/ILSL_Api.cs/LSL_Stub.cs/LSL_Constants.cs as
+above, plus `OpenSim/Framework/ViewerEnvironment.cs` and
+`OpenSim/Framework/ViewerSky.cs`.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.

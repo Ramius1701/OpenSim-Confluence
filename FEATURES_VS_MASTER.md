@@ -61,13 +61,16 @@ own Experience Tools instead):
   override read/write pipeline — glTF JSON extraction, compact
   key-value encoding, KHR texture transforms), `llSetLinkRenderMaterial`.
 - **Sculpt-map animation:** `llSetSculptAnim`.
+- **Region-level EEP scripting:** `llGetEnvironment`, `llSetEnvironment`,
+  `llReplaceEnvironment` — added in a follow-up pass once it turned out
+  these are gated by plain OpenSim parcel/estate permissions, not
+  Gunthar's Experience-Lite trust system (only the per-agent variants
+  were actually entangled with that).
 
-Deliberately left out of this pass (see PROJECT_LOG.md for the full
-rationale): Gunthar's Experience-Lite permission/trust/KVP-store system
-(competes with our own Experience Tools), region-level `llGetEnvironment`/
-`llSetEnvironment`/`llReplaceEnvironment` (entangled with Experience-Lite
-trust checks in his implementation), `llOpenFloater` (a stub even
-upstream), and the misc parcel/inventory functions (`llGiveAgentInventory`,
+Deliberately left out (see PROJECT_LOG.md for the full rationale):
+Gunthar's Experience-Lite permission/trust/KVP-store system (competes
+with our own Experience Tools), `llOpenFloater` (a stub even upstream),
+and the misc parcel/inventory functions (`llGiveAgentInventory`,
 `llSetParcelForSale`, `llGetAttachedListFiltered`, `llFindNotecardTextSync`,
 `llMatchGroup`, `llSetGroundTexture`, `llReturnObjectsByID`,
 `llReturnObjectsByOwner`, `llSetAgentRot`) — none of these were in the
