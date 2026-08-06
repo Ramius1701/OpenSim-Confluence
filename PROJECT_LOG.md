@@ -421,11 +421,48 @@ Built clean on the first attempt, both targeted and full-solution (0
 errors). Fast-forward merged into `merge-experiment`
 (`c0b86a2490..7f29f2688c`). **Not yet tested in-world.**
 
-**Still open:** the 4 completable Experience Tools query functions
-(`llIsExperienceTrusted` etc.) - deferred when the RegionWeb import took
-priority, not yet implemented.
-
 Key file: `addon-modules/RegionWeb/RegionWebModule/RegionWebModule.cs`.
+
+---
+
+## Experience introspection queries + Experience function family unreachable-from-scripts fix (done, merged 2026-08-06)
+
+Closed out the 4 deferred functions from the RegionWeb doc audit:
+`llIsExperienceTrusted`, `llGetExperiencePermissions`,
+`llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats`. Real
+implementations against Casperia's existing Experience Tools backend
+(`World.ExperienceModule.IsExperienceEnabled`/`IsExperienceAdmin`/
+`GetEstateKeyExperiences`), not stubs - "trusted" means the script's
+attached experience is enabled and either the owner is an Experience
+Admin or the experience is in the estate's Key Experience list.
+Auto-grantable permissions are a fixed safe set matching real SL's
+documented behavior (animation/controls/camera/attach/teleport - never
+`PERMISSION_DEBIT` or anything ownership-changing). KVP stats report
+real `enabled`/`trusted`/`key_count`/`used_bytes`; the `max_*` capacity
+fields report `-1` since our Experience store has no configured capacity
+ceiling to report (unlike Gunthar's local-dictionary store this was
+adapted from).
+
+**Bigger find while wiring these in:** the entire Experience function
+family was unreachable from any LSL script. All 12 pre-existing
+functions (`llRequestExperiencePermissions`, `llAgentInExperience`,
+`llGetExperienceDetails`, `llGetExperienceErrorMessage`, `llSitOnLink`,
+the 6 key-value store functions, `llSetAgentEnvironment`/
+`llReplaceAgentEnvironment`) were fully implemented in `LSL_Api.cs` and
+declared in `ILSL_Api.cs`, but never wired into `ScriptBaseClass`
+(`LSL_Stub.cs`). YEngine's `XMRInstAbstract` inherits from
+`ScriptBaseClass`, and compiled scripts call LSL functions through that
+inheritance chain - so despite the backend working correctly end to end,
+no script could actually call any of them. This directly affects the
+self-service Experience creation feature built earlier this session
+(residents' scripts calling `llRequestExperiencePermissions`/
+`llCreateKeyValue` etc. would have silently failed to compile). Wired
+all 12 alongside the 4 new functions.
+
+Verified with a targeted ScriptEngine build and a full solution build
+(0 errors both).
+
+Key files: `LSL_Api.cs`, `ILSL_Api.cs`, `LSL_Stub.cs`.
 
 ---
 
