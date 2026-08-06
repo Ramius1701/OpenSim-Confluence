@@ -327,10 +327,13 @@ work continues — don't let them go stale.
   `llSetLinkPrimitiveParamsFast`.
 - RegionCurrency vs. RegionWeb's currency portal duplication is
   unreconciled.
-- Mobius, Tranquillity, and WhiteCore-Dev have not received the same
-  exhaustive feature-parity audit that Gunthar's fork got in this round —
-  further portable improvements likely exist in those repos and haven't
-  been checked yet.
+- The User Alias service (ported from Tranquillity) hasn't been tested
+  in-world yet — console commands and connector wiring are unexercised
+  against a live grid.
+- Mobius and WhiteCore-Dev have not received the same exhaustive
+  feature-parity audit that Gunthar's fork and Tranquillity got in this
+  round — further portable improvements likely exist in those repos and
+  haven't been checked yet.
 - Grid-level control-panel features (per-region Hypergrid open/close
   toggle, on-demand maptile regeneration, OAR/IAR backup workflows, and
   general admin coverage) live in a separate companion project

@@ -82,6 +82,28 @@ texture/transform helpers, meant to back `PRIM_GLTF_*` codes in
 to them yet — wiring that in is a separate task, and OpenSim-Continuum's
 own README lists that specific path as unsupported.
 
+### Tranquillity feature-parity audit (2026-08-06)
+Full audit of `OpenSim-NGC/OpenSim-Tranquillity` against Casperia, same
+treatment as the Gunthar audit above. Result: Casperia is now ahead on
+LSL/OSSL breadth and addon-module coverage (Tranquillity has neither
+RegionWeb nor most of the LSL compatibility work above). Tranquillity's
+one big divergence — a migration to Entity Framework Core / ASP.NET
+Core Identity for its data layer (`Source/...` tree, dozens of EF model
+classes with no basename match anywhere in Casperia) — is a wholesale
+architecture swap, not a cherry-pickable feature, and was not pursued.
+
+One genuinely portable feature was found and ported:
+- **User Alias service** — lets an account be reachable under one or
+  more secondary UUIDs that resolve back to the same UserID grid-side.
+  Console-managed only (`create alias`/`show alias`/`delete alias`),
+  no HTTP-exposed create/delete, no viewer-visible cosmetic effect.
+  Ported with the standard Data/Services/Connectors/CoreModules layering
+  used elsewhere in this tree, plus PGSQL and SQLite backends beyond
+  Tranquillity's MySQL-only original. Two latent bugs fixed while
+  porting (unreachable code in `DeleteAlias`; a possible NRE on null
+  `Description` in the HTTP connector). Full detail in PROJECT_LOG.md.
+  **Not yet tested in-world.**
+
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly
 in Casperia:

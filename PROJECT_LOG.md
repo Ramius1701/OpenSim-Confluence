@@ -466,6 +466,65 @@ Key files: `LSL_Api.cs`, `ILSL_Api.cs`, `LSL_Stub.cs`.
 
 ---
 
+## User Alias service (done, merged 2026-08-06)
+
+Ported from Tranquillity (`OpenSim-NGC/OpenSim-Tranquillity`), the one
+genuinely portable finding from that repo's feature-parity audit (its
+big-ticket item, an EF Core/ASP.NET Identity migration, is a wholesale
+architecture swap and not cherry-pickable).
+
+Lets an account be reachable under one or more secondary UUIDs
+(aliases) that resolve back to the same UserID grid-side. Grid/console
+managed only - `create alias`/`show alias`/`delete alias` console
+commands, no HTTP-exposed create or delete (matches Tranquillity's
+original restriction exactly, preserved deliberately). No viewer-visible
+cosmetic effect; this is plumbing for other services to look up "is this
+UUID actually a known alt of that account," not a display-name feature.
+
+Followed the standard OpenSim service layering used elsewhere in this
+tree (see the Experience service for comparison): `IUserAliasData` +
+per-DB data handlers + migrations, `IUserAliasService` +
+`UserAliasService` (Robust-side, owns the console commands),
+`UserAliasServicesConnector` (HTTP client) with Local/Remote
+region-side `ISharedRegionModule` connectors, and
+`UserAliasServerPostHandler`/`UserAliasServiceConnector` on the Robust
+HTTP side.
+
+Added PGSQL and SQLite storage backends and migrations beyond
+Tranquillity's MySQL-only original, for cross-DB parity with the rest
+of Casperia (same pattern as the AccessControl/AbuseReports parity work
+earlier this project).
+
+Two bugs fixed while porting (present in Tranquillity's original,
+neither introduced here):
+- `UserAliasService.DeleteAlias` had an unreachable `throw` sitting
+  after its `return`.
+- `UserAliasServicesConnector.CreateAlias` sent
+  `Description.ToString()` where `Description` is already a
+  possibly-null `string` - would NRE on a null description. Changed to
+  `Description ?? string.Empty`.
+
+Also dropped a dependency on `OSHHTPHost`, a class referenced by
+Tranquillity's original `UserAliasServicesConnector.Initialise()` that
+doesn't exist anywhere in Casperia's tree (grepped for both that
+spelling and the likely-intended `OSHTTPHost`, found neither).
+Replaced with the same direct `GetString(...)` + trim pattern our own
+`ExperienceServicesConnector.cs` already uses.
+
+Built in an isolated worktree (`useralias-service` branch), verified
+with targeted builds (`OpenSim.Services.UserAccountService`,
+`OpenSim.Services.Connectors`, `OpenSim.Region.CoreModules`, which
+transitively covers `OpenSim.Server.Handlers`) and a full solution
+build (0 errors). Fast-forward merged into `merge-experiment`
+(`dfdc867c98..4a3dadc147`). **Not yet tested in-world** — no console
+command or connector wiring has been exercised against a live grid yet.
+
+Key files: `OpenSim/Services/Interfaces/IUserAliasService.cs`,
+`OpenSim/Services/UserAccountService/UserAliasService.cs`,
+`OpenSim/Services/Connectors/UserAliases/UserAliasServicesConnector.cs`.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.
