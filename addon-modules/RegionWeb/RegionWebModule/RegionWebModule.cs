@@ -48,6 +48,7 @@ using OpenSim.Region.ScriptEngine.Shared.Api.Interfaces;
 using OpenSim.Server.Base;
 using OpenSim.Services.Interfaces;
 
+
 [assembly: Addin("OpenSim.Addons.RegionWeb", "1.0")]
 [assembly: AddinDescription("Per-region homepage/blog/LSL-docs web front-end")]
 [assembly: AddinDependency("OpenSim.Region.Framework", OpenSim.VersionInfo.VersionNumber)]
@@ -76,29 +77,36 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             "The script engine is moving closer to Second Life behavior with Experience-Lite permissions, scripted sit controls, key-value stores, linkset data, environment, estate-return, parcel media, parcel prim counts/details, guarded money transfer, inventory transfer, damage, RSA, attachment filter, identity lookup, privacy-aware agent language lookup, animation-state introspection, physics energy readback, object-detail cost readback, script memory/profiler diagnostics, GLTF material and physics primitive-param helpers, plus a This estate compatibility center and in-world regression lab.";
         private const string ScriptEngineFeatureOverview =
             "The script engine now includes a wider Second Life-style scripting surface for modern estate systems. Trusted estate scripts can use Experience-Lite permissions, persistent experience key-value storage, linkset data with linkset_data events, scripted sit controls, linked sound controls, region and parcel environment helpers, estate return and terrain helpers, parcel media controls, same-owner simulator-wide parcel prim counts/details, guarded debit-permission money transfer, direct inventory and ownership transfer, direct damage helpers with Combat2-style pre-application damage transactions, cached identity lookup, privacy-aware agent language lookup, animation-state introspection, physics energy readback, object-detail cost/render/selection readback, script memory limit/profiler diagnostics, GLTF/render material primitive params with stored override readback, physics material primitive params, secure hashing/HMAC/RSA helpers, parameterized rez/derez workflows, filtered attachment inspection and HUD coordinate helpers without relying on brittle scripted workarounds. Second Life pathfinding character calls now provide persistent character option state, baked terrain navmesh caching, terrain-aware A* routing, parcel-stay handling and dynamic object/avatar obstacle avoidance where OpenSim does not expose the proprietary SL navmesh service. This estate exposes a script compatibility center, and the example suite includes an in-world regression controller for post-build checks.";
+        private const string CurrencyFeatureTitle = "Viewer-visible local currency";
+        private const string CurrencyFeatureBody =
+            "The estate can run a local persistent currency ledger that sends live balances to the viewer, handles transfers, object payments, land/object purchases and simulator economy charges without requiring a separate currency server.";
+        private const string CurrencyFeatureOverview =
+            "The bundled BetaGridLikeMoneyModule now works as a lightweight local economy backend. It persists avatar balances in a tab-separated ledger, grants a configurable first-use balance, pushes MoneyBalanceReply updates so compatible viewers show the current balance, and applies the same balance path to viewer transfers, scripted money calls, object payments, land/object purchases, upload charges and group creation charges.";
         private const string MultiGridFeatureTitle = "Attach to many grids";
         private const string MultiGridFeatureBody =
             "Attach your region to many grids at the same time, like OSGrid, Neverworld, Craft or any public grid you choose, with one click.";
         private const string MultiGridFeatureOverview =
-            "This estate lets one region appear on more than one grid map at the same time. You can keep your home base here, then share the same place with OSGrid or another friendly public grid from the multigrid switch profile. Visitors can discover the region from the grids they already use, while your simulator still keeps one home for inventory, assets and accounts.";
-        // Kept as descriptive marketing text only (no functional dependency
-        // on the currency system, which now lives in the separate
-        // RegionCurrency addon-module) since this file's generic feature-
-        // card system can legitimately advertise a companion module.
-        private const string CurrencyFeatureTitle = "Viewer-visible local currency";
-        private const string CurrencyFeatureBody =
-            "If the separate RegionCurrency addon-module is installed, the estate can run a local persistent currency ledger that sends live balances to the viewer and handles transfers and token purchases.";
-        private const string CurrencyFeatureOverview =
-            "RegionCurrency is a separate addon-module (not part of RegionWeb itself) providing an avatar wallet, PayPal token purchases, and an admin dashboard for managing balances, backed by whatever IMoneyModule the region is running.";
+            "This estate lets one region appear on more than one grid map at the same time. You can keep your home base here, then share the same place with OSGrid, Neverworld, Craft or another friendly public grid from the multigrid switch profile. Visitors can discover the region from the grids they already use, while your simulator still keeps one home for inventory, assets and accounts.";
         private const string EstateAdminFeatureTitle = "Estate owner control room";
         private const string EstateAdminFeatureBody =
             "Estate owners get a protected web admin panel to edit OpenSim settings, save with automatic backups, reload what is safe live and see clearly when a restart is still required.";
         private const string EstateAdminFeatureOverview =
             "This estate adds a practical control room for people who run regions. Instead of opening files over remote desktop for every small change, an estate owner can request an inworld admin token, open a protected web panel, browse the allowed OpenSim configuration files, edit raw INI text or one setting at a time, save with automatic backups and ask the simulator to reload the parts that can safely change while the region is online.";
+        private const string VanillaSimRepositoryUrl = "https://github.com/GuntharDeNiro/opensim";
+
         private readonly object m_sync = new object();
         private readonly Dictionary<UUID, Scene> m_scenesByID = new Dictionary<UUID, Scene>();
         private readonly Dictionary<string, UUID> m_regionIDsBySlug = new Dictionary<string, UUID>(StringComparer.OrdinalIgnoreCase);
+        private const string CurrencySessionCookie = "RegionWebCurrency";
+        private readonly object m_currencyAuthLock = new object();
+        private readonly object m_currencyPurchaseLock = new object();
+        private readonly object m_currencyPayPalLock = new object();
         private readonly object m_inventoryCarouselCacheLock = new object();
+        private readonly Dictionary<string, CurrencyLoginChallenge> m_currencyChallenges = new Dictionary<string, CurrencyLoginChallenge>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, CurrencyWebSession> m_currencySessions = new Dictionary<string, CurrencyWebSession>(StringComparer.Ordinal);
+        private readonly Dictionary<UUID, DateTime> m_currencyLastChallengeUTCByAgent = new Dictionary<UUID, DateTime>();
+        private readonly Dictionary<string, CurrencyPurchaseRequest> m_currencyPurchaseRequests = new Dictionary<string, CurrencyPurchaseRequest>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, CurrencyPayPalOrder> m_currencyPayPalOrders = new Dictionary<string, CurrencyPayPalOrder>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<UUID, InventoryCarouselAssetCacheEntry> m_inventoryCarouselAssetCache = new Dictionary<UUID, InventoryCarouselAssetCacheEntry>();
 
         private bool m_enabled;
@@ -108,19 +116,513 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
         private bool m_showStats;
         private bool m_showParcels;
         private bool m_inventoryCarouselEnabled = true;
+        private bool m_currencyPortalEnabled = true;
+        private bool m_currencyBuyEnabled = true;
+        private bool m_currencyTransferEnabled = true;
+        private bool m_payPalEnabled;
         private int m_postsPerPage;
+        private int m_currencyChallengeMinutes = 10;
+        private int m_currencyChallengeCooldownSeconds = 20;
+        private int m_currencySessionHours = 12;
+        private int m_currencyStatementLimit = 30;
+        private int m_currencyBuyLimit = 100000;
         private int m_inventoryCarouselLimit = 12;
         private int m_inventoryCarouselCacheSeconds = 300;
         private string m_defaultEstateTitle = "My OpenSim Estate";
-        private string m_currencyPortalUrl = string.Empty;
         private string m_basePath = "/regionweb";
         private string m_contentDirectory = "RegionWeb";
         private string m_inventoryCarouselFolder = "RegionWeb Carousel";
         private string m_regionInventoryCarouselFolderTemplate = "RegionWeb {RegionName} Carousel";
+        private string m_currencyBuyMode = "grant";
+        private string m_currencyPurchaseStoragePath = "Currency/regionweb-purchases.tsv";
+        private string m_payPalEnvironment = "sandbox";
+        private string m_payPalClientID = string.Empty;
+        private string m_payPalClientSecret = string.Empty;
+        private string m_payPalCurrencyCode = "EUR";
+        private string m_payPalReturnBaseUrl = string.Empty;
+        private string m_payPalOrderStoragePath = "Currency/regionweb-paypal-orders.tsv";
         private string m_absoluteContentDirectory;
+        private string m_absoluteCurrencyPurchaseStoragePath;
+        private string m_absolutePayPalOrderStoragePath;
+        private decimal m_payPalPricePerToken = 0.01m;
+
         public string Name { get { return "RegionWebModule"; } }
 
         public Type ReplaceableInterface { get { return null; } }
+
+        public void Initialise(IConfigSource source)
+        {
+            IConfig config = source.Configs["RegionWeb"];
+            if (config == null)
+                return;
+
+            m_enabled = config.GetBoolean("Enabled", false);
+            m_basePath = CleanPath(config.GetString("PublicPath", "/regionweb"));
+            m_contentDirectory = config.GetString("ContentDirectory", "RegionWeb").Trim();
+            m_autoCreateContent = config.GetBoolean("AutoCreateContent", true);
+            m_showMap = config.GetBoolean("ShowMap", true);
+            m_showStats = config.GetBoolean("ShowStats", true);
+            m_showParcels = config.GetBoolean("ShowParcels", true);
+            m_postsPerPage = Math.Max(1, config.GetInt("PostsPerPage", 5));
+            m_inventoryCarouselEnabled = config.GetBoolean("InventoryCarouselEnabled", true);
+            m_inventoryCarouselFolder = config.GetString("InventoryCarouselFolder", "RegionWeb Carousel").Trim();
+            m_regionInventoryCarouselFolderTemplate = config.GetString("RegionInventoryCarouselFolderTemplate", "RegionWeb {RegionName} Carousel").Trim();
+            m_inventoryCarouselLimit = Math.Max(1, config.GetInt("InventoryCarouselLimit", 12));
+            m_inventoryCarouselCacheSeconds = Math.Max(0, config.GetInt("InventoryCarouselCacheSeconds", 300));
+            m_currencyPortalEnabled = config.GetBoolean("CurrencyPortalEnabled", true);
+            m_currencyBuyEnabled = config.GetBoolean("CurrencyBuyEnabled", true);
+            m_currencyTransferEnabled = config.GetBoolean("CurrencyTransferEnabled", true);
+            m_currencyChallengeMinutes = Math.Max(1, config.GetInt("CurrencyChallengeMinutes", 10));
+            m_currencyChallengeCooldownSeconds = Math.Max(0, config.GetInt("CurrencyChallengeCooldownSeconds", 20));
+            m_currencySessionHours = Math.Max(1, config.GetInt("CurrencySessionHours", 12));
+            m_currencyStatementLimit = Math.Max(1, config.GetInt("CurrencyStatementLimit", 30));
+            m_currencyBuyLimit = Math.Max(1, config.GetInt("CurrencyBuyLimit", 100000));
+            m_currencyBuyMode = NormalizeCurrencyBuyMode(config.GetString("CurrencyBuyMode", "grant"));
+            m_currencyPurchaseStoragePath = config.GetString("CurrencyPurchaseStorage", "Currency/regionweb-purchases.tsv").Trim();
+            m_payPalEnabled = config.GetBoolean("PayPalEnabled", false);
+            m_payPalEnvironment = NormalizePayPalEnvironment(config.GetString("PayPalEnvironment", "sandbox"));
+            m_payPalClientID = config.GetString("PayPalClientID", string.Empty).Trim();
+            m_payPalClientSecret = config.GetString("PayPalClientSecret", string.Empty).Trim();
+            m_payPalCurrencyCode = NormalizePayPalCurrency(config.GetString("PayPalCurrencyCode", "EUR"));
+            m_payPalPricePerToken = ParsePositiveDecimal(config.GetString("PayPalPricePerToken", "0.01"), 0.01m);
+            m_payPalReturnBaseUrl = config.GetString("PayPalReturnBaseUrl", string.Empty).Trim();
+            m_payPalOrderStoragePath = config.GetString("PayPalOrderStorage", "Currency/regionweb-paypal-orders.tsv").Trim();
+            m_defaultEstateTitle = config.GetString("EstateTitle", "My OpenSim Estate").Trim();
+            if (string.IsNullOrEmpty(m_defaultEstateTitle))
+                m_defaultEstateTitle = "My OpenSim Estate";
+
+            if (string.IsNullOrEmpty(m_contentDirectory))
+                m_contentDirectory = "RegionWeb";
+            if (string.IsNullOrEmpty(m_inventoryCarouselFolder))
+                m_inventoryCarouselFolder = "RegionWeb Carousel";
+            if (string.IsNullOrEmpty(m_regionInventoryCarouselFolderTemplate))
+                m_regionInventoryCarouselFolderTemplate = "RegionWeb {RegionName} Carousel";
+            if (string.IsNullOrEmpty(m_currencyPurchaseStoragePath))
+                m_currencyPurchaseStoragePath = "Currency/regionweb-purchases.tsv";
+            if (string.IsNullOrEmpty(m_payPalOrderStoragePath))
+                m_payPalOrderStoragePath = "Currency/regionweb-paypal-orders.tsv";
+
+            m_absoluteContentDirectory = Path.IsPathRooted(m_contentDirectory)
+                ? m_contentDirectory
+                : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, m_contentDirectory);
+            m_absoluteCurrencyPurchaseStoragePath = Path.IsPathRooted(m_currencyPurchaseStoragePath)
+                ? m_currencyPurchaseStoragePath
+                : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, m_currencyPurchaseStoragePath);
+            m_absolutePayPalOrderStoragePath = Path.IsPathRooted(m_payPalOrderStoragePath)
+                ? m_payPalOrderStoragePath
+                : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, m_payPalOrderStoragePath);
+        }
+
+        public void PostInitialise()
+        {
+            if (!m_enabled)
+                return;
+
+            try
+            {
+                Directory.CreateDirectory(m_absoluteContentDirectory);
+                if (m_autoCreateContent)
+                    EnsureEstateContent();
+                LoadCurrencyPurchaseRequests();
+                LoadCurrencyPayPalOrders();
+
+                IHttpServer server = MainServer.GetHttpServer(0);
+                server.AddSimpleStreamHandler(new SimpleStreamHandler(m_basePath, HandleRequest, "RegionWeb"));
+                server.AddSimpleStreamHandler(new SimpleStreamHandler(m_basePath, HandleRequest, "RegionWeb"), true);
+                m_handlerRegistered = true;
+
+                MainConsole.Instance.Commands.AddCommand(
+                    "RegionWeb", false, "regionweb show",
+                    "regionweb show",
+                    "Show public This estate web URLs and content folders for loaded regions.",
+                    HandleShowCommand);
+
+                MainConsole.Instance.Commands.AddCommand(
+                    "RegionWeb", false, "regionweb currency pending",
+                    "regionweb currency pending",
+                    "List pending This estate wallet token purchase requests.",
+                    HandleCurrencyCommand);
+
+                MainConsole.Instance.Commands.AddCommand(
+                    "RegionWeb", false, "regionweb currency approve",
+                    "regionweb currency approve <request-id> [note]",
+                    "Approve a pending This estate wallet token purchase request and credit the avatar.",
+                    HandleCurrencyCommand);
+
+                MainConsole.Instance.Commands.AddCommand(
+                    "RegionWeb", false, "regionweb currency deny",
+                    "regionweb currency deny <request-id> [note]",
+                    "Deny a pending This estate wallet token purchase request.",
+                    HandleCurrencyCommand);
+
+                m_log.InfoFormat("[REGION WEB]: Enabled at {0}; content folder {1}", m_basePath, m_absoluteContentDirectory);
+            }
+            catch (Exception e)
+            {
+                m_enabled = false;
+                m_log.WarnFormat("[REGION WEB]: Could not enable module: {0}", e.Message);
+            }
+        }
+
+        public void AddRegion(Scene scene)
+        {
+            if (!m_enabled)
+                return;
+
+            AddOrUpdateScene(scene);
+        }
+
+        public void RegionLoaded(Scene scene)
+        {
+            if (!m_enabled)
+                return;
+
+            AddOrUpdateScene(scene);
+
+            if (m_autoCreateContent)
+                EnsureRegionContent(scene);
+
+            EnsureInventoryCarouselFolders(scene);
+        }
+
+        public void RemoveRegion(Scene scene)
+        {
+            if (!m_enabled)
+                return;
+
+            lock (m_sync)
+            {
+                m_scenesByID.Remove(scene.RegionInfo.RegionID);
+
+                List<string> deadSlugs = new List<string>();
+                foreach (KeyValuePair<string, UUID> kvp in m_regionIDsBySlug)
+                {
+                    if (kvp.Value == scene.RegionInfo.RegionID)
+                        deadSlugs.Add(kvp.Key);
+                }
+
+                foreach (string slug in deadSlugs)
+                    m_regionIDsBySlug.Remove(slug);
+            }
+        }
+
+        public void Close()
+        {
+            if (m_handlerRegistered)
+            {
+                MainServer.GetHttpServer(0).RemoveSimpleStreamHandler(m_basePath);
+                MainServer.GetHttpServer(0).RemoveSimpleStreamHandler(m_basePath);
+                m_handlerRegistered = false;
+            }
+
+            lock (m_sync)
+            {
+                m_scenesByID.Clear();
+                m_regionIDsBySlug.Clear();
+            }
+
+            lock (m_currencyAuthLock)
+            {
+                m_currencyChallenges.Clear();
+                m_currencySessions.Clear();
+                m_currencyLastChallengeUTCByAgent.Clear();
+            }
+
+            lock (m_currencyPurchaseLock)
+                m_currencyPurchaseRequests.Clear();
+
+            lock (m_currencyPayPalLock)
+                m_currencyPayPalOrders.Clear();
+
+            lock (m_inventoryCarouselCacheLock)
+                m_inventoryCarouselAssetCache.Clear();
+        }
+
+        private void AddOrUpdateScene(Scene scene)
+        {
+            string slug = MakeSlug(scene.RegionInfo.RegionName);
+
+            lock (m_sync)
+            {
+                m_scenesByID[scene.RegionInfo.RegionID] = scene;
+                m_regionIDsBySlug[slug] = scene.RegionInfo.RegionID;
+                m_regionIDsBySlug[scene.RegionInfo.RegionID.ToString()] = scene.RegionInfo.RegionID;
+            }
+        }
+
+        private void HandleShowCommand(string module, string[] cmd)
+        {
+            List<Scene> scenes;
+            lock (m_sync)
+                scenes = new List<Scene>(m_scenesByID.Values);
+
+            if (scenes.Count == 0)
+            {
+                MainConsole.Instance.Output("[REGION WEB]: No loaded regions.");
+                return;
+            }
+
+            foreach (Scene scene in scenes.OrderBy(s => s.RegionInfo.RegionName))
+            {
+                string slug = MakeSlug(scene.RegionInfo.RegionName);
+                MainConsole.Instance.Output(
+                    "[REGION WEB]: {0}: {1}{2}/{3}/  content: {4}",
+                    scene.RegionInfo.RegionName,
+                    scene.RegionInfo.ServerURI,
+                    m_basePath.TrimStart('/'),
+                    slug,
+                    GetRegionDirectory(scene));
+            }
+        }
+
+        private void HandleCurrencyCommand(string module, string[] cmd)
+        {
+            if (cmd == null || cmd.Length < 3)
+            {
+                MainConsole.Instance.Output("[REGION WEB]: Usage: regionweb currency pending|approve|deny");
+                return;
+            }
+
+            string action = cmd[2].ToLowerInvariant();
+            if (action == "pending")
+            {
+                List<CurrencyPurchaseRequest> pending;
+                lock (m_currencyPurchaseLock)
+                    pending = m_currencyPurchaseRequests.Values
+                        .Where(r => (r.Status ?? string.Empty).Equals("pending", StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(r => r.RequestedUTC)
+                        .ToList();
+
+                if (pending.Count == 0)
+                {
+                    MainConsole.Instance.Output("[REGION WEB]: No pending currency purchase requests.");
+                    return;
+                }
+
+                foreach (CurrencyPurchaseRequest request in pending)
+                {
+                    MainConsole.Instance.Output(
+                        "[REGION WEB]: {0}: {1} requested {2} tokens at {3}",
+                        request.RequestID,
+                        request.DisplayName,
+                        request.Amount.ToString(CultureInfo.InvariantCulture),
+                        request.RequestedUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture));
+                }
+                return;
+            }
+
+            if (cmd.Length < 4)
+            {
+                MainConsole.Instance.Output("[REGION WEB]: Usage: regionweb currency {0} <request-id> [note]", action);
+                return;
+            }
+
+            string requestID = cmd[3];
+            string note = cmd.Length > 4 ? string.Join(" ", cmd.Skip(4).ToArray()) : string.Empty;
+            if (action == "approve")
+            {
+                ApproveCurrencyPurchase(requestID, note, out string message);
+                MainConsole.Instance.Output("[REGION WEB]: " + message);
+                return;
+            }
+
+            if (action == "deny")
+            {
+                DenyCurrencyPurchase(requestID, note, out string message);
+                MainConsole.Instance.Output("[REGION WEB]: " + message);
+                return;
+            }
+
+            MainConsole.Instance.Output("[REGION WEB]: Usage: regionweb currency pending|approve|deny");
+        }
+
+        private void HandleRequest(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            try
+            {
+                string path = request.UriPath ?? string.Empty;
+                string relative = path.Length > m_basePath.Length ? path.Substring(m_basePath.Length).Trim('/') : string.Empty;
+
+                if (string.IsNullOrEmpty(relative))
+                {
+                    SendIndex(response);
+                    return;
+                }
+
+                string[] parts = relative.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 0)
+                {
+                    SendIndex(response);
+                    return;
+                }
+
+                if (parts.Length >= 2 && parts[0].Equals("media", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendEstateMedia(string.Join("/", parts.Skip(1).ToArray()), response);
+                    return;
+                }
+
+                if (parts.Length >= 2 && parts[0].Equals("inventory-carousel", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendInventoryCarouselAsset(parts[1], response);
+                    return;
+                }
+
+                if (parts[0].Equals("scripts", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendScriptReference(parts.Length >= 2 ? parts[1] : string.Empty, response);
+                    return;
+                }
+
+                if (parts[0].Equals("currency", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendCurrencyPortal(parts, request, response);
+                    return;
+                }
+
+                if (parts[0].Equals("admin", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendEstateAdminPortal(parts, request, response);
+                    return;
+                }
+
+                if (parts.Length >= 2 && parts[0].Equals("feature", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendFeaturePage(parts[1], response);
+                    return;
+                }
+
+                if (!TryGetScene(parts[0], out Scene scene))
+                {
+                    SendNotFound(response, "Region page not found.");
+                    return;
+                }
+
+                if (parts.Length >= 3 && parts[1].Equals("media", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendMedia(scene, string.Join("/", parts.Skip(2).ToArray()), response);
+                    return;
+                }
+
+                if (parts.Length >= 3 && parts[1].Equals("post", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendPost(scene, parts[2], response);
+                    return;
+                }
+
+                SendRegionPage(scene, response);
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[REGION WEB]: Request failed: {0}", e);
+                response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                response.ContentType = "text/plain";
+                response.RawBuffer = Encoding.UTF8.GetBytes("This estate web request failed.");
+            }
+        }
+
+        private bool TryGetScene(string slugOrID, out Scene scene)
+        {
+            UUID regionID;
+
+            lock (m_sync)
+            {
+                if (!m_regionIDsBySlug.TryGetValue(slugOrID, out regionID))
+                {
+                    scene = null;
+                    return false;
+                }
+
+                return m_scenesByID.TryGetValue(regionID, out scene);
+            }
+        }
+
+        private void SendIndex(IOSHttpResponse response)
+        {
+            List<Scene> scenes;
+            lock (m_sync)
+                scenes = new List<Scene>(m_scenesByID.Values);
+
+            EstatePageContent content = LoadEstateContent();
+            EstateStats stats = GetEstateStats(scenes);
+            string carousel = BuildEstateCarousel(scenes);
+            bool hasCarousel = !string.IsNullOrEmpty(carousel);
+
+            StringBuilder html = BeginPage(content.Title);
+            html.Append("<header class=\"estate-hero");
+            if (!hasCarousel && string.IsNullOrEmpty(content.HeroImage))
+                html.Append(" estate-hero-plain");
+            html.Append("\"");
+            if (!hasCarousel && !string.IsNullOrEmpty(content.HeroImage))
+            {
+                html.Append(" style=\"background-image:linear-gradient(90deg,rgba(0,0,0,.76),rgba(0,0,0,.30)),url('")
+                    .Append(Html(EstateMediaURL(content.HeroImage))).Append("')\"");
+            }
+
+            html.Append(">")
+                .Append(carousel)
+                .Append("<div class=\"wrap\"><p>").Append(Html(content.Tagline)).Append("</p><h1>")
+                .Append(Html(content.Title)).Append("</h1>")
+                .Append(Paragraphs(content.Description))
+                .Append(BuildHeroFeatureStrip())
+                .Append("<div class=\"estate-actions\"><a href=\"#regions\">Explore regions</a><a href=\"#features\">New features</a></div>")
+                .Append("</div></header>");
+
+            html.Append("<main><section class=\"wrap estate-stats\"><div>")
+                .Append("<strong>").Append(stats.RegionCount.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Regions online</span></div><div>")
+                .Append("<strong>").Append(stats.RootAgents.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Avatars online</span></div><div>")
+                .Append("<strong>").Append(stats.Objects.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Objects</span></div><div>")
+                .Append("<strong>").Append(stats.Prims.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Prims</span></div><div>")
+                .Append("<strong>").Append(stats.MeshParts.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Mesh parts</span></div></section>");
+
+            html.Append("<section id=\"features\" class=\"wrap feature-section\"><h2>What this estate adds to OpenSim</h2><div class=\"feature-grid\">");
+            foreach (FeatureItem feature in content.Features)
+            {
+                html.Append("<a class=\"feature-card\" href=\"").Append(Html(FeatureURL(feature))).Append("\"><h3>")
+                    .Append(Html(feature.Title)).Append("</h3><p>")
+                    .Append(Html(feature.Body)).Append("</p><span>Read guide</span></a>");
+            }
+            html.Append("</div></section>");
+
+            html.Append("<section id=\"regions\" class=\"wrap list\"><h2>Regions</h2><div class=\"region-grid\">");
+
+            foreach (Scene scene in scenes.OrderBy(s => s.RegionInfo.RegionName))
+            {
+                RegionPageContent regionContent = LoadContent(scene);
+                string slug = MakeSlug(scene.RegionInfo.RegionName);
+                html.Append("<a class=\"region-card\" href=\"")
+                    .Append(Html(m_basePath)).Append("/").Append(Url(slug)).Append("/\">")
+                    .Append("<img src=\"").Append(Html(GetHeroURL(scene, regionContent))).Append("\" alt=\"\">")
+                    .Append("<strong>").Append(Html(regionContent.Title)).Append("</strong>")
+                    .Append("<span>").Append(Html(regionContent.Tagline)).Append("</span>")
+                    .Append("</a>");
+            }
+
+            html.Append("</div></section></main>");
+            html.Append(EndPage());
+            SendHtml(response, html.ToString());
+        }
+
+        private static string BuildHeroFeatureStrip()
+        {
+            string[] features =
+            {
+                "High quality maps",
+                "Website for your region",
+                "Live weather",
+                "Money system",
+                "AI build helper",
+                "Boats roll and drift",
+                "Attach to many grids",
+                "Second Life scripts"
+            };
+
+            StringBuilder html = new StringBuilder("<div class=\"hero-feature-strip\" aria-label=\"This estate headline features\">");
+            foreach (string feature in features)
+                html.Append("<span>").Append(Html(feature)).Append("</span>");
+            html.Append("</div>");
+            return html.ToString();
+        }
 
         private void SendFeaturePage(string slug, IOSHttpResponse response)
         {
@@ -150,7 +652,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 "Estate", m_basePath + "/",
                 "Feature menu", m_basePath + "/#features",
                 "Script reference", m_basePath + "/scripts",
-                "Avatar wallet", CurrencyPortalUrl());
+                "Avatar wallet", m_basePath + "/currency/");
             html.Append("<p class=\"feature-kicker\">Feature guide</p><h1>")
                 .Append(Html(content.Title)).Append("</h1><p class=\"lead\">")
                 .Append(Html(content.Summary)).Append("</p>");
@@ -197,14 +699,14 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                     "All functions", m_basePath + "/scripts",
                     "Estate", m_basePath + "/",
                     "Feature menu", m_basePath + "/#features",
-                    "Avatar wallet", CurrencyPortalUrl());
+                    "Avatar wallet", m_basePath + "/currency/");
             }
             else
             {
                 AppendPageLinks(html,
                     "Estate", m_basePath + "/",
                     "Feature menu", m_basePath + "/#features",
-                    "Avatar wallet", CurrencyPortalUrl());
+                    "Avatar wallet", m_basePath + "/currency/");
             }
             html.Append("<p class=\"feature-kicker\">Script compatibility</p><h1>LSL Compatibility Center</h1>")
                 .Append("<p class=\"lead\">Expanded Second Life-style LSL functions implemented or corrected in this OpenSim build, with signatures, return values, permissions, compatibility status and exact in-world usage notes.</p>")
@@ -243,6 +745,2400 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
             html.Append("</main>").Append(EndPage());
             SendHtml(response, html.ToString());
+        }
+
+        private void SendCurrencyPortal(string[] parts, IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!m_currencyPortalEnabled)
+            {
+                SendNotFound(response, "This estate currency portal is disabled.");
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            bool isPost = !string.IsNullOrEmpty(request.HttpMethod)
+                && request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase);
+            string action = isPost ? FormValue(form, "action") :
+                (parts.Length >= 2 ? parts[1] : string.Empty);
+            bool adminPath = parts.Length >= 2 && parts[1].Equals("admin", StringComparison.OrdinalIgnoreCase);
+
+            CurrencyWebSession session = GetCurrencySession(request);
+
+            if (!isPost && adminPath && parts.Length >= 3)
+            {
+                if (!IsCurrencyAdminSession(session))
+                {
+                    SendCurrencyAdminLogin(response, "Login before downloading admin exports.", FormValue(form, "avatar"));
+                    return;
+                }
+
+                if (parts[2].Equals("requests.csv", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendCurrencyAdminRequestsCsv(response);
+                    return;
+                }
+
+                if (parts[2].Equals("balances.csv", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendCurrencyAdminBalancesCsv(response);
+                    return;
+                }
+            }
+
+            if (!isPost && action.Equals("statement.csv", StringComparison.OrdinalIgnoreCase))
+            {
+                if (session == null)
+                {
+                    SendCurrencyLogin(response, "Login before downloading the statement.", FormValue(form, "avatar"));
+                    return;
+                }
+
+                SendCurrencyStatementCsv(response, session);
+                return;
+            }
+
+            if (!isPost && action.Equals("paypal-return", StringComparison.OrdinalIgnoreCase))
+            {
+                if (session == null)
+                {
+                    SendCurrencyLogin(response, "Login again, then reopen the PayPal return URL to finish the token purchase.", FormValue(form, "avatar"));
+                    return;
+                }
+
+                HandleCurrencyPayPalReturn(session, form, response);
+                return;
+            }
+
+            if (!isPost && action.Equals("paypal-cancel", StringComparison.OrdinalIgnoreCase))
+            {
+                if (session == null)
+                {
+                    SendCurrencyLogin(response, "PayPal checkout was cancelled. Login again to return to the wallet.", FormValue(form, "avatar"));
+                    return;
+                }
+
+                HandleCurrencyPayPalCancel(session, form, response);
+                return;
+            }
+
+            if (action.Equals("logout", StringComparison.OrdinalIgnoreCase))
+            {
+                if (session != null && !ValidateCurrencyCsrf(session, form, out string csrfMessage))
+                {
+                    if (adminPath && IsCurrencyAdminSession(session))
+                        SendCurrencyAdminDashboard(response, session, csrfMessage, "error");
+                    else
+                        SendCurrencyDashboard(response, session, csrfMessage, "error");
+                    return;
+                }
+
+                string sessionToken = ReadCookie(request, CurrencySessionCookie);
+                if (!string.IsNullOrEmpty(sessionToken))
+                {
+                    lock (m_currencyAuthLock)
+                        m_currencySessions.Remove(sessionToken);
+                }
+
+                ClearCurrencySessionCookie(response);
+                if (adminPath)
+                    SendCurrencyAdminLogin(response, "You have been logged out.", string.Empty);
+                else
+                    SendCurrencyLogin(response, "You have been logged out.", string.Empty);
+                return;
+            }
+
+            if (isPost && action.Equals("request-token", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleCurrencyTokenRequest(form, response);
+                return;
+            }
+
+            if (isPost && action.Equals("login", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleCurrencyLogin(form, response);
+                return;
+            }
+
+            if (isPost && action.Equals("admin-request-token", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleCurrencyAdminTokenRequest(form, response);
+                return;
+            }
+
+            if (isPost && action.Equals("admin-login", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleCurrencyAdminLogin(form, response);
+                return;
+            }
+
+            if (action.Equals("admin", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("admin-", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsCurrencyAdminSession(session))
+                {
+                    SendCurrencyAdminLogin(response, string.Empty, FormValue(form, "avatar"));
+                    return;
+                }
+
+                if (isPost)
+                {
+                    string message;
+                    string severity;
+                    if (ValidateCurrencyCsrf(session, form, out message))
+                        HandleCurrencyAdminAction(session, action, form, out message, out severity);
+                    else
+                        severity = "error";
+                    SendCurrencyAdminDashboard(response, session, message, severity);
+                    return;
+                }
+
+                SendCurrencyAdminDashboard(response, session, string.Empty, string.Empty);
+                return;
+            }
+
+            if (session == null)
+            {
+                SendCurrencyLogin(response, string.Empty, FormValue(form, "avatar"));
+                return;
+            }
+
+            if (isPost && action.Equals("buy", StringComparison.OrdinalIgnoreCase))
+            {
+                string message;
+                string severity;
+                if (ValidateCurrencyCsrf(session, form, out message))
+                {
+                    if (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase))
+                    {
+                        HandleCurrencyPayPalBuy(session, form, response);
+                        return;
+                    }
+
+                    HandleCurrencyBuy(session, form, out message, out severity);
+                }
+                else
+                    severity = "error";
+                SendCurrencyDashboard(response, session, message, severity);
+                return;
+            }
+
+            if (isPost && action.Equals("transfer", StringComparison.OrdinalIgnoreCase))
+            {
+                string message;
+                string severity;
+                if (ValidateCurrencyCsrf(session, form, out message))
+                    HandleCurrencyTransfer(session, form, out message, out severity);
+                else
+                    severity = "error";
+                SendCurrencyDashboard(response, session, message, severity);
+                return;
+            }
+
+            SendCurrencyDashboard(response, session, string.Empty, string.Empty);
+        }
+
+        private void SendEstateAdminPortal(string[] parts, IOSHttpRequest request, IOSHttpResponse response)
+        {
+            Dictionary<string, string> form = ReadForm(request);
+            bool isPost = !string.IsNullOrEmpty(request.HttpMethod)
+                && request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase);
+            string action = isPost ? FormValue(form, "action") :
+                (parts.Length >= 2 ? parts[1] : string.Empty);
+
+            CurrencyWebSession session = GetCurrencySession(request);
+
+            if (action.Equals("logout", StringComparison.OrdinalIgnoreCase))
+            {
+                if (session != null && !ValidateCurrencyCsrf(session, form, out string csrfMessage))
+                {
+                    SendEstateAdminDashboard(response, session, FormValue(form, "file"), csrfMessage, "error");
+                    return;
+                }
+
+                string sessionToken = ReadCookie(request, CurrencySessionCookie);
+                if (!string.IsNullOrEmpty(sessionToken))
+                {
+                    lock (m_currencyAuthLock)
+                        m_currencySessions.Remove(sessionToken);
+                }
+
+                ClearCurrencySessionCookie(response);
+                SendEstateAdminLogin(response, "You have been logged out.", string.Empty);
+                return;
+            }
+
+            if (isPost && action.Equals("admin-request-token", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleEstateAdminTokenRequest(form, response);
+                return;
+            }
+
+            if (isPost && action.Equals("admin-login", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleEstateAdminLogin(form, response);
+                return;
+            }
+
+            if (!IsCurrencyAdminSession(session))
+            {
+                SendEstateAdminLogin(response, string.Empty, FormValue(form, "avatar"));
+                return;
+            }
+
+            string selectedFileID = FormValue(form, "file");
+            string message = string.Empty;
+            string severity = string.Empty;
+
+            if (isPost)
+            {
+                if (ValidateCurrencyCsrf(session, form, out message))
+                {
+                    if (action.Equals("admin-save-raw", StringComparison.OrdinalIgnoreCase))
+                    {
+                        SaveEstateAdminRawConfig(selectedFileID, FormRawValue(form, "content"), out message, out severity);
+                    }
+                    else if (action.Equals("admin-save-setting", StringComparison.OrdinalIgnoreCase))
+                    {
+                        SaveEstateAdminSetting(
+                            selectedFileID,
+                            FormValue(form, "section"),
+                            FormValue(form, "key"),
+                            FormRawValue(form, "value"),
+                            out message,
+                            out severity);
+                    }
+                    else if (action.Equals("admin-reload", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ApplyEstateAdminReload(selectedFileID, out message, out severity);
+                    }
+                }
+                else
+                {
+                    severity = "error";
+                }
+            }
+            else if (string.IsNullOrEmpty(selectedFileID))
+            {
+                selectedFileID = FormValue(form, "file");
+            }
+
+            SendEstateAdminDashboard(response, session, selectedFileID, message, severity);
+        }
+
+        private void HandleEstateAdminTokenRequest(Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string avatarName = FormValue(form, "avatar");
+            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
+            {
+                SendEstateAdminLogin(response, "Avatar not found. Use the full avatar name, for example First Last.", avatarName);
+                return;
+            }
+
+            if (!IsRegionWebSuperAdmin(agentID))
+            {
+                SendEstateAdminLogin(response, "Only an estate owner of a loaded region can access Estate Admin.", displayName);
+                return;
+            }
+
+            if (!TryFindOnlineClient(agentID, out IClientAPI client))
+            {
+                SendEstateAdminLogin(response, "Admin avatar resolved, but it must be online in one of these regions to receive the token inworld.", displayName);
+                return;
+            }
+
+            string token = GenerateCurrencyChallengeToken();
+            DateTime expires = DateTime.UtcNow.AddMinutes(m_currencyChallengeMinutes);
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                if (m_currencyChallengeCooldownSeconds > 0
+                    && m_currencyLastChallengeUTCByAgent.TryGetValue(agentID, out DateTime lastChallengeUTC)
+                    && (DateTime.UtcNow - lastChallengeUTC).TotalSeconds < m_currencyChallengeCooldownSeconds)
+                {
+                    SendEstateAdminLogin(response, "Admin token already sent recently. Wait a few seconds before requesting another one.", displayName);
+                    return;
+                }
+
+                m_currencyChallenges[token] = new CurrencyLoginChallenge
+                {
+                    AgentID = agentID,
+                    DisplayName = displayName,
+                    Token = token,
+                    ExpiresUTC = expires,
+                    IsAdmin = true
+                };
+                m_currencyLastChallengeUTCByAgent[agentID] = DateTime.UtcNow;
+            }
+
+            string message = "This estate estate admin token for " + displayName + ": " + token
+                + " (expires in " + m_currencyChallengeMinutes.ToString(CultureInfo.InvariantCulture) + " minutes).";
+            try
+            {
+                client.SendBlueBoxMessage(UUID.Zero, "RegionWeb", message);
+            }
+            catch
+            {
+                client.SendAgentAlertMessage(message, false);
+            }
+
+            SendEstateAdminLogin(response, "Admin token sent inworld to " + displayName + ". Enter it below to open Estate Admin.", displayName);
+        }
+
+        private void HandleEstateAdminLogin(Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string avatarName = FormValue(form, "avatar");
+            string token = FormValue(form, "token").Trim().ToUpperInvariant();
+            if (string.IsNullOrEmpty(token))
+            {
+                SendEstateAdminLogin(response, "Enter the admin token received inworld.", avatarName);
+                return;
+            }
+
+            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
+            {
+                SendEstateAdminLogin(response, "Avatar not found. Request a new admin token using the exact avatar name.", avatarName);
+                return;
+            }
+
+            if (!IsRegionWebSuperAdmin(agentID))
+            {
+                SendEstateAdminLogin(response, "Only an estate owner of a loaded region can access Estate Admin.", displayName);
+                return;
+            }
+
+            CurrencyLoginChallenge challenge;
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                if (!m_currencyChallenges.TryGetValue(token, out challenge))
+                {
+                    SendEstateAdminLogin(response, "Invalid or expired admin token. Request a new one inworld.", displayName);
+                    return;
+                }
+
+                if (challenge.AgentID != agentID)
+                {
+                    SendEstateAdminLogin(response, "That admin token belongs to a different avatar.", displayName);
+                    return;
+                }
+
+                if (!challenge.IsAdmin)
+                {
+                    SendEstateAdminLogin(response, "That is a wallet token. Request an admin token from this page.", displayName);
+                    return;
+                }
+
+                m_currencyChallenges.Remove(token);
+            }
+
+            string sessionToken = GenerateCurrencySessionToken();
+            CurrencyWebSession session = new CurrencyWebSession
+            {
+                AgentID = agentID,
+                DisplayName = challenge.DisplayName,
+                CsrfToken = GenerateCurrencySessionToken(),
+                ExpiresUTC = DateTime.UtcNow.AddHours(m_currencySessionHours),
+                IsAdmin = true
+            };
+
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                m_currencySessions[sessionToken] = session;
+            }
+
+            SetCurrencySessionCookie(response, sessionToken, session.ExpiresUTC);
+            SendEstateAdminDashboard(response, session, string.Empty, "Estate Admin login successful.", "ok");
+        }
+
+        private void SendEstateAdminLogin(IOSHttpResponse response, string message, string avatarName)
+        {
+            EstatePageContent estate = LoadEstateContent();
+            StringBuilder html = BeginPage("Estate Admin - " + estate.Title);
+            html.Append("<main class=\"wrap wallet-page estate-admin-page\">");
+            AppendPageLinks(html,
+                "Estate", m_basePath + "/",
+                "Avatar wallet", m_basePath + "/currency/");
+            html.Append("<p class=\"feature-kicker\">Estate owner control room</p><h1>Estate Admin</h1>")
+                .Append("<p class=\"lead\">Install, inspect, edit, save and backup This estate configuration from one protected web portal. Request a one-time inworld token before touching simulator files.</p>");
+
+            AppendCurrencyMessage(html, message, string.IsNullOrEmpty(message) || message.StartsWith("Admin token sent", StringComparison.Ordinal) ? "ok" : "error");
+
+            html.Append("<section class=\"wallet-grid\"><article class=\"wallet-card\"><h2>1. Request admin token</h2>")
+                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"admin-request-token\">")
+                .Append("<label>Estate owner avatar<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
+                .Append("<button type=\"submit\">Send admin token inworld</button></form>")
+                .Append("<p class=\"wallet-note\">The avatar must own at least one loaded estate region and must be online.</p></article>");
+
+            html.Append("<article class=\"wallet-card\"><h2>2. Login</h2>")
+                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"admin-login\">")
+                .Append("<label>Estate owner avatar<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
+                .Append("<label>Admin token<input name=\"token\" required autocomplete=\"one-time-code\" placeholder=\"8-character token\"></label>")
+                .Append("<button type=\"submit\">Open Estate Admin</button></form></article></section></main>")
+                .Append(EndPage());
+
+            SendHtml(response, html.ToString());
+        }
+
+        private void SendEstateAdminDashboard(IOSHttpResponse response, CurrencyWebSession session, string selectedFileID, string message, string severity)
+        {
+            EstatePageContent estate = LoadEstateContent();
+            List<EstateAdminConfigFile> files = GetEstateAdminConfigFiles();
+            EstateAdminConfigFile selected = ResolveEstateAdminConfigFile(files, selectedFileID);
+            string configText = string.Empty;
+            string readError = string.Empty;
+            List<EstateAdminIniSection> sections = new List<EstateAdminIniSection>();
+
+            if (selected != null)
+            {
+                try
+                {
+                    configText = File.ReadAllText(selected.AbsolutePath);
+                    sections = ParseEstateAdminIni(configText);
+                }
+                catch (Exception e)
+                {
+                    readError = e.Message;
+                    if (string.IsNullOrEmpty(message))
+                    {
+                        message = "Could not read selected config file: " + e.Message;
+                        severity = "error";
+                    }
+                }
+            }
+
+            StringBuilder html = BeginPage("Estate Admin - " + estate.Title);
+            html.Append("<main class=\"wrap wallet-page estate-admin-page\">");
+            AppendPageLinks(html,
+                "Estate", m_basePath + "/",
+                "Avatar wallet", m_basePath + "/currency/",
+                "Money admin", m_basePath + "/currency/admin");
+            html.Append("<p class=\"feature-kicker\">Estate owner control room</p><h1>Estate Admin</h1>")
+                .Append("<p class=\"lead\">A protected control panel for OpenSim configuration files: browse, edit, backup and apply safe reload operations from the web.</p>");
+
+            AppendCurrencyMessage(html, message, severity);
+
+            html.Append("<section class=\"wallet-summary estate-admin-summary\"><div><span>Admin</span><strong>")
+                .Append(Html(session.DisplayName)).Append("</strong></div><div><span>Config files</span><strong>")
+                .Append(files.Count.ToString(CultureInfo.InvariantCulture)).Append("</strong></div><div><span>Loaded regions</span><strong>")
+                .Append(GetSceneSnapshot().Count.ToString(CultureInfo.InvariantCulture)).Append("</strong></div></section>");
+
+            html.Append("<section class=\"estate-admin-shell\"><aside class=\"estate-admin-files\"><h2>Configuration</h2>");
+            if (files.Count == 0)
+            {
+                html.Append("<p>No editable configuration files were found under the simulator bin folder.</p>");
+            }
+            else
+            {
+                foreach (EstateAdminConfigFile file in files)
+                {
+                    bool current = selected != null && selected.ID.Equals(file.ID, StringComparison.Ordinal);
+                    html.Append("<a class=\"").Append(current ? "is-active" : string.Empty).Append("\" href=\"")
+                        .Append(Html(m_basePath)).Append("/admin?file=").Append(Url(file.ID)).Append("\"><span>")
+                        .Append(Html(file.Label)).Append("</span><small>")
+                        .Append(Html(file.Scope)).Append("</small></a>");
+                }
+            }
+            html.Append("</aside><section class=\"estate-admin-editor\">");
+
+            if (selected == null)
+            {
+                html.Append("<article class=\"wallet-card\"><h2>No file selected</h2><p class=\"wallet-note\">Choose a configuration file from the left to start editing.</p></article>");
+            }
+            else
+            {
+                html.Append("<article class=\"wallet-card estate-admin-file-head\"><div><h2>")
+                    .Append(Html(selected.Label)).Append("</h2><p>")
+                    .Append(Html(selected.RelativePath)).Append("</p></div><span class=\"reload-pill ")
+                    .Append(Html(selected.ReloadClass)).Append("\">")
+                    .Append(Html(selected.ReloadLabel)).Append("</span></article>");
+
+                if (!string.IsNullOrEmpty(readError))
+                {
+                    html.Append("<p class=\"wallet-message error\">").Append(Html(readError)).Append("</p>");
+                }
+                else
+                {
+                    html.Append("<article class=\"wallet-card\"><h2>Raw editor</h2>")
+                        .Append("<p class=\"wallet-note\">Every save creates a timestamped backup before writing. Use raw edit for complete control over comments, sections and values.</p>")
+                        .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
+                        .Append("<input type=\"hidden\" name=\"action\" value=\"admin-save-raw\">")
+                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                        .Append("<input type=\"hidden\" name=\"file\" value=\"").Append(Html(selected.ID)).Append("\">")
+                        .Append("<textarea class=\"config-textarea\" name=\"content\" spellcheck=\"false\">")
+                        .Append(Html(configText)).Append("</textarea>")
+                        .Append("<button type=\"submit\">Save with backup</button></form>")
+                        .Append("<form class=\"inline-admin-form\" method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
+                        .Append("<input type=\"hidden\" name=\"action\" value=\"admin-reload\">")
+                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                        .Append("<input type=\"hidden\" name=\"file\" value=\"").Append(Html(selected.ID)).Append("\">")
+                        .Append("<button type=\"submit\">Reload what can be reloaded now</button></form>")
+                        .Append("</article>");
+
+                    AppendEstateAdminStructuredEditor(html, session, selected, sections);
+                }
+            }
+
+            html.Append("</section></section>")
+                .Append("<form class=\"wallet-logout\" method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"logout\">")
+                .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                .Append("<button type=\"submit\">Logout</button></form>")
+                .Append("</main>").Append(EndPage());
+
+            SendHtml(response, html.ToString());
+        }
+
+        private void AppendEstateAdminStructuredEditor(StringBuilder html, CurrencyWebSession session, EstateAdminConfigFile file, List<EstateAdminIniSection> sections)
+        {
+            html.Append("<article class=\"wallet-card estate-admin-structured\"><h2>Structured editor</h2>")
+                .Append("<p class=\"wallet-note\">Edit one setting at a time when you want a safer, focused change. Startup-only options are marked so you know when a restart is still needed.</p>");
+
+            if (sections.Count == 0)
+            {
+                html.Append("<p class=\"wallet-note\">No INI-style section/key entries were detected in this file.</p></article>");
+                return;
+            }
+
+            foreach (EstateAdminIniSection section in sections)
+            {
+                html.Append("<details class=\"config-section\"><summary>")
+                    .Append(Html(string.IsNullOrEmpty(section.Name) ? "Global" : section.Name))
+                    .Append(" <span>")
+                    .Append(section.Entries.Count.ToString(CultureInfo.InvariantCulture))
+                    .Append("</span></summary><div class=\"config-table\">");
+
+                foreach (EstateAdminIniEntry entry in section.Entries)
+                {
+                    string reloadClass;
+                    string reloadLabel = ClassifyEstateAdminSetting(file, section.Name, entry.Key, out reloadClass);
+                    html.Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
+                        .Append("<input type=\"hidden\" name=\"action\" value=\"admin-save-setting\">")
+                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                        .Append("<input type=\"hidden\" name=\"file\" value=\"").Append(Html(file.ID)).Append("\">")
+                        .Append("<input type=\"hidden\" name=\"section\" value=\"").Append(Html(section.Name)).Append("\">")
+                        .Append("<input type=\"hidden\" name=\"key\" value=\"").Append(Html(entry.Key)).Append("\">")
+                        .Append("<label><span>").Append(Html(entry.Key)).Append("</span><input name=\"value\" value=\"")
+                        .Append(Html(entry.Value)).Append("\"></label><em class=\"reload-pill ")
+                        .Append(Html(reloadClass)).Append("\">").Append(Html(reloadLabel)).Append("</em>")
+                        .Append("<button type=\"submit\">Save</button></form>");
+                }
+
+                html.Append("</div></details>");
+            }
+
+            html.Append("</article>");
+        }
+
+        private void HandleCurrencyTokenRequest(Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string avatarName = FormValue(form, "avatar");
+            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
+            {
+                SendCurrencyLogin(response, "Avatar not found. Use the full avatar name, for example First Last.", avatarName);
+                return;
+            }
+
+            if (!TryFindOnlineClient(agentID, out IClientAPI client))
+            {
+                SendCurrencyLogin(response, "Avatar resolved, but it must be online in one of these regions to receive the token inworld.", displayName);
+                return;
+            }
+
+            string token = GenerateCurrencyChallengeToken();
+            DateTime expires = DateTime.UtcNow.AddMinutes(m_currencyChallengeMinutes);
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                if (m_currencyChallengeCooldownSeconds > 0
+                    && m_currencyLastChallengeUTCByAgent.TryGetValue(agentID, out DateTime lastChallengeUTC)
+                    && (DateTime.UtcNow - lastChallengeUTC).TotalSeconds < m_currencyChallengeCooldownSeconds)
+                {
+                    SendCurrencyLogin(response, "Token already sent recently. Wait a few seconds before requesting another one.", displayName);
+                    return;
+                }
+
+                m_currencyChallenges[token] = new CurrencyLoginChallenge
+                {
+                    AgentID = agentID,
+                    DisplayName = displayName,
+                    Token = token,
+                    ExpiresUTC = expires
+                };
+                m_currencyLastChallengeUTCByAgent[agentID] = DateTime.UtcNow;
+            }
+
+            string message = "This estate wallet login token for " + displayName + ": " + token
+                + " (expires in " + m_currencyChallengeMinutes.ToString(CultureInfo.InvariantCulture) + " minutes).";
+            try
+            {
+                client.SendBlueBoxMessage(UUID.Zero, "RegionWeb", message);
+            }
+            catch
+            {
+                client.SendAgentAlertMessage(message, false);
+            }
+
+            SendCurrencyLogin(response, "Token sent inworld to " + displayName + ". Enter it below to open the wallet.", displayName);
+        }
+
+        private void HandleCurrencyLogin(Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string avatarName = FormValue(form, "avatar");
+            string token = FormValue(form, "token").Trim().ToUpperInvariant();
+            if (string.IsNullOrEmpty(token))
+            {
+                SendCurrencyLogin(response, "Enter the token received inworld.", avatarName);
+                return;
+            }
+
+            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
+            {
+                SendCurrencyLogin(response, "Avatar not found. Request a new token using the exact avatar name.", avatarName);
+                return;
+            }
+
+            CurrencyLoginChallenge challenge;
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                if (!m_currencyChallenges.TryGetValue(token, out challenge))
+                {
+                    SendCurrencyLogin(response, "Invalid or expired token. Request a new one inworld.", displayName);
+                    return;
+                }
+
+                if (challenge.AgentID != agentID)
+                {
+                    SendCurrencyLogin(response, "That token belongs to a different avatar.", displayName);
+                    return;
+                }
+
+                if (challenge.IsAdmin)
+                {
+                    SendCurrencyLogin(response, "That is an admin token. Use the money admin login page.", displayName);
+                    return;
+                }
+
+                m_currencyChallenges.Remove(token);
+            }
+
+            string sessionToken = GenerateCurrencySessionToken();
+            CurrencyWebSession session = new CurrencyWebSession
+            {
+                AgentID = agentID,
+                DisplayName = challenge.DisplayName,
+                CsrfToken = GenerateCurrencySessionToken(),
+                ExpiresUTC = DateTime.UtcNow.AddHours(m_currencySessionHours)
+            };
+
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                m_currencySessions[sessionToken] = session;
+            }
+
+            SetCurrencySessionCookie(response, sessionToken, session.ExpiresUTC);
+            SendCurrencyDashboard(response, session, "Login successful.", "ok");
+        }
+
+        private void HandleCurrencyAdminTokenRequest(Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string avatarName = FormValue(form, "avatar");
+            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
+            {
+                SendCurrencyAdminLogin(response, "Avatar not found. Use the full avatar name, for example First Last.", avatarName);
+                return;
+            }
+
+            if (!IsRegionWebSuperAdmin(agentID))
+            {
+                SendCurrencyAdminLogin(response, "Only an estate owner of a loaded region can access the This estate money admin.", displayName);
+                return;
+            }
+
+            if (!TryFindOnlineClient(agentID, out IClientAPI client))
+            {
+                SendCurrencyAdminLogin(response, "Admin avatar resolved, but it must be online in one of these regions to receive the token inworld.", displayName);
+                return;
+            }
+
+            string token = GenerateCurrencyChallengeToken();
+            DateTime expires = DateTime.UtcNow.AddMinutes(m_currencyChallengeMinutes);
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                if (m_currencyChallengeCooldownSeconds > 0
+                    && m_currencyLastChallengeUTCByAgent.TryGetValue(agentID, out DateTime lastChallengeUTC)
+                    && (DateTime.UtcNow - lastChallengeUTC).TotalSeconds < m_currencyChallengeCooldownSeconds)
+                {
+                    SendCurrencyAdminLogin(response, "Admin token already sent recently. Wait a few seconds before requesting another one.", displayName);
+                    return;
+                }
+
+                m_currencyChallenges[token] = new CurrencyLoginChallenge
+                {
+                    AgentID = agentID,
+                    DisplayName = displayName,
+                    Token = token,
+                    ExpiresUTC = expires,
+                    IsAdmin = true
+                };
+                m_currencyLastChallengeUTCByAgent[agentID] = DateTime.UtcNow;
+            }
+
+            string message = "This estate money admin token for " + displayName + ": " + token
+                + " (expires in " + m_currencyChallengeMinutes.ToString(CultureInfo.InvariantCulture) + " minutes).";
+            try
+            {
+                client.SendBlueBoxMessage(UUID.Zero, "RegionWeb", message);
+            }
+            catch
+            {
+                client.SendAgentAlertMessage(message, false);
+            }
+
+            SendCurrencyAdminLogin(response, "Admin token sent inworld to " + displayName + ". Enter it below to open money admin.", displayName);
+        }
+
+        private void HandleCurrencyAdminLogin(Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string avatarName = FormValue(form, "avatar");
+            string token = FormValue(form, "token").Trim().ToUpperInvariant();
+            if (string.IsNullOrEmpty(token))
+            {
+                SendCurrencyAdminLogin(response, "Enter the admin token received inworld.", avatarName);
+                return;
+            }
+
+            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
+            {
+                SendCurrencyAdminLogin(response, "Avatar not found. Request a new admin token using the exact avatar name.", avatarName);
+                return;
+            }
+
+            if (!IsRegionWebSuperAdmin(agentID))
+            {
+                SendCurrencyAdminLogin(response, "Only an estate owner of a loaded region can access the This estate money admin.", displayName);
+                return;
+            }
+
+            CurrencyLoginChallenge challenge;
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                if (!m_currencyChallenges.TryGetValue(token, out challenge))
+                {
+                    SendCurrencyAdminLogin(response, "Invalid or expired admin token. Request a new one inworld.", displayName);
+                    return;
+                }
+
+                if (challenge.AgentID != agentID)
+                {
+                    SendCurrencyAdminLogin(response, "That admin token belongs to a different avatar.", displayName);
+                    return;
+                }
+
+                if (!challenge.IsAdmin)
+                {
+                    SendCurrencyAdminLogin(response, "That is a wallet token. Request an admin token from this page.", displayName);
+                    return;
+                }
+
+                m_currencyChallenges.Remove(token);
+            }
+
+            string sessionToken = GenerateCurrencySessionToken();
+            CurrencyWebSession session = new CurrencyWebSession
+            {
+                AgentID = agentID,
+                DisplayName = challenge.DisplayName,
+                CsrfToken = GenerateCurrencySessionToken(),
+                ExpiresUTC = DateTime.UtcNow.AddHours(m_currencySessionHours),
+                IsAdmin = true
+            };
+
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                m_currencySessions[sessionToken] = session;
+            }
+
+            SetCurrencySessionCookie(response, sessionToken, session.ExpiresUTC);
+            SendCurrencyAdminDashboard(response, session, "Admin login successful.", "ok");
+        }
+
+        private void HandleCurrencyAdminAction(CurrencyWebSession session, string action, Dictionary<string, string> form, out string message, out string severity)
+        {
+            severity = "error";
+            if (!IsCurrencyAdminSession(session))
+            {
+                message = "Admin session expired.";
+                return;
+            }
+
+            if (action.Equals("admin-approve", StringComparison.OrdinalIgnoreCase))
+            {
+                if (ApproveCurrencyPurchase(FormValue(form, "request"), FormValue(form, "note"), out message))
+                    severity = "ok";
+                return;
+            }
+
+            if (action.Equals("admin-deny", StringComparison.OrdinalIgnoreCase))
+            {
+                if (DenyCurrencyPurchase(FormValue(form, "request"), FormValue(form, "note"), out message))
+                    severity = "ok";
+                return;
+            }
+
+            IMoneyModule money = GetCurrencyMoneyModule();
+            if (money == null)
+            {
+                message = "Currency module is not active.";
+                return;
+            }
+
+            if (action.Equals("admin-set-balance", StringComparison.OrdinalIgnoreCase)
+                || action.Equals("admin-credit", StringComparison.OrdinalIgnoreCase)
+                || action.Equals("admin-debit", StringComparison.OrdinalIgnoreCase))
+            {
+                string avatar = FormValue(form, "avatar");
+                if (!TryResolveAvatar(avatar, out UUID targetID, out string targetName))
+                {
+                    message = "Avatar not found. Use the full avatar name or UUID.";
+                    return;
+                }
+
+                int amount;
+                if (action.Equals("admin-set-balance", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!TryParseWholeAmount(FormValue(form, "amount"), out amount, out message))
+                        return;
+                }
+                else if (!TryParsePositiveAmount(FormValue(form, "amount"), Int32.MaxValue, out amount, out message))
+                {
+                    return;
+                }
+
+                string note = FormValue(form, "note");
+                bool result = false;
+                string reason;
+                if (action.Equals("admin-set-balance", StringComparison.OrdinalIgnoreCase))
+                {
+                    result = InvokeWebSetBalance(money, targetID, amount, note, out reason);
+                    message = result ? "Set " + targetName + " balance to " + amount.ToString(CultureInfo.InvariantCulture) + "." : reason;
+                }
+                else if (action.Equals("admin-credit", StringComparison.OrdinalIgnoreCase))
+                {
+                    result = InvokeWebCreditCurrency(money, targetID, amount, note, out reason);
+                    message = result ? "Credited " + amount.ToString(CultureInfo.InvariantCulture) + " tokens to " + targetName + "." : reason;
+                }
+                else
+                {
+                    result = InvokeWebDebitCurrency(money, targetID, amount, note, out reason);
+                    message = result ? "Debited " + amount.ToString(CultureInfo.InvariantCulture) + " tokens from " + targetName + "." : reason;
+                }
+
+                if (result)
+                    severity = "ok";
+                else if (string.IsNullOrWhiteSpace(message))
+                    message = "Money admin action failed.";
+                return;
+            }
+
+            if (action.Equals("admin-transfer", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryResolveAvatar(FormValue(form, "from"), out UUID fromID, out string fromName)
+                    || !TryResolveAvatar(FormValue(form, "to"), out UUID toID, out string toName))
+                {
+                    message = "Both source and destination avatars must resolve to known accounts.";
+                    return;
+                }
+
+                if (!TryParsePositiveAmount(FormValue(form, "amount"), 0, out int amount, out message))
+                    return;
+
+                string note = FormValue(form, "note");
+                string description = string.IsNullOrWhiteSpace(note) ? "This estate admin transfer" : note;
+                if (InvokeWebTransfer(money, fromID, toID, amount, description, out string reason))
+                {
+                    severity = "ok";
+                    message = "Transferred " + amount.ToString(CultureInfo.InvariantCulture) + " tokens from " + fromName + " to " + toName + ".";
+                }
+                else
+                {
+                    message = string.IsNullOrWhiteSpace(reason) ? "Admin transfer failed." : reason;
+                }
+                return;
+            }
+
+            message = "Unknown admin action.";
+        }
+
+        private void HandleCurrencyBuy(CurrencyWebSession session, Dictionary<string, string> form, out string message, out string severity)
+        {
+            severity = "error";
+            if (!IsCurrencyBuyAvailable())
+            {
+                message = "Token purchases are disabled on this This estate portal.";
+                return;
+            }
+
+            if (!TryParsePositiveAmount(FormValue(form, "amount"), m_currencyBuyLimit, out int amount, out message))
+                return;
+
+            if (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase))
+            {
+                message = "PayPal purchases must start from the wallet checkout button.";
+                return;
+            }
+
+            if (m_currencyBuyMode.Equals("request", StringComparison.OrdinalIgnoreCase))
+            {
+                CurrencyPurchaseRequest request = CreateCurrencyPurchaseRequest(session, amount);
+                severity = "ok";
+                message = "Purchase request " + request.RequestID + " created for " + amount.ToString(CultureInfo.InvariantCulture)
+                    + " tokens. Estate staff can approve it from the console.";
+                NotifyCurrencyAvatar(session.AgentID, "This estate wallet purchase request " + request.RequestID
+                    + " created for " + amount.ToString(CultureInfo.InvariantCulture) + " tokens.");
+                return;
+            }
+
+            IMoneyModule money = GetCurrencyMoneyModule();
+            if (money == null)
+            {
+                message = "Currency module is not active.";
+                return;
+            }
+
+            if (InvokeWebBuyCurrency(money, session.AgentID, amount, out string reason))
+            {
+                severity = "ok";
+                message = "Purchased " + amount.ToString(CultureInfo.InvariantCulture) + " tokens.";
+            }
+            else
+            {
+                message = string.IsNullOrWhiteSpace(reason) ? "Token purchase failed." : reason;
+            }
+        }
+
+        private void HandleCurrencyPayPalBuy(CurrencyWebSession session, Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string message;
+            if (!m_currencyBuyEnabled || m_currencyBuyMode.Equals("disabled", StringComparison.OrdinalIgnoreCase))
+            {
+                SendCurrencyDashboard(response, session, "Token purchases are disabled on this This estate portal.", "error");
+                return;
+            }
+
+            if (!TryParsePositiveAmount(FormValue(form, "amount"), m_currencyBuyLimit, out int amount, out message))
+            {
+                SendCurrencyDashboard(response, session, message, "error");
+                return;
+            }
+
+            if (!IsPayPalConfigured(out string configReason))
+            {
+                SendCurrencyDashboard(response, session, configReason, "error");
+                return;
+            }
+
+            decimal fiatAmount = Decimal.Round(m_payPalPricePerToken * amount, 2, MidpointRounding.AwayFromZero);
+            if (fiatAmount <= 0m)
+            {
+                SendCurrencyDashboard(response, session, "PayPalPricePerToken produces a zero checkout amount.", "error");
+                return;
+            }
+
+            CurrencyPayPalOrder order = new CurrencyPayPalOrder
+            {
+                LocalID = GenerateCurrencyPayPalOrderID(),
+                AgentID = session.AgentID,
+                DisplayName = session.DisplayName,
+                TokenAmount = amount,
+                FiatAmount = fiatAmount,
+                CurrencyCode = m_payPalCurrencyCode,
+                Status = "creating",
+                CreatedUTC = DateTime.UtcNow,
+                UpdatedUTC = DateTime.UtcNow,
+                Note = string.Empty
+            };
+
+            if (!CreatePayPalOrder(order, out string approvalUrl, out string reason))
+            {
+                order.Status = "failed";
+                order.UpdatedUTC = DateTime.UtcNow;
+                order.Note = reason;
+                StoreCurrencyPayPalOrder(order);
+                SendCurrencyDashboard(response, session, string.IsNullOrWhiteSpace(reason) ? "PayPal order creation failed." : reason, "error");
+                return;
+            }
+
+            order.Status = "created";
+            order.UpdatedUTC = DateTime.UtcNow;
+            StoreCurrencyPayPalOrder(order);
+            NotifyCurrencyAvatar(session.AgentID, "This estate PayPal checkout " + order.LocalID + " created for "
+                + amount.ToString(CultureInfo.InvariantCulture) + " tokens.");
+            response.Redirect(approvalUrl, HttpStatusCode.Redirect);
+        }
+
+        private void HandleCurrencyPayPalReturn(CurrencyWebSession session, Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string orderID = FormValue(form, "token");
+            string localID = FormValue(form, "local");
+            CurrencyPayPalOrder order = FindCurrencyPayPalOrder(orderID, localID);
+            if (order == null)
+            {
+                SendCurrencyDashboard(response, session, "PayPal order not found in This estate storage.", "error");
+                return;
+            }
+
+            if (order.AgentID != session.AgentID)
+            {
+                SendCurrencyDashboard(response, session, "PayPal order belongs to a different avatar session.", "error");
+                return;
+            }
+
+            if ((order.Status ?? string.Empty).Equals("completed", StringComparison.OrdinalIgnoreCase))
+            {
+                SendCurrencyDashboard(response, session, "PayPal order " + order.LocalID + " was already completed.", "ok");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(order.PayPalOrderID))
+            {
+                SendCurrencyDashboard(response, session, "PayPal order has no remote order id.", "error");
+                return;
+            }
+
+            bool alreadyCaptured = (order.Status ?? string.Empty).Equals("capture_pending_credit", StringComparison.OrdinalIgnoreCase);
+            if (!alreadyCaptured)
+            {
+                MarkCurrencyPayPalOrder(order.LocalID, "capturing", "Capture requested from PayPal return.");
+                if (!CapturePayPalOrder(order.PayPalOrderID, out string captureReason))
+                {
+                    MarkCurrencyPayPalOrder(order.LocalID, "capture_failed", captureReason);
+                    SendCurrencyDashboard(response, session, string.IsNullOrWhiteSpace(captureReason) ? "PayPal capture failed." : captureReason, "error");
+                    return;
+                }
+            }
+
+            IMoneyModule money = GetCurrencyMoneyModule();
+            if (money == null)
+            {
+                MarkCurrencyPayPalOrder(order.LocalID, "capture_pending_credit", "PayPal captured, but currency module is not active.");
+                SendCurrencyDashboard(response, session, "PayPal payment captured, but the currency module is not active. Admin can credit from the order log.", "error");
+                return;
+            }
+
+            if (!InvokeWebBuyCurrency(money, order.AgentID, order.TokenAmount, out string creditReason))
+            {
+                string failure = string.IsNullOrWhiteSpace(creditReason) ? "Currency credit failed after PayPal capture." : creditReason;
+                MarkCurrencyPayPalOrder(order.LocalID, "capture_pending_credit", failure);
+                SendCurrencyDashboard(response, session, failure, "error");
+                return;
+            }
+
+            MarkCurrencyPayPalOrder(order.LocalID, "completed", "PayPal captured and tokens credited.");
+            NotifyCurrencyAvatar(session.AgentID, "This estate PayPal checkout " + order.LocalID + " completed: "
+                + order.TokenAmount.ToString(CultureInfo.InvariantCulture) + " tokens credited.");
+            SendCurrencyDashboard(response, session, "PayPal payment captured. Credited "
+                + order.TokenAmount.ToString(CultureInfo.InvariantCulture) + " tokens.", "ok");
+        }
+
+        private void HandleCurrencyPayPalCancel(CurrencyWebSession session, Dictionary<string, string> form, IOSHttpResponse response)
+        {
+            string orderID = FormValue(form, "token");
+            string localID = FormValue(form, "local");
+            CurrencyPayPalOrder order = FindCurrencyPayPalOrder(orderID, localID);
+            if (order != null && order.AgentID == session.AgentID
+                && !(order.Status ?? string.Empty).Equals("completed", StringComparison.OrdinalIgnoreCase))
+            {
+                MarkCurrencyPayPalOrder(order.LocalID, "cancelled", "User cancelled PayPal approval.");
+            }
+
+            SendCurrencyDashboard(response, session, "PayPal checkout cancelled.", "ok");
+        }
+
+        private void HandleCurrencyTransfer(CurrencyWebSession session, Dictionary<string, string> form, out string message, out string severity)
+        {
+            severity = "error";
+            if (!m_currencyTransferEnabled)
+            {
+                message = "Wallet transfers are disabled on this This estate portal.";
+                return;
+            }
+
+            if (!TryParsePositiveAmount(FormValue(form, "amount"), 0, out int amount, out message))
+                return;
+
+            string recipient = FormValue(form, "recipient");
+            if (!TryResolveAvatar(recipient, out UUID recipientID, out string recipientName))
+            {
+                message = "Recipient avatar not found. Use the full avatar name.";
+                return;
+            }
+
+            string description = FormValue(form, "description");
+            if (description.Length > 160)
+                description = description.Substring(0, 160);
+
+            IMoneyModule money = GetCurrencyMoneyModule();
+            if (money == null)
+            {
+                message = "Currency module is not active.";
+                return;
+            }
+
+            if (InvokeWebTransfer(money, session.AgentID, recipientID, amount, description, out string reason))
+            {
+                severity = "ok";
+                message = "Transferred " + amount.ToString(CultureInfo.InvariantCulture) + " tokens to " + recipientName + ".";
+            }
+            else
+            {
+                message = string.IsNullOrWhiteSpace(reason) ? "Transfer failed." : reason;
+            }
+        }
+
+        private void AppendCurrencyGuideCallout(StringBuilder html)
+        {
+            html.Append("<section class=\"wallet-guide\"><div><span>Currency guide</span><h2>")
+                .Append(Html(CurrencyFeatureTitle)).Append("</h2><p>")
+                .Append(Html(CurrencyFeatureBody)).Append("</p></div><a href=\"")
+                .Append(Html(m_basePath)).Append("/feature/")
+                .Append(Url(MakeSlug(CurrencyFeatureTitle)))
+                .Append("/\">Read guide</a></section>");
+        }
+
+        private void AppendMoneyAdminCallout(StringBuilder html)
+        {
+            html.Append("<section class=\"wallet-guide wallet-admin-callout\"><div><span>Estate owner tools</span><h2>Money Admin</h2>")
+                .Append("<p>Manage pending token requests, avatar balances, exports and local currency operations for the loaded This estate estate.</p></div><a href=\"")
+                .Append(Html(m_basePath)).Append("/currency/admin\">Open money admin</a></section>");
+        }
+
+        private void SendCurrencyLogin(IOSHttpResponse response, string message, string avatarName)
+        {
+            EstatePageContent estate = LoadEstateContent();
+            StringBuilder html = BeginPage("Avatar Wallet - " + estate.Title);
+            html.Append("<main class=\"wrap wallet-page\">");
+            AppendPageLinks(html,
+                "Estate", m_basePath + "/");
+            html.Append("<p class=\"feature-kicker\">Reserved area</p><h1>Avatar Wallet</h1>")
+                .Append("<p class=\"lead\">Request a one-time token inworld, then use it here to view your balance, statement, token purchases and avatar transfers.</p>");
+            AppendCurrencyGuideCallout(html);
+
+            AppendCurrencyMessage(html, message, string.IsNullOrEmpty(message) || message.StartsWith("Token sent", StringComparison.Ordinal) || message.StartsWith("You have", StringComparison.Ordinal) ? "ok" : "error");
+
+            html.Append("<section class=\"wallet-grid\"><article class=\"wallet-card\"><h2>1. Request inworld token</h2>")
+                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"request-token\">")
+                .Append("<label>Avatar name<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
+                .Append("<button type=\"submit\">Send token inworld</button></form>")
+                .Append("<p class=\"wallet-note\">The avatar must be online in one of the loaded regions so This estate can deliver the token through the viewer.</p></article>");
+
+            html.Append("<article class=\"wallet-card\"><h2>2. Login</h2>")
+                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"login\">")
+                .Append("<label>Avatar name<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
+                .Append("<label>Token<input name=\"token\" required autocomplete=\"one-time-code\" placeholder=\"8-character token\"></label>")
+                .Append("<button type=\"submit\">Open wallet</button></form></article></section></main>")
+                .Append(EndPage());
+
+            SendHtml(response, html.ToString());
+        }
+
+        private void SendCurrencyAdminLogin(IOSHttpResponse response, string message, string avatarName)
+        {
+            EstatePageContent estate = LoadEstateContent();
+            StringBuilder html = BeginPage("Money Admin - " + estate.Title);
+            html.Append("<main class=\"wrap wallet-page\">");
+            AppendPageLinks(html,
+                "Avatar wallet", m_basePath + "/currency/",
+                "Estate", m_basePath + "/");
+            html.Append("<p class=\"feature-kicker\">Superadmin area</p><h1>Money Admin</h1>")
+                .Append("<p class=\"lead\">Estate owners request a one-time inworld token before managing wallet requests and avatar balances.</p>");
+
+            AppendCurrencyMessage(html, message, string.IsNullOrEmpty(message) || message.StartsWith("Admin token sent", StringComparison.Ordinal) ? "ok" : "error");
+
+            html.Append("<section class=\"wallet-grid\"><article class=\"wallet-card\"><h2>1. Request admin token</h2>")
+                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"admin-request-token\">")
+                .Append("<label>Estate owner avatar<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
+                .Append("<button type=\"submit\">Send admin token inworld</button></form>")
+                .Append("<p class=\"wallet-note\">The avatar must be the estate owner of at least one loaded region and must be online.</p></article>");
+
+            html.Append("<article class=\"wallet-card\"><h2>2. Login</h2>")
+                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"admin-login\">")
+                .Append("<label>Estate owner avatar<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
+                .Append("<label>Admin token<input name=\"token\" required autocomplete=\"one-time-code\" placeholder=\"8-character token\"></label>")
+                .Append("<button type=\"submit\">Open money admin</button></form></article></section></main>")
+                .Append(EndPage());
+
+            SendHtml(response, html.ToString());
+        }
+
+        private void SendCurrencyDashboard(IOSHttpResponse response, CurrencyWebSession session, string message, string severity)
+        {
+            EstatePageContent estate = LoadEstateContent();
+            IMoneyModule money = GetCurrencyMoneyModule();
+            int balance = 0;
+            bool hasBalance = false;
+            if (money != null)
+            {
+                try
+                {
+                    balance = money.GetBalance(session.AgentID);
+                    hasBalance = true;
+                }
+                catch
+                {
+                    hasBalance = false;
+                }
+            }
+
+            StringBuilder html = BeginPage("Avatar Wallet - " + estate.Title);
+            html.Append("<main class=\"wrap wallet-page\">");
+            AppendPageLinks(html,
+                "Estate", m_basePath + "/");
+            html.Append("<p class=\"feature-kicker\">Reserved area</p><h1>Avatar Wallet</h1>");
+            AppendCurrencyGuideCallout(html);
+
+            AppendCurrencyMessage(html, message, severity);
+
+            html.Append("<section class=\"wallet-summary\"><div><span>Avatar</span><strong>")
+                .Append(Html(session.DisplayName)).Append("</strong></div><div><span>Balance</span><strong>")
+                .Append(hasBalance ? balance.ToString(CultureInfo.InvariantCulture) : "Unavailable")
+                .Append("</strong></div><div><span>Session expires</span><strong>")
+                .Append(Html(session.ExpiresUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture)))
+                .Append("</strong></div></section>");
+
+            if (IsRegionWebSuperAdmin(session.AgentID))
+                AppendMoneyAdminCallout(html);
+
+            if (money == null)
+            {
+                html.Append("<p class=\"wallet-message error\">Currency module is not active. Enable BetaGridLikeMoneyModule in [Economy].</p>");
+            }
+            else
+            {
+                html.Append("<section class=\"wallet-grid\"><article class=\"wallet-card\"><h2>Buy tokens</h2>");
+                if (IsCurrencyBuyAvailable())
+                {
+                    html.Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/\">")
+                        .Append("<input type=\"hidden\" name=\"action\" value=\"buy\">")
+                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                        .Append("<label>Amount<input name=\"amount\" type=\"number\" min=\"1\" max=\"")
+                        .Append(m_currencyBuyLimit.ToString(CultureInfo.InvariantCulture)).Append("\" required></label>")
+                        .Append("<button type=\"submit\">")
+                        .Append(m_currencyBuyMode.Equals("request", StringComparison.OrdinalIgnoreCase) ? "Request tokens"
+                            : (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase) ? "Pay with PayPal" : "Buy tokens"))
+                        .Append("</button></form>");
+                    if (m_currencyBuyMode.Equals("request", StringComparison.OrdinalIgnoreCase))
+                        html.Append("<p class=\"wallet-note\">This creates a pending purchase request for estate staff approval from the console.</p>");
+                    else if (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase))
+                        html.Append("<p class=\"wallet-note\">Checkout uses PayPal, then credits the local simulator ledger after payment capture. Price: ")
+                            .Append(Html(m_payPalPricePerToken.ToString("0.00##", CultureInfo.InvariantCulture))).Append(" ")
+                            .Append(Html(m_payPalCurrencyCode)).Append(" per token.</p>");
+                    else
+                        html.Append("<p class=\"wallet-note\">This credits the local simulator ledger and updates the viewer-visible balance.</p>");
+                }
+                else
+                {
+                    if (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase) && !IsPayPalConfigured(out string payPalReason))
+                        html.Append("<p class=\"wallet-note\">").Append(Html(payPalReason)).Append("</p>");
+                    else
+                        html.Append("<p class=\"wallet-note\">Token purchases are disabled on this portal.</p>");
+                }
+                html.Append("</article>");
+
+                html.Append("<article class=\"wallet-card\"><h2>Transfer</h2>");
+                if (m_currencyTransferEnabled)
+                {
+                    html.Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/\">")
+                        .Append("<input type=\"hidden\" name=\"action\" value=\"transfer\">")
+                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                        .Append("<label>Recipient avatar<input name=\"recipient\" required placeholder=\"First Last\"></label>")
+                        .Append("<label>Amount<input name=\"amount\" type=\"number\" min=\"1\" required></label>")
+                        .Append("<label>Description<input name=\"description\" maxlength=\"160\" placeholder=\"Optional note\"></label>")
+                        .Append("<button type=\"submit\">Transfer tokens</button></form>");
+                }
+                else
+                {
+                    html.Append("<p class=\"wallet-note\">Avatar-to-avatar wallet transfers are disabled on this portal.</p>");
+                }
+                html.Append("</article></section>");
+
+                AppendCurrencyStatement(html, money, session.AgentID);
+                AppendCurrencyPurchaseRequests(html, session.AgentID);
+            }
+
+            html.Append("<form class=\"wallet-logout\" method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"logout\">")
+                .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                .Append("<button type=\"submit\">Logout</button></form>")
+                .Append("</main>").Append(EndPage());
+            SendHtml(response, html.ToString());
+        }
+
+        private void SendCurrencyAdminDashboard(IOSHttpResponse response, CurrencyWebSession session, string message, string severity)
+        {
+            EstatePageContent estate = LoadEstateContent();
+            IMoneyModule money = GetCurrencyMoneyModule();
+            StringBuilder html = BeginPage("Money Admin - " + estate.Title);
+            html.Append("<main class=\"wrap wallet-page\">");
+            AppendPageLinks(html,
+                "Avatar wallet", m_basePath + "/currency/",
+                "Estate", m_basePath + "/");
+            html.Append("<p class=\"feature-kicker\">Superadmin area</p><h1>Money Admin</h1>");
+
+            AppendCurrencyMessage(html, message, severity);
+
+            html.Append("<section class=\"wallet-summary\"><div><span>Admin</span><strong>")
+                .Append(Html(session.DisplayName)).Append("</strong></div><div><span>Role</span><strong>Estate owner</strong></div><div><span>Session expires</span><strong>")
+                .Append(Html(session.ExpiresUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture)))
+                .Append("</strong></div></section>");
+
+            if (money == null)
+            {
+                html.Append("<p class=\"wallet-message error\">Currency module is not active. Enable BetaGridLikeMoneyModule in [Economy].</p>");
+            }
+            else
+            {
+                AppendCurrencyAdminRequests(html, session);
+                AppendCurrencyAdminPayPalOrders(html);
+
+                html.Append("<section class=\"wallet-grid\"><article class=\"wallet-card\"><h2>Set balance</h2>")
+                    .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                    .Append("<input type=\"hidden\" name=\"action\" value=\"admin-set-balance\">")
+                    .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                    .Append("<label>Avatar<input name=\"avatar\" required placeholder=\"First Last or UUID\"></label>")
+                    .Append("<label>Balance<input name=\"amount\" type=\"number\" min=\"0\" required></label>")
+                    .Append("<label>Note<input name=\"note\" maxlength=\"160\" placeholder=\"Optional audit note\"></label>")
+                    .Append("<button type=\"submit\">Set balance</button></form></article>");
+
+                html.Append("<article class=\"wallet-card\"><h2>Credit / debit</h2>")
+                    .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                    .Append("<input type=\"hidden\" name=\"action\" value=\"admin-credit\">")
+                    .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                    .Append("<label>Avatar<input name=\"avatar\" required placeholder=\"First Last or UUID\"></label>")
+                    .Append("<label>Amount<input name=\"amount\" type=\"number\" min=\"1\" required></label>")
+                    .Append("<label>Note<input name=\"note\" maxlength=\"160\" placeholder=\"Optional audit note\"></label>")
+                    .Append("<button type=\"submit\">Credit</button></form>")
+                    .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                    .Append("<input type=\"hidden\" name=\"action\" value=\"admin-debit\">")
+                    .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                    .Append("<label>Avatar<input name=\"avatar\" required placeholder=\"First Last or UUID\"></label>")
+                    .Append("<label>Amount<input name=\"amount\" type=\"number\" min=\"1\" required></label>")
+                    .Append("<label>Note<input name=\"note\" maxlength=\"160\" placeholder=\"Optional audit note\"></label>")
+                    .Append("<button type=\"submit\">Debit</button></form></article>");
+
+                html.Append("<article class=\"wallet-card\"><h2>Transfer</h2>")
+                    .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                    .Append("<input type=\"hidden\" name=\"action\" value=\"admin-transfer\">")
+                    .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                    .Append("<label>From<input name=\"from\" required placeholder=\"First Last or UUID\"></label>")
+                    .Append("<label>To<input name=\"to\" required placeholder=\"First Last or UUID\"></label>")
+                    .Append("<label>Amount<input name=\"amount\" type=\"number\" min=\"1\" required></label>")
+                    .Append("<label>Note<input name=\"note\" maxlength=\"160\" placeholder=\"Optional audit note\"></label>")
+                    .Append("<button type=\"submit\">Transfer</button></form></article></section>");
+
+                AppendCurrencyAdminBalances(html, money);
+            }
+
+            html.Append("<form class=\"wallet-logout\" method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                .Append("<input type=\"hidden\" name=\"action\" value=\"logout\">")
+                .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                .Append("<button type=\"submit\">Logout</button></form>")
+                .Append("</main>").Append(EndPage());
+            SendHtml(response, html.ToString());
+        }
+
+        private void AppendCurrencyStatement(StringBuilder html, IMoneyModule money, UUID agentID)
+        {
+            List<Dictionary<string, string>> rows = GetCurrencyStatement(money, agentID);
+            html.Append("<section class=\"wallet-card wallet-statement\"><h2>Statement</h2>");
+            if (rows.Count == 0)
+            {
+                html.Append("<p class=\"wallet-note\">No ledger entries yet.</p></section>");
+                return;
+            }
+
+            html.Append("<p class=\"wallet-note\"><a href=\"").Append(Html(m_basePath))
+                .Append("/currency/statement.csv\">Download CSV statement</a></p>");
+            html.Append("<div class=\"wallet-table\"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Balance</th><th>Description</th></tr></thead><tbody>");
+            string agentText = agentID.ToString();
+            foreach (Dictionary<string, string> row in rows)
+            {
+                string amount = RowValue(row, "amount");
+                string source = RowValue(row, "source");
+                string destination = RowValue(row, "destination");
+                bool credit = destination.Equals(agentText, StringComparison.OrdinalIgnoreCase)
+                    && !source.Equals(agentText, StringComparison.OrdinalIgnoreCase);
+                bool debit = source.Equals(agentText, StringComparison.OrdinalIgnoreCase)
+                    && !destination.Equals(agentText, StringComparison.OrdinalIgnoreCase);
+                string signedAmount = (credit ? "+" : (debit ? "-" : string.Empty)) + amount;
+
+                html.Append("<tr><td>").Append(Html(FormatUtc(RowValue(row, "utc")))).Append("</td><td>")
+                    .Append(Html(RowValue(row, "action"))).Append("</td><td class=\"")
+                    .Append(credit ? "credit" : (debit ? "debit" : string.Empty)).Append("\">")
+                    .Append(Html(signedAmount)).Append("</td><td>")
+                    .Append(Html(RowValue(row, "balance"))).Append("</td><td>")
+                    .Append(Html(RowValue(row, "description"))).Append("</td></tr>");
+            }
+
+            html.Append("</tbody></table></div></section>");
+        }
+
+        private void AppendCurrencyPurchaseRequests(StringBuilder html, UUID agentID)
+        {
+            List<CurrencyPurchaseRequest> requests;
+            lock (m_currencyPurchaseLock)
+            {
+                requests = m_currencyPurchaseRequests.Values
+                    .Where(r => r.AgentID == agentID)
+                    .OrderByDescending(r => r.RequestedUTC)
+                    .Take(12)
+                    .ToList();
+            }
+
+            if (requests.Count == 0)
+                return;
+
+            html.Append("<section class=\"wallet-card wallet-statement\"><h2>Purchase requests</h2>")
+                .Append("<div class=\"wallet-table\"><table><thead><tr><th>Date</th><th>ID</th><th>Amount</th><th>Status</th><th>Note</th></tr></thead><tbody>");
+
+            foreach (CurrencyPurchaseRequest request in requests)
+            {
+                html.Append("<tr><td>").Append(Html(request.RequestedUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))).Append("</td><td>")
+                    .Append(Html(request.RequestID)).Append("</td><td>")
+                    .Append(request.Amount.ToString(CultureInfo.InvariantCulture)).Append("</td><td>")
+                    .Append(Html(request.Status)).Append("</td><td>")
+                    .Append(Html(request.Note)).Append("</td></tr>");
+            }
+
+            html.Append("</tbody></table></div></section>");
+        }
+
+        private void AppendCurrencyAdminRequests(StringBuilder html, CurrencyWebSession session)
+        {
+            List<CurrencyPurchaseRequest> pending;
+            lock (m_currencyPurchaseLock)
+                pending = m_currencyPurchaseRequests.Values
+                    .Where(r => (r.Status ?? string.Empty).Equals("pending", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(r => r.RequestedUTC)
+                    .ToList();
+
+            html.Append("<section class=\"wallet-card wallet-statement\"><h2>Pending purchase requests</h2>");
+            html.Append("<p class=\"wallet-note\"><a href=\"").Append(Html(m_basePath))
+                .Append("/currency/admin/requests.csv\">Download requests CSV</a></p>");
+            if (pending.Count == 0)
+            {
+                html.Append("<p class=\"wallet-note\">No pending token purchase requests.</p></section>");
+                return;
+            }
+
+            html.Append("<div class=\"wallet-table\"><table><thead><tr><th>Date</th><th>ID</th><th>Avatar</th><th>Amount</th><th>Action</th></tr></thead><tbody>");
+            foreach (CurrencyPurchaseRequest request in pending)
+            {
+                html.Append("<tr><td>").Append(Html(request.RequestedUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))).Append("</td><td>")
+                    .Append(Html(request.RequestID)).Append("</td><td>")
+                    .Append(Html(request.DisplayName)).Append("</td><td>")
+                    .Append(request.Amount.ToString(CultureInfo.InvariantCulture)).Append("</td><td>")
+                    .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                    .Append("<input type=\"hidden\" name=\"action\" value=\"admin-approve\">")
+                    .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                    .Append("<input type=\"hidden\" name=\"request\" value=\"").Append(Html(request.RequestID)).Append("\">")
+                    .Append("<input name=\"note\" maxlength=\"160\" placeholder=\"Note\">")
+                    .Append("<button type=\"submit\">Approve</button></form>")
+                    .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
+                    .Append("<input type=\"hidden\" name=\"action\" value=\"admin-deny\">")
+                    .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
+                    .Append("<input type=\"hidden\" name=\"request\" value=\"").Append(Html(request.RequestID)).Append("\">")
+                    .Append("<input name=\"note\" maxlength=\"160\" placeholder=\"Reason\">")
+                    .Append("<button type=\"submit\">Deny</button></form></td></tr>");
+            }
+
+            html.Append("</tbody></table></div></section>");
+        }
+
+        private void AppendCurrencyAdminPayPalOrders(StringBuilder html)
+        {
+            List<CurrencyPayPalOrder> orders;
+            lock (m_currencyPayPalLock)
+                orders = m_currencyPayPalOrders.Values
+                    .OrderByDescending(r => r.CreatedUTC)
+                    .Take(20)
+                    .ToList();
+
+            if (orders.Count == 0)
+                return;
+
+            html.Append("<section class=\"wallet-card wallet-statement\"><h2>Recent PayPal checkouts</h2>")
+                .Append("<div class=\"wallet-table\"><table><thead><tr><th>Date</th><th>ID</th><th>Avatar</th><th>Tokens</th><th>Payment</th><th>Status</th><th>Note</th></tr></thead><tbody>");
+            foreach (CurrencyPayPalOrder order in orders)
+            {
+                html.Append("<tr><td>")
+                    .Append(Html(order.CreatedUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))).Append("</td><td>")
+                    .Append(Html(order.LocalID)).Append("<br><span>").Append(Html(order.PayPalOrderID)).Append("</span></td><td>")
+                    .Append(Html(order.DisplayName)).Append("</td><td>")
+                    .Append(order.TokenAmount.ToString(CultureInfo.InvariantCulture)).Append("</td><td>")
+                    .Append(Html(order.FiatAmount.ToString("0.00", CultureInfo.InvariantCulture))).Append(' ')
+                    .Append(Html(order.CurrencyCode)).Append("</td><td>")
+                    .Append(Html(order.Status)).Append("</td><td>")
+                    .Append(Html(order.Note)).Append("</td></tr>");
+            }
+
+            html.Append("</tbody></table></div></section>");
+        }
+
+        private void AppendCurrencyAdminBalances(StringBuilder html, IMoneyModule money)
+        {
+            List<Dictionary<string, string>> rows = GetCurrencyBalances(money, 50);
+            html.Append("<section class=\"wallet-card wallet-statement\"><h2>Top balances</h2>");
+            html.Append("<p class=\"wallet-note\"><a href=\"").Append(Html(m_basePath))
+                .Append("/currency/admin/balances.csv\">Download balances CSV</a></p>");
+            if (rows.Count == 0)
+            {
+                html.Append("<p class=\"wallet-note\">No balance rows yet.</p></section>");
+                return;
+            }
+
+            html.Append("<div class=\"wallet-table\"><table><thead><tr><th>Avatar</th><th>UUID</th><th>Balance</th></tr></thead><tbody>");
+            foreach (Dictionary<string, string> row in rows)
+            {
+                string agentText = RowValue(row, "agent_id");
+                string displayName = agentText;
+                if (UUID.TryParse(agentText, out UUID agentID))
+                {
+                    string resolved = LookupAvatarName(agentID);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                        displayName = resolved;
+                }
+
+                html.Append("<tr><td>").Append(Html(displayName)).Append("</td><td>")
+                    .Append(Html(agentText)).Append("</td><td>")
+                    .Append(Html(RowValue(row, "balance"))).Append("</td></tr>");
+            }
+
+            html.Append("</tbody></table></div></section>");
+        }
+
+        private void SendCurrencyStatementCsv(IOSHttpResponse response, CurrencyWebSession session)
+        {
+            IMoneyModule money = GetCurrencyMoneyModule();
+            if (money == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                response.ContentType = "text/plain";
+                response.RawBuffer = Encoding.UTF8.GetBytes("Currency module is not active.");
+                return;
+            }
+
+            List<Dictionary<string, string>> rows = GetCurrencyStatement(money, session.AgentID);
+            StringBuilder csv = new StringBuilder();
+            csv.Append("utc,local_time,action,direction,amount,balance,description,source,destination,success\n");
+            string agentText = session.AgentID.ToString();
+            foreach (Dictionary<string, string> row in rows)
+            {
+                string source = RowValue(row, "source");
+                string destination = RowValue(row, "destination");
+                string direction = GetCurrencyDirection(agentText, source, destination);
+                csv.Append(Csv(RowValue(row, "utc"))).Append(',')
+                    .Append(Csv(FormatUtc(RowValue(row, "utc")))).Append(',')
+                    .Append(Csv(RowValue(row, "action"))).Append(',')
+                    .Append(Csv(direction)).Append(',')
+                    .Append(Csv(RowValue(row, "amount"))).Append(',')
+                    .Append(Csv(RowValue(row, "balance"))).Append(',')
+                    .Append(Csv(RowValue(row, "description"))).Append(',')
+                    .Append(Csv(source)).Append(',')
+                    .Append(Csv(destination)).Append(',')
+                    .Append(Csv(RowValue(row, "success"))).Append('\n');
+            }
+
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.ContentType = "text/csv";
+            response.AddHeader("Content-Disposition", "attachment; filename=\"currency-statement-" + MakeSlug(session.DisplayName) + ".csv\"");
+            response.RawBuffer = Encoding.UTF8.GetBytes(csv.ToString());
+        }
+
+        private void SendCurrencyAdminRequestsCsv(IOSHttpResponse response)
+        {
+            List<CurrencyPurchaseRequest> requests;
+            lock (m_currencyPurchaseLock)
+                requests = m_currencyPurchaseRequests.Values
+                    .OrderByDescending(r => r.RequestedUTC)
+                    .ToList();
+
+            StringBuilder csv = new StringBuilder();
+            csv.Append("request_id,requested_utc,local_time,agent_id,display_name,amount,status,updated_utc,operator,note\n");
+            foreach (CurrencyPurchaseRequest request in requests)
+            {
+                csv.Append(Csv(request.RequestID)).Append(',')
+                    .Append(Csv(request.RequestedUTC.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture))).Append(',')
+                    .Append(Csv(request.RequestedUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))).Append(',')
+                    .Append(Csv(request.AgentID.ToString())).Append(',')
+                    .Append(Csv(request.DisplayName)).Append(',')
+                    .Append(request.Amount.ToString(CultureInfo.InvariantCulture)).Append(',')
+                    .Append(Csv(request.Status)).Append(',')
+                    .Append(Csv(request.UpdatedUTC.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture))).Append(',')
+                    .Append(Csv(request.OperatorName)).Append(',')
+                    .Append(Csv(request.Note)).Append('\n');
+            }
+
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.ContentType = "text/csv";
+            response.AddHeader("Content-Disposition", "attachment; filename=\"currency-admin-requests.csv\"");
+            response.RawBuffer = Encoding.UTF8.GetBytes(csv.ToString());
+        }
+
+        private void SendCurrencyAdminBalancesCsv(IOSHttpResponse response)
+        {
+            IMoneyModule money = GetCurrencyMoneyModule();
+            if (money == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                response.ContentType = "text/plain";
+                response.RawBuffer = Encoding.UTF8.GetBytes("Currency module is not active.");
+                return;
+            }
+
+            List<Dictionary<string, string>> rows = GetCurrencyBalances(money, 10000);
+            StringBuilder csv = new StringBuilder();
+            csv.Append("agent_id,display_name,balance\n");
+            foreach (Dictionary<string, string> row in rows)
+            {
+                string agentText = RowValue(row, "agent_id");
+                string displayName = agentText;
+                if (UUID.TryParse(agentText, out UUID agentID))
+                {
+                    string resolved = LookupAvatarName(agentID);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                        displayName = resolved;
+                }
+
+                csv.Append(Csv(agentText)).Append(',')
+                    .Append(Csv(displayName)).Append(',')
+                    .Append(Csv(RowValue(row, "balance"))).Append('\n');
+            }
+
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.ContentType = "text/csv";
+            response.AddHeader("Content-Disposition", "attachment; filename=\"currency-admin-balances.csv\"");
+            response.RawBuffer = Encoding.UTF8.GetBytes(csv.ToString());
+        }
+
+        private void AppendCurrencyMessage(StringBuilder html, string message, string severity)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            string css = string.IsNullOrWhiteSpace(severity) ? "ok" : severity;
+            html.Append("<p class=\"wallet-message ").Append(Html(css)).Append("\">")
+                .Append(Html(message)).Append("</p>");
+        }
+
+        private static bool ValidateCurrencyCsrf(CurrencyWebSession session, Dictionary<string, string> form, out string message)
+        {
+            message = string.Empty;
+            string token = FormValue(form, "csrf");
+            if (session == null || string.IsNullOrEmpty(session.CsrfToken)
+                || !session.CsrfToken.Equals(token, StringComparison.Ordinal))
+            {
+                message = "Security token expired. Reload the wallet page and try again.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private IMoneyModule GetCurrencyMoneyModule()
+        {
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
+                if (money != null)
+                    return money;
+            }
+
+            return null;
+        }
+
+        private bool InvokeWebBuyCurrency(IMoneyModule money, UUID agentID, int amount, out string reason)
+        {
+            reason = string.Empty;
+            MethodInfo method = money.GetType().GetMethod("WebBuyCurrency", BindingFlags.Public | BindingFlags.Instance);
+            if (method == null)
+            {
+                reason = "Currency module does not expose This estate purchases.";
+                return false;
+            }
+
+            object[] args = new object[] { agentID, amount, reason };
+            try
+            {
+                bool result = method.Invoke(money, args) is bool b && b;
+                reason = args[2] as string ?? string.Empty;
+                return result;
+            }
+            catch (Exception e)
+            {
+                reason = e.InnerException != null ? e.InnerException.Message : e.Message;
+                return false;
+            }
+        }
+
+        private bool InvokeWebTransfer(IMoneyModule money, UUID fromUser, UUID toUser, int amount, string description, out string reason)
+        {
+            reason = string.Empty;
+            MethodInfo method = money.GetType().GetMethod("WebTransfer", BindingFlags.Public | BindingFlags.Instance);
+            if (method == null)
+                method = money.GetType().GetMethod("WebTransferCurrency", BindingFlags.Public | BindingFlags.Instance);
+            if (method == null)
+            {
+                reason = "Currency module does not expose This estate transfers.";
+                return false;
+            }
+
+            object[] args = new object[] { fromUser, toUser, amount, description, reason };
+            try
+            {
+                bool result = method.Invoke(money, args) is bool b && b;
+                reason = args[4] as string ?? string.Empty;
+                return result;
+            }
+            catch (Exception e)
+            {
+                reason = e.InnerException != null ? e.InnerException.Message : e.Message;
+                return false;
+            }
+        }
+
+        private bool InvokeWebSetBalance(IMoneyModule money, UUID agentID, int amount, string description, out string reason)
+        {
+            return InvokeMoneyAdminMethod(money, "WebSetBalance", agentID, amount, description, out reason);
+        }
+
+        private bool InvokeWebCreditCurrency(IMoneyModule money, UUID agentID, int amount, string description, out string reason)
+        {
+            return InvokeMoneyAdminMethod(money, "WebCreditCurrency", agentID, amount, description, out reason);
+        }
+
+        private bool InvokeWebDebitCurrency(IMoneyModule money, UUID agentID, int amount, string description, out string reason)
+        {
+            return InvokeMoneyAdminMethod(money, "WebDebitCurrency", agentID, amount, description, out reason);
+        }
+
+        private bool InvokeMoneyAdminMethod(IMoneyModule money, string methodName, UUID agentID, int amount, string description, out string reason)
+        {
+            reason = string.Empty;
+            MethodInfo method = money.GetType().GetMethod(methodName, BindingFlags.Public | BindingFlags.Instance);
+            if (method == null)
+            {
+                reason = "Currency module does not expose " + methodName + ".";
+                return false;
+            }
+
+            object[] args = new object[] { agentID, amount, description ?? string.Empty, reason };
+            try
+            {
+                bool result = method.Invoke(money, args) is bool b && b;
+                reason = args[3] as string ?? string.Empty;
+                return result;
+            }
+            catch (Exception e)
+            {
+                reason = e.InnerException != null ? e.InnerException.Message : e.Message;
+                return false;
+            }
+        }
+
+        private CurrencyPurchaseRequest CreateCurrencyPurchaseRequest(CurrencyWebSession session, int amount)
+        {
+            CurrencyPurchaseRequest request = new CurrencyPurchaseRequest
+            {
+                RequestID = GenerateCurrencyPurchaseRequestID(),
+                RequestedUTC = DateTime.UtcNow,
+                AgentID = session.AgentID,
+                DisplayName = session.DisplayName,
+                Amount = amount,
+                Status = "pending",
+                UpdatedUTC = DateTime.UtcNow,
+                OperatorName = string.Empty,
+                Note = string.Empty
+            };
+
+            lock (m_currencyPurchaseLock)
+            {
+                m_currencyPurchaseRequests[request.RequestID] = request;
+                SaveCurrencyPurchaseRequestsLocked();
+            }
+
+            return request;
+        }
+
+        private bool ApproveCurrencyPurchase(string requestID, string note, out string message)
+        {
+            message = string.Empty;
+            UUID agentID;
+            string displayName;
+            int amount;
+
+            lock (m_currencyPurchaseLock)
+            {
+                if (!m_currencyPurchaseRequests.TryGetValue(requestID ?? string.Empty, out CurrencyPurchaseRequest request))
+                {
+                    message = "Currency purchase request not found: " + requestID;
+                    return false;
+                }
+
+                if (!(request.Status ?? string.Empty).Equals("pending", StringComparison.OrdinalIgnoreCase))
+                {
+                    message = "Currency purchase request " + request.RequestID + " is already " + request.Status + ".";
+                    return false;
+                }
+
+                request.Status = "processing";
+                request.UpdatedUTC = DateTime.UtcNow;
+                request.OperatorName = "console";
+                request.Note = note ?? string.Empty;
+                agentID = request.AgentID;
+                displayName = request.DisplayName;
+                amount = request.Amount;
+                SaveCurrencyPurchaseRequestsLocked();
+            }
+
+            IMoneyModule money = GetCurrencyMoneyModule();
+            if (money == null)
+            {
+                MarkCurrencyPurchasePending(requestID, "Currency module is not active.");
+                message = "Currency module is not active. Request left pending.";
+                return false;
+            }
+
+            if (!InvokeWebBuyCurrency(money, agentID, amount, out string reason))
+            {
+                string failure = string.IsNullOrWhiteSpace(reason) ? "Token purchase failed." : reason;
+                MarkCurrencyPurchasePending(requestID, failure);
+                message = failure + " Request left pending.";
+                return false;
+            }
+
+            lock (m_currencyPurchaseLock)
+            {
+                if (m_currencyPurchaseRequests.TryGetValue(requestID ?? string.Empty, out CurrencyPurchaseRequest request))
+                {
+                    request.Status = "approved";
+                    request.UpdatedUTC = DateTime.UtcNow;
+                    request.OperatorName = "console";
+                    request.Note = note ?? string.Empty;
+                    SaveCurrencyPurchaseRequestsLocked();
+                }
+            }
+
+            NotifyCurrencyAvatar(agentID, "This estate wallet purchase " + requestID + " approved: "
+                + amount.ToString(CultureInfo.InvariantCulture) + " tokens credited.");
+            message = "Approved " + requestID + " for " + displayName + " and credited "
+                + amount.ToString(CultureInfo.InvariantCulture) + " tokens.";
+            return true;
+        }
+
+        private bool DenyCurrencyPurchase(string requestID, string note, out string message)
+        {
+            UUID agentID;
+            string storedRequestID;
+            string displayName;
+            string storedNote;
+
+            lock (m_currencyPurchaseLock)
+            {
+                if (!m_currencyPurchaseRequests.TryGetValue(requestID ?? string.Empty, out CurrencyPurchaseRequest request))
+                {
+                    message = "Currency purchase request not found: " + requestID;
+                    return false;
+                }
+
+                string status = request.Status ?? string.Empty;
+                if (!status.Equals("pending", StringComparison.OrdinalIgnoreCase)
+                    && !status.Equals("processing", StringComparison.OrdinalIgnoreCase))
+                {
+                    message = "Currency purchase request " + request.RequestID + " is already " + request.Status + ".";
+                    return false;
+                }
+
+                request.Status = "denied";
+                request.UpdatedUTC = DateTime.UtcNow;
+                request.OperatorName = "console";
+                request.Note = note ?? string.Empty;
+                SaveCurrencyPurchaseRequestsLocked();
+
+                agentID = request.AgentID;
+                storedRequestID = request.RequestID;
+                displayName = request.DisplayName;
+                storedNote = request.Note;
+            }
+
+            NotifyCurrencyAvatar(agentID, "This estate wallet purchase " + storedRequestID + " denied."
+                + (string.IsNullOrWhiteSpace(storedNote) ? string.Empty : " " + storedNote));
+            message = "Denied " + storedRequestID + " for " + displayName + ".";
+            return true;
+        }
+
+        private void MarkCurrencyPurchasePending(string requestID, string note)
+        {
+            lock (m_currencyPurchaseLock)
+            {
+                if (m_currencyPurchaseRequests.TryGetValue(requestID ?? string.Empty, out CurrencyPurchaseRequest request))
+                {
+                    request.Status = "pending";
+                    request.UpdatedUTC = DateTime.UtcNow;
+                    request.OperatorName = "console";
+                    request.Note = note ?? string.Empty;
+                    SaveCurrencyPurchaseRequestsLocked();
+                }
+            }
+        }
+
+        private List<Dictionary<string, string>> GetCurrencyStatement(IMoneyModule money, UUID agentID)
+        {
+            List<Dictionary<string, string>> rows = new List<Dictionary<string, string>>();
+            MethodInfo method = money.GetType().GetMethod("GetCurrencyStatement", BindingFlags.Public | BindingFlags.Instance);
+            if (method == null)
+                return rows;
+
+            try
+            {
+                object result = method.Invoke(money, new object[] { agentID, m_currencyStatementLimit });
+                if (result is IEnumerable<Dictionary<string, string>> enumerable)
+                    rows.AddRange(enumerable);
+            }
+            catch
+            {
+            }
+
+            return rows;
+        }
+
+        private List<Dictionary<string, string>> GetCurrencyBalances(IMoneyModule money, int limit)
+        {
+            List<Dictionary<string, string>> rows = new List<Dictionary<string, string>>();
+            MethodInfo method = money.GetType().GetMethod("GetCurrencyBalances", BindingFlags.Public | BindingFlags.Instance);
+            if (method == null)
+                return rows;
+
+            try
+            {
+                object result = method.Invoke(money, new object[] { limit });
+                if (result is IEnumerable<Dictionary<string, string>> enumerable)
+                    rows.AddRange(enumerable);
+            }
+            catch
+            {
+            }
+
+            return rows;
+        }
+
+        private bool IsPayPalConfigured(out string reason)
+        {
+            reason = string.Empty;
+            if (!m_payPalEnabled)
+            {
+                reason = "PayPal checkout is disabled. Set PayPalEnabled = true in [RegionWeb].";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(m_payPalClientID) || string.IsNullOrWhiteSpace(m_payPalClientSecret))
+            {
+                reason = "PayPal checkout needs PayPalClientID and PayPalClientSecret in [RegionWeb].";
+                return false;
+            }
+
+            if (!IsAbsoluteWebUrl(GetCurrencyPublicBaseUrl()))
+            {
+                reason = "PayPal checkout needs PayPalReturnBaseUrl set to the public This estate URL, for example https://example.com/regionweb.";
+                return false;
+            }
+
+            if (m_payPalPricePerToken <= 0m)
+            {
+                reason = "PayPalPricePerToken must be greater than zero.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool CreatePayPalOrder(CurrencyPayPalOrder order, out string approvalUrl, out string reason)
+        {
+            approvalUrl = string.Empty;
+            reason = string.Empty;
+
+            if (!GetPayPalAccessToken(out string accessToken, out reason))
+                return false;
+
+            string publicBase = GetCurrencyPublicBaseUrl().TrimEnd('/');
+            string returnUrl = publicBase + "/currency/paypal-return?local=" + Url(order.LocalID);
+            string cancelUrl = publicBase + "/currency/paypal-cancel?local=" + Url(order.LocalID);
+            string amount = order.FiatAmount.ToString("0.00", CultureInfo.InvariantCulture);
+            string description = "This estate wallet tokens for " + order.DisplayName;
+            string customID = order.AgentID + ":" + order.TokenAmount.ToString(CultureInfo.InvariantCulture) + ":" + order.LocalID;
+
+            string body =
+                "{"
+                + "\"intent\":\"CAPTURE\","
+                + "\"purchase_units\":[{"
+                + "\"reference_id\":\"" + Json(order.LocalID) + "\","
+                + "\"description\":\"" + Json(description) + "\","
+                + "\"custom_id\":\"" + Json(customID) + "\","
+                + "\"amount\":{\"currency_code\":\"" + Json(order.CurrencyCode) + "\",\"value\":\"" + Json(amount) + "\"}"
+                + "}],"
+                + "\"application_context\":{"
+                + "\"brand_name\":\"This estate\","
+                + "\"landing_page\":\"LOGIN\","
+                + "\"user_action\":\"PAY_NOW\","
+                + "\"return_url\":\"" + Json(returnUrl) + "\","
+                + "\"cancel_url\":\"" + Json(cancelUrl) + "\""
+                + "}"
+                + "}";
+
+            if (!PayPalPost("/v2/checkout/orders", body, "application/json", accessToken, out string responseText, out reason))
+                return false;
+
+            if (!TryParseJsonMap(responseText, out OSDMap map, out reason))
+                return false;
+
+            if (!map.TryGetValue("id", out OSD idOSD) || string.IsNullOrWhiteSpace(idOSD.AsString()))
+            {
+                reason = "PayPal order response did not include an order id.";
+                return false;
+            }
+
+            order.PayPalOrderID = idOSD.AsString();
+            approvalUrl = ExtractPayPalApprovalUrl(map);
+            if (string.IsNullOrWhiteSpace(approvalUrl))
+            {
+                reason = "PayPal order response did not include an approval URL.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool CapturePayPalOrder(string paypalOrderID, out string reason)
+        {
+            reason = string.Empty;
+            if (string.IsNullOrWhiteSpace(paypalOrderID))
+            {
+                reason = "PayPal order id is empty.";
+                return false;
+            }
+
+            if (!GetPayPalAccessToken(out string accessToken, out reason))
+                return false;
+
+            string path = "/v2/checkout/orders/" + Url(paypalOrderID) + "/capture";
+            if (!PayPalPost(path, "{}", "application/json", accessToken, out string responseText, out reason))
+                return false;
+
+            if (!TryParseJsonMap(responseText, out OSDMap map, out reason))
+                return false;
+
+            if (map.TryGetValue("status", out OSD statusOSD)
+                && statusOSD.AsString().Equals("COMPLETED", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            reason = "PayPal capture did not return COMPLETED status.";
+            return false;
+        }
+
+        private bool GetPayPalAccessToken(out string accessToken, out string reason)
+        {
+            accessToken = string.Empty;
+            reason = string.Empty;
+            string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes(m_payPalClientID + ":" + m_payPalClientSecret));
+            if (!PayPalPost("/v1/oauth2/token", "grant_type=client_credentials", "application/x-www-form-urlencoded", "Basic " + credentials, out string responseText, out reason))
+                return false;
+
+            if (!TryParseJsonMap(responseText, out OSDMap map, out reason))
+                return false;
+
+            if (!map.TryGetValue("access_token", out OSD tokenOSD) || string.IsNullOrWhiteSpace(tokenOSD.AsString()))
+            {
+                reason = "PayPal OAuth response did not include an access token.";
+                return false;
+            }
+
+            accessToken = tokenOSD.AsString();
+            return true;
+        }
+
+        private bool PayPalPost(string path, string body, string contentType, string authorization, out string responseText, out string reason)
+        {
+            responseText = string.Empty;
+            reason = string.Empty;
+
+            try
+            {
+                string url = GetPayPalBaseUrl().TrimEnd('/') + path;
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+                request.Method = "POST";
+                request.ContentType = contentType;
+                request.Accept = "application/json";
+                request.Timeout = 20000;
+                request.ReadWriteTimeout = 20000;
+                if (!string.IsNullOrWhiteSpace(authorization))
+                {
+                    if (authorization.StartsWith("Basic ", StringComparison.Ordinal) || authorization.StartsWith("Bearer ", StringComparison.Ordinal))
+                        request.Headers.Add("Authorization", authorization);
+                    else
+                        request.Headers.Add("Authorization", "Bearer " + authorization);
+                }
+
+                byte[] payload = Encoding.UTF8.GetBytes(body ?? string.Empty);
+                request.ContentLength = payload.Length;
+                using (Stream stream = request.GetRequestStream())
+                    stream.Write(payload, 0, payload.Length);
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                {
+                    responseText = ReadHttpResponse(response);
+                    int code = (int)response.StatusCode;
+                    if (code >= 200 && code < 300)
+                        return true;
+
+                    reason = "PayPal returned HTTP " + code.ToString(CultureInfo.InvariantCulture) + ".";
+                    return false;
+                }
+            }
+            catch (WebException e)
+            {
+                if (e.Response is HttpWebResponse response)
+                {
+                    responseText = ReadHttpResponse(response);
+                    reason = "PayPal returned HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)
+                        + (string.IsNullOrWhiteSpace(responseText) ? string.Empty : ": " + TrimForLog(responseText, 240));
+                    return false;
+                }
+
+                reason = "PayPal request failed: " + e.Message;
+                return false;
+            }
+            catch (Exception e)
+            {
+                reason = "PayPal request failed: " + e.Message;
+                return false;
+            }
+        }
+
+        private static string ReadHttpResponse(HttpWebResponse response)
+        {
+            if (response == null)
+                return string.Empty;
+
+            using (Stream stream = response.GetResponseStream())
+            {
+                if (stream == null)
+                    return string.Empty;
+
+                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                    return reader.ReadToEnd();
+            }
+        }
+
+        private static bool TryParseJsonMap(string json, out OSDMap map, out string reason)
+        {
+            map = null;
+            reason = string.Empty;
+
+            try
+            {
+                map = OSDParser.DeserializeJson(json ?? string.Empty) as OSDMap;
+            }
+            catch (Exception e)
+            {
+                reason = "Could not parse PayPal JSON response: " + e.Message;
+                return false;
+            }
+
+            if (map == null)
+            {
+                reason = "PayPal JSON response was not an object.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string ExtractPayPalApprovalUrl(OSDMap map)
+        {
+            if (map == null || !map.TryGetValue("links", out OSD linksOSD) || !(linksOSD is OSDArray links))
+                return string.Empty;
+
+            foreach (OSD item in links)
+            {
+                if (!(item is OSDMap link))
+                    continue;
+
+                string rel = link.TryGetValue("rel", out OSD relOSD) ? relOSD.AsString() : string.Empty;
+                if (!rel.Equals("approve", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (link.TryGetValue("href", out OSD hrefOSD))
+                    return hrefOSD.AsString();
+            }
+
+            return string.Empty;
+        }
+
+        private string GetPayPalBaseUrl()
+        {
+            return m_payPalEnvironment.Equals("live", StringComparison.OrdinalIgnoreCase)
+                ? "https://api-m.paypal.com"
+                : "https://api-m.sandbox.paypal.com";
+        }
+
+        private string GetCurrencyPublicBaseUrl()
+        {
+            string configured = (m_payPalReturnBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+            if (IsAbsoluteWebUrl(configured))
+                return configured;
+
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                string serverURI = (scene.RegionInfo.ServerURI ?? string.Empty).Trim().TrimEnd('/');
+                if (IsAbsoluteWebUrl(serverURI))
+                    return serverURI + m_basePath;
+            }
+
+            return string.Empty;
+        }
+
+        private static bool IsAbsoluteWebUrl(string value)
+        {
+            return Uri.TryCreate(value, UriKind.Absolute, out Uri uri)
+                && (uri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase)
+                    || uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private bool TryParsePositiveAmount(string text, int maxAmount, out int amount, out string reason)
+        {
+            amount = 0;
+            reason = string.Empty;
+            if (!int.TryParse((text ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out amount) || amount <= 0)
+            {
+                reason = "Amount must be a positive whole number.";
+                return false;
+            }
+
+            if (maxAmount > 0 && amount > maxAmount)
+            {
+                reason = "Amount cannot exceed " + maxAmount.ToString(CultureInfo.InvariantCulture) + ".";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool TryParseWholeAmount(string text, out int amount, out string reason)
+        {
+            amount = 0;
+            reason = string.Empty;
+            if (!int.TryParse((text ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out amount) || amount < 0)
+            {
+                reason = "Amount must be zero or a positive whole number.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsCurrencyAdminSession(CurrencyWebSession session)
+        {
+            return session != null && session.IsAdmin && IsRegionWebSuperAdmin(session.AgentID);
+        }
+
+        private bool IsRegionWebSuperAdmin(UUID agentID)
+        {
+            if (agentID == UUID.Zero)
+                return false;
+
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                EstateSettings estate = scene.RegionInfo.EstateSettings;
+                if (estate != null && estate.EstateOwner == agentID)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private CurrencyWebSession GetCurrencySession(IOSHttpRequest request)
+        {
+            string token = ReadCookie(request, CurrencySessionCookie);
+            if (string.IsNullOrEmpty(token))
+                return null;
+
+            lock (m_currencyAuthLock)
+            {
+                CleanupCurrencyAuthLocked();
+                if (m_currencySessions.TryGetValue(token, out CurrencyWebSession session))
+                    return session;
+            }
+
+            return null;
+        }
+
+        private void CleanupCurrencyAuthLocked()
+        {
+            DateTime now = DateTime.UtcNow;
+            List<string> expiredChallenges = new List<string>();
+            foreach (KeyValuePair<string, CurrencyLoginChallenge> entry in m_currencyChallenges)
+            {
+                if (entry.Value.ExpiresUTC <= now)
+                    expiredChallenges.Add(entry.Key);
+            }
+            foreach (string token in expiredChallenges)
+                m_currencyChallenges.Remove(token);
+
+            List<string> expiredSessions = new List<string>();
+            foreach (KeyValuePair<string, CurrencyWebSession> entry in m_currencySessions)
+            {
+                if (entry.Value.ExpiresUTC <= now)
+                    expiredSessions.Add(entry.Key);
+            }
+            foreach (string token in expiredSessions)
+                m_currencySessions.Remove(token);
+
+            if (m_currencyChallengeCooldownSeconds > 0)
+            {
+                double keepSeconds = Math.Max(3600, m_currencyChallengeCooldownSeconds * 4);
+                List<UUID> oldRequests = new List<UUID>();
+                foreach (KeyValuePair<UUID, DateTime> entry in m_currencyLastChallengeUTCByAgent)
+                {
+                    if ((now - entry.Value).TotalSeconds > keepSeconds)
+                        oldRequests.Add(entry.Key);
+                }
+                foreach (UUID agentID in oldRequests)
+                    m_currencyLastChallengeUTCByAgent.Remove(agentID);
+            }
+        }
+
+        private void SetCurrencySessionCookie(IOSHttpResponse response, string token, DateTime expiresUTC)
+        {
+            response.AddHeader("Set-Cookie", CurrencySessionCookie + "=" + token
+                + "; Path=" + m_basePath + "; Expires=" + expiresUTC.ToString("R", CultureInfo.InvariantCulture)
+                + "; HttpOnly; SameSite=Lax");
+        }
+
+        private void ClearCurrencySessionCookie(IOSHttpResponse response)
+        {
+            response.AddHeader("Set-Cookie", CurrencySessionCookie
+                + "=; Path=" + m_basePath + "; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax");
         }
 
         private List<EstateAdminConfigFile> GetEstateAdminConfigFiles()
@@ -554,8 +3450,23 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 m_regionInventoryCarouselFolderTemplate = regionInventoryTemplate;
                 m_inventoryCarouselLimit = Math.Max(1, config.GetInt("InventoryCarouselLimit", m_inventoryCarouselLimit));
                 m_inventoryCarouselCacheSeconds = Math.Max(0, config.GetInt("InventoryCarouselCacheSeconds", m_inventoryCarouselCacheSeconds));
+                m_currencyPortalEnabled = config.GetBoolean("CurrencyPortalEnabled", m_currencyPortalEnabled);
+                m_currencyBuyEnabled = config.GetBoolean("CurrencyBuyEnabled", m_currencyBuyEnabled);
+                m_currencyTransferEnabled = config.GetBoolean("CurrencyTransferEnabled", m_currencyTransferEnabled);
+                m_currencyChallengeMinutes = Math.Max(1, config.GetInt("CurrencyChallengeMinutes", m_currencyChallengeMinutes));
+                m_currencyChallengeCooldownSeconds = Math.Max(0, config.GetInt("CurrencyChallengeCooldownSeconds", m_currencyChallengeCooldownSeconds));
+                m_currencySessionHours = Math.Max(1, config.GetInt("CurrencySessionHours", m_currencySessionHours));
+                m_currencyStatementLimit = Math.Max(1, config.GetInt("CurrencyStatementLimit", m_currencyStatementLimit));
+                m_currencyBuyLimit = Math.Max(1, config.GetInt("CurrencyBuyLimit", m_currencyBuyLimit));
+                m_currencyBuyMode = NormalizeCurrencyBuyMode(config.GetString("CurrencyBuyMode", m_currencyBuyMode));
+                m_payPalEnabled = config.GetBoolean("PayPalEnabled", m_payPalEnabled);
+                m_payPalEnvironment = NormalizePayPalEnvironment(config.GetString("PayPalEnvironment", m_payPalEnvironment));
+                m_payPalClientID = config.GetString("PayPalClientID", m_payPalClientID).Trim();
+                m_payPalClientSecret = config.GetString("PayPalClientSecret", m_payPalClientSecret).Trim();
+                m_payPalCurrencyCode = NormalizePayPalCurrency(config.GetString("PayPalCurrencyCode", m_payPalCurrencyCode));
+                m_payPalPricePerToken = ParsePositiveDecimal(config.GetString("PayPalPricePerToken", m_payPalPricePerToken.ToString(CultureInfo.InvariantCulture)), m_payPalPricePerToken);
+                m_payPalReturnBaseUrl = config.GetString("PayPalReturnBaseUrl", m_payPalReturnBaseUrl).Trim();
                 m_defaultEstateTitle = defaultEstateTitle;
-                m_currencyPortalUrl = config.GetString("CurrencyPortalUrl", m_currencyPortalUrl).Trim();
                 m_contentDirectory = contentDirectory;
                 m_absoluteContentDirectory = Path.IsPathRooted(m_contentDirectory)
                     ? m_contentDirectory
@@ -818,6 +3729,609 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             return "maybe live";
         }
 
+        private static string ReadCookie(IOSHttpRequest request, string name)
+        {
+            string cookies = request.Headers["cookie"] ?? request.Headers["Cookie"];
+            if (string.IsNullOrEmpty(cookies))
+                return string.Empty;
+
+            string[] parts = cookies.Split(';');
+            foreach (string raw in parts)
+            {
+                string part = raw.Trim();
+                int equals = part.IndexOf('=');
+                if (equals <= 0)
+                    continue;
+                if (part.Substring(0, equals).Trim().Equals(name, StringComparison.Ordinal))
+                    return part.Substring(equals + 1).Trim();
+            }
+
+            return string.Empty;
+        }
+
+        private Dictionary<string, string> ReadForm(IOSHttpRequest request)
+        {
+            Dictionary<string, string> form = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (request.QueryAsDictionary != null)
+            {
+                foreach (KeyValuePair<string, string> entry in request.QueryAsDictionary)
+                    form[entry.Key] = entry.Value ?? string.Empty;
+            }
+
+            if (request.HasEntityBody && request.InputStream != null)
+            {
+                Encoding encoding = request.ContentEncoding ?? Encoding.UTF8;
+                using (StreamReader reader = new StreamReader(request.InputStream, encoding))
+                {
+                    string body = reader.ReadToEnd();
+                    if (!string.IsNullOrEmpty(body))
+                    {
+                        Dictionary<string, object> parsed = ServerUtils.ParseQueryString(body);
+                        foreach (KeyValuePair<string, object> entry in parsed)
+                            form[entry.Key] = entry.Value == null ? string.Empty : entry.Value.ToString();
+                    }
+                }
+            }
+
+            return form;
+        }
+
+        private static string FormValue(Dictionary<string, string> form, string name)
+        {
+            if (form != null && form.TryGetValue(name, out string value))
+                return value == null ? string.Empty : value.Trim();
+            return string.Empty;
+        }
+
+        private static string FormRawValue(Dictionary<string, string> form, string name)
+        {
+            if (form != null && form.TryGetValue(name, out string value))
+                return value ?? string.Empty;
+            return string.Empty;
+        }
+
+        private bool TryResolveAvatar(string value, out UUID agentID, out string displayName)
+        {
+            agentID = UUID.Zero;
+            displayName = string.Empty;
+            string name = (value ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(name))
+                return false;
+
+            if (UUID.TryParse(name, out agentID))
+            {
+                displayName = LookupAvatarName(agentID);
+                if (string.IsNullOrWhiteSpace(displayName))
+                    displayName = agentID.ToString();
+                return true;
+            }
+
+            if (TryFindOnlineClientByName(name, out IClientAPI client))
+            {
+                agentID = client.AgentId;
+                displayName = client.Name;
+                return true;
+            }
+
+            if (!SplitAvatarName(name, out string firstName, out string lastName))
+                return false;
+
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                IUserAccountService accounts = scene.UserAccountService;
+                if (accounts == null)
+                    continue;
+
+                UserAccount account = accounts.GetUserAccount(scene.RegionInfo.ScopeID, firstName, lastName)
+                    ?? accounts.GetUserAccount(UUID.Zero, firstName, lastName);
+                if (account == null)
+                    continue;
+
+                agentID = account.PrincipalID;
+                displayName = account.Name;
+                return true;
+            }
+
+            return false;
+        }
+
+        private string LookupAvatarName(UUID agentID)
+        {
+            if (TryFindOnlineClient(agentID, out IClientAPI client))
+                return client.Name;
+
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                IUserAccountService accounts = scene.UserAccountService;
+                if (accounts == null)
+                    continue;
+
+                UserAccount account = accounts.GetUserAccount(scene.RegionInfo.ScopeID, agentID)
+                    ?? accounts.GetUserAccount(UUID.Zero, agentID);
+                if (account != null)
+                    return account.Name;
+            }
+
+            return string.Empty;
+        }
+
+        private bool TryFindOnlineClient(UUID agentID, out IClientAPI client)
+        {
+            client = null;
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                if (scene.TryGetScenePresence(agentID, out ScenePresence presence)
+                    && TryGetRootClient(presence, out client))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool TryFindOnlineClientByName(string name, out IClientAPI client)
+        {
+            client = null;
+            if (!SplitAvatarName(name, out string firstName, out string lastName))
+                return false;
+
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                ScenePresence presence = scene.GetScenePresence(firstName, lastName);
+                if (TryGetRootClient(presence, out client))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetRootClient(ScenePresence presence, out IClientAPI client)
+        {
+            client = null;
+            if (presence == null || presence.IsDeleted || presence.IsChildAgent || presence.ControllingClient == null)
+                return false;
+
+            client = presence.ControllingClient;
+            return client.IsActive;
+        }
+
+        private List<Scene> GetSceneSnapshot()
+        {
+            lock (m_sync)
+                return new List<Scene>(m_scenesByID.Values);
+        }
+
+        private static bool SplitAvatarName(string name, out string firstName, out string lastName)
+        {
+            firstName = string.Empty;
+            lastName = string.Empty;
+            string[] parts = (name ?? string.Empty).Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                return false;
+
+            firstName = parts[0];
+            if (parts.Length == 1)
+                lastName = "Resident";
+            else
+                lastName = string.Join(" ", parts.Skip(1).ToArray());
+
+            return true;
+        }
+
+        private static string GenerateCurrencyChallengeToken()
+        {
+            return UUID.Random().ToString().Replace("-", string.Empty).Substring(0, 8).ToUpperInvariant();
+        }
+
+        private static string GenerateCurrencySessionToken()
+        {
+            return UUID.Random().ToString().Replace("-", string.Empty) + UUID.Random().ToString().Replace("-", string.Empty);
+        }
+
+        private static string GenerateCurrencyPurchaseRequestID()
+        {
+            return "RW" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)
+                + "-" + UUID.Random().ToString().Replace("-", string.Empty).Substring(0, 6).ToUpperInvariant();
+        }
+
+        private static string GenerateCurrencyPayPalOrderID()
+        {
+            return "PP" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)
+                + "-" + UUID.Random().ToString().Replace("-", string.Empty).Substring(0, 6).ToUpperInvariant();
+        }
+
+        private static string NormalizeCurrencyBuyMode(string value)
+        {
+            string mode = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (mode == "request" || mode == "approval" || mode == "approve")
+                return "request";
+            if (mode == "paypal" || mode == "pay-pal" || mode == "checkout")
+                return "paypal";
+            if (mode == "disabled" || mode == "disable" || mode == "off" || mode == "false")
+                return "disabled";
+            return "grant";
+        }
+
+        private static string NormalizePayPalEnvironment(string value)
+        {
+            string mode = (value ?? string.Empty).Trim().ToLowerInvariant();
+            return mode == "live" || mode == "production" ? "live" : "sandbox";
+        }
+
+        private static string NormalizePayPalCurrency(string value)
+        {
+            string currency = (value ?? string.Empty).Trim().ToUpperInvariant();
+            if (currency.Length != 3 || currency.Any(c => c < 'A' || c > 'Z'))
+                return "EUR";
+            return currency;
+        }
+
+        private static decimal ParsePositiveDecimal(string value, decimal fallback)
+        {
+            if (decimal.TryParse((value ?? string.Empty).Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out decimal parsed)
+                && parsed > 0m)
+                return parsed;
+
+            if (decimal.TryParse((value ?? string.Empty).Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out parsed)
+                && parsed > 0m)
+                return parsed;
+
+            return fallback;
+        }
+
+        private bool IsCurrencyBuyAvailable()
+        {
+            if (!m_currencyBuyEnabled || m_currencyBuyMode.Equals("disabled", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase))
+                return IsPayPalConfigured(out _);
+            return true;
+        }
+
+        private void NotifyCurrencyAvatar(UUID agentID, string message)
+        {
+            if (agentID == UUID.Zero || string.IsNullOrWhiteSpace(message))
+                return;
+
+            if (!TryFindOnlineClient(agentID, out IClientAPI client))
+                return;
+
+            try
+            {
+                client.SendBlueBoxMessage(UUID.Zero, "RegionWeb", message);
+            }
+            catch
+            {
+                try
+                {
+                    client.SendAgentAlertMessage(message, false);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static string RowValue(Dictionary<string, string> row, string key)
+        {
+            if (row != null && row.TryGetValue(key, out string value))
+                return value ?? string.Empty;
+            return string.Empty;
+        }
+
+        private static string GetCurrencyDirection(string agentText, string source, string destination)
+        {
+            if (destination.Equals(agentText, StringComparison.OrdinalIgnoreCase)
+                && !source.Equals(agentText, StringComparison.OrdinalIgnoreCase))
+                return "credit";
+            if (source.Equals(agentText, StringComparison.OrdinalIgnoreCase)
+                && !destination.Equals(agentText, StringComparison.OrdinalIgnoreCase))
+                return "debit";
+            return "internal";
+        }
+
+        private static string FormatUtc(string value)
+        {
+            if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out DateTime parsed))
+                return parsed.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture);
+            return value;
+        }
+
+        private static string Csv(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            bool mustQuote = value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0;
+            string escaped = value.Replace("\"", "\"\"");
+            return mustQuote ? "\"" + escaped + "\"" : escaped;
+        }
+
+        private static string Json(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            StringBuilder escaped = new StringBuilder(value.Length + 8);
+            foreach (char c in value)
+            {
+                switch (c)
+                {
+                    case '\\':
+                        escaped.Append("\\\\");
+                        break;
+                    case '"':
+                        escaped.Append("\\\"");
+                        break;
+                    case '\r':
+                        escaped.Append("\\r");
+                        break;
+                    case '\n':
+                        escaped.Append("\\n");
+                        break;
+                    case '\t':
+                        escaped.Append("\\t");
+                        break;
+                    default:
+                        if (c < ' ')
+                            escaped.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                        else
+                            escaped.Append(c);
+                        break;
+                }
+            }
+
+            return escaped.ToString();
+        }
+
+        private static string TrimForLog(string value, int maxLength)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+                return value ?? string.Empty;
+            return value.Substring(0, Math.Max(0, maxLength)) + "...";
+        }
+
+        private void LoadCurrencyPurchaseRequests()
+        {
+            lock (m_currencyPurchaseLock)
+            {
+                m_currencyPurchaseRequests.Clear();
+
+                if (string.IsNullOrWhiteSpace(m_absoluteCurrencyPurchaseStoragePath)
+                    || !File.Exists(m_absoluteCurrencyPurchaseStoragePath))
+                    return;
+
+                try
+                {
+                    foreach (string line in File.ReadAllLines(m_absoluteCurrencyPurchaseStoragePath))
+                    {
+                        if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#", StringComparison.Ordinal))
+                            continue;
+
+                        string[] parts = line.Split('\t');
+                        if (parts.Length < 9 || !UUID.TryParse(parts[2], out UUID agentID))
+                            continue;
+
+                        if (!int.TryParse(parts[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int amount))
+                            continue;
+
+                        DateTime requestedUTC;
+                        DateTime updatedUTC;
+                        if (!DateTime.TryParse(parts[1], CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out requestedUTC))
+                            requestedUTC = DateTime.UtcNow;
+                        if (!DateTime.TryParse(parts[6], CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out updatedUTC))
+                            updatedUTC = requestedUTC;
+
+                        CurrencyPurchaseRequest request = new CurrencyPurchaseRequest
+                        {
+                            RequestID = parts[0],
+                            RequestedUTC = requestedUTC.ToUniversalTime(),
+                            AgentID = agentID,
+                            DisplayName = parts[3],
+                            Amount = amount,
+                            Status = string.IsNullOrWhiteSpace(parts[5]) ? "pending" : parts[5],
+                            UpdatedUTC = updatedUTC.ToUniversalTime(),
+                            OperatorName = parts[7],
+                            Note = parts[8]
+                        };
+
+                        if (!string.IsNullOrWhiteSpace(request.RequestID))
+                            m_currencyPurchaseRequests[request.RequestID] = request;
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[REGION WEB]: Could not load currency purchase requests from {0}: {1}", m_absoluteCurrencyPurchaseStoragePath, e.Message);
+                }
+            }
+        }
+
+        private void SaveCurrencyPurchaseRequestsLocked()
+        {
+            if (string.IsNullOrWhiteSpace(m_absoluteCurrencyPurchaseStoragePath))
+                return;
+
+            try
+            {
+                string directory = Path.GetDirectoryName(m_absoluteCurrencyPurchaseStoragePath);
+                if (!string.IsNullOrEmpty(directory))
+                    Directory.CreateDirectory(directory);
+
+                StringBuilder rows = new StringBuilder();
+                rows.Append("# request_id\trequested_utc\tagent_id\tdisplay_name\tamount\tstatus\tupdated_utc\toperator\tnote\n");
+                foreach (CurrencyPurchaseRequest request in m_currencyPurchaseRequests.Values.OrderBy(r => r.RequestedUTC))
+                {
+                    rows.Append(Tsv(request.RequestID)).Append('\t')
+                        .Append(request.RequestedUTC.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture)).Append('\t')
+                        .Append(request.AgentID).Append('\t')
+                        .Append(Tsv(request.DisplayName)).Append('\t')
+                        .Append(request.Amount.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                        .Append(Tsv(request.Status)).Append('\t')
+                        .Append(request.UpdatedUTC.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture)).Append('\t')
+                        .Append(Tsv(request.OperatorName)).Append('\t')
+                        .Append(Tsv(request.Note)).Append('\n');
+                }
+
+                File.WriteAllText(m_absoluteCurrencyPurchaseStoragePath, rows.ToString(), Encoding.UTF8);
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[REGION WEB]: Could not save currency purchase requests to {0}: {1}", m_absoluteCurrencyPurchaseStoragePath, e.Message);
+            }
+        }
+
+        private void LoadCurrencyPayPalOrders()
+        {
+            lock (m_currencyPayPalLock)
+            {
+                m_currencyPayPalOrders.Clear();
+
+                if (string.IsNullOrWhiteSpace(m_absolutePayPalOrderStoragePath)
+                    || !File.Exists(m_absolutePayPalOrderStoragePath))
+                    return;
+
+                try
+                {
+                    foreach (string line in File.ReadAllLines(m_absolutePayPalOrderStoragePath))
+                    {
+                        if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#", StringComparison.Ordinal))
+                            continue;
+
+                        string[] parts = line.Split('\t');
+                        if (parts.Length < 11 || !UUID.TryParse(parts[2], out UUID agentID))
+                            continue;
+
+                        if (!int.TryParse(parts[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tokenAmount))
+                            continue;
+
+                        if (!decimal.TryParse(parts[5], NumberStyles.Number, CultureInfo.InvariantCulture, out decimal fiatAmount))
+                            fiatAmount = 0m;
+
+                        DateTime createdUTC;
+                        DateTime updatedUTC;
+                        if (!DateTime.TryParse(parts[8], CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out createdUTC))
+                            createdUTC = DateTime.UtcNow;
+                        if (!DateTime.TryParse(parts[9], CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out updatedUTC))
+                            updatedUTC = createdUTC;
+
+                        CurrencyPayPalOrder order = new CurrencyPayPalOrder
+                        {
+                            LocalID = parts[0],
+                            PayPalOrderID = parts[1],
+                            AgentID = agentID,
+                            DisplayName = parts[3],
+                            TokenAmount = tokenAmount,
+                            FiatAmount = fiatAmount,
+                            CurrencyCode = string.IsNullOrWhiteSpace(parts[6]) ? m_payPalCurrencyCode : parts[6],
+                            Status = string.IsNullOrWhiteSpace(parts[7]) ? "created" : parts[7],
+                            CreatedUTC = createdUTC.ToUniversalTime(),
+                            UpdatedUTC = updatedUTC.ToUniversalTime(),
+                            Note = parts[10]
+                        };
+
+                        if (!string.IsNullOrWhiteSpace(order.LocalID))
+                            m_currencyPayPalOrders[order.LocalID] = order;
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[REGION WEB]: Could not load PayPal currency orders from {0}: {1}", m_absolutePayPalOrderStoragePath, e.Message);
+                }
+            }
+        }
+
+        private void StoreCurrencyPayPalOrder(CurrencyPayPalOrder order)
+        {
+            if (order == null || string.IsNullOrWhiteSpace(order.LocalID))
+                return;
+
+            lock (m_currencyPayPalLock)
+            {
+                m_currencyPayPalOrders[order.LocalID] = order;
+                SaveCurrencyPayPalOrdersLocked();
+            }
+        }
+
+        private CurrencyPayPalOrder FindCurrencyPayPalOrder(string paypalOrderID, string localID)
+        {
+            lock (m_currencyPayPalLock)
+            {
+                if (!string.IsNullOrWhiteSpace(localID)
+                    && m_currencyPayPalOrders.TryGetValue(localID, out CurrencyPayPalOrder byLocal))
+                    return byLocal;
+
+                if (!string.IsNullOrWhiteSpace(paypalOrderID))
+                {
+                    foreach (CurrencyPayPalOrder order in m_currencyPayPalOrders.Values)
+                    {
+                        if ((order.PayPalOrderID ?? string.Empty).Equals(paypalOrderID, StringComparison.OrdinalIgnoreCase))
+                            return order;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private void MarkCurrencyPayPalOrder(string localID, string status, string note)
+        {
+            if (string.IsNullOrWhiteSpace(localID))
+                return;
+
+            lock (m_currencyPayPalLock)
+            {
+                if (!m_currencyPayPalOrders.TryGetValue(localID, out CurrencyPayPalOrder order))
+                    return;
+
+                order.Status = status ?? order.Status;
+                order.Note = note ?? string.Empty;
+                order.UpdatedUTC = DateTime.UtcNow;
+                SaveCurrencyPayPalOrdersLocked();
+            }
+        }
+
+        private void SaveCurrencyPayPalOrdersLocked()
+        {
+            if (string.IsNullOrWhiteSpace(m_absolutePayPalOrderStoragePath))
+                return;
+
+            try
+            {
+                string directory = Path.GetDirectoryName(m_absolutePayPalOrderStoragePath);
+                if (!string.IsNullOrEmpty(directory))
+                    Directory.CreateDirectory(directory);
+
+                StringBuilder rows = new StringBuilder();
+                rows.Append("# local_id\tpaypal_order_id\tagent_id\tdisplay_name\ttokens\tfiat_amount\tcurrency\tstatus\tcreated_utc\tupdated_utc\tnote\n");
+                foreach (CurrencyPayPalOrder order in m_currencyPayPalOrders.Values.OrderBy(r => r.CreatedUTC))
+                {
+                    rows.Append(Tsv(order.LocalID)).Append('\t')
+                        .Append(Tsv(order.PayPalOrderID)).Append('\t')
+                        .Append(order.AgentID).Append('\t')
+                        .Append(Tsv(order.DisplayName)).Append('\t')
+                        .Append(order.TokenAmount.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                        .Append(order.FiatAmount.ToString("0.00", CultureInfo.InvariantCulture)).Append('\t')
+                        .Append(Tsv(order.CurrencyCode)).Append('\t')
+                        .Append(Tsv(order.Status)).Append('\t')
+                        .Append(order.CreatedUTC.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture)).Append('\t')
+                        .Append(order.UpdatedUTC.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture)).Append('\t')
+                        .Append(Tsv(order.Note)).Append('\n');
+                }
+
+                File.WriteAllText(m_absolutePayPalOrderStoragePath, rows.ToString(), Encoding.UTF8);
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[REGION WEB]: Could not save PayPal currency orders to {0}: {1}", m_absolutePayPalOrderStoragePath, e.Message);
+            }
+        }
+
+        private static string Tsv(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+            return value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ').Trim();
+        }
+
         private static void AppendScriptCompatibilitySummary(StringBuilder html, ScriptFunctionDoc[] docs)
         {
             Dictionary<string, int> statusCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -944,7 +4458,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             AppendPageLinks(html,
                 "Estate", m_basePath + "/",
                 "All regions", m_basePath + "/#regions",
-                "Avatar wallet", CurrencyPortalUrl(),
+                "Avatar wallet", m_basePath + "/currency/",
                 "Script reference", m_basePath + "/scripts");
             html.Append("<p>").Append(Html(content.Tagline)).Append("</p>")
                 .Append("<h1>").Append(Html(content.Title)).Append("</h1>")
@@ -1380,13 +4894,13 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                     content.Usage.Add("Keep AllowNegativeBalances = false for normal viewer currency behavior unless you deliberately want overdraft-style testing.");
                     content.Usage.Add("Set the LoginService Currency value to the viewer-facing currency name you want users to see beside their balance.");
                     content.Usage.Add("Use console commands such as money show, money balance, money set, money give, money take, money transfer, money export and money import for estate administration.");
-                    content.Usage.Add("If the separate RegionCurrency addon-module is installed, see its own documentation for the avatar wallet area (balance, statement, buy, transfer).");
-                    content.Usage.Add("With RegionCurrency installed, estate owners can open its /admin path, request an inworld admin token and manage pending token requests plus avatar balances.");
-                    content.Usage.Add("Use CurrencyBuyEnabled, CurrencyTransferEnabled, CurrencyChallengeCooldownSeconds, CurrencyStatementLimit and CurrencyBuyLimit in RegionCurrency's own [RegionCurrency] config section to tune the wallet.");
+                    content.Usage.Add("Open /regionweb/currency/ for the reserved avatar wallet area: users request an inworld token, log in, view balance/statement, buy tokens and transfer to another avatar.");
+                    content.Usage.Add("Estate owners can open /regionweb/currency/admin, request an inworld admin token and manage pending token requests plus avatar balances.");
+                    content.Usage.Add("Use CurrencyBuyEnabled, CurrencyTransferEnabled, CurrencyChallengeCooldownSeconds, CurrencyStatementLimit and CurrencyBuyLimit in [RegionWeb] to tune the wallet.");
                     content.Usage.Add("Set CurrencyBuyMode = request if purchases should become pending wallet requests instead of immediate credits.");
                     content.Usage.Add("Set CurrencyBuyMode = paypal plus PayPalEnabled, PayPalClientID, PayPalClientSecret, PayPalCurrencyCode, PayPalPricePerToken and PayPalReturnBaseUrl to route wallet token purchases through PayPal Checkout before crediting the local ledger.");
-                    content.Usage.Add("From RegionCurrency's /admin path, use requests.csv and balances.csv to export pending purchase requests and avatar balances for external audit.");
-                    content.Usage.Add("Use regioncurrency pending, regioncurrency approve <request-id> and regioncurrency deny <request-id> to manage pending wallet purchase requests from the simulator console.");
+                    content.Usage.Add("From /regionweb/currency/admin, use requests.csv and balances.csv to export pending purchase requests and avatar balances for external audit.");
+                    content.Usage.Add("Use regionweb currency pending, regionweb currency approve <request-id> and regionweb currency deny <request-id> to manage pending wallet purchase requests from the simulator console.");
                     content.Usage.Add("Restart the region after changing economy settings, then log in or request the balance in the viewer to receive the latest MoneyBalanceReply.");
                     content.Notes.Add("Balances are local to this simulator/grid configuration and are intended for estate/gameplay currency, not real-money production payment processing.");
                     content.Notes.Add("Scripted llGiveMoney and llTransferLindenDollars still require owner-granted PERMISSION_DEBIT before money leaves the object owner.");
@@ -1532,15 +5046,15 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 || value.Trim().Equals("Polished for creators and visitors", StringComparison.OrdinalIgnoreCase)
                 || value.Trim().Equals("OpenSim feature showroom", StringComparison.OrdinalIgnoreCase)
                 || value.Trim().Equals("hypergrid estate", StringComparison.OrdinalIgnoreCase)
-                || value.Trim().Equals("This estate's hypergrid estate", StringComparison.OrdinalIgnoreCase);
+                || value.Trim().Equals("This estate hypergrid estate", StringComparison.OrdinalIgnoreCase);
         }
 
         private RegionPageContent LoadContent(Scene scene)
         {
             RegionPageContent content = new RegionPageContent();
             content.Title = scene.RegionInfo.RegionName;
-            content.Tagline = "A region on this estate";
-            content.Description = "Add region photos and a description in this region's content folder.";
+            content.Tagline = "A This estate region";
+            content.Description = "Add region photos and a description in this region.s This estate content folder.";
             content.HeroImage = string.Empty;
 
             string file = Path.Combine(GetRegionDirectory(scene), "profile.ini");
@@ -1892,12 +5406,8 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             html.Append("<section class=\"stats\"><h2>Economy</h2><dl>");
             foreach (KeyValuePair<string, string> entry in stats)
                 html.Append(Stat(entry.Key, entry.Value));
-            html.Append("</dl>");
-            if (!string.IsNullOrEmpty(m_currencyPortalUrl))
-            {
-                html.Append("<p><a href=\"").Append(Html(m_currencyPortalUrl)).Append("\">Open avatar wallet</a></p>");
-            }
-            html.Append("</section>");
+            html.Append("</dl><p><a href=\"")
+                .Append(Html(m_basePath)).Append("/currency/\">Open avatar wallet</a></p></section>");
         }
 
         private void AppendParcels(StringBuilder html, RegionWebStats stats)
@@ -2856,6 +6366,20 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             html.Append("</ul></section>");
         }
 
+        private static void SendHtml(IOSHttpResponse response, string html)
+        {
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.ContentType = "text/html; charset=utf-8";
+            response.RawBuffer = Encoding.UTF8.GetBytes(html);
+        }
+
+        private static void SendNotFound(IOSHttpResponse response, string message)
+        {
+            response.StatusCode = (int)HttpStatusCode.NotFound;
+            response.ContentType = "text/plain";
+            response.RawBuffer = Encoding.UTF8.GetBytes(message);
+        }
+
         private static string RegionWebCss()
         {
             StringBuilder css = new StringBuilder(8192);
@@ -2872,6 +6396,68 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 .Append(".estate-admin-shell{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;margin-top:24px}.estate-admin-files{align-self:start;position:sticky;top:92px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:0 12px 34px rgba(5,10,15,.07);max-height:calc(100vh - 124px);overflow:auto}.estate-admin-files h2{font-size:20px;margin:0 0 12px}.estate-admin-files a{display:block;border:1px solid var(--line);border-radius:7px;padding:11px;margin:0 0 8px;color:#111820;background:#f8fbfc}.estate-admin-files a.is-active{border-color:var(--accent);background:#ecfaff}.estate-admin-files span{display:block;font-weight:1000}.estate-admin-files small{display:block;color:#66727b}.estate-admin-editor{min-width:0}.estate-admin-file-head{display:flex;align-items:center;justify-content:space-between;gap:14px}.estate-admin-file-head p{margin:0;color:#66727b;word-break:break-all}.reload-pill{display:inline-flex;align-items:center;justify-content:center;min-height:30px;border-radius:999px;border:1px solid #d1dbe0;padding:0 10px;font-size:12px;font-style:normal;font-weight:1000;text-transform:uppercase;color:#34404a;background:#f3f7f9;white-space:nowrap}.reload-safe{background:#eafff0;border-color:#abdfba;color:#146326}.reload-maybe{background:#fff8df;border-color:#ead37c;color:#7b5b00}.reload-restart{background:#fff0f0;border-color:#efb4b4;color:#8a1d1d}.config-textarea{box-sizing:border-box;width:100%;min-height:460px;margin:8px 0 12px;padding:14px;border:1px solid #cfdce2;border-radius:7px;background:#0d1115;color:#dfeaf0;font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:4}.inline-admin-form{margin-top:10px}.estate-admin-structured{margin-top:18px}.config-section{border:1px solid var(--line);border-radius:8px;margin:12px 0;background:#fbfdfe;overflow:hidden}.config-section summary{cursor:pointer;padding:12px 14px;font-weight:1000;background:#f0f5f7}.config-section summary span{color:#0079b6}.config-table{display:grid;gap:1px;background:var(--line)}.config-table form{display:grid;grid-template-columns:minmax(210px,1fr) auto auto;gap:10px;align-items:end;background:#fff;padding:10px}.config-table label{margin:0}.config-table label span{display:block;color:#46515a;font-size:13px;font-weight:1000;word-break:break-all}.config-table input{box-sizing:border-box;width:100%;margin-top:5px;background:#f8fbfc;border:1px solid #cfdce2;color:#111820;border-radius:6px;padding:9px;font:inherit}.config-table button{border:0;border-radius:5px;background:#020304;color:#fff;padding:9px 12px;font-weight:1000;cursor:pointer}.config-table button:hover{background:#0079b6}.estate-admin-summary strong{font-size:24px}")
                 .Append(".back-to-top{position:fixed;right:18px;bottom:18px;z-index:1001;background:#020304;color:#fff;border:1px solid var(--accent);border-radius:6px;padding:10px 13px;font-weight:1000;box-shadow:0 12px 34px rgba(0,0,0,.32)}.back-to-top:hover{background:var(--accent);color:#020304}@media(max-width:980px){.nav-wrap{align-items:flex-start;flex-direction:column;padding-top:12px;padding-bottom:14px}.nav-links{justify-content:flex-start;gap:14px}.layout,.estate-stats,.wallet-summary,.estate-admin-shell{grid-template-columns:1fr}.estate-admin-files{position:static;max-height:none}.config-table form{grid-template-columns:1fr}.wallet-guide{display:block}.wallet-guide a{display:inline-flex;margin-top:14px}.estate-hero{min-height:500px}.hero{min-height:330px}.estate-hero h1,.hero h1,.feature-page h1,.script-reference h1,.wallet-page h1{font-size:44px}.estate-hero .wrap{padding-top:80px;padding-bottom:64px}.wrap{padding-left:18px;padding-right:18px}.script-card-head{display:block}.script-card-head span{text-align:left;display:block;margin-top:5px}.brand{min-width:0}.back-to-top{right:14px;bottom:14px;padding:9px 11px}}");
             return css.ToString();
+        }
+
+        private StringBuilder BeginPage(string title)
+        {
+            StringBuilder html = new StringBuilder(8192);
+            html.Append("<!doctype html><html><head><meta charset=\"utf-8\">")
+                .Append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+                .Append("<title>").Append(Html(title)).Append("</title>")
+                .Append("<link rel=\"icon\" type=\"image/svg+xml\" href=\"")
+                .Append(VanillaSimFaviconDataUri())
+                .Append("\">")
+                .Append("<style>")
+                .Append(RegionWebCss())
+                .Append("</style></head><body id=\"top\">");
+            AppendGlobalNavigation(html);
+            return html;
+        }
+
+        private static string VanillaSimFaviconDataUri()
+        {
+            const string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#05070a'/><rect x='8' y='8' width='48' height='48' rx='11' fill='#111820' stroke='#12bdf4' stroke-width='4'/><path d='M17 18l8 28 8-28' fill='none' stroke='#12bdf4' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/><path d='M45 21c-8-4-17 2-9 8 8 5 2 13-8 8' fill='none' stroke='#fff' stroke-width='7' stroke-linecap='round'/><circle cx='45' cy='20' r='6' fill='#c700ff'/></svg>";
+            return "data:image/svg+xml," + Uri.EscapeDataString(svg);
+        }
+
+        private void AppendGlobalNavigation(StringBuilder html)
+        {
+            html.Append("<nav class=\"site-nav\" aria-label=\"This estate navigation\"><div class=\"wrap nav-wrap\"><a class=\"brand\" href=\"")
+                .Append(Html(m_basePath)).Append("/\"><span class=\"brand-mark\" aria-hidden=\"true\"><span></span></span><span class=\"brand-type\"><span>Vanilla</span><strong>Sim</strong></span></a><div class=\"nav-links\">")
+                .Append("<a href=\"").Append(Html(m_basePath)).Append("/#regions\">Regions</a>")
+                .Append("<a href=\"").Append(Html(m_basePath)).Append("/#features\">Features</a>");
+
+            if (m_currencyPortalEnabled)
+                html.Append("<a class=\"nav-cta\" href=\"").Append(Html(m_basePath)).Append("/currency/\">Wallet</a>");
+
+            html.Append("<a href=\"").Append(Html(m_basePath)).Append("/admin\">Admin</a>");
+
+            html.Append("<a class=\"nav-github\" href=\"").Append(Html(VanillaSimRepositoryUrl))
+                .Append("\" target=\"_blank\" rel=\"noopener\" aria-label=\"This estate GitHub repository\">")
+                .Append("<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.68 7.68 0 0 1 8 3.86c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z\"/></svg><span>GitHub</span></a>");
+
+            html.Append("</div></div></nav>");
+        }
+
+        private static void AppendPageLinks(StringBuilder html, params string[] labelUrlPairs)
+        {
+            if (labelUrlPairs == null || labelUrlPairs.Length < 2)
+                return;
+
+            html.Append("<nav class=\"page-links\" aria-label=\"Page navigation\">");
+            for (int i = 0; i + 1 < labelUrlPairs.Length; i += 2)
+            {
+                html.Append("<a href=\"").Append(Html(labelUrlPairs[i + 1])).Append("\">")
+                    .Append(Html(labelUrlPairs[i])).Append("</a>");
+            }
+            html.Append("</nav>");
+        }
+
+        private static string EndPage()
+        {
+            return "<a class=\"back-to-top\" href=\"#top\" aria-label=\"Back to top\">Top</a>"
+                + "<script>(function(){var groups=document.querySelectorAll('[data-carousel]');for(var g=0;g<groups.length;g++){(function(box){var slides=box.querySelectorAll('.estate-slide');if(slides.length<2)return;var i=0;setInterval(function(){slides[i].classList.remove('is-active');i=(i+1)%slides.length;slides[i].classList.add('is-active');},9500);})(groups[g]);}})();</script>"
+                + "</body></html>";
         }
 
         private static string Paragraphs(string text)
@@ -2900,6 +6486,31 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             return string.Join(" ", words.Take(count).ToArray()) + "...";
         }
 
+        private static string MakeSlug(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return "region";
+
+            StringBuilder slug = new StringBuilder(name.Length);
+            bool dash = false;
+            foreach (char c in name.Trim().ToLowerInvariant())
+            {
+                if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                {
+                    slug.Append(c);
+                    dash = false;
+                }
+                else if (!dash)
+                {
+                    slug.Append('-');
+                    dash = true;
+                }
+            }
+
+            string result = slug.ToString().Trim('-');
+            return string.IsNullOrEmpty(result) ? "region" : result;
+        }
+
         private static string CleanPath(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -2910,6 +6521,16 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 path = "/" + path;
 
             return path.TrimEnd('/');
+        }
+
+        private static string Url(string value)
+        {
+            return Uri.EscapeDataString(value ?? string.Empty);
+        }
+
+        private static string Html(string value)
+        {
+            return WebUtility.HtmlEncode(value ?? string.Empty);
         }
 
         private static string EscapeIni(string value)
@@ -3490,6 +7111,75 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             public string Body;
         }
 
+        private class CurrencyLoginChallenge
+        {
+            public UUID AgentID;
+            public string DisplayName;
+            public string Token;
+            public DateTime ExpiresUTC;
+            public bool IsAdmin;
+        }
+
+        private class CurrencyWebSession
+        {
+            public UUID AgentID;
+            public string DisplayName;
+            public string CsrfToken;
+            public DateTime ExpiresUTC;
+            public bool IsAdmin;
+        }
+
+        private class EstateAdminConfigFile
+        {
+            public string ID;
+            public string Label;
+            public string AbsolutePath;
+            public string RelativePath;
+            public string Scope;
+            public string ReloadLabel;
+            public string ReloadClass;
+        }
+
+        private class EstateAdminIniSection
+        {
+            public string Name;
+            public readonly List<EstateAdminIniEntry> Entries = new List<EstateAdminIniEntry>();
+        }
+
+        private class EstateAdminIniEntry
+        {
+            public string Key;
+            public string Value;
+        }
+
+        private class CurrencyPurchaseRequest
+        {
+            public string RequestID;
+            public DateTime RequestedUTC;
+            public UUID AgentID;
+            public string DisplayName;
+            public int Amount;
+            public string Status;
+            public DateTime UpdatedUTC;
+            public string OperatorName;
+            public string Note;
+        }
+
+        private class CurrencyPayPalOrder
+        {
+            public string LocalID;
+            public string PayPalOrderID;
+            public UUID AgentID;
+            public string DisplayName;
+            public int TokenAmount;
+            public decimal FiatAmount;
+            public string CurrencyCode;
+            public string Status;
+            public DateTime CreatedUTC;
+            public DateTime UpdatedUTC;
+            public string Note;
+        }
+
         private class InventoryCarouselItem
         {
             public UUID AssetID;
@@ -3536,1300 +7226,5 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             public string Name;
             public int Area;
         }
-        private bool IsRegionWebSuperAdmin(UUID agentID)
-        {
-            if (agentID == UUID.Zero)
-                return false;
-
-            foreach (Scene scene in GetSceneSnapshot())
-            {
-                EstateSettings estate = scene.RegionInfo.EstateSettings;
-                if (estate != null && estate.EstateOwner == agentID)
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static string ReadCookie(IOSHttpRequest request, string name)
-        {
-            string cookies = request.Headers["cookie"] ?? request.Headers["Cookie"];
-            if (string.IsNullOrEmpty(cookies))
-                return string.Empty;
-
-            string[] parts = cookies.Split(';');
-            foreach (string raw in parts)
-            {
-                string part = raw.Trim();
-                int equals = part.IndexOf('=');
-                if (equals <= 0)
-                    continue;
-                if (part.Substring(0, equals).Trim().Equals(name, StringComparison.Ordinal))
-                    return part.Substring(equals + 1).Trim();
-            }
-
-            return string.Empty;
-        }
-
-        private Dictionary<string, string> ReadForm(IOSHttpRequest request)
-        {
-            Dictionary<string, string> form = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            if (request.QueryAsDictionary != null)
-            {
-                foreach (KeyValuePair<string, string> entry in request.QueryAsDictionary)
-                    form[entry.Key] = entry.Value ?? string.Empty;
-            }
-
-            if (request.HasEntityBody && request.InputStream != null)
-            {
-                Encoding encoding = request.ContentEncoding ?? Encoding.UTF8;
-                using (StreamReader reader = new StreamReader(request.InputStream, encoding))
-                {
-                    string body = reader.ReadToEnd();
-                    if (!string.IsNullOrEmpty(body))
-                    {
-                        Dictionary<string, object> parsed = ServerUtils.ParseQueryString(body);
-                        foreach (KeyValuePair<string, object> entry in parsed)
-                            form[entry.Key] = entry.Value == null ? string.Empty : entry.Value.ToString();
-                    }
-                }
-            }
-
-            return form;
-        }
-
-        private static string FormValue(Dictionary<string, string> form, string name)
-        {
-            if (form != null && form.TryGetValue(name, out string value))
-                return value == null ? string.Empty : value.Trim();
-            return string.Empty;
-        }
-
-        private static string FormRawValue(Dictionary<string, string> form, string name)
-        {
-            if (form != null && form.TryGetValue(name, out string value))
-                return value ?? string.Empty;
-            return string.Empty;
-        }
-
-        private bool TryResolveAvatar(string value, out UUID agentID, out string displayName)
-        {
-            agentID = UUID.Zero;
-            displayName = string.Empty;
-            string name = (value ?? string.Empty).Trim();
-            if (string.IsNullOrEmpty(name))
-                return false;
-
-            if (UUID.TryParse(name, out agentID))
-            {
-                displayName = LookupAvatarName(agentID);
-                if (string.IsNullOrWhiteSpace(displayName))
-                    displayName = agentID.ToString();
-                return true;
-            }
-
-            if (TryFindOnlineClientByName(name, out IClientAPI client))
-            {
-                agentID = client.AgentId;
-                displayName = client.Name;
-                return true;
-            }
-
-            if (!SplitAvatarName(name, out string firstName, out string lastName))
-                return false;
-
-            foreach (Scene scene in GetSceneSnapshot())
-            {
-                IUserAccountService accounts = scene.UserAccountService;
-                if (accounts == null)
-                    continue;
-
-                UserAccount account = accounts.GetUserAccount(scene.RegionInfo.ScopeID, firstName, lastName)
-                    ?? accounts.GetUserAccount(UUID.Zero, firstName, lastName);
-                if (account == null)
-                    continue;
-
-                agentID = account.PrincipalID;
-                displayName = account.Name;
-                return true;
-            }
-
-            return false;
-        }
-
-        private string LookupAvatarName(UUID agentID)
-        {
-            if (TryFindOnlineClient(agentID, out IClientAPI client))
-                return client.Name;
-
-            foreach (Scene scene in GetSceneSnapshot())
-            {
-                IUserAccountService accounts = scene.UserAccountService;
-                if (accounts == null)
-                    continue;
-
-                UserAccount account = accounts.GetUserAccount(scene.RegionInfo.ScopeID, agentID)
-                    ?? accounts.GetUserAccount(UUID.Zero, agentID);
-                if (account != null)
-                    return account.Name;
-            }
-
-            return string.Empty;
-        }
-
-        private bool TryFindOnlineClient(UUID agentID, out IClientAPI client)
-        {
-            client = null;
-            foreach (Scene scene in GetSceneSnapshot())
-            {
-                if (scene.TryGetScenePresence(agentID, out ScenePresence presence)
-                    && TryGetRootClient(presence, out client))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private bool TryFindOnlineClientByName(string name, out IClientAPI client)
-        {
-            client = null;
-            if (!SplitAvatarName(name, out string firstName, out string lastName))
-                return false;
-
-            foreach (Scene scene in GetSceneSnapshot())
-            {
-                ScenePresence presence = scene.GetScenePresence(firstName, lastName);
-                if (TryGetRootClient(presence, out client))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool TryGetRootClient(ScenePresence presence, out IClientAPI client)
-        {
-            client = null;
-            if (presence == null || presence.IsDeleted || presence.IsChildAgent || presence.ControllingClient == null)
-                return false;
-
-            client = presence.ControllingClient;
-            return client.IsActive;
-        }
-
-        private List<Scene> GetSceneSnapshot()
-        {
-            lock (m_sync)
-                return new List<Scene>(m_scenesByID.Values);
-        }
-
-        private static bool SplitAvatarName(string name, out string firstName, out string lastName)
-        {
-            firstName = string.Empty;
-            lastName = string.Empty;
-            string[] parts = (name ?? string.Empty).Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0)
-                return false;
-
-            firstName = parts[0];
-            if (parts.Length == 1)
-                lastName = "Resident";
-            else
-                lastName = string.Join(" ", parts.Skip(1).ToArray());
-
-            return true;
-        }
-
-        private static string FormatUtc(string value)
-        {
-            if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out DateTime parsed))
-                return parsed.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture);
-            return value;
-        }
-
-        private static string Csv(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return string.Empty;
-
-            bool mustQuote = value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0;
-            string escaped = value.Replace("\"", "\"\"");
-            return mustQuote ? "\"" + escaped + "\"" : escaped;
-        }
-
-        private static string Json(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return string.Empty;
-
-            StringBuilder escaped = new StringBuilder(value.Length + 8);
-            foreach (char c in value)
-            {
-                switch (c)
-                {
-                    case '\\':
-                        escaped.Append("\\\\");
-                        break;
-                    case '"':
-                        escaped.Append("\\\"");
-                        break;
-                    case '\r':
-                        escaped.Append("\\r");
-                        break;
-                    case '\n':
-                        escaped.Append("\\n");
-                        break;
-                    case '\t':
-                        escaped.Append("\\t");
-                        break;
-                    default:
-                        if (c < ' ')
-                            escaped.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
-                        else
-                            escaped.Append(c);
-                        break;
-                }
-            }
-
-            return escaped.ToString();
-        }
-
-        private static string TrimForLog(string value, int maxLength)
-        {
-            if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
-                return value ?? string.Empty;
-            return value.Substring(0, Math.Max(0, maxLength)) + "...";
-        }
-
-        private static string Tsv(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return string.Empty;
-            return value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ').Trim();
-        }
-
-        private static void SendHtml(IOSHttpResponse response, string html)
-        {
-            response.StatusCode = (int)HttpStatusCode.OK;
-            response.ContentType = "text/html; charset=utf-8";
-            response.RawBuffer = Encoding.UTF8.GetBytes(html);
-        }
-
-        private static void SendNotFound(IOSHttpResponse response, string message)
-        {
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            response.ContentType = "text/plain";
-            response.RawBuffer = Encoding.UTF8.GetBytes(message);
-        }
-
-        private StringBuilder BeginPage(string title)
-        {
-            StringBuilder html = new StringBuilder(8192);
-            html.Append("<!doctype html><html><head><meta charset=\"utf-8\">")
-                .Append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-                .Append("<title>").Append(Html(title)).Append("</title>")
-                .Append("<style>")
-                .Append(RegionWebCss())
-                .Append("</style></head><body id=\"top\">");
-            AppendGlobalNavigation(html);
-            return html;
-        }
-
-        private void AppendGlobalNavigation(StringBuilder html)
-        {
-            html.Append("<nav class=\"site-nav\" aria-label=\"Region navigation\"><div class=\"wrap nav-wrap\"><a class=\"brand\" href=\"")
-                .Append(Html(m_basePath)).Append("/\"><span class=\"brand-type\">").Append(Html(m_defaultEstateTitle)).Append("</span></a><div class=\"nav-links\">")
-                .Append("<a href=\"").Append(Html(m_basePath)).Append("/#regions\">Regions</a>")
-                .Append("<a href=\"").Append(Html(m_basePath)).Append("/#features\">Features</a>");
-
-            html.Append("<a href=\"").Append(Html(m_basePath)).Append("/admin\">Admin</a>");
-
-            html.Append("</div></div></nav>");
-        }
-
-        private string CurrencyPortalUrl(string suffix = null)
-        {
-            if (string.IsNullOrWhiteSpace(m_currencyPortalUrl))
-                return string.Empty;
-
-            string url = m_currencyPortalUrl.Trim();
-            if (string.IsNullOrWhiteSpace(suffix))
-                return url;
-
-            return url.TrimEnd('/') + "/" + suffix.TrimStart('/');
-        }
-
-        private static void AppendPageLinks(StringBuilder html, params string[] labelUrlPairs)
-        {
-            if (labelUrlPairs == null || labelUrlPairs.Length < 2)
-                return;
-
-            StringBuilder links = new StringBuilder();
-            for (int i = 0; i + 1 < labelUrlPairs.Length; i += 2)
-            {
-                string label = labelUrlPairs[i];
-                string url = labelUrlPairs[i + 1];
-
-                if (string.IsNullOrWhiteSpace(label) || string.IsNullOrWhiteSpace(url))
-                    continue;
-
-                links.Append("<a href=\"").Append(Html(url)).Append("\">")
-                    .Append(Html(label)).Append("</a>");
-            }
-
-            if (links.Length == 0)
-                return;
-
-            html.Append("<nav class=\"page-links\" aria-label=\"Page navigation\">")
-                .Append(links).Append("</nav>");
-        }
-
-        private static string EndPage()
-        {
-            return "<a class=\"back-to-top\" href=\"#top\" aria-label=\"Back to top\">Top</a>"
-                + "<script>(function(){var groups=document.querySelectorAll('[data-carousel]');for(var g=0;g<groups.length;g++){(function(box){var slides=box.querySelectorAll('.estate-slide');if(slides.length<2)return;var i=0;setInterval(function(){slides[i].classList.remove('is-active');i=(i+1)%slides.length;slides[i].classList.add('is-active');},9500);})(groups[g]);}})();</script>"
-                + "</body></html>";
-        }
-
-        private static string MakeSlug(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name))
-                return "region";
-
-            StringBuilder slug = new StringBuilder(name.Length);
-            bool dash = false;
-            foreach (char c in name.Trim().ToLowerInvariant())
-            {
-                if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
-                {
-                    slug.Append(c);
-                    dash = false;
-                }
-                else if (!dash)
-                {
-                    slug.Append('-');
-                    dash = true;
-                }
-            }
-
-            string result = slug.ToString().Trim('-');
-            return string.IsNullOrEmpty(result) ? "region" : result;
-        }
-
-        private static string Url(string value)
-        {
-            return Uri.EscapeDataString(value ?? string.Empty);
-        }
-
-        private static string Html(string value)
-        {
-            return WebUtility.HtmlEncode(value ?? string.Empty);
-        }
-
-        private void SendEstateAdminPortal(string[] parts, IOSHttpRequest request, IOSHttpResponse response)
-        {
-            Dictionary<string, string> form = ReadForm(request);
-            bool isPost = !string.IsNullOrEmpty(request.HttpMethod)
-                && request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase);
-            string action = isPost ? FormValue(form, "action") :
-                (parts.Length >= 2 ? parts[1] : string.Empty);
-
-            EstateAdminSession session = GetEstateAdminSession(request);
-
-            if (action.Equals("logout", StringComparison.OrdinalIgnoreCase))
-            {
-                if (session != null && !ValidateEstateAdminCsrf(session, form, out string csrfMessage))
-                {
-                    SendEstateAdminDashboard(response, session, FormValue(form, "file"), csrfMessage, "error");
-                    return;
-                }
-
-                string sessionToken = ReadCookie(request, EstateAdminSessionCookie);
-                if (!string.IsNullOrEmpty(sessionToken))
-                {
-                    lock (m_estateAdminAuthLock)
-                        m_estateAdminSessions.Remove(sessionToken);
-                }
-
-                ClearEstateAdminSessionCookie(response);
-                SendEstateAdminLogin(response, "You have been logged out.", string.Empty);
-                return;
-            }
-
-            if (isPost && action.Equals("admin-request-token", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleEstateAdminTokenRequest(form, response);
-                return;
-            }
-
-            if (isPost && action.Equals("admin-login", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleEstateAdminLogin(form, response);
-                return;
-            }
-
-            if (session == null || !IsRegionWebSuperAdmin(session.AgentID))
-            {
-                SendEstateAdminLogin(response, string.Empty, FormValue(form, "avatar"));
-                return;
-            }
-
-            string selectedFileID = FormValue(form, "file");
-            string message = string.Empty;
-            string severity = string.Empty;
-
-            if (isPost)
-            {
-                if (ValidateEstateAdminCsrf(session, form, out message))
-                {
-                    if (action.Equals("admin-save-raw", StringComparison.OrdinalIgnoreCase))
-                    {
-                        SaveEstateAdminRawConfig(selectedFileID, FormRawValue(form, "content"), out message, out severity);
-                    }
-                    else if (action.Equals("admin-save-setting", StringComparison.OrdinalIgnoreCase))
-                    {
-                        SaveEstateAdminSetting(
-                            selectedFileID,
-                            FormValue(form, "section"),
-                            FormValue(form, "key"),
-                            FormRawValue(form, "value"),
-                            out message,
-                            out severity);
-                    }
-                    else if (action.Equals("admin-reload", StringComparison.OrdinalIgnoreCase))
-                    {
-                        ApplyEstateAdminReload(selectedFileID, out message, out severity);
-                    }
-                }
-                else
-                {
-                    severity = "error";
-                }
-            }
-            else if (string.IsNullOrEmpty(selectedFileID))
-            {
-                selectedFileID = FormValue(form, "file");
-            }
-
-            SendEstateAdminDashboard(response, session, selectedFileID, message, severity);
-        }
-
-        private void SendEstateAdminLogin(IOSHttpResponse response, string message, string avatarName)
-        {
-            EstatePageContent estate = LoadEstateContent();
-            StringBuilder html = BeginPage("Estate Admin - " + estate.Title);
-            html.Append("<main class=\"wrap wallet-page estate-admin-page\">");
-            AppendPageLinks(html,
-                "Estate", m_basePath + "/",
-                "Avatar wallet", CurrencyPortalUrl());
-            html.Append("<p class=\"feature-kicker\">Estate owner control room</p><h1>Estate Admin</h1>")
-                .Append("<p class=\"lead\">Install, inspect, edit, save and backup OpenSim configuration from one protected web portal. Request a one-time inworld token before touching simulator files.</p>");
-
-            AppendEstateAdminMessage(html, message, string.IsNullOrEmpty(message) || message.StartsWith("Admin token sent", StringComparison.Ordinal) ? "ok" : "error");
-
-            html.Append("<section class=\"wallet-grid\"><article class=\"wallet-card\"><h2>1. Request admin token</h2>")
-                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
-                .Append("<input type=\"hidden\" name=\"action\" value=\"admin-request-token\">")
-                .Append("<label>Estate owner avatar<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
-                .Append("<button type=\"submit\">Send admin token inworld</button></form>")
-                .Append("<p class=\"wallet-note\">The avatar must own at least one loaded estate region and must be online.</p></article>");
-
-            html.Append("<article class=\"wallet-card\"><h2>2. Login</h2>")
-                .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
-                .Append("<input type=\"hidden\" name=\"action\" value=\"admin-login\">")
-                .Append("<label>Estate owner avatar<input name=\"avatar\" value=\"").Append(Html(avatarName)).Append("\" required placeholder=\"First Last\"></label>")
-                .Append("<label>Admin token<input name=\"token\" required autocomplete=\"one-time-code\" placeholder=\"8-character token\"></label>")
-                .Append("<button type=\"submit\">Open Estate Admin</button></form></article></section></main>")
-                .Append(EndPage());
-
-            SendHtml(response, html.ToString());
-        }
-
-        private void SendEstateAdminDashboard(IOSHttpResponse response, EstateAdminSession session, string selectedFileID, string message, string severity)
-        {
-            EstatePageContent estate = LoadEstateContent();
-            List<EstateAdminConfigFile> files = GetEstateAdminConfigFiles();
-            EstateAdminConfigFile selected = ResolveEstateAdminConfigFile(files, selectedFileID);
-            string configText = string.Empty;
-            string readError = string.Empty;
-            List<EstateAdminIniSection> sections = new List<EstateAdminIniSection>();
-
-            if (selected != null)
-            {
-                try
-                {
-                    configText = File.ReadAllText(selected.AbsolutePath);
-                    sections = ParseEstateAdminIni(configText);
-                }
-                catch (Exception e)
-                {
-                    readError = e.Message;
-                    if (string.IsNullOrEmpty(message))
-                    {
-                        message = "Could not read selected config file: " + e.Message;
-                        severity = "error";
-                    }
-                }
-            }
-
-            StringBuilder html = BeginPage("Estate Admin - " + estate.Title);
-            html.Append("<main class=\"wrap wallet-page estate-admin-page\">");
-            AppendPageLinks(html,
-                "Estate", m_basePath + "/",
-                "Avatar wallet", CurrencyPortalUrl(),
-                "Money admin", CurrencyPortalUrl("admin"));
-            html.Append("<p class=\"feature-kicker\">Estate owner control room</p><h1>Estate Admin</h1>")
-                .Append("<p class=\"lead\">A protected control panel for OpenSim configuration files: browse, edit, backup and apply safe reload operations from the web.</p>");
-
-            AppendEstateAdminMessage(html, message, severity);
-
-            html.Append("<section class=\"wallet-summary estate-admin-summary\"><div><span>Admin</span><strong>")
-                .Append(Html(session.DisplayName)).Append("</strong></div><div><span>Config files</span><strong>")
-                .Append(files.Count.ToString(CultureInfo.InvariantCulture)).Append("</strong></div><div><span>Loaded regions</span><strong>")
-                .Append(GetSceneSnapshot().Count.ToString(CultureInfo.InvariantCulture)).Append("</strong></div></section>");
-
-            html.Append("<section class=\"estate-admin-shell\"><aside class=\"estate-admin-files\"><h2>Configuration</h2>");
-            if (files.Count == 0)
-            {
-                html.Append("<p>No editable configuration files were found under the simulator bin folder.</p>");
-            }
-            else
-            {
-                foreach (EstateAdminConfigFile file in files)
-                {
-                    bool current = selected != null && selected.ID.Equals(file.ID, StringComparison.Ordinal);
-                    html.Append("<a class=\"").Append(current ? "is-active" : string.Empty).Append("\" href=\"")
-                        .Append(Html(m_basePath)).Append("/admin?file=").Append(Url(file.ID)).Append("\"><span>")
-                        .Append(Html(file.Label)).Append("</span><small>")
-                        .Append(Html(file.Scope)).Append("</small></a>");
-                }
-            }
-            html.Append("</aside><section class=\"estate-admin-editor\">");
-
-            if (selected == null)
-            {
-                html.Append("<article class=\"wallet-card\"><h2>No file selected</h2><p class=\"wallet-note\">Choose a configuration file from the left to start editing.</p></article>");
-            }
-            else
-            {
-                html.Append("<article class=\"wallet-card estate-admin-file-head\"><div><h2>")
-                    .Append(Html(selected.Label)).Append("</h2><p>")
-                    .Append(Html(selected.RelativePath)).Append("</p></div><span class=\"reload-pill ")
-                    .Append(Html(selected.ReloadClass)).Append("\">")
-                    .Append(Html(selected.ReloadLabel)).Append("</span></article>");
-
-                if (!string.IsNullOrEmpty(readError))
-                {
-                    html.Append("<p class=\"wallet-message error\">").Append(Html(readError)).Append("</p>");
-                }
-                else
-                {
-                    html.Append("<article class=\"wallet-card\"><h2>Raw editor</h2>")
-                        .Append("<p class=\"wallet-note\">Every save creates a timestamped backup before writing. Use raw edit for complete control over comments, sections and values.</p>")
-                        .Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
-                        .Append("<input type=\"hidden\" name=\"action\" value=\"admin-save-raw\">")
-                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
-                        .Append("<input type=\"hidden\" name=\"file\" value=\"").Append(Html(selected.ID)).Append("\">")
-                        .Append("<textarea class=\"config-textarea\" name=\"content\" spellcheck=\"false\">")
-                        .Append(Html(configText)).Append("</textarea>")
-                        .Append("<button type=\"submit\">Save with backup</button></form>")
-                        .Append("<form class=\"inline-admin-form\" method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
-                        .Append("<input type=\"hidden\" name=\"action\" value=\"admin-reload\">")
-                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
-                        .Append("<input type=\"hidden\" name=\"file\" value=\"").Append(Html(selected.ID)).Append("\">")
-                        .Append("<button type=\"submit\">Reload what can be reloaded now</button></form>")
-                        .Append("</article>");
-
-                    AppendEstateAdminStructuredEditor(html, session, selected, sections);
-                }
-            }
-
-            html.Append("</section></section>")
-                .Append("<form class=\"wallet-logout\" method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
-                .Append("<input type=\"hidden\" name=\"action\" value=\"logout\">")
-                .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
-                .Append("<button type=\"submit\">Logout</button></form>")
-                .Append("</main>").Append(EndPage());
-
-            SendHtml(response, html.ToString());
-        }
-
-        private void AppendEstateAdminStructuredEditor(StringBuilder html, EstateAdminSession session, EstateAdminConfigFile file, List<EstateAdminIniSection> sections)
-        {
-            html.Append("<article class=\"wallet-card estate-admin-structured\"><h2>Structured editor</h2>")
-                .Append("<p class=\"wallet-note\">Edit one setting at a time when you want a safer, focused change. Startup-only options are marked so you know when a restart is still needed.</p>");
-
-            if (sections.Count == 0)
-            {
-                html.Append("<p class=\"wallet-note\">No INI-style section/key entries were detected in this file.</p></article>");
-                return;
-            }
-
-            foreach (EstateAdminIniSection section in sections)
-            {
-                html.Append("<details class=\"config-section\"><summary>")
-                    .Append(Html(string.IsNullOrEmpty(section.Name) ? "Global" : section.Name))
-                    .Append(" <span>")
-                    .Append(section.Entries.Count.ToString(CultureInfo.InvariantCulture))
-                    .Append("</span></summary><div class=\"config-table\">");
-
-                foreach (EstateAdminIniEntry entry in section.Entries)
-                {
-                    string reloadClass;
-                    string reloadLabel = ClassifyEstateAdminSetting(file, section.Name, entry.Key, out reloadClass);
-                    html.Append("<form method=\"post\" action=\"").Append(Html(m_basePath)).Append("/admin\">")
-                        .Append("<input type=\"hidden\" name=\"action\" value=\"admin-save-setting\">")
-                        .Append("<input type=\"hidden\" name=\"csrf\" value=\"").Append(Html(session.CsrfToken)).Append("\">")
-                        .Append("<input type=\"hidden\" name=\"file\" value=\"").Append(Html(file.ID)).Append("\">")
-                        .Append("<input type=\"hidden\" name=\"section\" value=\"").Append(Html(section.Name)).Append("\">")
-                        .Append("<input type=\"hidden\" name=\"key\" value=\"").Append(Html(entry.Key)).Append("\">")
-                        .Append("<label><span>").Append(Html(entry.Key)).Append("</span><input name=\"value\" value=\"")
-                        .Append(Html(entry.Value)).Append("\"></label><em class=\"reload-pill ")
-                        .Append(Html(reloadClass)).Append("\">").Append(Html(reloadLabel)).Append("</em>")
-                        .Append("<button type=\"submit\">Save</button></form>");
-                }
-
-                html.Append("</div></details>");
-            }
-
-            html.Append("</article>");
-        }
-
-        private class EstateAdminConfigFile
-        {
-            public string ID;
-            public string Label;
-            public string AbsolutePath;
-            public string RelativePath;
-            public string Scope;
-            public string ReloadLabel;
-            public string ReloadClass;
-        }
-
-        private class EstateAdminIniSection
-        {
-            public string Name;
-            public readonly List<EstateAdminIniEntry> Entries = new List<EstateAdminIniEntry>();
-        }
-
-        private class EstateAdminIniEntry
-        {
-            public string Key;
-            public string Value;
-        }
-
-        // Estate Admin's own login/session system, ported from
-        // GuntharDeNiro/opensim's RegionWeb module but decoupled into an
-        // independent copy rather than sharing state with the wallet/
-        // PayPal system (which was the entanglement that made separating
-        // the two features risky - see conversation notes). Same
-        // challenge-token-over-IM / session-cookie shape as the original,
-        // just with its own dedicated fields, classes, and cookie name.
-        private const string EstateAdminSessionCookie = "RegionWebEstateAdmin";
-        private readonly object m_estateAdminAuthLock = new object();
-        private readonly Dictionary<string, EstateAdminLoginChallenge> m_estateAdminChallenges = new Dictionary<string, EstateAdminLoginChallenge>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, EstateAdminSession> m_estateAdminSessions = new Dictionary<string, EstateAdminSession>(StringComparer.Ordinal);
-        private readonly Dictionary<UUID, DateTime> m_estateAdminLastChallengeUTCByAgent = new Dictionary<UUID, DateTime>();
-        private int m_estateAdminChallengeMinutes = 10;
-        private int m_estateAdminChallengeCooldownSeconds = 20;
-        private int m_estateAdminSessionHours = 12;
-
-        private class EstateAdminLoginChallenge
-        {
-            public UUID AgentID;
-            public string DisplayName;
-            public string Token;
-            public DateTime ExpiresUTC;
-        }
-
-        private class EstateAdminSession
-        {
-            public UUID AgentID;
-            public string DisplayName;
-            public string CsrfToken;
-            public DateTime ExpiresUTC;
-        }
-
-        private void HandleEstateAdminTokenRequest(Dictionary<string, string> form, IOSHttpResponse response)
-        {
-            string avatarName = FormValue(form, "avatar");
-            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
-            {
-                SendEstateAdminLogin(response, "Avatar not found. Use the full avatar name, for example First Last.", avatarName);
-                return;
-            }
-
-            if (!IsRegionWebSuperAdmin(agentID))
-            {
-                SendEstateAdminLogin(response, "Only an estate owner of a loaded region can access Estate Admin.", displayName);
-                return;
-            }
-
-            if (!TryFindOnlineClient(agentID, out IClientAPI client))
-            {
-                SendEstateAdminLogin(response, "Admin avatar resolved, but it must be online in one of these regions to receive the token inworld.", displayName);
-                return;
-            }
-
-            string token = GenerateEstateAdminChallengeToken();
-            DateTime expires = DateTime.UtcNow.AddMinutes(m_estateAdminChallengeMinutes);
-            lock (m_estateAdminAuthLock)
-            {
-                CleanupEstateAdminAuthLocked();
-                if (m_estateAdminChallengeCooldownSeconds > 0
-                    && m_estateAdminLastChallengeUTCByAgent.TryGetValue(agentID, out DateTime lastChallengeUTC)
-                    && (DateTime.UtcNow - lastChallengeUTC).TotalSeconds < m_estateAdminChallengeCooldownSeconds)
-                {
-                    SendEstateAdminLogin(response, "Admin token already sent recently. Wait a few seconds before requesting another one.", displayName);
-                    return;
-                }
-
-                m_estateAdminChallenges[token] = new EstateAdminLoginChallenge
-                {
-                    AgentID = agentID,
-                    DisplayName = displayName,
-                    Token = token,
-                    ExpiresUTC = expires
-                };
-                m_estateAdminLastChallengeUTCByAgent[agentID] = DateTime.UtcNow;
-            }
-
-            string message = "Estate admin token for " + displayName + ": " + token
-                + " (expires in " + m_estateAdminChallengeMinutes.ToString(CultureInfo.InvariantCulture) + " minutes).";
-            try
-            {
-                client.SendBlueBoxMessage(UUID.Zero, "Estate Admin", message);
-            }
-            catch
-            {
-                client.SendAgentAlertMessage(message, false);
-            }
-
-            SendEstateAdminLogin(response, "Admin token sent inworld to " + displayName + ". Enter it below to open Estate Admin.", displayName);
-        }
-
-        private void HandleEstateAdminLogin(Dictionary<string, string> form, IOSHttpResponse response)
-        {
-            string avatarName = FormValue(form, "avatar");
-            string token = FormValue(form, "token").Trim().ToUpperInvariant();
-            if (string.IsNullOrEmpty(token))
-            {
-                SendEstateAdminLogin(response, "Enter the admin token received inworld.", avatarName);
-                return;
-            }
-
-            if (!TryResolveAvatar(avatarName, out UUID agentID, out string displayName))
-            {
-                SendEstateAdminLogin(response, "Avatar not found. Request a new admin token using the exact avatar name.", avatarName);
-                return;
-            }
-
-            if (!IsRegionWebSuperAdmin(agentID))
-            {
-                SendEstateAdminLogin(response, "Only an estate owner of a loaded region can access Estate Admin.", displayName);
-                return;
-            }
-
-            EstateAdminLoginChallenge challenge;
-            lock (m_estateAdminAuthLock)
-            {
-                CleanupEstateAdminAuthLocked();
-                if (!m_estateAdminChallenges.TryGetValue(token, out challenge))
-                {
-                    SendEstateAdminLogin(response, "Invalid or expired admin token. Request a new one inworld.", displayName);
-                    return;
-                }
-
-                if (challenge.AgentID != agentID)
-                {
-                    SendEstateAdminLogin(response, "That admin token belongs to a different avatar.", displayName);
-                    return;
-                }
-
-                m_estateAdminChallenges.Remove(token);
-            }
-
-            string sessionToken = GenerateEstateAdminSessionToken();
-            EstateAdminSession session = new EstateAdminSession
-            {
-                AgentID = agentID,
-                DisplayName = challenge.DisplayName,
-                CsrfToken = GenerateEstateAdminSessionToken(),
-                ExpiresUTC = DateTime.UtcNow.AddHours(m_estateAdminSessionHours)
-            };
-
-            lock (m_estateAdminAuthLock)
-            {
-                CleanupEstateAdminAuthLocked();
-                m_estateAdminSessions[sessionToken] = session;
-            }
-
-            SetEstateAdminSessionCookie(response, sessionToken, session.ExpiresUTC);
-            SendEstateAdminDashboard(response, session, string.Empty, "Estate Admin login successful.", "ok");
-        }
-
-        private EstateAdminSession GetEstateAdminSession(IOSHttpRequest request)
-        {
-            string token = ReadCookie(request, EstateAdminSessionCookie);
-            if (string.IsNullOrEmpty(token))
-                return null;
-
-            lock (m_estateAdminAuthLock)
-            {
-                CleanupEstateAdminAuthLocked();
-                if (m_estateAdminSessions.TryGetValue(token, out EstateAdminSession session))
-                    return session;
-            }
-
-            return null;
-        }
-
-        private void CleanupEstateAdminAuthLocked()
-        {
-            DateTime now = DateTime.UtcNow;
-            List<string> expiredChallenges = new List<string>();
-            foreach (KeyValuePair<string, EstateAdminLoginChallenge> entry in m_estateAdminChallenges)
-            {
-                if (entry.Value.ExpiresUTC <= now)
-                    expiredChallenges.Add(entry.Key);
-            }
-            foreach (string token in expiredChallenges)
-                m_estateAdminChallenges.Remove(token);
-
-            List<string> expiredSessions = new List<string>();
-            foreach (KeyValuePair<string, EstateAdminSession> entry in m_estateAdminSessions)
-            {
-                if (entry.Value.ExpiresUTC <= now)
-                    expiredSessions.Add(entry.Key);
-            }
-            foreach (string token in expiredSessions)
-                m_estateAdminSessions.Remove(token);
-
-            if (m_estateAdminChallengeCooldownSeconds > 0)
-            {
-                double keepSeconds = Math.Max(3600, m_estateAdminChallengeCooldownSeconds * 4);
-                List<UUID> oldRequests = new List<UUID>();
-                foreach (KeyValuePair<UUID, DateTime> entry in m_estateAdminLastChallengeUTCByAgent)
-                {
-                    if ((now - entry.Value).TotalSeconds > keepSeconds)
-                        oldRequests.Add(entry.Key);
-                }
-                foreach (UUID agentID in oldRequests)
-                    m_estateAdminLastChallengeUTCByAgent.Remove(agentID);
-            }
-        }
-
-        private void SetEstateAdminSessionCookie(IOSHttpResponse response, string token, DateTime expiresUTC)
-        {
-            response.AddHeader("Set-Cookie", EstateAdminSessionCookie + "=" + token
-                + "; Path=" + m_basePath + "; Expires=" + expiresUTC.ToString("R", CultureInfo.InvariantCulture)
-                + "; HttpOnly; SameSite=Lax");
-        }
-
-        private void ClearEstateAdminSessionCookie(IOSHttpResponse response)
-        {
-            response.AddHeader("Set-Cookie", EstateAdminSessionCookie
-                + "=; Path=" + m_basePath + "; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax");
-        }
-
-        private static void AppendEstateAdminMessage(StringBuilder html, string message, string severity)
-        {
-            if (string.IsNullOrWhiteSpace(message))
-                return;
-
-            string css = string.IsNullOrWhiteSpace(severity) ? "ok" : severity;
-            html.Append("<p class=\"admin-message ").Append(Html(css)).Append("\">")
-                .Append(Html(message)).Append("</p>");
-        }
-
-        private static bool ValidateEstateAdminCsrf(EstateAdminSession session, Dictionary<string, string> form, out string message)
-        {
-            message = string.Empty;
-            string token = FormValue(form, "csrf");
-            if (session == null || string.IsNullOrEmpty(session.CsrfToken)
-                || !session.CsrfToken.Equals(token, StringComparison.Ordinal))
-            {
-                message = "Security token expired. Reload the page and try again.";
-                return false;
-            }
-
-            return true;
-        }
-
-        private static string GenerateEstateAdminChallengeToken()
-        {
-            return UUID.Random().ToString().Replace("-", string.Empty).Substring(0, 8).ToUpperInvariant();
-        }
-
-        private static string GenerateEstateAdminSessionToken()
-        {
-            return UUID.Random().ToString().Replace("-", string.Empty) + UUID.Random().ToString().Replace("-", string.Empty);
-        }
-
-        public void Initialise(IConfigSource source)
-        {
-            IConfig config = source.Configs["RegionWeb"];
-            if (config == null)
-                return;
-
-            m_enabled = config.GetBoolean("Enabled", false);
-            m_basePath = CleanPath(config.GetString("PublicPath", "/regionweb"));
-            m_contentDirectory = config.GetString("ContentDirectory", "RegionWeb").Trim();
-            m_autoCreateContent = config.GetBoolean("AutoCreateContent", true);
-            m_showMap = config.GetBoolean("ShowMap", true);
-            m_showStats = config.GetBoolean("ShowStats", true);
-            m_showParcels = config.GetBoolean("ShowParcels", true);
-            m_postsPerPage = Math.Max(1, config.GetInt("PostsPerPage", 5));
-            m_inventoryCarouselEnabled = config.GetBoolean("InventoryCarouselEnabled", true);
-            m_inventoryCarouselFolder = config.GetString("InventoryCarouselFolder", "RegionWeb Carousel").Trim();
-            m_regionInventoryCarouselFolderTemplate = config.GetString("RegionInventoryCarouselFolderTemplate", "RegionWeb {RegionName} Carousel").Trim();
-            m_inventoryCarouselLimit = Math.Max(1, config.GetInt("InventoryCarouselLimit", 12));
-            m_inventoryCarouselCacheSeconds = Math.Max(0, config.GetInt("InventoryCarouselCacheSeconds", 300));
-            // Ported from GuntharDeNiro/opensim's RegionWeb module. The
-            // Currency/PayPal wallet system that originally lived here has
-            // been split out into its own separate RegionCurrency
-            // addon-module with its own login, per request - see that
-            // module instead for wallet/PayPal config.
-            m_defaultEstateTitle = config.GetString("EstateTitle", "My OpenSim Estate").Trim();
-            if (string.IsNullOrEmpty(m_defaultEstateTitle))
-                m_defaultEstateTitle = "My OpenSim Estate";
-            // Optional pointer to a separately-deployed RegionCurrency
-            // addon-module instance (e.g. "/currency/"), shown as an
-            // "Open avatar wallet" link on region economy stats. Left
-            // blank by default since RegionWeb has no way to know whether
-            // RegionCurrency is even installed.
-            m_currencyPortalUrl = config.GetString("CurrencyPortalUrl", string.Empty).Trim();
-
-            if (string.IsNullOrEmpty(m_contentDirectory))
-                m_contentDirectory = "RegionWeb";
-            if (string.IsNullOrEmpty(m_inventoryCarouselFolder))
-                m_inventoryCarouselFolder = "RegionWeb Carousel";
-            if (string.IsNullOrEmpty(m_regionInventoryCarouselFolderTemplate))
-                m_regionInventoryCarouselFolderTemplate = "RegionWeb {RegionName} Carousel";
-
-            m_absoluteContentDirectory = Path.IsPathRooted(m_contentDirectory)
-                ? m_contentDirectory
-                : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, m_contentDirectory);
-        }
-
-        public void PostInitialise()
-        {
-            if (!m_enabled)
-                return;
-
-            try
-            {
-                Directory.CreateDirectory(m_absoluteContentDirectory);
-                if (m_autoCreateContent)
-                    EnsureEstateContent();
-
-                IHttpServer server = MainServer.GetHttpServer(0);
-                server.AddSimpleStreamHandler(new SimpleStreamHandler(m_basePath, HandleRequest, "RegionWeb"));
-                server.AddSimpleStreamHandler(new SimpleStreamHandler(m_basePath, HandleRequest, "RegionWeb"), true);
-                m_handlerRegistered = true;
-
-                MainConsole.Instance.Commands.AddCommand(
-                    "RegionWeb", false, "regionweb show",
-                    "regionweb show",
-                    "Show public RegionWeb URLs and content folders for loaded regions.",
-                    HandleShowCommand);
-
-                m_log.InfoFormat("[REGION WEB]: Enabled at {0}; content folder {1}", m_basePath, m_absoluteContentDirectory);
-            }
-            catch (Exception e)
-            {
-                m_enabled = false;
-                m_log.WarnFormat("[REGION WEB]: Could not enable module: {0}", e.Message);
-            }
-        }
-
-        public void AddRegion(Scene scene)
-        {
-            if (!m_enabled)
-                return;
-
-            AddOrUpdateScene(scene);
-        }
-
-        public void RegionLoaded(Scene scene)
-        {
-            if (!m_enabled)
-                return;
-
-            AddOrUpdateScene(scene);
-
-            if (m_autoCreateContent)
-                EnsureRegionContent(scene);
-
-            EnsureInventoryCarouselFolders(scene);
-        }
-
-        public void RemoveRegion(Scene scene)
-        {
-            if (!m_enabled)
-                return;
-
-            lock (m_sync)
-            {
-                m_scenesByID.Remove(scene.RegionInfo.RegionID);
-
-                List<string> deadSlugs = new List<string>();
-                foreach (KeyValuePair<string, UUID> kvp in m_regionIDsBySlug)
-                {
-                    if (kvp.Value == scene.RegionInfo.RegionID)
-                        deadSlugs.Add(kvp.Key);
-                }
-
-                foreach (string slug in deadSlugs)
-                    m_regionIDsBySlug.Remove(slug);
-            }
-        }
-
-        public void Close()
-        {
-            if (m_handlerRegistered)
-            {
-                MainServer.GetHttpServer(0).RemoveSimpleStreamHandler(m_basePath);
-                MainServer.GetHttpServer(0).RemoveSimpleStreamHandler(m_basePath);
-                m_handlerRegistered = false;
-            }
-
-            lock (m_sync)
-            {
-                m_scenesByID.Clear();
-                m_regionIDsBySlug.Clear();
-            }
-
-            lock (m_estateAdminAuthLock)
-            {
-                m_estateAdminChallenges.Clear();
-                m_estateAdminSessions.Clear();
-                m_estateAdminLastChallengeUTCByAgent.Clear();
-            }
-
-            lock (m_inventoryCarouselCacheLock)
-                m_inventoryCarouselAssetCache.Clear();
-        }
-
-        private void AddOrUpdateScene(Scene scene)
-        {
-            string slug = MakeSlug(scene.RegionInfo.RegionName);
-
-            lock (m_sync)
-            {
-                m_scenesByID[scene.RegionInfo.RegionID] = scene;
-                m_regionIDsBySlug[slug] = scene.RegionInfo.RegionID;
-                m_regionIDsBySlug[scene.RegionInfo.RegionID.ToString()] = scene.RegionInfo.RegionID;
-            }
-        }
-
-        private void HandleShowCommand(string module, string[] cmd)
-        {
-            List<Scene> scenes;
-            lock (m_sync)
-                scenes = new List<Scene>(m_scenesByID.Values);
-
-            if (scenes.Count == 0)
-            {
-                MainConsole.Instance.Output("[REGION WEB]: No loaded regions.");
-                return;
-            }
-
-            foreach (Scene scene in scenes.OrderBy(s => s.RegionInfo.RegionName))
-            {
-                string slug = MakeSlug(scene.RegionInfo.RegionName);
-                MainConsole.Instance.Output(
-                    "[REGION WEB]: {0}: {1}{2}/{3}/  content: {4}",
-                    scene.RegionInfo.RegionName,
-                    scene.RegionInfo.ServerURI,
-                    m_basePath.TrimStart('/'),
-                    slug,
-                    GetRegionDirectory(scene));
-            }
-        }
-
-        private void HandleRequest(IOSHttpRequest request, IOSHttpResponse response)
-        {
-            try
-            {
-                string path = request.UriPath ?? string.Empty;
-                string relative = path.Length > m_basePath.Length ? path.Substring(m_basePath.Length).Trim('/') : string.Empty;
-
-                if (string.IsNullOrEmpty(relative))
-                {
-                    SendIndex(response);
-                    return;
-                }
-
-                string[] parts = relative.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 0)
-                {
-                    SendIndex(response);
-                    return;
-                }
-
-                if (parts.Length >= 2 && parts[0].Equals("media", StringComparison.OrdinalIgnoreCase))
-                {
-                    SendEstateMedia(string.Join("/", parts.Skip(1).ToArray()), response);
-                    return;
-                }
-
-                if (parts.Length >= 2 && parts[0].Equals("inventory-carousel", StringComparison.OrdinalIgnoreCase))
-                {
-                    SendInventoryCarouselAsset(parts[1], response);
-                    return;
-                }
-
-                if (parts[0].Equals("scripts", StringComparison.OrdinalIgnoreCase))
-                {
-                    SendScriptReference(parts.Length >= 2 ? parts[1] : string.Empty, response);
-                    return;
-                }
-
-                if (parts[0].Equals("admin", StringComparison.OrdinalIgnoreCase))
-                {
-                    SendEstateAdminPortal(parts, request, response);
-                    return;
-                }
-
-                if (parts.Length >= 2 && parts[0].Equals("feature", StringComparison.OrdinalIgnoreCase))
-                {
-                    SendFeaturePage(parts[1], response);
-                    return;
-                }
-
-                if (!TryGetScene(parts[0], out Scene scene))
-                {
-                    SendNotFound(response, "Region page not found.");
-                    return;
-                }
-
-                if (parts.Length >= 3 && parts[1].Equals("media", StringComparison.OrdinalIgnoreCase))
-                {
-                    SendMedia(scene, string.Join("/", parts.Skip(2).ToArray()), response);
-                    return;
-                }
-
-                if (parts.Length >= 3 && parts[1].Equals("post", StringComparison.OrdinalIgnoreCase))
-                {
-                    SendPost(scene, parts[2], response);
-                    return;
-                }
-
-                SendRegionPage(scene, response);
-            }
-            catch (Exception e)
-            {
-                m_log.WarnFormat("[REGION WEB]: Request failed: {0}", e);
-                response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                response.ContentType = "text/plain";
-                response.RawBuffer = Encoding.UTF8.GetBytes("RegionWeb request failed.");
-            }
-        }
-
-        private bool TryGetScene(string slugOrID, out Scene scene)
-        {
-            UUID regionID;
-
-            lock (m_sync)
-            {
-                if (!m_regionIDsBySlug.TryGetValue(slugOrID, out regionID))
-                {
-                    scene = null;
-                    return false;
-                }
-
-                return m_scenesByID.TryGetValue(regionID, out scene);
-            }
-        }
-
-        private void SendIndex(IOSHttpResponse response)
-        {
-            List<Scene> scenes;
-            lock (m_sync)
-                scenes = new List<Scene>(m_scenesByID.Values);
-
-            EstatePageContent content = LoadEstateContent();
-            EstateStats stats = GetEstateStats(scenes);
-            string carousel = BuildEstateCarousel(scenes);
-            bool hasCarousel = !string.IsNullOrEmpty(carousel);
-
-            StringBuilder html = BeginPage(content.Title);
-            html.Append("<header class=\"estate-hero");
-            if (!hasCarousel && string.IsNullOrEmpty(content.HeroImage))
-                html.Append(" estate-hero-plain");
-            html.Append("\"");
-            if (!hasCarousel && !string.IsNullOrEmpty(content.HeroImage))
-            {
-                html.Append(" style=\"background-image:linear-gradient(90deg,rgba(0,0,0,.76),rgba(0,0,0,.30)),url('")
-                    .Append(Html(EstateMediaURL(content.HeroImage))).Append("')\"");
-            }
-
-            html.Append(">")
-                .Append(carousel)
-                .Append("<div class=\"wrap\"><p>").Append(Html(content.Tagline)).Append("</p><h1>")
-                .Append(Html(content.Title)).Append("</h1>")
-                .Append(Paragraphs(content.Description))
-                .Append(BuildHeroFeatureStrip())
-                .Append("<div class=\"estate-actions\"><a href=\"#regions\">Explore regions</a><a href=\"#features\">New features</a></div>")
-                .Append("</div></header>");
-
-            html.Append("<main><section class=\"wrap estate-stats\"><div>")
-                .Append("<strong>").Append(stats.RegionCount.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Regions online</span></div><div>")
-                .Append("<strong>").Append(stats.RootAgents.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Avatars online</span></div><div>")
-                .Append("<strong>").Append(stats.Objects.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Objects</span></div><div>")
-                .Append("<strong>").Append(stats.Prims.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Prims</span></div><div>")
-                .Append("<strong>").Append(stats.MeshParts.ToString(CultureInfo.InvariantCulture)).Append("</strong><span>Mesh parts</span></div></section>");
-
-            html.Append("<section id=\"features\" class=\"wrap feature-section\"><h2>What this estate adds to OpenSim</h2><div class=\"feature-grid\">");
-            foreach (FeatureItem feature in content.Features)
-            {
-                html.Append("<a class=\"feature-card\" href=\"").Append(Html(FeatureURL(feature))).Append("\"><h3>")
-                    .Append(Html(feature.Title)).Append("</h3><p>")
-                    .Append(Html(feature.Body)).Append("</p><span>Read guide</span></a>");
-            }
-            html.Append("</div></section>");
-
-            html.Append("<section id=\"regions\" class=\"wrap list\"><h2>Regions</h2><div class=\"region-grid\">");
-
-            foreach (Scene scene in scenes.OrderBy(s => s.RegionInfo.RegionName))
-            {
-                RegionPageContent regionContent = LoadContent(scene);
-                string slug = MakeSlug(scene.RegionInfo.RegionName);
-                html.Append("<a class=\"region-card\" href=\"")
-                    .Append(Html(m_basePath)).Append("/").Append(Url(slug)).Append("/\">")
-                    .Append("<img src=\"").Append(Html(GetHeroURL(scene, regionContent))).Append("\" alt=\"\">")
-                    .Append("<strong>").Append(Html(regionContent.Title)).Append("</strong>")
-                    .Append("<span>").Append(Html(regionContent.Tagline)).Append("</span>")
-                    .Append("</a>");
-            }
-
-            html.Append("</div></section></main>");
-            html.Append(EndPage());
-            SendHtml(response, html.ToString());
-        }
-
-        private static string BuildHeroFeatureStrip()
-        {
-            // Genericized from the source project's marketing strip, which
-            // advertised several other features from that same fork
-            // (weather, boat physics, AI terrain tools) regardless of
-            // whether the operator actually has them installed. This addon
-            // only claims what RegionWeb itself provides.
-            string[] features =
-            {
-                "Region homepage",
-                "Region blog",
-                "LSL/OSSL script reference",
-                "Estate control room",
-                "Inventory-backed image carousels"
-            };
-
-            StringBuilder html = new StringBuilder("<div class=\"hero-feature-strip\">");
-            foreach (string feature in features)
-                html.Append("<span>").Append(Html(feature)).Append("</span>");
-            html.Append("</div>");
-            return html.ToString();
-        }
-
     }
 }
