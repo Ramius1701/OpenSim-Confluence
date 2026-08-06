@@ -148,6 +148,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
        LSL_Integer llGetFreeMemory();
        LSL_Integer llGetUsedMemory();
        LSL_Integer llGetFreeURLs();
+          LSL_List llGetEnvironment(LSL_Vector position, LSL_List rules);
         LSL_Vector llGetGeometricCenter();
          LSL_Float llGetGMTclock();
         LSL_String llGetHTTPHeader(LSL_Key request_id, string header);
@@ -561,6 +562,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
                void llSetRenderMaterial(LSL_String material, LSL_Integer face);
                void llSetLinkRenderMaterial(LSL_Integer link, LSL_String material, LSL_Integer face);
                void llSetLinkGLTFOverrides(LSL_Integer link, LSL_Integer face, LSL_List overrides);
+        LSL_Integer llReplaceEnvironment(LSL_Vector position, LSL_String environment, LSL_Integer track_no, LSL_Integer day_length, LSL_Integer day_offset);
+        LSL_Integer llSetEnvironment(LSL_Vector position, LSL_List parameters);
 
       void llRequestExperiencePermissions(string agent_id, string unused);
       LSL_Integer llAgentInExperience(string agent_id);
