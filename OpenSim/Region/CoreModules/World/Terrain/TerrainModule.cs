@@ -26,7 +26,10 @@
  */
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Net;
 using System.Threading;
@@ -35,6 +38,7 @@ using log4net;
 using Nini.Config;
 
 using OpenMetaverse;
+using OpenMetaverse.Imaging;
 using Mono.Addins;
 
 using OpenSim.Framework;
@@ -46,6 +50,7 @@ using OpenSim.Region.CoreModules.World.Terrain.FloodBrushes;
 using OpenSim.Region.CoreModules.World.Terrain.PaintBrushes;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Services.Interfaces;
 
 namespace OpenSim.Region.CoreModules.World.Terrain
 {
@@ -74,6 +79,9 @@ namespace OpenSim.Region.CoreModules.World.Terrain
         private object _modifyLock = new();
 
         private const string LogHeader = "[TERRAIN]: ";
+
+        private IRegionConsole m_regionConsole;
+        private IAssetService m_assetService;
 
         private readonly Commander m_commander = new("terrain");
         private readonly Dictionary<string, ITerrainLoader> m_loaders = [];
@@ -312,6 +320,24 @@ namespace OpenSim.Region.CoreModules.World.Terrain
             //Do this here to give file loaders time to initialize and
             //register their supported file extensions and file formats.
             InstallInterfaces();
+
+            m_regionConsole = scene.RequestModuleInterface<IRegionConsole>();
+            if (m_regionConsole != null)
+            {
+                m_assetService = scene.RequestModuleInterface<IAssetService>();
+                if (m_assetService == null)
+                    m_log.Error(LogHeader + "Asset service not found! Cannot enable 'terrain load texture' command!");
+                else
+                    m_regionConsole.AddCommand("Terrain", false, "terrain load texture", "terrain load texture <uuid>",
+                        "Loads a heightmap from a square texture matching the region's size.", HandleLoadTerrainViaUUID);
+
+                m_regionConsole.AddCommand("Terrain", false, "terrain elevate", "terrain elevate <meters>",
+                    "Raises the current heightmap by the specified amount.", HandleElevateTerrain);
+                m_regionConsole.AddCommand("Terrain", false, "terrain lower", "terrain lower <meters>",
+                    "Lowers the current heightmap by the specified amount.", HandleLowerTerrain);
+                m_regionConsole.AddCommand("Terrain", false, "terrain fill", "terrain fill <meters>",
+                    "Fills the current heightmap to the specified level.", HandleFillTerrain);
+            }
         }
 
         public void RemoveRegion(Scene scene)
@@ -1559,6 +1585,121 @@ namespace OpenSim.Region.CoreModules.World.Terrain
         private void StoreUndoState()
         {
         }
+
+        #region Inworld Region Console
+
+        private void HandleFillTerrain(string module, string[] cmd)
+        {
+            UUID agentID = new(cmd[cmd.Length - 1]);
+            Array.Resize(ref cmd, cmd.Length - 1);
+
+            float m = float.Parse(cmd[cmd.Length - 1]);
+
+            m_regionConsole.SendConsoleOutput(agentID, string.Format("Filling terrain to {0} meters.", m));
+
+            InterfaceFillTerrain(new object[] { m });
+        }
+
+        private void HandleLowerTerrain(string module, string[] cmd)
+        {
+            UUID agentID = new(cmd[cmd.Length - 1]);
+            Array.Resize(ref cmd, cmd.Length - 1);
+
+            float m = float.Parse(cmd[cmd.Length - 1]);
+
+            m_regionConsole.SendConsoleOutput(agentID, string.Format("Lowering terrain by {0} meters.", m));
+
+            InterfaceLowerTerrain(new object[] { m });
+        }
+
+        private void HandleElevateTerrain(string module, string[] cmd)
+        {
+            UUID agentID = new(cmd[cmd.Length - 1]);
+            Array.Resize(ref cmd, cmd.Length - 1);
+
+            float m = float.Parse(cmd[cmd.Length - 1]);
+
+            m_regionConsole.SendConsoleOutput(agentID, string.Format("Raising terrain by {0} meters.", m));
+
+            InterfaceElevateTerrain(new object[] { m });
+        }
+
+        private void HandleLoadTerrainViaUUID(string module, string[] cmd)
+        {
+            UUID agentID = new(cmd[cmd.Length - 1]);
+            Array.Resize(ref cmd, cmd.Length - 1);
+
+            if (!UUID.TryParse(cmd[cmd.Length - 1], out UUID textureID))
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Invalid texture UUID!");
+                return;
+            }
+
+            AssetBase texture = m_assetService.GetCached(textureID.ToString()) ?? m_assetService.Get(textureID.ToString());
+            if (texture == null)
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Asset doesn't exist!");
+                return;
+            }
+
+            if (texture.Type != (sbyte)AssetType.Texture)
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Incorrect asset type!");
+                return;
+            }
+
+            if (texture.Data.Length == 0)
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Asset is null!");
+                return;
+            }
+
+            if (!OpenJPEG.DecodeToImage(texture.Data, out ManagedImage managedImage, out Image image) || image == null)
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Could not decode image!");
+                return;
+            }
+
+            using Bitmap bitmap = new(image);
+
+            if (bitmap.Width != bitmap.Height)
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Texture is not a square!");
+                return;
+            }
+
+            if (bitmap.Width != m_scene.RegionInfo.RegionSizeX || bitmap.Height != m_scene.RegionInfo.RegionSizeY)
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Image is not the same size as the region!");
+                return;
+            }
+
+            ImageCodecInfo pngCodec = ImageCodecInfo.GetImageEncoders().FirstOrDefault(x => x.MimeType == "image/png");
+            if (pngCodec == default(ImageCodecInfo))
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "PNG codec not found!");
+                return;
+            }
+
+            using EncoderParameters encoderParameters = new();
+            encoderParameters.Param[0] = new EncoderParameter(Encoder.Quality, 95L);
+
+            using MemoryStream memoryStream = new();
+            bitmap.Save(memoryStream, pngCodec, encoderParameters);
+
+            try
+            {
+                m_regionConsole.SendConsoleOutput(agentID, "Applying terrain map...");
+                LoadFromStream(textureID.ToString() + ".png", memoryStream);
+                m_regionConsole.SendConsoleOutput(agentID, "Done!");
+            }
+            catch (Exception e)
+            {
+                m_regionConsole.SendConsoleOutput(agentID, e.Message);
+            }
+        }
+
+        #endregion
 
         #region Console Commands
 
