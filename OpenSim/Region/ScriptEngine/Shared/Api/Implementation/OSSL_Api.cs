@@ -2323,6 +2323,71 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         }
 
         /// <summary>
+        /// Write a script directly into the prim's inventory.
+        /// </summary>
+        /// <remarks>
+        /// Same griefer-tool risk as osMakeNotecard - asset bloat / DOS
+        /// via looped calls - hence the same ThreatLevel.Severe gate.
+        /// </remarks>
+        /// <param name="scriptName">The name of the script to write.</param>
+        /// <param name="contents">The script source, one line per list entry.</param>
+        public void osMakeScript(string scriptName, LSL_List contents)
+        {
+            CheckThreatLevel(ThreatLevel.Severe, "osMakeScript");
+
+            StringBuilder scriptData = new();
+            for (int i = 0; i < contents.Length; i++)
+                scriptData.Append((string)contents.GetLSLStringItem(i)).Append('\n');
+
+            SaveScript(scriptName, "Script generated script", scriptData.ToString(), false);
+        }
+
+        protected TaskInventoryItem SaveScript(string name, string description, string data, bool forceSameName)
+        {
+            // Create new asset
+            AssetBase asset = new(UUID.Random(), name, (sbyte)AssetType.LSLText, m_host.OwnerID.ToString())
+            {
+                Description = description,
+                Data = Util.UTF8.GetBytes(data)
+            };
+
+            World.AssetService.Store(asset);
+
+            // Create Task Entry
+            TaskInventoryItem taskItem = new()
+            {
+                ParentID = m_host.UUID,
+                CreationDate = (uint)Util.UnixTimeSinceEpoch(),
+                Name = name,
+                Description = description,
+                Type = (int)AssetType.LSLText,
+                InvType = (int)InventoryType.LSL,
+                OwnerID = m_host.OwnerID,
+                CreatorID = m_host.OwnerID,
+                BasePermissions = (uint)PermissionMask.All | (uint)PermissionMask.Export,
+                CurrentPermissions = (uint)PermissionMask.All | (uint)PermissionMask.Export,
+                EveryonePermissions = 0,
+                NextPermissions = (uint)PermissionMask.All,
+                GroupID = m_host.GroupID,
+                GroupPermissions = 0,
+                Flags = 0,
+                PermsGranter = UUID.Zero,
+                PermsMask = 0,
+                AssetID = asset.FullID
+            };
+
+            taskItem.ResetIDs(m_host.UUID);
+
+            if (forceSameName)
+                m_host.Inventory.AddInventoryItemExclusive(taskItem, false);
+            else
+                m_host.Inventory.AddInventoryItem(taskItem, false);
+            m_host.ParentGroup.InvalidateDeepEffectivePerms();
+
+            return taskItem;
+        }
+
+        /// <summary>
         /// Write a notecard directly to the prim's inventory.
         /// </summary>
         /// <remarks>

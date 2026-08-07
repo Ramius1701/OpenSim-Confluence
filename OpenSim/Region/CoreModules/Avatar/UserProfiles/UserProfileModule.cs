@@ -255,6 +255,15 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
         }
 
         /// <summary>
+        /// The account-type string reported for NPCs in avatar properties.
+        /// </summary>
+        public string NPCAccountType
+        {
+            get;
+            set;
+        } = "Non Player Character (NPC)";
+
+        /// <summary>
         /// Gets or sets a value indicating whether this
         /// <see cref="OpenSim.Region.Coremodules.UserProfiles.UserProfileModule"/> is enabled.
         /// </summary>
@@ -294,6 +303,7 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
             // If we find ProfileURL then we configure for FULL support
             // else we setup for BASIC support
             ProfileServerUri = profileConfig.GetString("ProfileServiceURL", "");
+            NPCAccountType = profileConfig.GetString("NPCAccountType", NPCAccountType);
             if (string.IsNullOrEmpty(ProfileServerUri))
             {
                 Enabled = false;
@@ -1618,7 +1628,7 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
             if (p is not null && p.IsNPC)
             {
                 remoteClient.SendAvatarProperties(avatarID, ((INPC)(p.ControllingClient)).profileAbout, ((INPC)(p.ControllingClient)).Born,
-                      Utils.StringToBytes("Non Player Character (NPC)"), "NPCs have no life", 0x10,
+                      Utils.StringToBytes(NPCAccountType), "NPCs have no life", 0x10,
                       UUID.Zero, ((INPC)(p.ControllingClient)).profileImage, "", UUID.Zero);
                 remoteClient.SendAvatarInterestsReply(avatarID, 0, "",
                           0, "Getting into trouble", "Droidspeak");

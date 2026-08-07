@@ -351,6 +351,10 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         public const int DATA_PAYINFO = 8;
         public const int DATA_SIM_RELEASE = 128;
 
+        // DATA_PAYINFO reply bit values
+        public const int PAYMENT_INFO_ON_FILE = 1;
+        public const int PAYMENT_INFO_USED = 2;
+
         public const int ANIM_ON = 1;
         public const int LOOP = 2;
         public const int REVERSE = 4;

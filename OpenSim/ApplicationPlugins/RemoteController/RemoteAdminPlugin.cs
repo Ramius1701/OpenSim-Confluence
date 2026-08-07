@@ -139,6 +139,7 @@ namespace OpenSim.ApplicationPlugins.RemoteController
                     availableMethods["admin_close_region"] = (req, ep) => InvokeXmlRpcMethod(req, ep, XmlRpcCloseRegionMethod);
                     availableMethods["admin_modify_region"] = (req, ep) => InvokeXmlRpcMethod(req, ep, XmlRpcModifyRegionMethod);
                     availableMethods["admin_region_query"] = (req, ep) => InvokeXmlRpcMethod(req, ep, XmlRpcRegionQueryMethod);
+                    availableMethods["admin_change_parcel_flags"] = (req, ep) => InvokeXmlRpcMethod(req, ep, XmlRpcChangeParcelFlagsMethod);
                     availableMethods["admin_shutdown"] = (req, ep) => InvokeXmlRpcMethod(req, ep, XmlRpcShutdownMethod);
                     availableMethods["admin_dialog"] = (req, ep) => InvokeXmlRpcMethod(req, ep, XmlRpcDialogMethod);
                     availableMethods["admin_restart"] = (req, ep) => InvokeXmlRpcMethod(req, ep, XmlRpcRestartMethod);
@@ -1950,6 +1951,45 @@ namespace OpenSim.ApplicationPlugins.RemoteController
             }
 
             m_log.Info("[RADMIN]: Save XML Administrator Request complete");
+        }
+
+        /// <summary>
+        /// Enables or disables a set of parcel flag bits across every parcel in a region,
+        /// leaving all other flags on each parcel untouched.
+        /// </summary>
+        private void XmlRpcChangeParcelFlagsMethod(XmlRpcRequest request, XmlRpcResponse response, IPEndPoint remoteClient)
+        {
+            Hashtable responseData = (Hashtable)response.Value;
+            Hashtable requestData = (Hashtable)request.Params[0];
+
+            m_log.Info("[RADMIN]: Received Region Change Parcel Flags Request");
+
+            CheckRegionParams(requestData, responseData);
+
+            Scene scene = null;
+            GetSceneFromRegionParams(requestData, responseData, out scene);
+
+            if (!requestData.Contains("enable") || !requestData.Contains("flags"))
+                throw new Exception("missing enable or flags parameter");
+
+            bool enable = requestData["enable"].ToString().ToLower() == "true";
+            uint mask = Convert.ToUInt32(requestData["flags"]);
+
+            List<ILandObject> parcels = scene.LandChannel.AllParcels();
+            foreach (ILandObject parcel in parcels)
+            {
+                LandData data = parcel.LandData;
+                if (enable)
+                    data.Flags |= mask;
+                else
+                    data.Flags &= ~mask;
+
+                scene.LandChannel.UpdateLandObject(data.LocalID, data);
+            }
+
+            responseData["success"] = true;
+
+            m_log.Info("[RADMIN]: Change Parcel Flags Request complete");
         }
 
         private void XmlRpcRegionQueryMethod(XmlRpcRequest request, XmlRpcResponse response, IPEndPoint remoteClient)

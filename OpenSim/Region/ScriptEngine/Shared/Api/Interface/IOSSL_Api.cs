@@ -359,6 +359,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
         //ApiDesc Directly send a message as dataserver event to a given object by its key.
               void osMessageObject(key objectUUID, string message);
 
+        //ApiDesc Creates a new script in the primitive inventory, one line per list entry.
+              void osMakeScript(string scriptName, LSL_List contents);
         //ApiDesc Creates a new notecard in the primitive inventory with given contents.
               void osMakeNotecard(string notecardName, LSL_String contents);
         //ApiDesc Creates a new notecard in the primitive inventory with given contents.

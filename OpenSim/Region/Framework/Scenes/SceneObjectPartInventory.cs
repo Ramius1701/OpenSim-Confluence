@@ -1033,7 +1033,11 @@ namespace OpenSim.Region.Framework.Scenes
             if (allowedDrop)
                 m_part.TriggerScriptChangedEvent(Changed.ALLOWED_DROP, item.ItemID);
             else
+            {
                 m_part.TriggerScriptChangedEvent(Changed.INVENTORY);
+                if (m_part.ParentGroup.RootPart != m_part)
+                    m_part.ParentGroup.RootPart.TriggerScriptChangedEvent(Changed.INVENTORY);
+            }
 
             m_part.AggregateInnerPerms();
             m_part.ParentGroup.HasGroupChanged = true;
@@ -1370,7 +1374,11 @@ namespace OpenSim.Region.Framework.Scenes
 
                 m_inventorySerial++;
                 if (fireScriptEvents)
+                {
                     m_part.TriggerScriptChangedEvent(Changed.INVENTORY);
+                    if (m_part.ParentGroup.RootPart != m_part)
+                        m_part.ParentGroup.RootPart.TriggerScriptChangedEvent(Changed.INVENTORY);
+                }
 
                 if (considerChanged)
                 {
@@ -1428,7 +1436,11 @@ namespace OpenSim.Region.Framework.Scenes
                     if (type == (int)InventoryType.LSL) // Script
                         m_part.ParentGroup.Scene.EventManager.TriggerRemoveScript(m_part.LocalId, itemID);
                     if (m_scripts != null)
+                    {
                         m_part.TriggerScriptChangedEvent(Changed.INVENTORY);
+                        if (m_part.ParentGroup.RootPart != m_part)
+                            m_part.ParentGroup.RootPart.TriggerScriptChangedEvent(Changed.INVENTORY);
+                    }
                     return type;
                 }
                 else

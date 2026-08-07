@@ -589,6 +589,12 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osMakeScript(string scriptName, LSL_List contents)
+        {
+            m_OSSL_Functions.osMakeScript(scriptName, contents);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void osMakeNotecard(string notecardName, LSL_String contents)
         {
             m_OSSL_Functions.osMakeNotecard(notecardName, contents);

@@ -145,6 +145,9 @@ namespace OpenSim.Services.InventoryService
             if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.LostAndFound))
                 CreateFolder(principalID, rootFolder.ID, (int)FolderType.LostAndFound, "Lost And Found");
 
+            if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.MarketplaceListings))
+                CreateFolder(principalID, rootFolder.ID, (int)FolderType.MarketplaceListings, "Marketplace Listings");
+
             if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Notecard))
                 CreateFolder(principalID, rootFolder.ID, (int)FolderType.Notecard, "Notecards");
 

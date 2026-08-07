@@ -404,6 +404,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         private string m_wallclockTimeZone = string.Empty;
 
+        private string m_SlurlPrefix = "http://slurl.opensim.local";
+
         private static readonly Dictionary<string, string> MovementAnimationsForLSL = new(StringComparer.InvariantCultureIgnoreCase)
         {
             {"CROUCH", "Crouching"},
@@ -670,6 +672,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 // returning local system time. Set to an IANA/Windows time zone ID
                 // (e.g. "America/Los_Angeles") for spec-correct PST/PDT wallclock time.
                 m_wallclockTimeZone = seConfig.GetString("GetWallclockTimeZone", m_wallclockTimeZone);
+
+                m_SlurlPrefix = seConfig.GetString("SlurlPrefix", m_SlurlPrefix);
             }
 
             if (m_notecardLineReadCharsMax > 65535)
@@ -8725,8 +8729,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 GridInstantMessage msg = new(World, m_host.OwnerID, m_host.Name, destID,
                         (byte)InstantMessageDialog.TaskInventoryOffered,
                         m_host.OwnerID.Equals(m_host.GroupID),
-                        string.Format("'{0}'", category),
-                        //string.Format("'{0}'  ( http://slurl.com/secondlife/{1}/{2}/{3}/{4} )", category, World.Name, (int)pos.X, (int)pos.Y, (int)pos.Z),
+                        string.Format("'{0}'  ( {1}/{2}/{3}/{4}/{5}/ )", category, m_SlurlPrefix, World.Name, (int)pos.X, (int)pos.Y, (int)pos.Z),
                         folderID, false, pos,
                         bucket, false);
 
