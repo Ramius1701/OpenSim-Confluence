@@ -72,6 +72,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
               void llBreakAllLinks();
               void llBreakLink(int linknum);
           LSL_List llCastRay(LSL_Vector start, LSL_Vector end, LSL_List options);
+          LSL_List llCastRayV3(LSL_Vector start, LSL_Vector end, LSL_List options);
        LSL_Integer llCeil(double f);
               void llClearCameraParams();
        LSL_Integer llClearLinkMedia(LSL_Integer link, LSL_Integer face);

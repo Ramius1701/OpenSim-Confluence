@@ -1221,6 +1221,12 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List llCastRayV3(LSL_Vector start, LSL_Vector end, LSL_List options)
+        {
+            return m_LSL_Functions.llCastRayV3(start, end, options);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void llLinkParticleSystem(int linknum, LSL_List rules)
         {
             m_LSL_Functions.llLinkParticleSystem(linknum, rules);

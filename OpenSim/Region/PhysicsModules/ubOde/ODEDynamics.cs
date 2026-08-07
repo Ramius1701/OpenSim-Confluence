@@ -126,6 +126,8 @@ namespace OpenSim.Region.PhysicsModule.ubOde
         private readonly float m_timestep = 0.02f;
         private readonly float m_invtimestep = 50;
 
+        private float m_boatTurnBankRoll = 0f;
+
 
         float m_ampwr;
         float m_amdampX;
@@ -781,6 +783,32 @@ namespace OpenSim.Region.PhysicsModule.ubOde
             return _pParentScene.GetDynamicWaterFlow(x, y);
         }
 
+        private float GetBoatTurnBankTargetRoll()
+        {
+            if (!_pParentScene.BoatTurnBankingEnabled || m_type != Vehicle.TYPE_BOAT)
+            {
+                m_boatTurnBankRoll = 0f;
+                return 0f;
+            }
+
+            float maxYaw = MathF.Abs(_pParentScene.BoatTurnBankingMaxYaw);
+            if (maxYaw < 0.001f)
+                maxYaw = 1f;
+
+            float turn = Math.Clamp(m_angularMotorDirection.Z / maxYaw, -1f, 1f);
+            if (_pParentScene.BoatTurnBankingInvert)
+                turn = -turn;
+
+            float maxRoll = _pParentScene.BoatTurnBankingDegrees * MathF.PI / 180f;
+            float targetRoll = turn * maxRoll;
+
+            float timescale = MathF.Max(_pParentScene.BoatTurnBankingTimescale, m_timestep);
+            float alpha = Math.Clamp(m_timestep / timescale, 0.01f, 1f);
+            m_boatTurnBankRoll += (targetRoll - m_boatTurnBankRoll) * alpha;
+
+            return m_boatTurnBankRoll;
+        }
+
         internal void Step()
         {
             IntPtr Body = rootPrim.Body;
@@ -994,10 +1022,12 @@ namespace OpenSim.Region.PhysicsModule.ubOde
                 else if (roll < -halfpi)
                     roll = -pi - roll;
 
+                float rollError = roll - GetBoatTurnBankTargetRoll();
+
                 float effroll = pitch / halfpi;
                 effroll *= effroll;
                 effroll = 1 - effroll;
-                effroll *= roll;
+                effroll *= rollError;
 
                 torque.X += effroll * ftmp;
 

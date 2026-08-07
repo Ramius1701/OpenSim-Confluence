@@ -712,14 +712,20 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             dm.SendAlertToUser(sp.ControllingClient, msg + "\n", false);
         }
 
-        public void osSetRot(UUID target, Quaternion rotation)
+        public void osSetRot(LSL_Key target, LSL_Rotation rotation)
         {
             // if enabled It can be used to destroy
             // arbitrary builds the user would normally have no rights to
             //
             CheckThreatLevel(ThreatLevel.VeryHigh, "osSetRot");
 
-            if (World.Entities.TryGetValue(target, out EntityBase entity))
+            if (!UUID.TryParse(target, out UUID targetID))
+            {
+                OSSLError("osSetRot: Invalid target");
+                return;
+            }
+
+            if (World.Entities.TryGetValue(targetID, out EntityBase entity))
             {
                 if (entity is SceneObjectGroup sog)
                     sog.UpdateGroupRotationR(rotation);

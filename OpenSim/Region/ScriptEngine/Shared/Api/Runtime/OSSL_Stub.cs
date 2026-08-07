@@ -1165,6 +1165,12 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osSetRot(LSL_Key target, rotation rot)
+        {
+            m_OSSL_Functions.osSetRot(target, rot);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void osSetTerrainTexture(int level, LSL_Key texture)
         {
             m_OSSL_Functions.osSetTerrainTexture(level, texture);

@@ -601,6 +601,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
         //ApiDesc Removes a given avatar from the group the object belongs to.
        LSL_Integer osEjectFromGroup(LSL_Key agentId);
 
+        //ApiDesc Force-sets the rotation of an object or avatar, bypassing normal permission checks.
+              void osSetRot(LSL_Key target, LSL_Rotation rotation);
         //ApiDesc Sets the terrain texture for a given level.
               void osSetTerrainTexture(int level, LSL_Key texture);
         //ApiDesc Sets terrain textures for legacy viewers it types == 0 or 2, textures for new viewers it types == 1 or 2 or PBR materials if types == 1
