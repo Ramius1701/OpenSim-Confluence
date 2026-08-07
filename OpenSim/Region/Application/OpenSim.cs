@@ -34,6 +34,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Timers;
@@ -80,6 +81,7 @@ namespace OpenSim
         private int m_timeInterval = 1200;
         private System.Timers.Timer m_scriptTimer;
         private static readonly string[] selecteRootRegionParams = ["change", "region", "root"];
+        private PosixSignalRegistration m_signalReg;
 
         public OpenSim(IConfigSource configSource) : base(configSource)
         {
@@ -133,6 +135,14 @@ namespace OpenSim
             m_log.Info("[OPENSIM MAIN]: Using async_call_method " + Util.FireAndForgetMethod);
 
             m_log.InfoFormat("[OPENSIM MAIN] Running GC in {0} mode", GCSettings.IsServerGC ? "server":"workstation");
+
+            // Graceful shutdown on SIGTERM (docker stop, systemctl stop, etc)
+            // instead of an abrupt process kill.
+            m_signalReg = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+                    {
+                        m_log.Info("[OPENSIM MAIN]: Received SIGTERM, shutting down");
+                        MainConsole.Instance.RunCommand("shutdown");
+                    });
         }
 
         /// <summary>
