@@ -652,6 +652,109 @@ Key file: `OpenSim/Region/CoreModules/World/Terrain/TerrainModule.cs`.
 
 ---
 
+## opensim-lickx archival + osGetAgentViewer port (done, merged 2026-08-07)
+
+`S:\Github\opensim-lickx` is the source Casperia's own MoneyServer and
+OpenSimSearch modules descend from — and its original GitHub repo has
+since been deleted, making that local checkout the only surviving copy
+anywhere. Before anything else, git-initialized it in place (it had never
+been under version control) as a pure safety net: removed a blanket
+`addon-modules/` exclusion from its own `.gitignore` that would have
+silently dropped the one directory (`opensim.currency-lickx`, containing
+`DTLNSLMoneyModule.cs`/`MoneyDBService.cs` and the rest of the currency
+lineage) this archive actually exists to preserve, then committed all
+2436 files as-is. No changes to Casperia itself in this step.
+
+The audit of that tree (vanilla 0.9.3.1 base + Gloebit/OpenSimMutelist/
+OpenSimSearch/opensim.currency-lickx addon-modules, confirmed via a
+`0.9.3.1Dev` vanilla-tag diff to have no core patches beyond a small
+`Lickx_Api`/`ILickx_Api`/`Lickx_Stub` script-function trio) found
+Casperia's currency stack is already a confirmed superset file-for-file
+of everything in `opensim.currency-lickx`. Two candidates were flagged
+for action:
+
+- **Automatic MoneyServer DB schema creation/self-migration** — turned
+  out to be a **false positive** on closer inspection while porting.
+  Casperia's own `OpenSim.Data.MySQL.MySQLMoneyDataWrapper\
+  MySQLMoneyManager.cs` already has this exact capability
+  (`CheckAndCreateTables`/`InitialiseBalancesTable`/etc, wired in via
+  `MySQLSuperManager`) — the audit only checked `MoneyDBService.cs`
+  directly and missed the sibling file that actually does it. No action
+  needed. (Second false-positive audit finding this project, after the
+  Mobius audit's `LSLSyntaxId` claim — worth remembering to verify a
+  "missing" finding against the *whole* relevant subsystem, not just the
+  first file that looks like it should have the feature.)
+- **`lxGetAgentViewer(key)`** — genuinely missing, confirmed absent by
+  direct grep before porting. Reveals which viewer client an avatar is
+  connected with, via the already-existing `Util.GetViewerName`. Lickx
+  wrapped this one function in its own small standalone `Lickx_Api`
+  script-API namespace; folded it into the existing `os*` OSSL
+  convention instead as `osGetAgentViewer` (`OSSL_Api.cs`/`IOSSL_Api.cs`/
+  `OSSL_Stub.cs`) rather than carrying that extra plumbing over for a
+  single function. Gated at `ThreatLevel.Moderate`, matching
+  `osGetAgentCountry`'s sensitivity level (viewer identity is client
+  metadata, not credential-adjacent like `osGetAgentIP`, which is
+  `Severe` + god-only).
+
+Verified with a targeted `OpenSim.Region.ScriptEngine.Shared.Api` build
+and a full solution build (0 errors). Fast-forward merged into
+`merge-experiment` (`007be00310..77cba7c352`). **Not yet tested
+in-world.**
+
+Key files: `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/
+OSSL_Api.cs`, and `S:\Github\opensim-lickx\.git` (new archival history,
+outside the Casperia repo itself).
+
+## Halcyon/InWorldz and Homeworldz preservation audits — done, no code changes yet (2026-08-07)
+
+Explicitly framed by the user as a preservation effort, not opportunistic
+feature-hunting: "some of those repos like Mobius, WhiteCore, LickX, and
+Halcyon have fallen by the wayside. Doesn't mean some of their code and
+features should be lost." Two more targets audited on that basis, both
+fetched as remotes (`halcyon`, `homeworldz`). Full findings summarized in
+FEATURES_VS_MASTER.md; this entry is the narrative record of what was
+found and why nothing was ported yet.
+
+**Halcyon** (github.com/HalcyonGrid/halcyon) — InWorldz's server, forked
+from OpenSim in 2010, no shared git history with vanilla origin/master
+(confirmed via `git merge-base`, same as WhiteCore/Mobius) but a mature
+C#/.NET codebase — real code-level porting is feasible here, unlike
+WhiteCore. Its actual scripting engine compiler/VM (`InWorldz.Phlox.
+Engine`) and physics core (`InWorldz.PhysxPhysics`) turned out to be
+closed-source binaries in this repo (`lib/InWorldz.Phlox.dll`, native
+PhysX3 libs) — not portable at all, which materially changed what the
+audit could actually recommend versus what was expected going in. What
+IS open and portable: a complete Bot/NPC framework
+(`OpenSim/Region/CoreModules/Agent/BotManager/`) that's the mature,
+working version of what Tranquillity's own in-progress bot framework
+(see the `develop`-branch audit below) is still building toward with no
+script engine to actually call it yet — flagged as the flagship
+candidate if this preservation work continues, but not started (large,
+multi-week estimate, needs its own dedicated pass). Smaller candidates
+(`llReturnObjectsByOwner`/`ByID`, ~80 `iw*` OSSL-equivalent functions,
+Euler-rotation functions, a sit-target compatibility fix, a JWT module)
+are all still open, not yet ported.
+
+**Homeworldz** (github.com/homeworldz/server) — not a fork, a from-
+scratch C++20/Go reimplementation "informed by Halcyon, OpenSimulator,
+and the SL viewer protocol without preserving their internal service
+boundaries or storage formats" (its own README). No code is portable
+here (total language mismatch), but its docs and ~30 ADRs are a genuine
+source of preservable design rationale — the user explicitly confirmed
+after this one landed that an ideas-only audit is a legitimate, valued
+outcome on its own, not a lesser result just because nothing got ported:
+"for the ideas... that can help shape the future of Casperia and really
+worth looking into." See FEATURES_VS_MASTER.md for the physics (Jolt)
+and scripting (Falcon VM) findings in full — nothing here requires
+action, it's reference material for future architecture decisions.
+
+**Status:** audits complete, findings documented, nothing ported yet.
+The Halcyon Bot/NPC framework is the one concrete "worth doing" item
+sitting open from this round — a real project, not a quick win, so it
+hasn't been started without an explicit decision to take it on.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.

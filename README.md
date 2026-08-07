@@ -328,10 +328,17 @@ work continues — don't let them go stale.
 - RegionCurrency vs. RegionWeb's currency portal duplication is
   unreconciled.
 - The User Alias service (ported from Tranquillity), the Land Auction
-  and Team Combat modules (ported from WhiteCore-Dev), and the in-world
-  terrain console commands (ported from Mobius) haven't been tested
-  in-world yet — console commands and connector wiring are unexercised
-  against a live grid.
+  and Team Combat modules (ported from WhiteCore-Dev), the in-world
+  terrain console commands (ported from Mobius), and `osGetAgentViewer`
+  (ported from opensim-lickx) haven't been tested in-world yet —
+  console commands and connector wiring are unexercised against a live
+  grid.
+- Halcyon/InWorldz's Bot/NPC framework — a complete, mature,
+  LSL-scriptable NPC system found in a preservation-focused audit — is
+  a real, deferred candidate. Large enough to need its own dedicated
+  pass rather than a quick port; not started. See FEATURES_VS_MASTER.md
+  for the smaller candidates from that same audit (a handful of missing
+  LSL functions, a sit-target accuracy fix) that are also still open.
 - Grid-level control-panel features (per-region Hypergrid open/close
   toggle, on-demand maptile regeneration, OAR/IAR backup workflows, and
   general admin coverage) live in a separate companion project
@@ -380,6 +387,13 @@ incompatible with a straight cherry-pick, hand-ported from:
 - [Tranquillity](https://github.com/OpenSim-NGC/OpenSim-Tranquillity)
 - [Mobius](https://github.com/Mobius-Team/Mobius)
 - [WhiteCore-Dev](https://github.com/WhiteCoreSim/WhiteCore-Dev)
+- opensim-lickx — origin of Casperia's MoneyServer and OpenSimSearch
+  modules; its original GitHub repository has since been deleted, so
+  the only remaining copy is archived locally
+- [Halcyon/InWorldz](https://github.com/HalcyonGrid/halcyon) and
+  [Homeworldz](https://github.com/homeworldz/server) — audited as a
+  preservation effort for design ideas and code from projects that have
+  fallen by the wayside; see FEATURES_VS_MASTER.md for what was found
 
 Historical source provenance remains available in Git history.
 

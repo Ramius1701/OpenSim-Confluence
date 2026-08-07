@@ -167,6 +167,103 @@ data read from `bin/ScriptSyntax.xml` (present, 345KB) at startup, with
 `[SimulatorFeatures] ScriptSyntax` defaulting to enabled. No gap here;
 Casperia already matches Mobius on this one.
 
+### opensim-lickx archival + audit (2026-08-07)
+`S:\Github\opensim-lickx` — the vanilla-0.9.3.1-based source of Casperia's
+own MoneyServer and OpenSimSearch modules — had its original GitHub repo
+deleted, so the local checkout was git-initialized as a pure archival
+safety net before auditing it (see PROJECT_LOG.md for detail). Casperia's
+currency stack confirmed a superset of everything in its bundled
+`opensim.currency-lickx` module. One genuinely missing function ported:
+`osGetAgentViewer` (viewer-client identification, `ThreatLevel.Moderate`).
+One flagged candidate — automatic MoneyServer schema creation — turned
+out to be a false positive; Casperia already has it in a sibling file
+(`MySQLMoneyManager.cs`) the audit hadn't checked.
+
+### Halcyon/InWorldz and Homeworldz — preservation audits (2026-08-07)
+Explicitly a preservation effort, not just feature-hunting: "some of
+those repos like Mobius, WhiteCore, LickX, and Halcyon have fallen by
+the wayside. Doesn't mean some of their code and features should be
+lost." Two more targets audited on that basis.
+
+**Halcyon** (github.com/HalcyonGrid/halcyon, InWorldz's server) — forked
+from OpenSim in 2010, no shared git history with vanilla origin/master
+(same pattern as WhiteCore/Mobius) but a mature, still-portable C#/.NET
+codebase, ~15 years of independent development. Its actual scripting
+engine (`InWorldz.Phlox.Engine`'s compiler/VM) and physics core
+(`InWorldz.PhysxPhysics`'s NVIDIA PhysX binding) are closed-source
+binaries in this repo — not portable, full stop — but the open C# layers
+around them turned up real, substantial findings:
+- **Portable:** a complete, mature, LSL-scriptable Bot/NPC framework
+  (`OpenSim/Region/CoreModules/Agent/BotManager/`, ~50 documented `bot*`
+  functions, pathfinding/wandering/following/sitting/appearance) — the
+  mature version of what Tranquillity's own still-unfinished bot
+  framework (see its `develop`-branch audit above) is building toward.
+  Large but self-contained; flagship candidate if pursued. Also:
+  `llReturnObjectsByOwner`/`llReturnObjectsByID` (confirmed absent from
+  Casperia), ~80 `iw*` OSSL-equivalent functions (inventory/string/list/
+  agent/group utilities), Euler-rotation LSL functions, a sit-target
+  compatibility fix for a long-standing OpenSim sit-position accuracy
+  bug, and a small JWT auth module.
+- **Worth preserving as knowledge, not portable:** Phlox's fixed-
+  timeslice bytecode-interpreter scheduling (a real design contrast to
+  YEngine's compile-to-IL approach — VM-interpreted trades raw
+  throughput for exact preemption granularity); a deferred-event-
+  delivery idea (queue events for not-yet-loaded scripts instead of
+  dropping them); three PhysX-era physics design ideas that don't
+  actually need PhysX (double-buffered command queues, auto static/
+  kinematic/dynamic prim lifecycle, "stick to a moving platform after
+  1s" fix for the classic avatar-sliding-off-vehicles problem); and a
+  detailed internal design doc on OpenSim's known teleport/region-
+  crossing race conditions with Halcyon's proposed staged redesign —
+  directly relevant since region crossing is a pain point across the
+  whole OpenSim family.
+- **Not portable:** the closed-source Phlox VM/compiler and PhysX core
+  (licensing + native-binding burden); `InWorldz.Arbiter` (assumes
+  Halcyon's own multi-process clustering topology); `InWorldz.Data.
+  Assets.Stratus` (Rackspace CloudFiles client, not distinctive).
+
+**Homeworldz** (github.com/homeworldz/server) — NOT a fork, a from-
+scratch reimplementation in C++20 (region server) + Go (grid service),
+"informed by Halcyon, OpenSimulator, and the SL viewer protocol without
+preserving their internal service boundaries or storage formats" (its
+own words). Total language mismatch with Casperia's C# — no code is
+portable here — but its docs (dedicated `PHYSICS.md`/`PHYSICS_RESULTS.md`,
+`SCRIPTING.md`/`VM.md`, and ~30 Architecture Decision Records) are a
+genuine source of preservable design rationale, per explicit user
+confirmation this kind of ideas-only audit is a legitimate outcome, not
+a consolation prize:
+- **Physics:** ran a formal Jolt-vs-PhysX-vs-Bullet-vs-Havok evaluation
+  before picking Jolt (MIT license, lower integration cost, benchmarked
+  lighter on CPU). Two concrete, engine-independent pitfalls worth
+  checking against Casperia's own `ubOdeMeshing` pipeline: cylinders
+  must keep analytic roundness through the physics pipeline (a backend
+  without one "must generate a convex cylinder... must not substitute a
+  box," since flattened cylinders are commonly used as wheels), and
+  render meshes must never double as collision geometry.
+  Contact-force design worth noting: character push force derives from
+  mass × configured max acceleration rather than synthetic impulses,
+  avoiding the "avatar as unstoppable force" bug.
+- **Scripting:** their own "Falcon" VM is a proof-of-concept (15% of
+  their own roadmap, one state, two events, two functions) — not a
+  reference implementation. The one durable idea: scripts must be
+  suspendable after any single completed bytecode instruction, not just
+  at event boundaries, so a region crossing never waits on a bad
+  handler. They also reversed an earlier plan to build a bespoke
+  restricted-Lua VM once they found Second Life's own SLua (MIT-licensed
+  Luau fork) already solves the exact state-serialization problem they
+  needed — a good example of not reinventing an already-solved problem.
+- **Other ideas:** grid-as-trust-anchor with disposable/untrusted
+  regions (checksum-verified cross-region asset fetches); an asset model
+  splitting immutable content-addressed blobs from viewer-facing assets
+  from per-owner instances; honest `SimulatorFeatures` advertisement
+  (never claim a capability that doesn't actually work); live
+  terrain-derived map tiles instead of scheduled snapshot jobs.
+
+Neither audit resulted in code changes to Casperia beyond the Bot/NPC
+framework being flagged as a real, deferred candidate — worth revisiting
+as its own project. Homeworldz is worth a second look in 6–12 months
+once its scripting/physics phases mature further.
+
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly
 in Casperia:
