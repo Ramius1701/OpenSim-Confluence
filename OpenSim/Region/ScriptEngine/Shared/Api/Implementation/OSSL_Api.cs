@@ -1313,6 +1313,20 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             return string.Empty;
         }
 
+        public LSL_String osGetAgentViewer(LSL_Key agent)
+        {
+            CheckThreatLevel(ThreatLevel.Moderate, "osGetAgentViewer");
+
+            if (!UUID.TryParse(agent, out UUID avatarID))
+                return string.Empty;
+
+            AgentCircuitData circuit = World.AuthenticateHandler.GetAgentCircuitData(avatarID);
+            if (circuit is not null)
+                return Util.GetViewerName(circuit);
+
+            return string.Empty;
+        }
+
         // Adam's super super custom animation functions
         public void osAvatarPlayAnimation(LSL_Key avatar, string animation)
         {

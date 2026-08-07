@@ -170,6 +170,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
           LSL_List osGetAgents();
         //ApiDesc Returns the IP address of a given avatar.
             string osGetAgentIP(string agent);
+        //ApiDesc Returns the name of the viewer a given avatar is currently connected with.
+              LSL_String osGetAgentViewer(LSL_Key agent);
 
         // Teleport commands
         //ApiDesc Teleport a given avatar (key) to a given position and rotation as look at vector with a velocity vector and teleport flags.

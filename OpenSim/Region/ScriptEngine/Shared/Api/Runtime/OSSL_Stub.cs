@@ -345,6 +345,12 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
             return m_OSSL_Functions.osGetAgentIP(agent);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String osGetAgentViewer(LSL_Key agent)
+        {
+            return m_OSSL_Functions.osGetAgentViewer(agent);
+        }
+
         // Animation Functions
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
