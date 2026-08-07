@@ -64,7 +64,7 @@ namespace OpenSim.Data
                 return idb.Length < 16 ? UUID.Zero : new UUID(idb, 0);
             }
 
-            throw new Exception("Failed to convert db value to UUID: " + id.ToString());
+            return UUID.Zero;
         }
     }
 }

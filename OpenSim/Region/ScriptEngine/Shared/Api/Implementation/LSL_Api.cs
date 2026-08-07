@@ -402,6 +402,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         private int m_linksetDataLimit = 32 * 1024;
 
+        private string m_wallclockTimeZone = string.Empty;
+
         private static readonly Dictionary<string, string> MovementAnimationsForLSL = new(StringComparer.InvariantCultureIgnoreCase)
         {
             {"CROUCH", "Crouching"},
@@ -663,6 +665,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 m_disable_underground_movement = seConfig.GetBoolean("DisableUndergroundMovement", true);
 
                 m_linksetDataLimit = seConfig.GetInt("LinksetDataLimit", m_linksetDataLimit);
+
+                // Empty (the default) preserves the old llGetWallclock() behavior of
+                // returning local system time. Set to an IANA/Windows time zone ID
+                // (e.g. "America/Los_Angeles") for spec-correct PST/PDT wallclock time.
+                m_wallclockTimeZone = seConfig.GetString("GetWallclockTimeZone", m_wallclockTimeZone);
             }
 
             if (m_notecardLineReadCharsMax > 65535)
@@ -3035,7 +3042,19 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         public LSL_Float llGetWallclock()
         {
-            return DateTime.Now.TimeOfDay.TotalSeconds;
+            if (string.IsNullOrEmpty(m_wallclockTimeZone))
+                return DateTime.Now.TimeOfDay.TotalSeconds;
+
+            try
+            {
+                TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById(m_wallclockTimeZone);
+                DateTime wallclock = TimeZoneInfo.ConvertTime(DateTime.UtcNow, tz);
+                return (double)(int)wallclock.TimeOfDay.TotalSeconds;
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return DateTime.Now.TimeOfDay.TotalSeconds;
+            }
         }
 
         public LSL_Float llGetTime()
@@ -5301,7 +5320,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 if (account is null)
                 {
                     GridUserInfo info = World.GridUserService.GetGridUserInfo(destId.ToString());
-                    if(info is null || info.Online == false)
+                    if(info is null)
                     {
                         Error("llGiveInventory", "Can't find destination '" + destId.ToString() + "'");
                         return;
@@ -5503,7 +5522,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                             }
                             else
                             {
-                                if (data == 7)
+                                if (data == 7 || data == ScriptBaseClass.DATA_PAYINFO)
                                     reply = "0";
                             }
                             break;
@@ -12617,8 +12636,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
                             float repeatX = Math.Clamp((float)mnrepeat.x,-100.0f, 100.0f);
                             float repeatY = Math.Clamp((float)mnrepeat.y,-100.0f, 100.0f);
-                            float offsetX = Math.Clamp((float)mnoffset.x, 0f, 1.0f);
-                            float offsetY = Math.Clamp((float)mnoffset.y, 0f, 1.0f);
+                            float offsetX = Math.Clamp((float)mnoffset.x, -1.0f, 1.0f);
+                            float offsetY = Math.Clamp((float)mnoffset.y, -1.0f, 1.0f);
 
                             materialChanged |= SetMaterialNormalMap(part, face, mapID, repeatX, repeatY, offsetX, offsetY, mnrot);
                             break;

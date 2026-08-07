@@ -11,7 +11,9 @@ namespace OpenSim.Services.HypergridService
 {
     public class UserAccountCache : IUserAccountService
     {
-        private const double CACHE_EXPIRATION_SECONDS = 120000.0; // 33 hours!
+        private const double CACHE_ALIEN_EXPIRATION_SECONDS = 7200.0; // 2 hours
+        private const double CACHE_EXPIRATION_SECONDS = 3600.0; // 1 hour
+        private const double CACHE_NULL_EXPIRATION_SECONDS = 600.0; // 10 minutes
 
 //        private static readonly ILog m_log =
 //                LogManager.GetLogger(
@@ -40,7 +42,20 @@ namespace OpenSim.Services.HypergridService
         public void Cache(UUID userID, UserAccount account)
         {
             // Cache even null accounts
-            m_UUIDCache.AddOrUpdate(userID, account, CACHE_EXPIRATION_SECONDS);
+            if (account is null)
+            {
+                m_UUIDCache.AddOrUpdate(userID, account, CACHE_NULL_EXPIRATION_SECONDS);
+                return;
+            }
+
+            if (account.LocalToGrid)
+            {
+                m_UUIDCache.AddOrUpdate(userID, account, CACHE_EXPIRATION_SECONDS);
+                return;
+            }
+
+            // Foreigners
+            m_UUIDCache.AddOrUpdate(userID, account, CACHE_ALIEN_EXPIRATION_SECONDS);
 
             //m_log.DebugFormat("[USER CACHE]: cached user {0}", userID);
         }

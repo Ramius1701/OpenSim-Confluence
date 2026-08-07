@@ -518,7 +518,7 @@ namespace OpenSim.Region.CoreModules.Scripting.VectorRender
                             start++;
                         if (start < nextLine.Length)
                         {
-                            nextLine = nextLine.Substring(start);
+                            nextLine = nextLine.Substring(start).TrimEnd();
                             graph.DrawString(nextLine, myFont, myBrush, startPoint);
                         }
                         continue;

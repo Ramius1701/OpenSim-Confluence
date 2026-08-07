@@ -326,7 +326,7 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Grid
                 rinfo = m_RemoteGridService.GetRegionByName(scopeID, uri.RegionName);
             else
             {
-                rinfo = m_RemoteGridService.GetDefaultRegions(UUID.Zero)[0];
+                rinfo = m_RemoteGridService.GetDefaultRegions(scopeID)[0];
                 if (rinfo == null)
                     m_log.Warn("[REMOTE GRID CONNECTOR] returned null default region");
                 else

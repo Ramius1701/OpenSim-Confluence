@@ -1900,7 +1900,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public vector osTemperature2sRBG(LSL_Float dtemp)
+        public vector osTemperature2sRGB(LSL_Float dtemp)
         {
             return m_OSSL_Functions.osTemperature2sRGB(dtemp);
         }
