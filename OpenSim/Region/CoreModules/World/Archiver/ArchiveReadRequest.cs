@@ -180,6 +180,25 @@ namespace OpenSim.Region.CoreModules.World.Archiver
 
         private UUID m_defaultUser;
 
+        protected bool m_noDefaultUser = false;
+
+        protected bool m_lookupAliases = false;
+
+        private IUserAliasService m_UserAliasService = null;
+        private IUserAliasService UserAliasService
+        {
+            get
+            {
+                m_UserAliasService ??= m_rootScene.RequestModuleInterface<IUserAliasService>();
+                return m_UserAliasService;
+            }
+        }
+
+        /// <summary>
+        /// Cache aliased user lookups since we will likely have many instances
+        /// </summary>
+        private readonly Dictionary<UUID, UserAlias> m_userAliases = new();
+
         public ArchiveReadRequest(Scene scene, string loadPath, Guid requestId, Dictionary<string, object> options)
         {
             m_rootScene = scene;
@@ -215,6 +234,8 @@ namespace OpenSim.Region.CoreModules.World.Archiver
             m_mergeParcels = options.ContainsKey("merge-parcels");
             m_noObjects = options.ContainsKey("no-objects");
             m_skipAssets = options.ContainsKey("skipAssets");
+            m_noDefaultUser = options.ContainsKey("no-defaultuser");
+            m_lookupAliases = options.ContainsKey("lookup-aliases");
             m_ForceAssetsCache = options.ContainsKey("forceAssets");
             if(m_ForceAssetsCache)
                 m_skipAssets = false;
@@ -283,6 +304,8 @@ namespace OpenSim.Region.CoreModules.World.Archiver
             m_requestId = requestId;
 
             m_defaultUser = scene.RegionInfo.EstateSettings.EstateOwner;
+            m_noDefaultUser = options.ContainsKey("no-defaultuser");
+            m_lookupAliases = options.ContainsKey("lookup-aliases");
 
             // Zero can never be a valid user id
             m_validUserUuids[UUID.Zero] = false;
@@ -796,17 +819,14 @@ namespace OpenSim.Region.CoreModules.World.Archiver
             {
                 if (string.IsNullOrEmpty(part.CreatorData))
                 {
-                    if (!ResolveUserUuid(scene, part.CreatorID))
-                        part.CreatorID = m_defaultUser;
+                    // Creators can't be groups.
+                    part.CreatorID = ResolveUserAliasOrDefault(scene, part.CreatorID, checkGroup: false);
                 }
                 if (UserManager is not null)
                     UserManager.AddCreatorUser(part.CreatorID, part.CreatorData);
 
-                if (!(ResolveUserUuid(scene, part.OwnerID) || ResolveGroupUuid(part.OwnerID)))
-                    part.OwnerID = m_defaultUser;
-
-                if (!(ResolveUserUuid(scene, part.LastOwnerID) || ResolveGroupUuid(part.LastOwnerID)))
-                    part.LastOwnerID = m_defaultUser;
+                part.OwnerID = ResolveUserAliasOrDefault(scene, part.OwnerID, checkGroup: true);
+                part.LastOwnerID = ResolveUserAliasOrDefault(scene, part.LastOwnerID, checkGroup: true);
 
                 if (!ResolveGroupUuid(part.GroupID))
                     part.GroupID = UUID.Zero;
@@ -828,19 +848,16 @@ namespace OpenSim.Region.CoreModules.World.Archiver
                     TaskInventoryDictionary inv = part.TaskInventory;
                     foreach (KeyValuePair<UUID, TaskInventoryItem> kvp in inv)
                     {
-                        if (!(ResolveUserUuid(scene, kvp.Value.OwnerID) || ResolveGroupUuid(kvp.Value.OwnerID)))
-                        {
-                            kvp.Value.OwnerID = m_defaultUser;
-                        }
-
                         if (string.IsNullOrEmpty(kvp.Value.CreatorData))
                         {
-                            if (!ResolveUserUuid(scene, kvp.Value.CreatorID))
-                                kvp.Value.CreatorID = m_defaultUser;
+                            // Creator can't be a group
+                            kvp.Value.CreatorID = ResolveUserAliasOrDefault(scene, kvp.Value.CreatorID, checkGroup: false);
                         }
 
                         if (UserManager is not null)
                             UserManager.AddCreatorUser(kvp.Value.CreatorID, kvp.Value.CreatorData);
+
+                        kvp.Value.OwnerID = ResolveUserAliasOrDefault(scene, kvp.Value.OwnerID, checkGroup: true);
 
                         if (!ResolveGroupUuid(kvp.Value.GroupID))
                             kvp.Value.GroupID = UUID.Zero;
@@ -1023,6 +1040,43 @@ namespace OpenSim.Region.CoreModules.World.Archiver
 
                 return m_validUserUuids[uuid];
             }
+        }
+
+        /// <summary>
+        /// Look up and return the original user, the default user or a user alias if one is found
+        /// based on the options passed in at run time.
+        /// </summary>
+        /// <param name="scene">The scene we are loading this OAR into.</param>
+        /// <param name="aliasID">The id we are looking for locally or as an alias</param>
+        /// <param name="checkGroup">The incoming ID may be a group so check for that as well</param>
+        /// <returns>UUID - the ID to use based on incoming ID and settings</returns>
+        private UUID ResolveUserAliasOrDefault(Scene scene, UUID aliasID, bool checkGroup)
+        {
+            if (ResolveUserUuid(scene, aliasID))
+                return aliasID;
+
+            if (checkGroup && ResolveGroupUuid(aliasID))
+                return aliasID;
+
+            if (m_lookupAliases)
+            {
+                UserAlias aliasUser = null;
+
+                lock (m_userAliases)
+                {
+                    if (!m_userAliases.TryGetValue(aliasID, out aliasUser))
+                    {
+                        aliasUser = UserAliasService?.GetUserForAlias(aliasID);
+                        if (aliasUser is not null)
+                            m_userAliases[aliasID] = aliasUser;
+                    }
+                }
+
+                if (aliasUser is not null && ResolveUserUuid(scene, aliasUser.UserID))
+                    return aliasUser.UserID;
+            }
+
+            return m_noDefaultUser ? aliasID : m_defaultUser;
         }
 
         /// <summary>
