@@ -835,8 +835,110 @@ spawn, or explicitly instruct a single large-scope agent not to spawn
 sub-agents.
 
 Still open from this round: the two deferred Gunthar HG-identity
-commits (Batch 6 note above), and the Halcyon Bot/NPC framework
-preservation candidate noted above.
+commits (Batch 6 note above). The Halcyon Bot/NPC framework
+preservation candidate noted above was superseded, not fixed — see the
+Tranquillity `develop` round below, which found a better-provenance
+open-source bot framework to port instead.
+
+---
+
+## Tranquillity moves to a formal release; `develop` mined for 3 more batches (2026-08-08)
+
+User flagged that Tranquillity-Sim published a first formal release,
+[`OpenSim-NGC/OpenSim-Tranquillity` `release/v1.0`]
+(https://github.com/OpenSim-NGC/OpenSim-Tranquillity/tree/release/v1.0).
+Diffing `release/v1.0` against `develop` showed the release branch is
+only 3 commits behind `develop` (release notes + a console-log
+newline fix — nothing to port), but `develop` itself had moved well
+past the release cut with substantial new work: a bot/NPC framework, a
+brand-new "Phlox" LSL/SLua script engine, per-script stats, Experience
+Tools SL-conformance fixes, a BinaryFormatter security remediation, and
+a small heartbeat/LinksetData fix. Three more batches ported from this
+round; one major finding (Phlox) explicitly NOT ported pending a
+provenance question raised upstream.
+
+**Batch 9** (`3ec6c7d209`) — removed the three remaining live
+`BinaryFormatter` deserialization paths in the tree (FlotsamAssetCache
+disk cache, YEngine script-state migration, KeyframeMotion
+serialization) — `BinaryFormatter` resolves types named in the byte
+stream it deserializes, a code-execution vector removed entirely in
+.NET 9. Also added `moving_start`/`moving_end` script events for
+general (non-keyframed) physical movement. Tranquillity's paired fix
+also added a root-part-delegation `LinksetData` group accessor;
+Casperia already exposes `LinksetData` at the group level natively (a
+plain field on `SceneObjectGroup`), so that half was a no-op here.
+
+**Batch 10** (`cfc0855b85`) — ported `IBotManager`/`BotManager`/
+`BotPersistenceManager`, a module-facing Bot/NPC management layer
+wrapping Casperia's existing `INPCModule` with tag/profile/outfit/
+navigation/speed tracking and script event delivery. Verified before
+porting that this is an original implementation (per its own header:
+"wraps OpenSim's INPCModule"), not a resurrection of InWorldz/Halcyon's
+closed-source engine — despite sharing the same "Legion Grid" origin
+as Phlox (see below), its licensing is clean. Adapted to use
+`System.Data.SQLite` (already a Casperia dependency) instead of
+upstream's `Microsoft.Data.Sqlite`, avoiding a second SQLite client
+library and its native-binary deployment story for a handful of calls
+that are identical across both providers. **Scope note:** this lands
+the module only — Tranquillity's ~50 `bot*` OSSL functions that call
+this API exist solely in Phlox's script engine, not in a form YEngine
+can call. Wiring those into `OSSL_Api.cs`/`IOSSL_Api.cs`/
+`OSSL_Stub.cs` is deliberately deferred as its own follow-on effort,
+comparable in size to this port — without it, the module is present
+but currently unreachable from any script (user chose this scope
+explicitly over a partial or full function-wiring option).
+
+**Batch 11** (`b508644e43`) — Experience Tools SL-conformance fixes:
+a new estate-level Blocked Experiences tier (the viewer has always
+sent add/remove requests for this list; they were silently discarded —
+new `EstateSettings.BlockedExperiences`, `EstateManagementModule`
+wiring, MySQL migration version 38), a real pagination bug in
+experience search (`page` parameter was entirely unhandled — "todo:
+handle pages" — silently returning every match with no paging), a
+dropped marketplace-link field in `GetExperienceInfoGetHandler`, a
+real security hole where any experience admin (not just the owner)
+could reassign an experience's group, NRE guards on unresolved
+experience IDs, and a KV quota raised from 16 MiB to the real SL limit
+of 128 MiB. **Two things explicitly NOT ported** because Casperia's
+own independent implementation is already better or the fix doesn't
+apply: Tranquillity's `ExperienceCreators` acquire-policy gate (Casperia
+already has `CanCreateExperience`/`TryCreateExperience` with real
+per-resident limits AND an `IMoneyModule`-charged creation fee —
+porting the simpler role-only gate over it would be a downgrade), and
+Tranquillity's `ExperienceQuery` cap no-op (its correctness depends on
+Tranquillity's per-agent EEP being a stubbed no-op; Casperia's
+`llSetAgentEnvironment` is a real, working implementation, so "always
+answer permitted" would be actively wrong here — a correct version
+needs real policing logic that doesn't exist yet, a separate,
+undesigned piece of work). Also confirmed a pre-existing, not
+Casperia-specific gap: Allowed/Key/now Blocked Experiences are only
+ever persisted for MySQL, not PGSQL/SQLite/Null — left as-is, a
+distinct cross-DB-parity effort.
+
+**Phlox — audited, NOT ported.** Tranquillity's `develop` also added a
+~98,000-line alternative LSL/SLua script engine called "Phlox",
+alongside XEngine/YEngine. A dedicated research pass (not a porting
+attempt) found this is *literally* InWorldz/Halcyon's own Phlox engine
+carried forward — file headers explicitly read "Adapted from InWorldz
+Halcyon `ExecutionScheduler.cs`", attributed to "InWorldz Halcyon
+Developers," obtained via an unspecified "Legion Grid" project. This
+directly contradicts what Casperia's own earlier Halcyon audit found:
+`InWorldz.Phlox.Engine` shipped as a **closed-source binary DLL** even
+in InWorldz's own repository — "not portable, full stop" was that
+audit's conclusion. Now ~50,000+ lines of buildable C# claiming to be
+that same engine appear with no LICENSE file, no ThirdPartyLicenses
+entry, and no explanation of provenance — just a bare copyright line.
+Other findings if this ever clears: real (partial) SLua support,
+architecturally distinct from XEngine/YEngine (bytecode-interpreted VM
+vs compile-to-IL) with genuinely easy integration via the same
+`IScriptEngine`/`IScriptModule` seam Casperia already uses, and
+Casperia's own independently-built Experience-Lite/LinksetData
+interfaces are surprisingly close to what Phlox's adapters expect. But
+OSSL support is only 2 functions vs Casperia's 312 — unusable on real
+content without a large follow-on effort. **User decision: raise the
+provenance question with OpenSim-NGC before any engineering
+investment.** Not shelved outright, not actioned — waiting on an
+answer from upstream. See FEATURES_VS_MASTER.md for the full writeup.
 
 ---
 

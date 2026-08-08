@@ -333,12 +333,19 @@ work continues — don't let them go stale.
   (ported from opensim-lickx) haven't been tested in-world yet —
   console commands and connector wiring are unexercised against a live
   grid.
-- Halcyon/InWorldz's Bot/NPC framework — a complete, mature,
-  LSL-scriptable NPC system found in a preservation-focused audit — is
-  a real, deferred candidate. Large enough to need its own dedicated
-  pass rather than a quick port; not started. See FEATURES_VS_MASTER.md
-  for the smaller candidates from that same audit (a handful of missing
-  LSL functions, a sit-target accuracy fix) that are also still open.
+- Halcyon/InWorldz's own Bot/NPC framework (from a preservation-focused
+  audit) is superseded, not pursued — Tranquillity's `develop` branch
+  shipped its own open, cleanly-licensed bot/NPC framework since, and
+  that's what got ported instead (see below). The smaller Halcyon
+  candidates from that same audit (a handful of missing LSL functions,
+  a sit-target accuracy fix) are still open; see FEATURES_VS_MASTER.md.
+- The Bot/NPC management framework (`IBotManager`/`BotManager`/
+  `BotPersistenceManager`, ported from Tranquillity) is infrastructure
+  only — no script can reach it yet. Tranquillity's ~50 `bot*` OSSL
+  functions exist only in their Phlox script engine; wiring an
+  equivalent into Casperia's own `OSSL_Api.cs`/`IOSSL_Api.cs`/
+  `OSSL_Stub.cs` so YEngine scripts can actually call it is deferred as
+  its own effort, comparable in size to the module port itself.
 - Grid-level control-panel features (per-region Hypergrid open/close
   toggle, on-demand maptile regeneration, OAR/IAR backup workflows, and
   general admin coverage) live in a separate companion project
@@ -348,9 +355,16 @@ work continues — don't let them go stale.
   command and a standalone-HG-login HomeURI repair, both touching
   `LLLoginService.cs`) were deliberately deferred from the 2026-08-08
   re-audit/port round as warranting dedicated review rather than batch
-  inclusion — not yet started. See PROJECT_LOG.md for the full list of
-  what that round did port (8 batches, `merge-experiment` at
-  `ef991373f6`).
+  inclusion — not yet started.
+- Tranquillity's "Phlox" LSL/SLua script engine (~98,000 lines) is
+  audited but NOT ported: it turned out to be a resurrection of
+  InWorldz/Halcyon's own closed-source Phlox engine, now appearing as
+  source with no LICENSE file and no explained chain of custody. Not
+  shelved outright — the user is raising a provenance question with
+  OpenSim-NGC before any engineering investment is considered. See
+  PROJECT_LOG.md for the full writeup and for the complete list of what
+  the 2026-08-08 rounds did port (11 batches, `merge-experiment` at
+  `b508644e43`).
 
 ## Repository model
 

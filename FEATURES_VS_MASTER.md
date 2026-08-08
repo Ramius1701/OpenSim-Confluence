@@ -1,7 +1,7 @@
 # Casperia vs. upstream OpenSim master
 
 Generated from `git log origin/master..merge-experiment --oneline --no-merges`
-(211 commits ahead of `opensim/opensim@master` as of 2026-08-08). Regenerate
+(215 commits ahead of `opensim/opensim@master` as of 2026-08-08). Regenerate
 with that command if this drifts — git is the source of truth, this is just
 a categorized read of it.
 
@@ -195,10 +195,13 @@ binaries in this repo — not portable, full stop — but the open C# layers
 around them turned up real, substantial findings:
 - **Portable:** a complete, mature, LSL-scriptable Bot/NPC framework
   (`OpenSim/Region/CoreModules/Agent/BotManager/`, ~50 documented `bot*`
-  functions, pathfinding/wandering/following/sitting/appearance) — the
-  mature version of what Tranquillity's own still-unfinished bot
-  framework (see its `develop`-branch audit above) is building toward.
-  Large but self-contained; flagship candidate if pursued. Also:
+  functions, pathfinding/wandering/following/sitting/appearance) — at
+  the time of this audit, the mature version of what Tranquillity's own
+  still-unfinished bot framework was building toward. **Superseded, not
+  pursued:** Tranquillity's `develop` branch has since shipped its own
+  open, cleanly-licensed bot/NPC framework (module ported into Casperia
+  — see the "Tranquillity `develop` mined past its first release"
+  section below), making this Halcyon-sourced route unnecessary. Also:
   `llReturnObjectsByOwner`/`llReturnObjectsByID` (confirmed absent from
   Casperia), ~80 `iw*` OSSL-equivalent functions (inventory/string/list/
   agent/group utilities), Euler-rotation LSL functions, a sit-target
@@ -299,6 +302,63 @@ commit hashes in PROJECT_LOG.md. Headline items:
 Deferred, not yet ported: two riskier Gunthar HG-identity commits that
 touch the login critical path directly (account-ServiceURLs-repair
 console command, standalone-HG-login HomeURI repair).
+
+### Tranquillity `develop` mined past its first release (2026-08-08)
+Tranquillity-Sim published a first formal release
+(`OpenSim-NGC/OpenSim-Tranquillity` `release/v1.0`); `develop` had
+moved past it with real new work. 3 more batches ported (full detail
+in PROJECT_LOG.md):
+- **BinaryFormatter removal** — the three remaining live
+  `BinaryFormatter` deserialization paths (asset disk cache, YEngine
+  script-state migration, KeyframeMotion serialization) replaced with
+  fixed-type/explicit-format serialization. `BinaryFormatter` resolves
+  types named in the byte stream it deserializes — a code-execution
+  vector, removed entirely in .NET 9. Also added `moving_start`/
+  `moving_end` script events for general physical movement.
+- **Bot/NPC management framework** — `IBotManager`/`BotManager`/
+  `BotPersistenceManager`, wrapping Casperia's existing `INPCModule`
+  with tag/profile/outfit/navigation tracking and script event
+  delivery. Verified as an original implementation wrapping OpenSim's
+  own NPC infrastructure, not a resurrection of InWorldz/Halcyon's
+  closed-source engine (unlike Phlox below, despite sharing its
+  "Legion Grid" origin). Module only — the ~50 `bot*` OSSL functions
+  that would let scripts actually call it exist only in Phlox's script
+  engine; wiring those into Casperia's own OSSL API is deferred as its
+  own effort.
+- **Experience Tools SL-conformance fixes** — a new estate-level
+  Blocked Experiences tier (previously silently discarded from the
+  wire protocol), a real pagination bug in experience search, a
+  dropped marketplace-link field, a security hole letting any admin
+  (not just the owner) reassign an experience's group, NRE guards, and
+  a KV quota raised to the real SL limit (128 MiB). Two related
+  Tranquillity fixes were deliberately NOT ported because Casperia's
+  own independent implementation is already more capable (an
+  acquire-policy gate Casperia already exceeds with a real
+  fee-charging creation flow) or because the fix's premise doesn't
+  hold here (an EEP-query no-op that's only correct if per-agent EEP
+  is a stub — Casperia's is a real, working implementation).
+
+### Phlox script engine — audited, NOT ported: unresolved provenance (2026-08-08)
+Tranquillity's `develop` also added a ~98,000-line alternative LSL/SLua
+script engine ("Phlox") alongside XEngine/YEngine, with real (partial)
+SLua support and genuinely easy integration via the same
+`IScriptEngine`/`IScriptModule` seam Casperia already uses for
+XEngine/YEngine coexistence. A dedicated research pass — explicitly
+NOT a porting attempt — found this is *literally* InWorldz/Halcyon's
+own Phlox engine: file headers read "Adapted from InWorldz Halcyon
+`ExecutionScheduler.cs`", attributed to "InWorldz Halcyon Developers,"
+obtained via an unspecified "Legion Grid" project, with no LICENSE
+file, no ThirdPartyLicenses entry, and no explanation of provenance —
+just a bare copyright line. This directly contradicts the Halcyon audit
+above, which confirmed `InWorldz.Phlox.Engine` shipped as a
+**closed-source binary DLL** even in InWorldz's own repository. Other
+findings, moot until provenance clears: OSSL support is only 2
+functions vs Casperia's 312 (unusable on real content without a large
+follow-on effort); Casperia's own independently-built Experience-Lite/
+LinksetData interfaces are surprisingly close to what Phlox's adapters
+expect (less rework than feared if this ever proceeds). **Status:**
+neither shelved nor actioned — the user chose to raise the provenance
+question with OpenSim-NGC before any engineering investment.
 
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly
