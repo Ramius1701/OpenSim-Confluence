@@ -64,6 +64,8 @@ namespace OpenSim.Services.HypergridService
         private static string m_DeniedMacs = string.Empty;
         private static string m_DeniedID0s = string.Empty;
         private static bool m_ForeignAgentsAllowed = true;
+        private static string m_DeniedMessage = "Destination does not allow visitors from your world";
+        private static readonly Regex m_HomeURIIsBareIP = new(@"http\:\/\/\d+\.\d+\.\d+\.\d+\:\d+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly List<string> m_ForeignsAllowedExceptions = new();
         private static readonly List<string> m_ForeignsDisallowedExceptions = new();
 
@@ -188,6 +190,7 @@ namespace OpenSim.Services.HypergridService
                 m_DeniedID0s = Util.GetConfigVarFromSections<string>(config, "DeniedID0s", possibleAccessControlConfigSections, string.Empty);
 
                 m_ForeignAgentsAllowed = serverConfig.GetBoolean("ForeignAgentsAllowed", true);
+                m_DeniedMessage = serverConfig.GetString("DeniedMessage", m_DeniedMessage);
 
                 LoadDomainExceptionsFromConfig(serverConfig, "AllowExcept", m_ForeignsAllowedExceptions);
                 LoadDomainExceptionsFromConfig(serverConfig, "DisallowExcept", m_ForeignsDisallowedExceptions);
@@ -437,12 +440,15 @@ namespace OpenSim.Services.HypergridService
                 if (m_ForeignAgentsAllowed && IsException(aCircuit, m_ForeignsAllowedExceptions))
                     allowed = false;
 
+                if (m_ForeignAgentsAllowed && m_HomeURIIsBareIP.IsMatch(aCircuit.ServiceURLs["HomeURI"].ToString()))
+                    allowed = false; // HomeURI is a bare IP address, not a proper hostname
+
                 if (!m_ForeignAgentsAllowed && IsException(aCircuit, m_ForeignsDisallowedExceptions))
                     allowed = true;
 
                 if (!allowed)
                 {
-                    reason = "Destination does not allow visitors from your world";
+                    reason = m_DeniedMessage;
                     m_log.InfoFormat("[GATEKEEPER SERVICE]: Foreign agents are not permitted {0} {1} @ {2}. Refusing service.",
                         aCircuit.firstname, aCircuit.lastname, aCircuit.ServiceURLs["HomeURI"]);
                     return false;

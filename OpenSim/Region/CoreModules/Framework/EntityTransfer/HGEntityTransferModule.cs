@@ -273,6 +273,9 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                     return false;
                 }
 
+                if (isLocal)
+                    ApplyCanonicalLocalServiceURLs(agentCircuit);
+
                 if (agentCircuit.ServiceURLs.ContainsKey("HomeURI"))
                 {
                     string userAgentDriver = agentCircuit.ServiceURLs["HomeURI"].ToString();
@@ -305,6 +308,57 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
             }
 
             return base.CreateAgent(sp, reg, finalDestination, agentCircuit, teleportFlags, ctx, out reason, out logout);
+        }
+
+        /// <summary>
+        /// If this grid's own public HomeURI/GatekeeperURI has moved (e.g. from a raw
+        /// IP to a proper domain) since a local user's account was created, their
+        /// outbound circuit can still be carrying the old value. Rewrite it to the
+        /// grid's current canonical URLs before it's sent to the destination, so
+        /// foreign viewers don't keep seeing a stale @IP:port identity forever.
+        /// </summary>
+        private void ApplyCanonicalLocalServiceURLs(AgentCircuitData agentCircuit)
+        {
+            agentCircuit.ServiceURLs ??= new Dictionary<string, object>();
+
+            string homeURI = NormalizeServiceURL(m_thisGridInfo.HomeURL);
+            string gatekeeperURI = NormalizeServiceURL(m_thisGridInfo.GateKeeperURL);
+
+            if (homeURI.Length > 0)
+            {
+                string currentHomeURI = agentCircuit.ServiceURLs.TryGetValue("HomeURI", out object currentHome)
+                    ? NormalizeServiceURL(currentHome as string)
+                    : string.Empty;
+
+                if (!homeURI.Equals(currentHomeURI, StringComparison.OrdinalIgnoreCase))
+                {
+                    m_log.InfoFormat("[HG ENTITY TRANSFER MODULE]: Rewriting local outbound HomeURI from {0} to {1}",
+                        currentHomeURI, homeURI);
+                    agentCircuit.ServiceURLs["HomeURI"] = homeURI;
+                }
+            }
+
+            if (gatekeeperURI.Length > 0)
+            {
+                string currentGatekeeperURI = agentCircuit.ServiceURLs.TryGetValue("GatekeeperURI", out object currentGatekeeper)
+                    ? NormalizeServiceURL(currentGatekeeper as string)
+                    : string.Empty;
+
+                if (!gatekeeperURI.Equals(currentGatekeeperURI, StringComparison.OrdinalIgnoreCase))
+                    agentCircuit.ServiceURLs["GatekeeperURI"] = gatekeeperURI;
+            }
+        }
+
+        private static string NormalizeServiceURL(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            value = value.Trim();
+            if (!value.EndsWith("/"))
+                value += "/";
+
+            return value;
         }
 
         public override void TriggerTeleportHome(UUID id, IClientAPI client)
