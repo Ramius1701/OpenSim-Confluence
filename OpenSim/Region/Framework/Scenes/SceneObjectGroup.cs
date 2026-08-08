@@ -441,6 +441,11 @@ namespace OpenSim.Region.Framework.Scenes
         protected SceneObjectPart m_rootPart;
         // private Dictionary<UUID, scriptEvents> m_scriptEvents = new Dictionary<UUID, scriptEvents>();
 
+        // Tracks whether this group was moving on the previous heartbeat so
+        // Scene.CheckMovingTransitions() can fire moving_start/moving_end on general
+        // (non-keyframed) movement.
+        public bool WasMoving { get; set; }
+
         private Dictionary<int, scriptPosTarget> m_targets = new();
         private Dictionary<int, scriptRotTarget> m_rotTargets = new();
         private Dictionary<UUID, List<int>> m_targetsByScript = new();
