@@ -755,6 +755,91 @@ hasn't been started without an explicit decision to take it on.
 
 ---
 
+## Full re-audit and 8-batch port round (2026-08-08)
+
+Triggered by a corrected audit methodology: an earlier narrow, currency-
+module-only pass on opensim-lickx had missed a real RemoteAdmin finding
+(`admin_alert_user`) that only turned up once a full code-level diff was
+run, not just a commit-message/wiki-guided spot check ("we should be
+looking at the code as well not just the git"). That lesson was applied
+project-wide: full re-audits were run against opensim-lickx (full
+249-file core-tree diff), Gunthar (279-commit range), Tranquillity
+(418-commit range), Mobius (310-file vanilla diff vs tag `0.9.1.1`),
+Halcyon (deeper code-level pass), plus a dedicated diff of
+`LSL_Api.cs`/`OSSL_Api.cs` against lickx. Findings were consolidated into
+a backlog and ported in 8 batches, each in its own isolated worktree
+(`git worktree add ../Casperia-batchN`), built, and fast-forward merged
+into `merge-experiment` one at a time:
+
+- **Batch 1** (`72c8cc89d2`) — 12 small bug fixes: parcel-manager
+  permission check, MySQL money transaction-id type, HG default-region
+  lookup scope, `DBGuids.FromDB` unhandled throw, VectorRender trailing
+  whitespace, group-title active-tag refresh, `llGiveInventory`/
+  `llRequestAgentData`/`llGetWallclock` fixes, an OSSL typo
+  (`osTemperature2sRBG`→`RGB`), and tiered HG user-account cache expiry.
+- **Batch 2** (`c6dfa1b767`) — 3 dead-code completions: boat turn-banking
+  physics actually wired into `ODEDynamics.Step()`, and two
+  implemented-but-never-wired script functions (`llCastRayV3`,
+  `osSetRot`) — present unwired in vanilla OpenSim itself, not lickx-
+  specific.
+- **Batch 3** (`0c83fdd06d`) — 8 new capabilities: `admin_change_parcel_
+  flags` RemoteAdmin RPC, configurable NPC account type, linkset
+  inventory-changed propagation, SLURL restored in `llGiveInventory`'s
+  IM, new `osMakeScript`, standalone XML-RPC login by username, and a
+  `MarketplaceListings` default inventory folder.
+- **Batch 4** (`080718e6b8`) — 2 security/data-integrity fixes: closed an
+  `/lslhttp/` blacklist bypass in `OutboundUrlFilter`, and flipped
+  CreatorData inventory export from opt-in to opt-out.
+- **Batch 5** (`a6cde3b133`) — graceful SIGTERM handling (`PosixSignal
+  Registration`) in both the region simulator and Robust server, so a
+  clean `kill`/service-stop triggers an orderly shutdown instead of a
+  hard kill.
+- **Batch 6** (`26ef7b6743`) — HG identity/friends fixes: canonicalized
+  local-service URLs before outbound HG teleport, fixed a no-op stale-
+  cache refresh in `UserManagementModule.AddUser`, a configurable denial
+  message plus bare-IP HomeURI rejection in `GatekeeperService`, and a
+  `HGFriendsService` fix for Mantis 9199. Two riskier Gunthar login-path
+  commits from the same cluster (account-ServiceURLs-repair console
+  command, standalone-HG-login HomeURI repair) were explicitly deferred
+  as warranting dedicated review rather than batch inclusion.
+- **Batch 7** (`5f487ebba8`) — made the hardcoded 10-second
+  `WaitForUpdateAgent` teleport timeout in `ScenePresence.cs`
+  configurable (`TransferAgentUpdateWaitMS`, floor 10000ms, default
+  raised to 30000ms), fixing spurious teleport failures on slow links
+  (notably HG returns). Independently surfaced by both the Gunthar and
+  Mobius re-audits as the same converged finding.
+- **Batch 8** (`ef991373f6`) — added `--lookup-aliases`/`--no-defaultuser`
+  OAR import options, wiring the already-ported User Alias service into
+  `ArchiveReadRequest.ModifySceneObject` so unresolved creator/owner/
+  last-owner UUIDs can resolve through a registered alias instead of
+  always silently reassigning to the estate owner. Flagged by the
+  Tranquillity re-audit as the highest-value remaining find.
+
+Each batch was rebased onto `merge-experiment` immediately before
+merging (worktrees were created in parallel off a common base, so later
+batches needed `git rebase merge-experiment` to stay fast-forwardable),
+and the main worktree's generated `.csproj`/`.sln` files were
+regenerated (`prebuild.dll`) and rebuilt after every merge to catch
+false "type not found" errors from stale gitignored project files.
+`merge-experiment` now sits at `ef991373f6`, building clean (0 errors,
+1 pre-existing unrelated warning). **Not yet tested in-world.**
+
+Also fixed along the way (recorded as a lesson, not a code change):
+a research agent instructed to audit the full lickx tree decided on its
+own to spawn 6 further sub-agents to parallelize the work, then lost
+track of 5 of their 6 results when compiling its final report. Recovered
+by reconstructing the missing findings from task-notifications received
+directly during the session. Going forward: either launch parallel
+top-level audit agents directly rather than letting one agent self-
+spawn, or explicitly instruct a single large-scope agent not to spawn
+sub-agents.
+
+Still open from this round: the two deferred Gunthar HG-identity
+commits (Batch 6 note above), and the Halcyon Bot/NPC framework
+preservation candidate noted above.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.

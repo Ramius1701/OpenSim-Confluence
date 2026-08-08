@@ -344,6 +344,13 @@ work continues — don't let them go stale.
   general admin coverage) live in a separate companion project
   (`OpenSim-Grid-Interface`), not this repository, and have their own
   open items there.
+- Two Gunthar HG-identity commits (an account-ServiceURLs-repair console
+  command and a standalone-HG-login HomeURI repair, both touching
+  `LLLoginService.cs`) were deliberately deferred from the 2026-08-08
+  re-audit/port round as warranting dedicated review rather than batch
+  inclusion — not yet started. See PROJECT_LOG.md for the full list of
+  what that round did port (8 batches, `merge-experiment` at
+  `ef991373f6`).
 
 ## Repository model
 

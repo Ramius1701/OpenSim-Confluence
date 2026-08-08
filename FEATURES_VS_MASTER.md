@@ -1,7 +1,7 @@
 # Casperia vs. upstream OpenSim master
 
 Generated from `git log origin/master..merge-experiment --oneline --no-merges`
-(165 commits ahead of `opensim/opensim@master` as of 2026-08-05). Regenerate
+(211 commits ahead of `opensim/opensim@master` as of 2026-08-08). Regenerate
 with that command if this drifts — git is the source of truth, this is just
 a categorized read of it.
 
@@ -263,6 +263,42 @@ Neither audit resulted in code changes to Casperia beyond the Bot/NPC
 framework being flagged as a real, deferred candidate — worth revisiting
 as its own project. Homeworldz is worth a second look in 6–12 months
 once its scripting/physics phases mature further.
+
+### Full code-level re-audit + 8-batch port (2026-08-08)
+Corrected methodology after the opensim-lickx audit above initially
+missed a real RemoteAdmin finding (`admin_alert_user`) on a narrow,
+currency-module-only pass — full code-level diffs were re-run against
+opensim-lickx (full 249-file core tree), Gunthar (279-commit range),
+Tranquillity (418-commit range), Mobius (310-file vanilla diff), and
+Halcyon (deeper pass), plus a dedicated `LSL_Api.cs`/`OSSL_Api.cs` diff.
+8 batches ported and merged into `merge-experiment`; full detail and
+commit hashes in PROJECT_LOG.md. Headline items:
+- Two more implemented-but-never-wired script functions found
+  (`llCastRayV3`, `osSetRot`) — same bug class as `osGetAgentViewer`
+  above, present unwired in vanilla OpenSim itself, not lickx-specific.
+- Boat turn-banking physics (`ODEDynamics`) was parsed from config but
+  never actually applied — now wired into the vertical-attractor roll
+  calculation.
+- HG identity/friends hardening: canonicalized local-service URLs
+  before outbound HG teleport, fixed a no-op stale-cache refresh for
+  returning HG visitors, bare-IP HomeURI rejection in
+  `GatekeeperService`, and a `HGFriendsService` fix for Mantis 9199.
+- Teleport reliability: the hardcoded 10s `WaitForUpdateAgent` wait is
+  now configurable (`TransferAgentUpdateWaitMS`, default 30000ms),
+  fixing spurious failures on slow HG links — a converged finding from
+  both the Gunthar and Mobius audits independently.
+- OAR import gained `--lookup-aliases`/`--no-defaultuser`, wiring the
+  already-ported User Alias service into creator/owner/last-owner UUID
+  resolution instead of always silently reassigning unresolved IDs to
+  the estate owner.
+- Graceful SIGTERM shutdown for both the region simulator and Robust
+  server.
+- A closed `/lslhttp/` outbound-URL-filter bypass, and CreatorData
+  inventory export flipped from opt-in to opt-out.
+
+Deferred, not yet ported: two riskier Gunthar HG-identity commits that
+touch the login critical path directly (account-ServiceURLs-repair
+console command, standalone-HG-login HomeURI repair).
 
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly
