@@ -632,6 +632,10 @@ namespace OpenSim.Region.ClientStack.LindenCaps
         public bool IsExperienceAdmin(UUID agent_id, UUID experience_id)
         {
             ExperienceInfo info = GetExperienceInfo(experience_id, true);
+            // Guard an unresolved experience (unknown id) so callers get a clean false
+            // rather than an NRE on info.owner_id below.
+            if (info == null || agent_id == UUID.Zero)
+                return false;
             if (info.owner_id == agent_id)
                 return true;
 
@@ -654,6 +658,9 @@ namespace OpenSim.Region.ClientStack.LindenCaps
         public bool IsExperienceContributor(UUID agent_id, UUID experience_id)
         {
             ExperienceInfo info = GetExperienceInfo(experience_id, true);
+            // Same unresolved-experience guard as IsExperienceAdmin.
+            if (info == null || agent_id == UUID.Zero)
+                return false;
             if (info.owner_id == agent_id)
                 return true;
 
@@ -681,6 +688,11 @@ namespace OpenSim.Region.ClientStack.LindenCaps
         public UUID[] GetEstateKeyExperiences()
         {
             return m_scene.RegionInfo.EstateSettings.KeyExperiences;
+        }
+
+        public UUID[] GetEstateBlockedExperiences()
+        {
+            return m_scene.RegionInfo.EstateSettings.BlockedExperiences;
         }
 
 
@@ -812,18 +824,29 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
             NameValueCollection query = HttpUtility.ParseQueryString(httpRequest.Url.Query);
 
-            string page = query.Get("page");
-            string page_size = query.Get("page_size");
-            string query_str = query.Get("query");
+            string query_str = query.Get("query") ?? string.Empty;
 
-            // todo: handle pages
+            // Pagination. The picker's `page` param is 1-BASED: it sends page=1 for the
+            // first search and clamps to >=1 client-side. Treating it as 0-based (or not
+            // handling it at all) drops every result on some viewer versions. Clamp <1 to
+            // page one; page_size defaults 30.
+            int page = 0, page_size = 30;
+            int.TryParse(query.Get("page"), out page);
+            if (!int.TryParse(query.Get("page_size"), out page_size) || page_size <= 0) page_size = 30;
+            if (page < 1) page = 1;
 
-            ExperienceInfo[] results = m_ExperienceModule.FindExperiencesByName(query_str);
+            ExperienceInfo[] results = m_ExperienceModule.FindExperiencesByName(query_str)
+                ?? new ExperienceInfo[0];
+            int start = (page - 1) * page_size;
+            int end = start + page_size;
+            if (end > results.Length) end = results.Length;
+            bool hasNext = results.Length > page * page_size;
 
             string new_str = "<?xml version=\"1.0\" ?><llsd><map><key>experience_keys</key><array>";
 
-            foreach(ExperienceInfo info in results)
+            for (int i = start; i < end; i++)
             {
+                ExperienceInfo info = results[i];
                 string extended_meta = string.Format("<llsd><map><key>logo</key><uuid>{0}</uuid><key>marketplace</key>{1}</map></llsd>", info.logo, info.marketplace != string.Empty ? string.Format("<string>{0}</string>", info.marketplace) : "<string />");
 
                 new_str += string.Format("<map>" +
@@ -841,9 +864,28 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                     "</map>", info.public_id, info.description, info.name, info.group_id, info.owner_id, HttpUtility.HtmlEncode(extended_meta), info.slurl, info.maturity, info.properties, info.quota);
             }
 
-            new_str += "</array></map></llsd>";
+            new_str += "</array>";
+
+            // The picker enables its page buttons purely on the PRESENCE of these keys and
+            // re-requests via ?page=N±1; the values are never dereferenced, but real re-query
+            // URLs are emitted for correctness.
+            string basePath = httpRequest.Url.AbsolutePath;
+            if (hasNext)
+                new_str += string.Format("<key>next_page_url</key><string>{0}</string>",
+                    HttpUtility.HtmlEncode(PageUrl(basePath, query_str, page + 1, page_size)));
+            if (page > 1)
+                new_str += string.Format("<key>previous_page_url</key><string>{0}</string>",
+                    HttpUtility.HtmlEncode(PageUrl(basePath, query_str, page - 1, page_size)));
+
+            new_str += "</map></llsd>";
 
             return Encoding.UTF8.GetBytes(new_str);
+        }
+
+        private static string PageUrl(string basePath, string query, int page, int pageSize)
+        {
+            return (basePath ?? string.Empty) + "?page=" + page + "&page_size=" + pageSize +
+                   "&query=" + Uri.EscapeDataString(query ?? string.Empty);
         }
     }
 
@@ -1030,7 +1072,16 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             {
                 currentInfo.name = name;
                 currentInfo.description = desc;
-                currentInfo.group_id = group_id;
+
+                // Group field is owner-only: any experience administrator may edit every
+                // other field, but only the experience OWNER may change its group.
+                // Previously any admin could reassign it.
+                if (group_id != currentInfo.group_id)
+                {
+                    if (currentInfo.owner_id == m_AgentID)
+                        currentInfo.group_id = group_id;
+                    // else: admin-but-not-owner -> keep the existing group (change ignored).
+                }
 
                 if (slurl != "last")
                     currentInfo.slurl = slurl;
@@ -1177,6 +1228,7 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
             UUID[] allowed = m_ExperienceModule.GetEstateAllowedExperiences();
             UUID[] key = m_ExperienceModule.GetEstateKeyExperiences();
+            UUID[] blocked = m_ExperienceModule.GetEstateBlockedExperiences();
 
             string response_str = "<llsd><map><key>allowed</key>";
             if (allowed.Length > 0)
@@ -1190,7 +1242,24 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             }
             else response_str += "<undef />";
 
-            response_str += "<key>blocked</key><undef /><key>default</key><uuid /><key>disabled</key><undef /><key>trusted</key>";
+            // The `blocked` list now surfaces the real estate BlockedExperiences tier. It was
+            // hardcoded <undef/>, so the Region/Estate > Experiences Blocked editor always
+            // rendered empty even when experiences were region-blocked. `default`/`disabled`
+            // stay omitted-shaped (neither is modeled; the panel reads them conditionally, so
+            // undef/empty is the correct "not set" wire value).
+            response_str += "<key>blocked</key>";
+            if (blocked.Length > 0)
+            {
+                response_str += "<array>";
+                foreach (UUID id in blocked)
+                {
+                    response_str += string.Format("<uuid>{0}</uuid>", id);
+                }
+                response_str += "</array>";
+            }
+            else response_str += "<undef />";
+
+            response_str += "<key>default</key><uuid /><key>disabled</key><undef /><key>trusted</key>";
 
             if (key.Length > 0)
             {
@@ -1245,7 +1314,10 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
                 if (info != null)
                 {
-                    string extended_meta = string.Format("<llsd><map><key>logo</key><uuid>{0}</uuid><key>marketplace</key><string /></map></llsd>", info.logo);
+                    // Was hardcoding an EMPTY marketplace (dropping info.marketplace), so the
+                    // profile floater's Marketplace panel never showed a store link. Emit the
+                    // real value like the Find/Update handlers do.
+                    string extended_meta = string.Format("<llsd><map><key>logo</key><uuid>{0}</uuid><key>marketplace</key>{1}</map></llsd>", info.logo, info.marketplace != string.Empty ? string.Format("<string>{0}</string>", info.marketplace) : "<string />");
 
                     response_str += string.Format("<map>" +
                         "<key>public_id</key><uuid>{0}</uuid>" +

@@ -20,7 +20,8 @@ namespace OpenSim.Services.ExperienceService
 
         private IUserAccountService m_UserService = null;
 
-        private const int MAX_QUOTA = 1024 * 1024 * 16;
+        // SL per-experience KV quota: 128 MiB (was 16 MiB), matching the real SL limit.
+        private const int MAX_QUOTA = 1024 * 1024 * 128;
 
         public ExperienceService(IConfigSource config)
             : base(config)

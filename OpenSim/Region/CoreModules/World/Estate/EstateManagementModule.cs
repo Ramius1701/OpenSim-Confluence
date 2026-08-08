@@ -1580,6 +1580,62 @@ namespace OpenSim.Region.CoreModules.World.Estate
                     if (needReply)
                         sendExperienceLists[remote_client] = invoice;
                 }
+
+                // BLOCKED experience add/remove (viewer BLOCKED_ADD = 1<<6 = 64,
+                // BLOCKED_REMOVE = 1<<7 = 128 - previously received and DISCARDED). Mirrors the
+                // allowed branches; the block-wins tier of the admission ladder reads this list.
+                if ((estateAccessType & 64) != 0) // add blocked experience
+                {
+                    if (thisSettings.BlockedExperiencesCount() >= (int)Constants.EstateAccessLimits.AllowedExperiences)
+                    {
+                        if (!sentAllowedFull)
+                        {
+                            sentAllowedFull = true;
+                            remote_client.SendAlertMessage("Estate Blocked Experiences list is full");
+                        }
+                    }
+                    else
+                    {
+                        if (doOtherEstates)
+                        {
+                            foreach (EstateSettings estateSettings in otherEstates)
+                            {
+                                if (!isadmin && !estateSettings.IsEstateManagerOrOwner(agentID))
+                                    continue;
+                                if (estateSettings.BlockedExperiencesCount() >= (int)Constants.EstateAccessLimits.AllowedExperiences)
+                                    continue;
+                                estateSettings.AddBlockedExperience(experience);
+                                changed[(int)estateSettings.EstateID] = estateSettings;
+                            }
+                        }
+
+                        thisSettings.AddBlockedExperience(experience);
+                        changed[thisEstateID] = thisSettings;
+
+                        if (needReply)
+                            sendExperienceLists[remote_client] = invoice;
+                    }
+                }
+
+                if ((estateAccessType & 128) != 0) // remove blocked experience
+                {
+                    if (doOtherEstates) // All estates
+                    {
+                        foreach (EstateSettings estateSettings in otherEstates)
+                        {
+                            if (!isadmin && !estateSettings.IsEstateManagerOrOwner(agentID))
+                                continue;
+                            estateSettings.RemoveBlockedExperience(experience);
+                            changed[(int)estateSettings.EstateID] = estateSettings;
+                        }
+                    }
+
+                    thisSettings.RemoveBlockedExperience(experience);
+                    changed[thisEstateID] = thisSettings;
+
+                    if (needReply)
+                        sendExperienceLists[remote_client] = invoice;
+                }
             }
             lock (deltareqLock)
                 runnigDeltaExec = false;
