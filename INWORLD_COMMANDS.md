@@ -12,7 +12,7 @@ chat (not LSL scripts, not console commands). Compiled by auditing every
 | **TextBuild** | [`OpenSim/Region/OptionalModules/World/TextBuild/COMMANDS.md`](OpenSim/Region/OptionalModules/World/TextBuild/COMMANDS.md) | `90` (private; channel 0 explicitly rejected, hardened from the original public-chat default) | `EstateManagerOnly` (default `true`); terrain commands additionally require a `build confirm`/`build cancel` step before anything is written |
 
 TextBuild is present in the codebase but has no `[TextBuild]` config section
-anywhere in Casperia-Dev, so it's currently inactive (defaults to disabled
+anywhere in the test deployment, so it's currently inactive (defaults to disabled
 with no config present). OpenSimWeather is active and configured.
 
 ## Everything else checked, with zero avatar-typed commands found

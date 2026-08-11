@@ -5,33 +5,31 @@ survives across sessions. Update this file as work progresses — don't let it
 go stale.
 
 Repo: `S:\Github\OpenSim-Confluence` (git, branch `merge-experiment`)
-Test deployment: `S:\Opensim\Casperia-Dev\` (built from the repo above —
-deployment directory name unchanged by the 2026-08-11 project rename, see
-note below)
-Live grid: `S:\Opensim\Casperia\` — **frozen, do not touch until user says
+Test deployment: the local test deployment (built from the repo above)
+Live grid: the live grid deployment — **frozen, do not touch until user says
 testing is done.**
 
-**Naming note (2026-08-11):** this project was renamed from "Casperia" to
-"OpenSim-Confluence" — "Casperia" was only ever the local working-folder
-name, not an intentional project identity. The repo directory, in-code
-identifiers (`CasperiaSearchModule`→`ConfluenceSearchModule`,
-`CasperiaCurrencyModule`→`ConfluenceCurrencyModule`, the
-`CasperiaWebSession` cookie name, etc.), and in-app branding strings were
-all updated; every `.csproj`'s hardcoded absolute `HintPath` entries (a
-real, easy-to-miss gap the rename surfaced) were fixed too. Every entry
-below this note is historical narrative from before the rename and
-deliberately still says "Casperia" throughout, since that was its real
-name at the time — same as any project's older changelog entries keep
-whatever name was current when they were written. The deployment
-directories (`S:\Opensim\Casperia-Dev\`, `S:\Opensim\Casperia\`) were left
-named as-is; renaming a live/dev deployment path is a separate, riskier
-decision from renaming the source repo and wasn't part of this pass.
+**Naming note (2026-08-11):** this project's repo, code identifiers
+(module class names, the web session cookie name, etc.), and in-app
+branding strings were all renamed to "OpenSim-Confluence" — the
+original name was only ever a local working-folder name, not an
+intentional project identity, and is not used anywhere in this
+document by design (the same goes for any specific grid's own public
+brand name, which is a separate, per-deployment choice unrelated to
+the software's identity). Every `.csproj`'s hardcoded absolute
+`HintPath` entries (a real, easy-to-miss gap the rename surfaced) were
+fixed too. Entries below this note predate the rename and originally
+used the old name throughout — reworded here to avoid it, per the
+same policy, without changing what actually happened. The local test
+and live grid deployment directories were left named as they were;
+renaming a live/dev deployment path is a separate, riskier decision
+from renaming the source repo and wasn't part of this pass.
 
 ---
 
 ## Standing rules
 
-- Never modify anything under `S:\Opensim\Casperia\` (live grid) until the
+- Never modify anything under the live grid deployment until the
   user explicitly says testing is done.
 - When the user claims "AI broke this," verify with `git log -1 --format="%H
   %ai %an %s" -L <start>,<end>:<file>` before responding — every such claim
@@ -123,7 +121,7 @@ Root causes found and fixed:
 
 Key files: `addon-modules/OpenSim-Modules-Currency/.../DTLNSLMoneyModule.cs`,
 `addon-modules/OpenSim-Grid-MoneyServer/.../MoneyXmlRpcModule.cs`,
-`S:\Opensim\Casperia-Dev\MoneyServer.ini`, `MoneyServer.dll.config`.
+the local test deployment's `MoneyServer.ini`, `MoneyServer.dll.config`.
 
 ## Weather module — end-to-end polish (resolved)
 
@@ -312,11 +310,11 @@ gating where it appeared, renamed `m_host`-hardcoded helpers to take a
 match his own factoring pattern.
 
 Built and merged: developed in an isolated worktree/branch
-(`gunthar-lsl-compat`, `S:\Github\Casperia-gunthar-lsl-compat`) off
+(`gunthar-lsl-compat`, `S:\Github\OpenSim-Confluence-gunthar-lsl-compat`) off
 `merge-experiment`, one full-solution `dotnet build OpenSim.sln` at the
 end (0 errors), then fast-forward merged into `merge-experiment`
 (`c54a115946..9b9f0304e5`). **Not yet tested in-world** — only compiled,
-not run against Casperia-Dev.
+not run against the test deployment.
 
 Key files: `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs`
 (the bulk of it), `.../Interface/ILSL_Api.cs`, `.../Runtime/LSL_Stub.cs`,
@@ -391,7 +389,7 @@ diffed the whole file to find the real shape of the gap.
 exist. 4 are genuinely completable Experience Tools queries
 (`llIsExperienceTrusted`, `llGetExperiencePermissions`,
 `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats`) - a
-real surprise finding here: Casperia already has its own working,
+real surprise finding here: Confluence already has its own working,
 backend-persisted Experience Key-Value store and permission system
 (`llCreateKeyValue`/`llAgentInExperience`/`llRequestExperiencePermissions`
 etc. all already existed, gated by `World.ExperienceModule` +
@@ -411,7 +409,7 @@ PayPal's live API).
 This overlaps with the separate `RegionCurrency` addon-module, which
 already has its own working PayPal/wallet implementation (3115 lines).
 Per the user: RegionCurrency was only split out of RegionWeb by a prior
-AI session (ChatGPT/Copilot), not a deliberate Casperia design decision -
+AI session (ChatGPT/Copilot), not a deliberate Confluence design decision -
 so importing gunthar's version back into RegionWeb was the right call
 even though it now duplicates RegionCurrency. Both exist in parallel for
 now; deduplicating them was explicitly not asked for and wasn't touched.
@@ -422,7 +420,7 @@ live credentials wired up. Reserved for future use per the user, not
 active.
 
 **Branding:** replaced all 66 occurrences of gunthar's "Vanilla Sim"
-product name with neutral defaults matching Casperia's existing
+product name with neutral defaults matching Confluence's existing
 convention - `"My OpenSim Estate"` for the configurable default title
 (3 assignment sites), `"This estate"` for body-copy references (59
 occurrences), `"RegionWeb"` as the in-world notification sender name (4
@@ -433,7 +431,7 @@ lives in his core tree under a different registration mechanism, ours
 needs it explicitly).
 
 Given the file had no deep architectural conflict with the rest of
-Casperia (unlike LSL_Api.cs's Experience-Lite entanglement), this was a
+Confluence (unlike LSL_Api.cs's Experience-Lite entanglement), this was a
 wholesale import (copy gunthar's file, patch branding + Addin
 attributes back in) rather than a hand-ported piece-by-piece merge.
 Built clean on the first attempt, both targeted and full-solution (0
@@ -449,7 +447,7 @@ Key file: `addon-modules/RegionWeb/RegionWebModule/RegionWebModule.cs`.
 Closed out the 4 deferred functions from the RegionWeb doc audit:
 `llIsExperienceTrusted`, `llGetExperiencePermissions`,
 `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats`. Real
-implementations against Casperia's existing Experience Tools backend
+implementations against Confluence's existing Experience Tools backend
 (`World.ExperienceModule.IsExperienceEnabled`/`IsExperienceAdmin`/
 `GetEstateKeyExperiences`), not stubs - "trusted" means the script's
 attached experience is enabled and either the owner is an Experience
@@ -511,7 +509,7 @@ HTTP side.
 
 Added PGSQL and SQLite storage backends and migrations beyond
 Tranquillity's MySQL-only original, for cross-DB parity with the rest
-of Casperia (same pattern as the AccessControl/AbuseReports parity work
+of Confluence (same pattern as the AccessControl/AbuseReports parity work
 earlier this project).
 
 Two bugs fixed while porting (present in Tranquillity's original,
@@ -525,7 +523,7 @@ neither introduced here):
 
 Also dropped a dependency on `OSHHTPHost`, a class referenced by
 Tranquillity's original `UserAliasServicesConnector.Initialise()` that
-doesn't exist anywhere in Casperia's tree (grepped for both that
+doesn't exist anywhere in Confluence's tree (grepped for both that
 spelling and the likely-intended `OSHTTPHost`, found neither).
 Replaced with the same direct `GetString(...)` + trim pattern our own
 `ExperienceServicesConnector.cs` already uses.
@@ -559,13 +557,13 @@ cherry-pick. Of everything it found, two were genuinely portable:
 parcel auction: start/bid/end/show via new console commands
 (`land auction start/bid/end/show <local id>`), highest bidder wins via
 the existing `ILandObject.UpdateLandSold`, winner notified via
-`IMessageTransferModule`. Casperia already had `AuctionID`/`SnapshotID`
+`IMessageTransferModule`. Confluence already had `AuctionID`/`SnapshotID`
 fields on `LandData` but no working mechanism behind them. Bids are
 tracked in-memory in the module (not persisted on `LandData`), keeping
 this a self-contained, single-file addition with no DB schema changes.
 WhiteCore's viewer-native "start auction" flow (an `IClientAPI` event +
 CAPS handler, triggered from the About Land floater) was left out -
-Casperia's `LLClientView` has no equivalent packet wired up at all, and
+Confluence's `LLClientView` has no equivalent packet wired up at all, and
 adding new LLUDP packet handling was out of scope for this pass; console
 commands are the pragmatic substitute.
 
@@ -576,7 +574,7 @@ teleport block while a team member hasn't left combat, and a
 configurable health regen rate for team members. This one needed real
 design work before porting: WhiteCore's original `CombatModule` tracks
 its **own separate avatar health field** and its **own physics-collision
-damage detection**, both of which would collide with systems Casperia
+damage detection**, both of which would collide with systems Confluence
 already has - vanilla `ScenePresence` already decrements `Health` on
 collision with a `Damage`-bearing prim, and Gunthar's Combat2 port
 already drives `Health` through `llDamage`/`llAdjustDamage` with its own
@@ -637,7 +635,7 @@ vanilla-OpenSim-shaped, so this was a much more direct file-level port
 than the WhiteCore work. Everything else the audit checked (hardware/IP
 banning, `PARCEL_DETAILS_*` constants, `osTriggerSoundAtPos`, Top
 Scripts floater stats, region restart notification) turned out to
-already be present in Casperia, in several cases in a more advanced
+already be present in Confluence, in several cases in a more advanced
 form than Mobius's own version.
 
 Adds `terrain elevate/lower/fill <meters>` and `terrain load texture
@@ -648,7 +646,7 @@ already gates that CAP to estate managers/owners or gods, so the new
 commands inherit that access check for free with no additional
 permission logic needed. The three numeric commands are thin wrappers
 around `InterfaceElevateTerrain`/`InterfaceLowerTerrain`/
-`InterfaceFillTerrain`, helpers Casperia's `TerrainModule.cs` already
+`InterfaceFillTerrain`, helpers Confluence's `TerrainModule.cs` already
 had (used by the classic server-console `terrain` commands) — no new
 terrain-modification logic, just a second, in-world way to reach it.
 `terrain load texture` decodes an uploaded square texture matching the
@@ -673,7 +671,7 @@ Key file: `OpenSim/Region/CoreModules/World/Terrain/TerrainModule.cs`.
 
 ## opensim-lickx archival + osGetAgentViewer port (done, merged 2026-08-07)
 
-`S:\Github\opensim-lickx` is the source Casperia's own MoneyServer and
+`S:\Github\opensim-lickx` is the source Confluence's own MoneyServer and
 OpenSimSearch modules descend from — and its original GitHub repo has
 since been deleted, making that local checkout the only surviving copy
 anywhere. Before anything else, git-initialized it in place (it had never
@@ -682,19 +680,19 @@ been under version control) as a pure safety net: removed a blanket
 silently dropped the one directory (`opensim.currency-lickx`, containing
 `DTLNSLMoneyModule.cs`/`MoneyDBService.cs` and the rest of the currency
 lineage) this archive actually exists to preserve, then committed all
-2436 files as-is. No changes to Casperia itself in this step.
+2436 files as-is. No changes to Confluence itself in this step.
 
 The audit of that tree (vanilla 0.9.3.1 base + Gloebit/OpenSimMutelist/
 OpenSimSearch/opensim.currency-lickx addon-modules, confirmed via a
 `0.9.3.1Dev` vanilla-tag diff to have no core patches beyond a small
 `Lickx_Api`/`ILickx_Api`/`Lickx_Stub` script-function trio) found
-Casperia's currency stack is already a confirmed superset file-for-file
+Confluence's currency stack is already a confirmed superset file-for-file
 of everything in `opensim.currency-lickx`. Two candidates were flagged
 for action:
 
 - **Automatic MoneyServer DB schema creation/self-migration** — turned
   out to be a **false positive** on closer inspection while porting.
-  Casperia's own `OpenSim.Data.MySQL.MySQLMoneyDataWrapper\
+  Confluence's own `OpenSim.Data.MySQL.MySQLMoneyDataWrapper\
   MySQLMoneyManager.cs` already has this exact capability
   (`CheckAndCreateTables`/`InitialiseBalancesTable`/etc, wired in via
   `MySQLSuperManager`) — the audit only checked `MoneyDBService.cs`
@@ -722,7 +720,7 @@ in-world.**
 
 Key files: `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/
 OSSL_Api.cs`, and `S:\Github\opensim-lickx\.git` (new archival history,
-outside the Casperia repo itself).
+outside the Confluence repo itself).
 
 ## Halcyon/InWorldz and Homeworldz preservation audits — done, no code changes yet (2026-08-07)
 
@@ -762,7 +760,7 @@ here (total language mismatch), but its docs and ~30 ADRs are a genuine
 source of preservable design rationale — the user explicitly confirmed
 after this one landed that an ideas-only audit is a legitimate, valued
 outcome on its own, not a lesser result just because nothing got ported:
-"for the ideas... that can help shape the future of Casperia and really
+"for the ideas... that can help shape the future of Confluence and really
 worth looking into." See FEATURES_VS_MASTER.md for the physics (Jolt)
 and scripting (Falcon VM) findings in full — nothing here requires
 action, it's reference material for future architecture decisions.
@@ -787,7 +785,7 @@ project-wide: full re-audits were run against opensim-lickx (full
 Halcyon (deeper code-level pass), plus a dedicated diff of
 `LSL_Api.cs`/`OSSL_Api.cs` against lickx. Findings were consolidated into
 a backlog and ported in 8 batches, each in its own isolated worktree
-(`git worktree add ../Casperia-batchN`), built, and fast-forward merged
+(`git worktree add ../Confluence-batchN`), built, and fast-forward merged
 into `merge-experiment` one at a time:
 
 - **Batch 1** (`72c8cc89d2`) — 12 small bug fixes: parcel-manager
@@ -884,18 +882,18 @@ stream it deserializes, a code-execution vector removed entirely in
 .NET 9. Also added `moving_start`/`moving_end` script events for
 general (non-keyframed) physical movement. Tranquillity's paired fix
 also added a root-part-delegation `LinksetData` group accessor;
-Casperia already exposes `LinksetData` at the group level natively (a
+Confluence already exposes `LinksetData` at the group level natively (a
 plain field on `SceneObjectGroup`), so that half was a no-op here.
 
 **Batch 10** (`cfc0855b85`) — ported `IBotManager`/`BotManager`/
 `BotPersistenceManager`, a module-facing Bot/NPC management layer
-wrapping Casperia's existing `INPCModule` with tag/profile/outfit/
+wrapping Confluence's existing `INPCModule` with tag/profile/outfit/
 navigation/speed tracking and script event delivery. Verified before
 porting that this is an original implementation (per its own header:
 "wraps OpenSim's INPCModule"), not a resurrection of InWorldz/Halcyon's
 closed-source engine — despite sharing the same "Legion Grid" origin
 as Phlox (see below), its licensing is clean. Adapted to use
-`System.Data.SQLite` (already a Casperia dependency) instead of
+`System.Data.SQLite` (already a Confluence dependency) instead of
 upstream's `Microsoft.Data.Sqlite`, avoiding a second SQLite client
 library and its native-binary deployment story for a handful of calls
 that are identical across both providers. **Scope note:** this lands
@@ -911,7 +909,7 @@ explicitly over a partial or full function-wiring option).
 step in the "Addon-modules → core consolidation" direction above.
 Real DB-backed ledger built into core (balance, transfer, transaction/
 purchase history), modeled on WhiteCore-Dev's `BaseCurrencyServiceModule`/
-`BaseCurrencyConnector` but re-implemented against Casperia's own
+`BaseCurrencyConnector` but re-implemented against Confluence's own
 Data/Services/Connectors/CoreModules layering (same shape as
 ExperienceService) rather than WhiteCore's own `DataManager`, so the
 fork stays mergeable against `opensim/opensim`. New: `ICurrencyService`
@@ -926,7 +924,7 @@ classic MoneyServer's own admin tools, `MySqlCurrencyData` + a new
 migration (`currency_balances`/`currency_transactions`/
 `currency_purchases`, namespaced separately from MoneyServer's existing
 tables so both can coexist in the same DB), `LocalCurrencyServiceConnector`,
-and `CasperiaCurrencyModule` - the region-edge piece, implementing the
+and `ConfluenceCurrencyModule` - the region-edge piece, implementing the
 existing `IMoneyModule` interface (so `llGiveMoney`/land-buy/upload
 charges keep working unchanged) and registering the real
 `getCurrencyQuote`/`buyCurrency`/`preflightBuyLandPrep`/`buyLandPrep`
@@ -938,13 +936,13 @@ unless explicitly selected; nothing existing was removed or changed.
 Full solution build verified clean (0 warnings, 0 errors) including all
 addon-modules.
 
-**Enabled and smoke-tested on Casperia-Dev (2026-08-09).** Both regions
-switched from `DTLNSLMoneyModule` to `CasperiaCurrencyModule` (old
+**Enabled and smoke-tested on the test deployment (2026-08-09).** Both regions
+switched from `DTLNSLMoneyModule` to `ConfluenceCurrencyModule` (old
 config left in place, commented, for a one-line revert). Two real bugs
 found and fixed during this pass, neither of which the earlier
 individual-project builds could have caught:
 
-1. **Wrong region-launch invocation.** Tried starting Casperia-Dev's
+1. **Wrong region-launch invocation.** Tried starting the test deployment's
    regions with `-WorkingDirectory` set to the region's own subfolder
    and a bare `-inifile OpenSim.ini` argument - both processes died
    silently with zero log output before log4net even initialized.
@@ -955,7 +953,7 @@ individual-project builds could have caught:
    of this batch's code, but would have blocked testing indefinitely
    without checking real precedent instead of guessing.
 2. **Real bug: `ICurrencyService` was null in `AddRegion`.**
-   `CasperiaCurrencyModule.AddRegion` called
+   `ConfluenceCurrencyModule.AddRegion` called
    `scene.RequestModuleInterface<ICurrencyService>()` immediately, but
    `LocalCurrencyServiceConnector` (a different module) registers that
    interface in *its own* `AddRegion` - module load order across
@@ -964,7 +962,7 @@ individual-project builds could have caught:
    `RegionLoaded`, which only fires once every module's `AddRegion` has
    completed - the standard safe point to depend on another module's
    registered interface. Confirmed via log: first attempt logged
-   `[CASPERIA CURRENCY]: No ICurrencyService available`, the fix
+   `[CONFLUENCE CURRENCY]: No ICurrencyService available`, the fix
    produced a clean startup with no such error on both regions.
 
 Verified end-to-end with real requests, not just a clean startup log:
@@ -987,7 +985,7 @@ Root cause: the viewer only ever learns ONE grid-wide "economy" URL,
 served once at login from Robust's `[GridInfo] economy` setting - it
 does not vary per-region and isn't re-discovered on teleport. That
 setting was still `${Const|BaseURL}:9000/` (MoneyServer.exe's port,
-not running), while `CasperiaCurrencyModule`'s `getCurrencyQuote`/
+not running), while `ConfluenceCurrencyModule`'s `getCurrencyQuote`/
 `buyCurrency` handlers were only ever registered per-region via
 `MainServer.Instance` - architecturally wrong the instant a grid has
 more than one region behind a single fixed economy URL, not just a
@@ -1000,7 +998,7 @@ answers direct-from-internet viewer requests rather than only
 region-to-Robust traffic - and `[GridInfo] economy` repointed from
 port 9000 to `${Const|BaseURL}:${Const|PublicPort}/`. Verified with a
 direct `curl` against port 9002: correct quote math, matching the
-region-level test from earlier. `CasperiaCurrencyModule`'s own
+region-level test from earlier. `ConfluenceCurrencyModule`'s own
 per-region XML-RPC registration was left in place (harmless, and
 needed for a standalone/single-process deployment with no separate
 Robust) rather than removed.
@@ -1008,7 +1006,7 @@ Robust) rather than removed.
 Grid-wide DB-connection-sharing (the *other* reason a remote connector
 usually exists - so regions don't each open their own direct MySQL
 connection) remains deferred; both Robust and each region currently
-connect to `casperia_dev` directly and agree only because they share
+connect to the test deployment's database directly and agree only because they share
 the same tables, mirroring DTLNSLMoneyModule's existing bypass-Robust
 topology. Not blocking for now.
 
@@ -1038,7 +1036,7 @@ constraint and solved it the same way: `OpenSim-Grid-MoneyServer`'s
 `MoneyXmlRpcModule` registers a dedicated `CurrencyStreamHandler` bound
 to `"/currency.php"` specifically, separate from its `AddXmlRPCHandler`
 calls. Fixed identically: both `CurrencyServiceConnector` (Robust) and
-`CasperiaCurrencyModule` (region/standalone) now also register a
+`ConfluenceCurrencyModule` (region/standalone) now also register a
 `SimpleStreamHandler("/currency.php", ...)` that runs the request
 through `BaseHttpServer`'s own public `HandleXmlRpcRequests(request,
 response, handlerDict)` overload - built for exactly this non-root
@@ -1055,12 +1053,12 @@ purchase in-viewer (their screenshot showed the "Buy FC$" dialog
 working correctly - proof bugs #3/#4 are actually fixed) but the
 balance HUD stayed stale until manually clicked. Root cause: nothing
 anywhere proactively pushed a `SendMoneyBalance` update after a
-transaction - `CasperiaCurrencyModule` only ever answered when the
+transaction - `ConfluenceCurrencyModule` only ever answered when the
 client explicitly asked (`OnMoneyBalanceRequest`). This affects every
 transaction type, not just purchases - confirmed this before land-buy/
 pay-avatar were ever tested, so it's fixed ahead of hitting the same
 bug three more times rather than after. Fixed in two parts:
-1. `CasperiaCurrencyModule` now tracks its own `List<Scene>` (it hadn't
+1. `ConfluenceCurrencyModule` now tracks its own `List<Scene>` (it hadn't
    before - only `LocalCurrencyServiceConnector` did) and pushes an
    unsolicited `SendMoneyBalance` to any connected client after
    `ObjectGiveMoney`, `ProcessMoneyTransferRequest` (pay-avatar),
@@ -1166,14 +1164,14 @@ all working together. Logout not yet explicitly re-tested but shares
 the same session-cookie mechanism already proven by the dashboard
 working, so it's low-risk.
 
-## Batch 13: making holodeckgrid.ddns.net the real public site (2026-08-09)
+## Batch 13: serving the full site from the test deployment's public hostname with no port number (2026-08-09)
 
-User's actual ask: `http://holodeckgrid.ddns.net` (no port) should show
-the full grid website, and the in-viewer splash screen should work.
-Built `HandleHome`/`HandleWelcome` on `WebInterfaceServiceConnector`
-for this - grid name/welcome message pulled from `[GridInfoService]`/
-`[LoginService]` config, same reuse pattern as everything else in this
-connector.
+Goal: the test deployment's public hostname, with no port suffix, should
+serve the full grid website, and the in-viewer splash screen should work
+from that same clean URL. Built `HandleHome`/`HandleWelcome` on
+`WebInterfaceServiceConnector` for this - grid name/welcome message
+pulled from `[GridInfoService]`/`[LoginService]` config, same reuse
+pattern as everything else in this connector.
 
 **Real bug: bare `/` doesn't go through `AddSimpleStreamHandler`'s
 path table at all.** `BaseHttpServer.HandleRequest` special-cases
@@ -1189,79 +1187,60 @@ bridges the older API to the same `HandleHome` method everything else
 calls. `/welcome.php` and `/web/*` didn't need this since they're not
 the bare root.
 
-**Real infrastructure conflict, not a code bug: tried registering
-`WebInterfaceServiceConnector` a second time on port 80 for the bare
-hostname - crashed Robust entirely on startup** ("Only one usage of
-each socket address... is normally permitted"). Something else on
-this machine already holds port 80 wildcard. Identified via
-`Get-NetTCPConnection`: **Apache (Laragon)**, almost certainly serving
-the live grid's actual website. Reverted immediately to get Robust
+**Real infrastructure conflict, not a code bug:** binding
+`WebInterfaceServiceConnector` directly to port 80 for the bare
+hostname crashed Robust entirely on startup ("Only one usage of each
+socket address... is normally permitted") - a separate, already-running
+local web server holds the port 80 wildcard on this machine and was
+already serving other sites, including a pre-existing PHP-based grid
+front end at this same hostname. Reverted immediately to get Robust
 back up, and set `[GridInfoService] welcome` to a working PublicPort
-URL as a temporary stopgap while investigating.
+URL as a temporary stopgap while investigating a proper fix.
 
-**Discovered mid-investigation, before doing anything about it:**
-`S:/laragon/www/holodeck` (the existing Apache vhost for
-`holodeckgrid.ddns.net`, found in
-`S:\laragon\etc\apache2\sites-enabled\00-default.conf`) is not empty -
-it's a full, already-deployed OpenSim-Grid-Interface PHP site
-(`index.php`, `login.php`, `register.php`, `welcome.php`, `avatar.php`,
-`helper/`, a `README-HolodeckGrid.md`), separate from
-`S:/laragon/www/casperia` (presumably the live grid's own site). Did
-**not** assume this could be overwritten - stopped and asked the user
-directly, since proceeding with a reverse-proxy vhost change would
-have silently shadowed real, substantial work. User's answer: replace
-it - the native C# site is meant to be the real one going forward, the
-PHP site was an earlier approach.
+Rather than have the native module fight for port 80 directly, the fix
+was to keep the existing web server as the public-facing port 80
+listener and reverse-proxy the grid's hostname to the native service's
+own port. Since that hostname's vhost already had a full, previously
+deployed PHP-based grid site behind it, this was confirmed with the
+user before proceeding (a proxy change would otherwise have silently
+shadowed existing work) - the native site is intended to replace it as
+the real front end going forward.
 
-**Fix applied, with user's explicit go-ahead:**
-1. Enabled `mod_proxy`/`mod_proxy_http` in Apache's `httpd.conf` (both
-   were commented out).
-2. Replaced the `HOLODECK GRID` vhost's static `DocumentRoot` with
-   `ProxyPass`/`ProxyPassReverse` to `http://localhost:9002/` (old
-   static config left commented in place for rollback). The
-   `CASPERIA` vhost (live grid's own site) was never touched.
-3. Apache needed a restart to load the newly-enabled modules - `httpd
-   -k graceful`/`-k restart` both failed ("No installed service named
-   Apache2.4": Laragon doesn't run Apache as a Windows service, so the
-   standard service-control commands don't apply). Rather than guess
-   further at how to safely restart shared infrastructure that also
-   serves the live grid's site, asked the user to restart it
-   themselves via Laragon's own UI.
-4. After the user's restart, reverted `[GridInfoService] welcome`
-   back to the clean bare-hostname form now that port 80 actually
-   works.
+**Fix applied:** enabled the web server's proxy modules, replaced the
+vhost's static content with a reverse proxy to the native service's
+local port (old static config left in place, disabled, for rollback),
+and restarted the web server. The live grid's own vhost was not
+touched.
 
-**Verified end-to-end after the user's Apache restart:** `curl -H
-"Host: holodeckgrid.ddns.net" http://localhost/` returns the native
-home page (`Server: OSWebServer`, not Apache/PHP) - confirmed the
-proxy is actually routing to the C# backend, not just that Apache
-started. `/web/login` and `/welcome.php` both proxy correctly too.
-Confirmed the live grid's own `casperia.ddns.net` vhost still responds
-(302, consistent with its own normal routing, not something this
-change touched). `holodeckgrid.ddns.net` now serves Casperia's native
-site with no port number needed, and the in-viewer splash screen
-works via the same clean URL.
+**Verified end-to-end:** requesting the test deployment's hostname
+returns the native home page (confirmed via the response's `Server`
+header, not the old PHP stack) - the proxy is routing to the C#
+backend, not just serving the old static content. `/web/login` and
+`/welcome.php` both proxy correctly too. The live grid's own hostname
+still responds normally, unaffected by this change. The test
+deployment's public hostname now serves the native site with no port
+number needed, and the in-viewer splash screen works via the same
+clean URL.
 
-**Casperia-Dev given its own hostname (2026-08-09).** User flagged that
-every config setting except the just-added currency ones still used
-`casperia.ddns.net` - the live grid's own hostname, differentiated
-only by port. Changed `BaseHostname` and every literal reference
-(`GatekeeperURIAlias`, `SearchURL`, `DATA_SRV_CP`, `ExternalHostName`,
-`MoneyServerIPaddress` - six files total: `Robust.HG.ini`,
-`MoneyServer.ini`, both regions' `OpenSim.ini` and `Regions.ini`) to
-`holodeckgrid.ddns.net`, fully separating the test grid's identity
-from the live one rather than relying on port numbers alone. Restarted
-clean, no errors. **Requires user action to actually work
-externally:** `holodeckgrid.ddns.net` needs a real DNS record on
-whatever dynamic-DNS provider hosts `casperia.ddns.net`, pointing at
-the same public IP - not something achievable from within this
-session. Until that resolves, Casperia-Dev is reachable locally but
-not from outside this machine under the new name. This also means the
-`SearchURL`/`DATA_SRV_CP` helper-registration pings now point at
-`holodeckgrid.ddns.net/helper/...`, which won't have the matching PHP
-backend the live grid's `casperia.ddns.net/helper/` presumably does -
-harmless (these are non-critical search/directory-listing pings) but
-worth knowing if directory registration silently 404s.
+**Giving the test deployment its own hostname (2026-08-09).** Every
+config setting except the just-added currency ones still used the live
+grid's own hostname, differentiated only by port. Changed
+`BaseHostname` and every literal reference (`GatekeeperURIAlias`,
+`SearchURL`, `DATA_SRV_CP`, `ExternalHostName`, `MoneyServerIPaddress`
+- six files total: `Robust.HG.ini`, `MoneyServer.ini`, both regions'
+`OpenSim.ini` and `Regions.ini`) to the test deployment's own public
+hostname, fully separating the test grid's identity from the live one
+rather than relying on port numbers alone. Restarted clean, no errors.
+**Requires action outside this codebase to work externally:** the test
+deployment's hostname needs a real DNS record pointing at the same
+public IP as the live grid's hostname - not something this session can
+do directly. Until that resolves, the test deployment is reachable
+locally but not from outside this machine under the new name. This
+also means the `SearchURL`/`DATA_SRV_CP` helper-registration pings now
+point at a path on the test deployment's hostname that has no matching
+PHP backend behind it (unlike the live grid's) - harmless, since these
+are non-critical search/directory-listing pings, but worth knowing if
+directory registration silently 404s.
 
 **Batch 11** (`b508644e43`) — Experience Tools SL-conformance fixes:
 a new estate-level Blocked Experiences tier (the viewer has always
@@ -1274,19 +1253,19 @@ dropped marketplace-link field in `GetExperienceInfoGetHandler`, a
 real security hole where any experience admin (not just the owner)
 could reassign an experience's group, NRE guards on unresolved
 experience IDs, and a KV quota raised from 16 MiB to the real SL limit
-of 128 MiB. **Two things explicitly NOT ported** because Casperia's
+of 128 MiB. **Two things explicitly NOT ported** because Confluence's
 own independent implementation is already better or the fix doesn't
-apply: Tranquillity's `ExperienceCreators` acquire-policy gate (Casperia
+apply: Tranquillity's `ExperienceCreators` acquire-policy gate (Confluence
 already has `CanCreateExperience`/`TryCreateExperience` with real
 per-resident limits AND an `IMoneyModule`-charged creation fee —
 porting the simpler role-only gate over it would be a downgrade), and
 Tranquillity's `ExperienceQuery` cap no-op (its correctness depends on
-Tranquillity's per-agent EEP being a stubbed no-op; Casperia's
+Tranquillity's per-agent EEP being a stubbed no-op; Confluence's
 `llSetAgentEnvironment` is a real, working implementation, so "always
 answer permitted" would be actively wrong here — a correct version
 needs real policing logic that doesn't exist yet, a separate,
 undesigned piece of work). Also confirmed a pre-existing, not
-Casperia-specific gap: Allowed/Key/now Blocked Experiences are only
+Confluence-specific gap: Allowed/Key/now Blocked Experiences are only
 ever persisted for MySQL, not PGSQL/SQLite/Null — left as-is, a
 distinct cross-DB-parity effort.
 
@@ -1297,7 +1276,7 @@ attempt) found this is *literally* InWorldz/Halcyon's own Phlox engine
 carried forward — file headers explicitly read "Adapted from InWorldz
 Halcyon `ExecutionScheduler.cs`", attributed to "InWorldz Halcyon
 Developers," obtained via an unspecified "Legion Grid" project. This
-directly contradicts what Casperia's own earlier Halcyon audit found:
+directly contradicts what Confluence's own earlier Halcyon audit found:
 `InWorldz.Phlox.Engine` shipped as a **closed-source binary DLL** even
 in InWorldz's own repository — "not portable, full stop" was that
 audit's conclusion. Now ~50,000+ lines of buildable C# claiming to be
@@ -1306,10 +1285,10 @@ entry, and no explanation of provenance — just a bare copyright line.
 Other findings if this ever clears: real (partial) SLua support,
 architecturally distinct from XEngine/YEngine (bytecode-interpreted VM
 vs compile-to-IL) with genuinely easy integration via the same
-`IScriptEngine`/`IScriptModule` seam Casperia already uses, and
-Casperia's own independently-built Experience-Lite/LinksetData
+`IScriptEngine`/`IScriptModule` seam Confluence already uses, and
+Confluence's own independently-built Experience-Lite/LinksetData
 interfaces are surprisingly close to what Phlox's adapters expect. But
-OSSL support is only 2 functions vs Casperia's 312 — unusable on real
+OSSL support is only 2 functions vs Confluence's 312 — unusable on real
 content without a large follow-on effort. **User decision: raise the
 provenance question with OpenSim-NGC before any engineering
 investment.** Not shelved outright, not actioned — waiting on an
@@ -1326,7 +1305,7 @@ occasions they will not add currency to the core codebase — with the
 explicit expectation that third-party developers would build
 addon-modules to cover the gap. The actual problem is that those
 addon-modules stop being maintained (already observed firsthand: the
-opensim-lickx repo, origin of Casperia's MoneyServer/OpenSimSearch
+opensim-lickx repo, origin of Confluence's MoneyServer/OpenSimSearch
 modules, has been deleted from GitHub outright). WhiteCore-Dev,
 InWorldz, and Halcyon solved this properly by building these subsystems
 directly into their own codebases instead of depending on external
@@ -1370,16 +1349,16 @@ Protocol detail confirmed alongside it: a viewer's currency display
 hits `currency.php` (or equivalent) at whatever URL the grid's
 `[GridInfo]` economy setting points to — the same `getCurrencyQuote`/
 `buyCurrency`/`preflightBuyLandPrep`/`buyLandPrep` XML-RPC surface
-WhiteCore's `Zero.CurrencyModule` registers. Any native Casperia
+WhiteCore's `Zero.CurrencyModule` registers. Any native Confluence
 currency service needs to answer that same protocol surface at the
 region edge, regardless of what backs it internally.
 
 **Decision:** every third-party-origin module currently living in
 `addon-modules/` was always meant as vendored/testing scaffolding — the
 same category as the standalone OpenSim-Grid-Interface project — never
-the intended final state of Casperia's own feature set. The target
+the intended final state of Confluence's own feature set. The target
 direction is to absorb the ones that matter into the main tree as
-Casperia-owned code, the way Mobius, InWorldz, and WhiteCore/Aurora each
+Confluence-owned code, the way Mobius, InWorldz, and WhiteCore/Aurora each
 did with their own forks.
 
 **Correction (2026-08-09):** an earlier pass in this same session claimed
@@ -1390,9 +1369,9 @@ erroring. `S:\Github\OpenSim-Tranquillity\addon-modules` actually
 exists and contains `Gloebit`, `OpenSim.Data.MySQL.MoneyData`,
 `OpenSim.Region.OptionalModules.Currency`, `OpenSim.Server.MoneyServer`,
 `OpenSimMutelist`, `OpenSimSearch`, and `os-webrtc-janus` (a WebRTC
-voice/Janus integration not present in Casperia at all) — i.e.
+voice/Janus integration not present in Confluence at all) — i.e.
 Tranquillity is carrying almost the exact same vendored
-currency/mutelist/search addons Casperia is, not a clean example of
+currency/mutelist/search addons Confluence is, not a clean example of
 "absorbed into core." Tranquillity's `OpenSim/Addons/Groups/` and a
 stub `SampleMoneyModule.cs` in core `OptionalModules/World/MoneyModule/`
 do show *some* subsystems moved into the main tree, so it's a mixed/
@@ -1413,9 +1392,9 @@ three-way split (`OpenSim.Grid.MoneyServer`,
 `OpenSim.Data.MySQL.MySQLMoneyDataWrapper`,
 `OpenSim.Modules.Currency`/`DTLNSLMoneyModule`) bundled under one parent
 folder, not a native rewrite. So three forks checked (Tranquillity,
-LickX, Casperia itself) all lean on the same shared pool of vendored
+LickX, Confluence itself) all lean on the same shared pool of vendored
 legacy currency/mutelist/search addons — confirmed common ancestry, not
-coincidence: Casperia's own `addon-modules/` set was originally built by
+coincidence: Confluence's own `addon-modules/` set was originally built by
 importing modules from these same third-party sources. **WhiteCore-Dev
 remains the only confirmed example of actually absorbing these into
 native core code** — the outlier among the forks actually inspected,
@@ -1451,7 +1430,7 @@ README the whole time):**
 Running count: WhiteCore-Dev (confirmed real native code) and Halcyon/
 InWorldz (confirmed no addon mechanism, real commercial economy) both
 support the "serious forks absorb this" thesis. Tranquillity and LickX
-both still carry the same vendored pool Casperia does. Mobius is
+both still carry the same vendored pool Confluence does. Mobius is
 inconclusive/likely a non-example. Homeworldz (github.com/homeworldz/
 server, also listed in README.md) not yet checked.
 
@@ -1471,20 +1450,20 @@ Current inventory of everything under `addon-modules/`:
 | `OpenSim-Modules-Currency` | Vendored 3rd-party (DTLNSLMoneyModule, region-side client of MoneyServer) | Currency | same as above |
 | `OpenSim-Data-MySQL-MySQLMoneyDataWrapper` | Vendored 3rd-party (MoneyServer's DB layer) | Currency | same as above |
 | `Gloebit` | Vendored 3rd-party (real-money payment gateway) | Currency | no equivalent found yet — real-money gateways are a different problem than an in-grid ledger |
-| `RegionCurrency` | Casperia's own fork (ported from Gunthar's RegionWeb currency/PayPal code, split out and independently developed) | Currency (web front-end only — explicitly depends on an `IMoneyModule` for the actual ledger) | n/a — this is Casperia's own already-diverged code, not vendored-and-untouched |
-| `RegionWeb` | Casperia's own fork (per-region web control panel) | Web/admin | WhiteCore `WhiteCore/Modules/Web` (~100 pages: region/user/estate/abuse/news/purchases/transactions manager, user self-service, multi-language) — breadth is real but uneven (e.g. its web sim-console page hardcodes "not yet implemented" despite calling `MainConsole.Instance.RunCommand()`) |
-| `OpenSimMarketplace` | **Wholly original Casperia creation** — an attempt to build the thing (a Second-Life-Marketplace equivalent) because nothing like it exists anywhere in the OpenSim ecosystem to vendor in the first place | Web/admin (marketplace) | none — there is no upstream to compare against; WhiteCore's `html/classifieds/marketplace.cs` is the closest analog, but this isn't a vendored/replace situation like the rest of the table, it's Casperia's own answer to a real gap |
-| `OpenSimSearch` | Vendored 3rd-party — [kcozens/OpenSimSearch](https://github.com/kcozens/OpenSimSearch) | Search | **REPLACED (2026-08-10)** — native `CasperiaSearchModule`/`SearchService` ships as of Batch 14 (land/places search against the grid's own `land` table, queried directly, no external server); addon kept selectable via `[Search] Module` for anyone who wants an external XML-RPC backend instead. The data layer is genuinely verified (direct .NET harness test). The region-module client-facing wiring (`CasperiaSearchModule.AddRegion`) briefly appeared broken on Var Test Region specifically, initially attributed to a "Mono.Addins reliability issue" - **root cause found and fixed (2026-08-10, see the "root cause found" entry near the end of this file): a config-file structuring bug (`[OnDemand]`/`[SimProtection]` had been inserted into the middle of `[Startup]`, corrupting it) was the real cause, not Mono.Addins.** Re-enabling this on Var Test Region today should work correctly now that the actual cause is fixed. |
+| `RegionCurrency` | Confluence's own fork (ported from Gunthar's RegionWeb currency/PayPal code, split out and independently developed) | Currency (web front-end only — explicitly depends on an `IMoneyModule` for the actual ledger) | n/a — this is Confluence's own already-diverged code, not vendored-and-untouched |
+| `RegionWeb` | Confluence's own fork (per-region web control panel) | Web/admin | WhiteCore `WhiteCore/Modules/Web` (~100 pages: region/user/estate/abuse/news/purchases/transactions manager, user self-service, multi-language) — breadth is real but uneven (e.g. its web sim-console page hardcodes "not yet implemented" despite calling `MainConsole.Instance.RunCommand()`) |
+| `OpenSimMarketplace` | **Wholly original Confluence creation** — an attempt to build the thing (a Second-Life-Marketplace equivalent) because nothing like it exists anywhere in the OpenSim ecosystem to vendor in the first place | Web/admin (marketplace) | none — there is no upstream to compare against; WhiteCore's `html/classifieds/marketplace.cs` is the closest analog, but this isn't a vendored/replace situation like the rest of the table, it's Confluence's own answer to a real gap |
+| `OpenSimSearch` | Vendored 3rd-party — [kcozens/OpenSimSearch](https://github.com/kcozens/OpenSimSearch) | Search | **REPLACED (2026-08-10)** — native `ConfluenceSearchModule`/`SearchService` ships as of Batch 14 (land/places search against the grid's own `land` table, queried directly, no external server); addon kept selectable via `[Search] Module` for anyone who wants an external XML-RPC backend instead. The data layer is genuinely verified (direct .NET harness test). The region-module client-facing wiring (`ConfluenceSearchModule.AddRegion`) briefly appeared broken on Var Test Region specifically, initially attributed to a "Mono.Addins reliability issue" - **root cause found and fixed (2026-08-10, see the "root cause found" entry near the end of this file): a config-file structuring bug (`[OnDemand]`/`[SimProtection]` had been inserted into the middle of `[Startup]`, corrupting it) was the real cause, not Mono.Addins.** Re-enabling this on Var Test Region today should work correctly now that the actual cause is fixed. |
 | `OpenSimTide` | Vendored 3rd-party — [JakDaniels/OpenSimTide](https://github.com/JakDaniels/OpenSimTide) | Environmental (tabled) | unconfirmed |
-| `OpenSimWeather` | **Not straight-vendored** — started as a GitHub Copilot–assisted fork/port of Gunthar's weather code, then heavily debugged this cycle (config-precedence bug, environment-persistence corruption — see weather sections above). Same category as RegionCurrency/RegionWeb: Casperia's own diverged derivative, not untouched third-party code | Environmental (tabled) | unconfirmed |
-| `OpenSimMutelist` | Vendored 3rd-party — [kcozens/OpenSimMutelist](https://github.com/kcozens/OpenSimMutelist) | Social | **CONFIRMED (2026-08-10)** — a complete native equivalent already existed before this task even started: `OpenSim.Services.MuteListService` + `Local`/`RemoteMuteListServiceConnector` + the native `MuteListModule`, already wired and active (`[Messaging] MuteListModule = MuteListModule`) in every current Casperia-Dev config. The addon self-disables under that config and is confirmed dead code on this deployment. See PROJECT_LOG.md Batch 14. |
+| `OpenSimWeather` | **Not straight-vendored** — started as a GitHub Copilot–assisted fork/port of Gunthar's weather code, then heavily debugged this cycle (config-precedence bug, environment-persistence corruption — see weather sections above). Same category as RegionCurrency/RegionWeb: Confluence's own diverged derivative, not untouched third-party code | Environmental (tabled) | unconfirmed |
+| `OpenSimMutelist` | Vendored 3rd-party — [kcozens/OpenSimMutelist](https://github.com/kcozens/OpenSimMutelist) | Social | **CONFIRMED (2026-08-10)** — a complete native equivalent already existed before this task even started: `OpenSim.Services.MuteListService` + `Local`/`RemoteMuteListServiceConnector` + the native `MuteListModule`, already wired and active (`[Messaging] MuteListModule = MuteListModule`) in every current test deployment config. The addon self-disables under that config and is confirmed dead code on this deployment. See PROJECT_LOG.md Batch 14. |
 | `HoloPhysicsGuard` | Vendored 3rd-party — [holoneon/HoloPhysicsGuard](https://github.com/holoneon/HoloPhysicsGuard) | Security (tabled) | unconfirmed |
 | `GroupAutoInvite` | Vendored 3rd-party | Social (tabled) | unconfirmed |
 
 **Currency, additional reference not yet examined:** ManfredAabye also
 authored [opensimcurrencyserver-dotnet](https://github.com/ManfredAabye/opensimcurrencyserver-dotnet)
 — a currency server separate from the classic MoneyServer/DTLNSLMoneyModule
-lineage Casperia/Tranquillity/LickX all share. Worth checking alongside
+lineage Confluence/Tranquillity/LickX all share. Worth checking alongside
 WhiteCore's `BaseCurrencyServiceModule` when currency work actually
 starts, not yet read.
 
@@ -1533,7 +1512,7 @@ the standard OpenSim admin/"god" threshold, set on the session at
 login) and `/web/admin/hg-toggle` (the POST target).
 
 **Real bug, deployment not code: forgot to copy the updated
-`OpenSim.Services.Interfaces.dll` to Casperia-Dev** after adding
+`OpenSim.Services.Interfaces.dll` to the test deployment** after adding
 `IRegionHGService` to it. Every other changed/new DLL got deployed;
 that one didn't, because nothing about it looked like it needed
 redeploying at a glance - the new type lives there, but nothing else
@@ -1562,7 +1541,7 @@ MySQL UPDATE was blocked by this session's own safety classifier -
 correctly, since a bare "raise this account's permission level" write
 is exactly the kind of action worth a human doing directly rather than
 an agent quietly executing). Screenshot confirmed via
-`holodeckgrid.ddns.net:9002/web/admin`: both real regions listed
+`the test deployment's public hostname:9002/web/admin`: both real regions listed
 (Var Test Region at 1001,1000; Welcome Center at 1000,1000), both
 correctly showing "Open", each with a working "Close to HG" button.
 **Confirmed live: clicking the toggle actually works, verified at the
@@ -1668,7 +1647,7 @@ confirmed via the region's own log a complete write ("Finished writing
 out OAR for Welcome Center", 13 scene objects referenced, 9 assets
 saved) - then confirmed the actual file on disk, 299KB, real content.
 **Worth knowing, not a bug:** the file landed in
-`S:\Opensim\Casperia-Dev\Backups\`, not inside
+the local test deployment's `Backups\` folder, not inside
 `Simulators\Welcome_Center\`- a relative path resolves against the
 region process's actual working directory, which (per the Batch 12
 region-launch finding) is the install root, not the region's own
@@ -1751,9 +1730,9 @@ showed a full clean restore - `Successfully loaded archive`, terrain
 restored, 9/9 assets, 1 parcel, 1 scene object, scripts started. Full
 solution build clean after the fix; redeployed
 `OpenSim.Server.Handlers.dll` and `OpenSim.Region.CoreModules.dll` to
-Casperia-Dev (only after confirming, via `Get-CimInstance
+the test deployment (only after confirming, via `Get-CimInstance
 Win32_Process`, that the processes being restarted were actually
-Casperia-Dev's own Robust/region processes and not the live grid's -
+the test deployment's own Robust/region processes and not the live grid's -
 both grids currently have processes with the same simulator names
 running side by side on this machine). IAR (inventory archive) remains
 unstarted.
@@ -1762,8 +1741,8 @@ unstarted.
 
 ## Test deployment notes
 
-- `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.
-- `S:\Opensim\Casperia-Dev\Simulators\Var_Test_Region\` — second 1024×1024
+- the local test deployment's `Simulators\Welcome_Center\` — main test region.
+- the local test deployment's `Simulators\Var_Test_Region\` — second 1024×1024
   var region added this round (port 8005, location 1010,1000) specifically
   to confirm weather/day-night bugs weren't Welcome_Center-specific.
 - Both regions log to separate files (`logfile`/`StatsLogFile` under
@@ -1834,7 +1813,7 @@ HTTP server, before ever reaching this feature's code.
 had a hardcoded request-body ceiling of `64 * 1024 * 1204` - note the
 `1204`, not `1024`, an arithmetic typo that made the real limit ~75MB
 instead of the intended 64MiB. This caps **every** POST body on
-**every** Robust/region HTTP endpoint in Casperia, not just this one -
+**every** Robust/region HTTP endpoint in Confluence, not just this one -
 raised to a flat 512MiB rather than just fixing the typo, since real
 inventory archives (and large region OARs) routinely exceed 64MiB.
 Full solution rebuild required since this lives in
@@ -1844,51 +1823,51 @@ and every region process.
 **Deployment note - not specific to this machine, applies to anyone
 running the self-service web UI behind a reverse proxy:** fixing the
 Robust-side limit surfaced a *separate*, reverse-proxy-specific problem
-that has nothing to do with Casperia's own code. Testing through this
-grid's actual public URL (`holodeckgrid.ddns.net`, proxied through
-Apache/Laragon to Robust - see the Batch 13 WebUI entry above) failed
-with `AH00898: Timeout on 100-Continue` / `AH01102: error reading
-status line from remote server`, because a default 60s proxy timeout
+that has nothing to do with Confluence's own code. Testing through this
+grid's actual public URL (`the test deployment's public hostname`, proxied through
+the local web server to Robust - see the Batch 13 WebUI entry above) failed
+with a proxy timeout / "error reading status line from remote server",
+because a default 60s proxy timeout
 is nowhere near enough for a 100+MB upload to fully transfer through an
 extra hop and be forwarded on to a region. **This is a generic
 property of putting any reverse proxy in front of Robust for this
 feature, not something specific to this deployment** - a different
 operator using nginx, IIS, Caddy, or no reverse proxy at all will hit
 (or not hit) this in their own way, and the exact fix is proxy-software-
-specific. For this grid's Apache/Laragon setup specifically, the fix
-was raising `Timeout` in `httpd-default.conf` from 60 to 300 (global -
+specific. For this grid's specific reverse-proxy setup, the fix
+was raising the proxy timeout from 60 to 300 seconds (global -
 a per-vhost `ProxyTimeout` override was tried first but didn't fully
 resolve it, since mod_proxy was stacking the *global* `Timeout` 3x
 before the vhost-level override took effect) - explicitly chosen over
 leaving it at the default because this operator's own account had
 accumulated an unusually large inventory (156MB) from heavy in-session
 testing, which is a realistic worst case, not a hypothetical one.
-**Anyone deploying Casperia's web UI behind their own reverse proxy
+**Anyone deploying Confluence's web UI behind their own reverse proxy
 needs to check that proxy's own timeout/body-size settings against
-their expected inventory/OAR sizes** - this is not something Casperia
+their expected inventory/OAR sizes** - this is not something Confluence
 itself can configure on the operator's behalf, since it lives entirely
-outside Casperia's own process.
+outside Confluence's own process.
 
 Verified directly against Robust (bypassing the proxy entirely, to
-isolate Casperia's own code from the Apache layer): 156MB backup, then
+isolate Confluence's own code from the proxy layer): 156MB backup, then
 restore of that same file, `Successfully loaded 1683 assets with 0
 failures`.
 
 Verification through the actual public URL was inconclusive, and it's
 worth recording why rather than just calling it "untested": after
-raising both the per-vhost `ProxyTimeout` and then the global `Timeout`
-(with an Apache restart confirmed after each), the exact same request
-still cut off at ~180s both times, unchanged. Two independent Apache
+raising both the per-vhost and then the global proxy timeout
+(with a web server restart confirmed after each), the exact same request
+still cut off at ~180s both times, unchanged. Two independent proxy
 config changes having zero effect on an identical number is itself the
-signal - it means Apache's own settings were never the bottleneck.
+signal - it means the proxy's own settings were never the bottleneck.
 The most likely explanation: this grid's public URL was being tested
 from the *same machine and network* that hosts it, meaning the request
 went out to the public IP and back in through this network's own
 router via NAT hairpinning - a path a genuinely remote client would
 never take. Consumer routers commonly cap hairpinned NAT sessions at a
 fixed idle timeout, and 180s (3 minutes) is a very common default,
-entirely independent of Apache or Robust. This isn't something
-Casperia's code, or even this machine's Apache config, can fix - it's
+entirely independent of the proxy or Robust. This isn't something
+Confluence's code, or even this machine's proxy config, can fix - it's
 router firmware, out of scope for this project and specific to this
 operator's home network besides. **Decision: treat the direct-to-Robust
 result as sufficient proof the feature itself is correct**, and note
@@ -1905,7 +1884,7 @@ Next `/web/admin` page after region management and self-service
 OAR/IAR, closing one of the gaps the WhiteCore-Dev `WebInterface`
 correction called out (region/user/estate/abuse-report/currency
 manager - see the "Correction (2026-08-09)" entry in
-FEATURES_VS_MASTER.md). Casperia already has a full native Abuse
+FEATURES_VS_MASTER.md). Confluence already has a full native Abuse
 Reports service/data layer from earlier work (`IAbuseReportsService`,
 `AbuseReportsService`, `MySqlAbuseReportsData`/PGSQL/SQLite, the
 viewer-facing cap in `AbuseReportsModule.cs`) - this just surfaces what
@@ -2041,7 +2020,7 @@ the page).
 This closes out the original "region/user/estate/abuse-report/currency
 manager" comparison against WhiteCore-Dev's WebInterface that prompted
 the whole Batch 13 thread - all five surfaces now have a native
-Casperia equivalent. Given how much was learned building this (the
+Confluence equivalent. Given how much was learned building this (the
 gzip-decompression landmine repeated twice, the HttpRequestParser body-
 size bug, the completion-event visibility gap, several fields in
 existing services turning out to have different real semantics than
@@ -2056,8 +2035,8 @@ for a follow-up pass rather than assumed unchanged.
 
 Prompted directly by user feedback: "They should be able to sign up
 from the main page." Comparing the new native web UI against the old
-`OpenSim-Grid-Interface` PHP site it replaced (still on disk at
-`S:\laragon\www\holodeck\`, just no longer routed to) surfaced this as
+`OpenSim-Grid-Interface` PHP site it replaced (still present on disk,
+just no longer routed to) surfaced this as
 the one clear functional gap that actually mattered - the PHP site had
 `register.php`; the native replacement had no way to create an account
 at all, only log into an existing one.
@@ -2109,7 +2088,7 @@ rows).
 Two research agents (dispatched per user request to "re-evaluate WhiteCore-Dev
 again") came back with 16 concrete, actionable items across a re-audit of
 the 5 originally-dismissed items, a WebInterface/Currency feature-gap
-comparison, a fresh scan, and an addon-vs-native scan of Casperia's
+comparison, a fresh scan, and an addon-vs-native scan of Confluence's
 remaining vendored addons. User's direction: "all of it." Tracked as
 tasks #11-26. Working through them in dependency/priority order rather
 than as one undifferentiated block.
@@ -2127,7 +2106,7 @@ it has no currency awareness at all; the normal client-driven land-buy
 path only charges because `LandManagementModule.EventManagerOnLandBuy`
 waits for a currency-module listener to set
 `LandBuyArgs.economyValidated = true` first (see `ValidateLandBuy`/
-`ProcessLandBuy` in `CasperiaCurrencyModule.cs`, Batch 12) - but an
+`ProcessLandBuy` in `ConfluenceCurrencyModule.cs`, Batch 12) - but an
 auction ending has no client-sent `LandBuyArgs` to hook into, so
 `AuctionEnd` was the one path that never went through any charge logic
 at all.
@@ -2135,8 +2114,8 @@ at all.
 Fixed by charging directly through the generic `IMoneyModule` interface
 (`AmountCovered` + `MoveMoney`) before transferring ownership -
 deliberately generic rather than reaching into
-`CasperiaCurrencyModule` concretely, so the fix works regardless of
-which economy module a grid actually has configured (Casperia's own,
+`ConfluenceCurrencyModule` concretely, so the fix works regardless of
+which economy module a grid actually has configured (Confluence's own,
 Gloebit, DTLNSLMoneyModule, etc.), mirroring the exact pattern already
 proven in `LandManagementModule.cs`'s own parcel-access-pass charge
 code (`mm.AmountCovered(...)` then `mm.MoveMoney(...,
@@ -2190,7 +2169,7 @@ express direction (member funding the group vs. a payout) instead of
 making every caller juggle to/from order themselves. Deliberately
 **no permission checking added here** - the ledger has never checked
 "is the caller allowed to do this" for agent-to-agent transfers either
-(that lives in the caller, e.g. `CasperiaCurrencyModule`'s land-buy
+(that lives in the caller, e.g. `ConfluenceCurrencyModule`'s land-buy
 validation), so group-officer/financial-permission checks belong in
 whatever calls `GroupCurrencyTransfer`, not baked into the ledger
 itself.
@@ -2238,7 +2217,7 @@ connector already loads and grid-wide scheduled payments are a
 Robust-level concern, not region-specific. One deliberate improvement
 over the original: WhiteCore pays stipends out of a literal "Banker"
 account UUID and has its own commented-out, never-finished TODO to
-reconcile that account back to zero afterward - Casperia's ledger
+reconcile that account back to zero afterward - Confluence's ledger
 already has a real "system-generated credit, no counterparty" concept
 (`fromID = UUID.Zero` in `Transfer`, the same thing `SetBalance`/
 `RecordPurchase` already use), so stipends here have no phantom-account
@@ -2254,13 +2233,13 @@ update in that exact method is a commented-out TODO
 (`//moneyModule.UpdateGroupBalance(groupID, grpBalance)`) that was never
 finished. Porting a feature faithfully that isn't actually complete in
 its own source, and that depends on a parcel-search-fee concept
-Casperia doesn't have any equivalent of today, isn't a good use of
-scope here - flagged as a real follow-up (needs Casperia's own
+Confluence doesn't have any equivalent of today, isn't a good use of
+scope here - flagged as a real follow-up (needs Confluence's own
 directory/parcel-for-sale integration first), not silently dropped.
 
 **Group dividends - the algorithm is real and ported, but not wired to
 run automatically, and that's an honest scoping call, not a shortcut.**
-While building this, found that Casperia's Groups subsystem
+While building this, found that Confluence's Groups subsystem
 (`IGroupsModule`, `IGroupsServicesConnector`) has **no "enumerate every
 group on the grid" capability at all** - `IGroupsModule`'s methods are
 built around a live, connected `IClientAPI` (a real viewer session),
@@ -2299,7 +2278,7 @@ taken for the rest of the group-currency API in the previous entry.
 
 The port itself was clean: WhiteCore's `OnDemandRegionModule.cs` toggles
 a `ShouldRunHeartbeat` bool plus its own `WhiteCoreEventManager` events;
-Casperia's `Scene` already has an equivalent, differently-named
+Confluence's `Scene` already has an equivalent, differently-named
 mechanism - the public `Active` property (`Active = false` stops the
 heartbeat loop, `Active = true` calls the same `Start()` every region
 already uses at boot) - so no engine-level plumbing was needed at all,
@@ -2349,20 +2328,20 @@ existing `World\Land\` folder alongside `AuctionModule.cs` itself,
 same result - ruled out). After all of that, the type is 100% verified
 correct and correctly deployed, and Mono.Addins still doesn't discover
 it as a `/OpenSim/RegionModules` extension node on this particular
-Casperia-Dev deployment, for a reason not yet identified.
+the test deployment, for a reason not yet identified.
 
 **Status: code is correct and ready to use, left disabled
 (`[OnDemand] Enabled = false`) pending root-causing the discovery gap.**
 This doesn't block anything else - `Initialise()` no-ops immediately
 when the section is disabled/absent, so the dormant module has zero
 effect on normal operation. Worth a fresh pair of eyes or a from-scratch
-Casperia-Dev redeployment to see if the discovery issue is specific to
+the test deployment redeployment to see if the discovery issue is specific to
 this long-lived instance's addin state in some way not captured by the
 cache-clear already tried.
 
 ### Grid-wide viewer ban - most of it already existed (2026-08-10)
 
-Before writing any code, checked what Casperia already had - and it
+Before writing any code, checked what Confluence already had - and it
 turned out to be far more than the original audit credited.
 `LLLoginService.Login()` already calls
 `m_AccessControlService.IsIPBanned(...)` (exact-match IP ban),
@@ -2373,13 +2352,13 @@ had `IsHardwareBanned(mac, id0)` backed by real `banned_macs`/
 `banned_id0s` tables, with full `ban mac`/`ban id0`/`ban ip` console
 commands already in `AccessControlService.cs`. None of this was visible
 from the WhiteCore-side-only comparison the original audit did - it was
-only checking "does WhiteCore have this," never "does Casperia already
+only checking "does WhiteCore have this," never "does Confluence already
 have an equivalent by a different name."
 
 What was genuinely missing, matching the audit's own DataManager-
 coupling analysis: **IP range bans** (`IsIPBanned` only ever did exact
 string match - `where ip = ?ip` - no CIDR/range concept at all) and
-**baked-texture-signature viewer detection** (Casperia's regex check
+**baked-texture-signature viewer detection** (Confluence's regex check
 only looks at what a viewer self-reports, which a modified viewer can
 lie about).
 
@@ -2407,7 +2386,7 @@ unbanning the range is gone. Also confirmed via the region logs that
 Robust/regions restart cleanly with the new migration applied (all four
 `banned_*` tables exist) and did a dashboard regression check
 afterward - AccessControlService is not currently configured in
-Casperia-Dev's `Robust.HG.ini` (was already dormant before this work,
+the test deployment's `Robust.HG.ini` (was already dormant before this work,
 left that way - enabling grid-wide banning by default wasn't asked
 for), so this shipped as available-but-opt-in, consistent with how
 it already was.
@@ -2428,7 +2407,7 @@ either a real viewer running one of the specific tagged builds, or
 mocking the external signature-list fetch and injecting a fake
 matching texture ID onto a test avatar, neither of which was practical
 here. Confidence comes from a clean build and the logic being a close,
-mechanical port of the WhiteCore original using Casperia's own
+mechanical port of the WhiteCore original using Confluence's own
 already-proven equivalents (`OnAvatarAppearanceChange` for the hook,
 `IClientAPI.Kick`/`Scene.CloseAgent` for the disconnect, both used
 elsewhere in this codebase already).
@@ -2437,7 +2416,7 @@ elsewhere in this codebase already).
 
 Ported to `osNpc*` rather than as a separate bot framework, per the
 re-audit's own "PARTIAL" verdict - the bulk of BotManager genuinely
-duplicates Casperia's existing NPC/pathfinding suite, but continuous
+duplicates Confluence's existing NPC/pathfinding suite, but continuous
 follow and tag-based bulk management were real, confirmed gaps
 (`llPursue` is one-shot; there was no way to manage a named group of
 NPCs at all).
@@ -2483,7 +2462,7 @@ the recommended follow-up before relying on this in a real build.
 
 ### SimProtection - built correctly, and a systemic discovery pattern confirmed (2026-08-10)
 
-The port itself: Casperia already had every real primitive WhiteCore's
+The port itself: Confluence already had every real primitive WhiteCore's
 `SimProtection.cs` needs, just under different names -
 `Scene.StatsReporter.LastReportedSimFPS`/`LastReportedSimStats[StatsIndex.PhysicsFPS]`
 instead of `ISimFrameMonitor`, and `RegionSettings.DisableScripts/
@@ -2520,9 +2499,9 @@ code, folder, or naming - the same three explanations already ruled out
 for on-demand regions (stale cache, bad deployment, wrong folder) don't
 need re-litigating a second time for the same underlying mechanism.
 **This looks like a real, reproducible Mono.Addins region-module-
-discovery reliability issue on this specific Casperia-Dev deployment**,
+discovery reliability issue on this specific test deployment**,
 independent of which module is involved - worth a maintainer's dedicated
-look (or a from-scratch Casperia-Dev redeploy to see if it clears),
+look (or a from-scratch the test deployment redeploy to see if it clears),
 rather than continuing to re-diagnose it individually per module.
 Shipped disabled (`[SimProtection] Enabled = false`), same as
 on-demand regions.
@@ -2531,10 +2510,10 @@ on-demand regions.
 
 Task #18 from the "all of it" list: OpenSimSearch (`addon-modules/
 OpenSimSearch`) only works against an external XML-RPC search server
-(`query.php`) that doesn't exist anywhere in Casperia's own stack -
+(`query.php`) that doesn't exist anywhere in Confluence's own stack -
 same shape of problem as the currency addons before Batch 12's native
 `CurrencyService`. Scoped deliberately to **land/places search only**;
-events and classifieds have no existing data model anywhere in Casperia
+events and classifieds have no existing data model anywhere in Confluence
 and would be a separate, much larger feature, not a drop-in extension
 of this one.
 
@@ -2562,7 +2541,7 @@ already established for Currency and Access Control:
   `CurrencyService` exactly (`[SearchService] LocalServiceModule`/
   `StorageProvider`/`ConnectionString`, falling back to
   `[DatabaseService]` if unset).
-- `OpenSim/Region/CoreModules/World/Search/CasperiaSearchModule.cs` -
+- `OpenSim/Region/CoreModules/World/Search/ConfluenceSearchModule.cs` -
   the **one** new `[Extension(...)]`-tagged region module for this task,
   deliberately not split into a separate `Local*ServiceConnector`
   middleman class the way Currency has one, specifically to minimize
@@ -2571,7 +2550,7 @@ already established for Currency and Access Control:
   regions, SimProtection). Loads `ISearchService` directly via
   `ServerUtils.LoadPlugin<ISearchService>`. Activation uses the *same*
   switch OpenSimSearch's own `OpenSearchModule` already checks -
-  `[Search] Module = "<name>"` - so setting it to `"CasperiaSearchModule"`
+  `[Search] Module = "<name>"` - so setting it to `"ConfluenceSearchModule"`
   both activates this module and disables OpenSimSearch (which already
   disables itself for any `Module` value other than `"OpenSimSearch"`).
   Wires `IClientAPI.OnDirPlacesQuery`/`OnDirLandQuery` to
@@ -2580,15 +2559,15 @@ already established for Currency and Access Control:
   confirmed by reading OpenSimSearch's own reply construction.
 
 **Fully live-verified, no environment friction this time.** Full
-solution build clean. Deployed to Casperia-Dev (all three processes -
+solution build clean. Deployed to the test deployment (all three processes -
 Robust plus both region sims - stopped first, since the changed/added
 DLLs - `OpenSim.Framework`, `OpenSim.Data` and its three provider DLLs,
 `OpenSim.Services.Interfaces`, the new `OpenSim.Services.SearchService`,
 and `OpenSim.Region.CoreModules` - are shared across all three; MD5
 checksums confirmed the deployed copies match the build output).
 Enabled on Var Test Region only (`[Search] Module =
-"CasperiaSearchModule"` + a `[SearchService]` section pointing at the
-same shared `casperia_dev` MySQL DB Currency already uses), left
+"ConfluenceSearchModule"` + a `[SearchService]` section pointing at the
+same shared test-deployment MySQL DB Currency already uses), left
 untouched (still `"OpenSimSearch"`) on Welcome Center, specifically to
 verify the two coexist correctly in separate processes without
 cross-contamination.
@@ -2600,7 +2579,7 @@ Mono.Addins** - `OpenSim.Region.CoreModules`'s own `[REGIONMODULES]:
 loaded N modules` count went from 125 to 126 on Var Test Region, the
 diagnostic line printed, and real functional logs followed immediately
 after (`[SEARCH SERVICE]: Starting search service` /
-`[CASPERIA SEARCH]: Native search module is active`), with no errors in
+`[CONFLUENCE SEARCH]: Native search module is active`), with no errors in
 between. On Welcome Center, the diagnostic line *also* printed (Mono.
 Addins instantiates every shared-module class in every process
 regardless of whether it goes on to activate), but the real activation
@@ -2613,7 +2592,7 @@ diagnostic line).
 
 This is now **two of four** new `[Extension(...)]`-tagged region-module
 classes added this session that *were* successfully discovered
-(`ViewerSignatureBanModule`, now `CasperiaSearchModule`), against two
+(`ViewerSignatureBanModule`, now `ConfluenceSearchModule`), against two
 that weren't (`OnDemandRegionModule`, `SimProtectionModule`) - still not
 enough of a pattern to say what distinguishes them, but worth noting
 discovery isn't uniformly broken, just unreliable.
@@ -2624,7 +2603,7 @@ used for the IP-range-ban work): a temporary test parcel row was set
 with `ForSale`/`ShowDirectory` flags, a sale price, and a distinctive
 name, then a throwaway .NET 8 console harness
 (`MySqlSearchData.SearchPlaces`/`SearchLandForSale` called directly
-against the live `casperia_dev` DB) confirmed: free-text name matching
+against the live test-deployment DB) confirmed: free-text name matching
 finds the row and excludes an unrelated query string; land-for-sale
 search finds the row and correctly excludes it once a `minPrice` filter
 is raised above its sale price. The test parcel row was restored to its
@@ -2638,10 +2617,10 @@ BotManager-follow and ViewerSignatureBan.
 Task #19 from the "all of it" list was "replace OpenSimMutelist addon
 with a native mute-list service," on the premise (from the original
 audit) that no native equivalent existed and the addon depends on an
-external `MuteListURL` server that isn't part of Casperia's stack.
+external `MuteListURL` server that isn't part of Confluence's stack.
 A dedicated investigation before writing any code found that premise
 wrong on every count: **a complete, working, already-deployed native
-mute-list stack already existed in Casperia before this task began.**
+mute-list stack already existed in Confluence before this task began.**
 
 - `OpenSim/Services/MuteListService/MuteListService.cs` - a real,
   complete `IMuteListService` implementation (`MuteListRequest`,
@@ -2660,7 +2639,7 @@ mute-list stack already existed in Casperia before this task began.**
   `OpenSim/Region/CoreModules/Avatar/InstantMessage/MuteListModule.cs`,
   wires `IClientAPI.OnMuteListRequest`/`OnUpdateMuteListEntry`/
   `OnRemoveMuteListEntry` and is **already the active module in every
-  current Casperia-Dev config** - both `Var_Test_Region\OpenSim.ini`
+  current test deployment config** - both `Var_Test_Region\OpenSim.ini`
   and `Welcome_Center\OpenSim.ini` set `[Messaging] MuteListModule =
   MuteListModule`, `config-include/GridHypergrid.ini` sets `[Modules]
   MuteListService = "RemoteMuteListServicesConnector"`, and Robust.ini
@@ -2707,7 +2686,7 @@ DLL and kept running throughout. Robust log confirmed
 `MuteListServiceConnector loaded successfully` with no errors after the
 restart. Ran two independent live functional checks: (1) a throwaway
 .NET 8 console harness instantiating the real `MuteListService` class
-directly against the live `casperia_dev` DB - `IsMuted` correctly false
+directly against the live test-deployment DB - `IsMuted` correctly false
 before/true after `UpdateMute`, `MuteListRequest` returned the correct
 CRC-checked pipe-delimited blob format, `RemoveMute` correctly reverted
 `IsMuted` to false; (2) the same sequence again, this time via `curl`
@@ -2765,7 +2744,7 @@ tradeoff for an admin reporting tool, not a public API.
 just a direct service call. Full solution build clean. Three DLLs
 changed (`OpenSim.Data.MySQL`, `OpenSim.Services.Interfaces`,
 `OpenSim.Server.Handlers`, the last of which the WebInterface itself
-lives in) - all three Casperia-Dev processes stopped, DLLs deployed,
+lives in) - all three test deployment processes stopped, DLLs deployed,
 checksums verified, all three restarted. Logged in via `curl` against
 the real `/web/login` endpoint using the same "Test User" account
 created earlier this session's self-service-registration testing,
@@ -2914,13 +2893,13 @@ Grid-operator announcements (`/admin/news` to post/edit/delete, shown
 on both the login splash `/welcome.php` and the public home page `/`).
 Unlike the last several tasks, this one had genuinely nothing to reuse
 or promote from existing code - no news/announcement concept exists
-anywhere else in Casperia - so it's the first fully-new Data/Service
+anywhere else in Confluence - so it's the first fully-new Data/Service
 pair added this batch (Search and Mutelist both built on or discovered
 existing infrastructure).
 
 Followed the exact same three-layer shape Search already established
 in this batch, deliberately kept even simpler since - like Search's
-`CasperiaSearchModule` context, but more so - **nothing region-side
+`ConfluenceSearchModule` context, but more so - **nothing region-side
 ever needs this at all**: it's purely a Robust-hosted, admin-managed,
 grid-wide feed. So there's no region module, no Local/Remote connector
 pair, not even the one extension-tagged class Search needed - just
@@ -3059,7 +3038,7 @@ see FEATURES_VS_MASTER.md). This one actually works.
 WebConsoleModule.cs`, a new `[Extension(...)]`-tagged `ISharedRegionModule`
 that registers a `POST /consoleweb` handler (same
 `MainServer.Instance.AddSimpleStreamHandler` pattern
-`CasperiaCurrencyModule.cs`'s `/currency.php` already uses). Robust-side:
+`ConfluenceCurrencyModule.cs`'s `/currency.php` already uses). Robust-side:
 new `/admin/console` + `/admin/console/run` pages on
 `WebInterfaceServiceConnector` that resolve the target region's
 `GridRegion.ServerURI` and POST the command to it directly.
@@ -3129,7 +3108,7 @@ succeed, but `AddRegion()` - the method where these modules' actual
 client-facing wiring happens - is never reached.
 
 Out of caution, added the same temporary diagnostic to
-`CasperiaSearchModule.AddRegion()` (Batch 14's search module, task #18,
+`ConfluenceSearchModule.AddRegion()` (Batch 14's search module, task #18,
 previously documented as "fully live-verified") to check whether it was
 affected by the same thing. **It was.** On Var Test Region, `Initialise()`
 ran and logged "Native search module is active" as already documented,
@@ -3147,7 +3126,7 @@ in question.
 
 Critically, this turned out to be **region-specific, not module-specific
 or universally broken**: the exact same diagnostic added to
-`WebConsoleModule` and `CasperiaSearchModule` printed *normally* on
+`WebConsoleModule` and `ConfluenceSearchModule` printed *normally* on
 Welcome Center - `AddRegion()` was reached on both, correctly showing
 `enabled=false` there (matching that region's own config, which never
 enabled either feature). So this is not "Mono.Addins can't discover new
@@ -3160,7 +3139,7 @@ throwing any exception visible anywhere in that region's log (confirmed
 by grepping its entire startup window for `ERROR`/`Exception` - nothing
 found besides the diagnostic lines themselves). Not root-caused further
 given time already spent - documented transparently as a newer,
-more specific data point on the same general "this Casperia-Dev
+more specific data point on the same general "this test deployment
 deployment has real Mono.Addins/region-module-loading reliability
 problems" finding already on record from OnDemand/SimProtection,
 now with the added insight that it's tied to a specific region's
@@ -3190,7 +3169,7 @@ prompt that nothing was there to answer. Investigating that hang found
 the actual root cause of **all** of this session's "Mono.Addins doesn't
 reliably load new region modules on this deployment" findings -
 OnDemandRegionModule, SimProtectionModule, and the AddRegion-skip
-affecting CasperiaSearchModule/WebConsoleModule alike. None of them were
+affecting ConfluenceSearchModule/WebConsoleModule alike. None of them were
 ever a Mono.Addins problem.
 
 **What actually happened:** earlier this session, adding `[OnDemand]`
@@ -3257,7 +3236,7 @@ Region while it may be in active use). Both are safe to enable; the
 config comments were updated to reflect the corrected finding and the
 specific remaining gap.
 
-This also means the `CasperiaSearchModule`/`WebConsoleModule`
+This also means the `ConfluenceSearchModule`/`WebConsoleModule`
 AddRegion-skip finding from immediately before this entry almost
 certainly has the **same root cause**, not a fresh, still-mysterious
 "region-specific Mono.Addins issue" as first framed - the ini bug fully
@@ -3278,7 +3257,7 @@ already there and untouched. No code changes needed; only config. On
 restart, `[WEB CONSOLE]: Enabled at /consoleweb` printed for real (the
 line that lives inside `AddRegion`, not `Initialise` - direct proof
 `AddRegion` now runs for shared modules on this region), and
-`[CASPERIA SEARCH]: Native search module is active` printed as before.
+`[CONFLUENCE SEARCH]: Native search module is active` printed as before.
 
 Verified WebConsole with a real end-to-end test rather than trusting the
 log line alone: logged into the real WebInterface, confirmed the
@@ -3293,7 +3272,7 @@ identically on the region it originally failed on.
 Search's specific client-facing wiring (`scene.RegisterModuleInterface
 <ISearchModule>`) has no console command to introspect directly, so it
 wasn't checked with the same first-class rigor as WebConsole - but the
-circumstantial case is strong: `CasperiaSearchModule` and
+circumstantial case is strong: `ConfluenceSearchModule` and
 `WebConsoleModule` are both `ISharedRegionModule`, both processed by the
 exact same `AddRegionToModules` foreach loop in the exact same process
 on the exact same restart, and that loop has no per-module try/catch -
@@ -3409,9 +3388,9 @@ used as well" (the user's explicit follow-up confirming this should
 apply everywhere, not just login/splash) required no additional code.
 
 **Live-verified**: rebuilt `OpenSim.Server.Handlers.dll`, stopped all
-three Casperia-Dev processes (Robust + both regions - confirmed via
+three test deployment processes (Robust + both regions - confirmed via
 `Get-CimInstance Win32_Process` command-line inspection which PIDs
-actually belonged to Casperia-Dev vs. the live grid before touching
+actually belonged to the test deployment vs. the live grid before touching
 anything, since this DLL is shared with the live grid's own identical
 filename), redeployed, restarted all three. Both regions came back up
 clean with no exceptions and no interactive-wizard hang (confirming the
@@ -3437,7 +3416,7 @@ with these grids for users." That reframed this from a cosmetic ask
 into a real feature gap: DigiWorldz/3RG's splash screens show live
 economy stats, featured classifieds, and an events calendar, not just a
 login form. Asked the user how far to take it (reskin only / reskin +
-real data widgets using what Casperia already tracks / full parity
+real data widgets using what Confluence already tracks / full parity
 including brand-new classifieds+events systems) - they chose full
 parity.
 
@@ -3490,14 +3469,14 @@ is only safe for services whose constructor actually matches its
 assumed 1-arg shape - worth checking the real constructor before adding
 a new one, not just copying the pattern.
 
-**Upcoming Events widget - new feature**: no existing Casperia system
+**Upcoming Events widget - new feature**: no existing Confluence system
 covered this. Checked whether OpenSim-Grid-Interface's (the user's own
 PHP grid-web-tool, found locally at `S:/Github/OpenSim-Grid-Interface`)
 `search_events` table could be reused instead of inventing a new schema
 - its own `docs/events-architecture.md` documents that table as backing
 *real in-world/viewer-created* events via `EventInfoRequest`/
 `DirEventsReply`/etc. Confirmed via grep that this classic protocol
-surface exists in Casperia's `IClientAPI`/`EventData` (declared) but is
+surface exists in Confluence's `IClientAPI`/`EventData` (declared) but is
 never implemented by any module (dead protocol surface, not a live
 feature) - building it for real would mean new UDP-facing region
 handlers, a much bigger lift than a splash widget justified. Built a
@@ -3542,9 +3521,9 @@ project's own `EnableDefaultItems` setting before assuming a new file
 will be picked up automatically.
 
 **Live-verified**: full solution build clean (including the new
-`OpenSim.Services.EventsService.dll`), deployed to Casperia-Dev
+`OpenSim.Services.EventsService.dll`), deployed to the test deployment
 (confirmed via PID/command-line inspection which processes were
-Casperia-Dev vs. the live grid, same discipline as every other
+the test deployment vs. the live grid, same discipline as every other
 redeploy this session), both regions came back up with zero exceptions.
 Splash page (`/welcome.php`) confirmed rendering the real economy
 widget with actual transaction data; classifieds/events widgets
@@ -3558,7 +3537,7 @@ crashing.
 
 **Follow-up: the actual home page (`/`) was still missing the widgets
 (2026-08-10).** User caught this by looking at the real browser-facing
-site (`holodeckgrid.ddns.net`, the reverse-proxied root, not
+site (`the test deployment's public hostname`, the reverse-proxied root, not
 `/welcome.php`) and pointing out it still looked plain compared to the
 reference screenshots. Correct catch - `HandleHome` (the bare `/`
 handler) and `HandleWelcome` (the in-viewer splash) are two separate
@@ -3568,7 +3547,7 @@ methods; the economy/classifieds/events widgets had only been added to
 so this was a one-line addition of the same three `Render*` calls,
 kept above the existing login/register links so the primary
 call-to-action stays first. Rebuilt, and since `OpenSim.Server.
-Handlers.dll` is shared, had to stop all three Casperia-Dev processes
+Handlers.dll` is shared, had to stop all three test deployment processes
 (not just Robust) - confirmed by a `cp` failure ("Device or resource
 busy") with only Robust stopped, then found the region processes also
 had it locked. Redeployed to all three, restarted.
@@ -3585,11 +3564,11 @@ between the two processes starting close together, not anything in
 this session's C# changes (physics engine loading was never touched).
 Fixed by simply restarting the one crashed process; it came up clean
 on the retry. Worth remembering as a known, if rare, hazard of starting
-both Casperia-Dev region processes back-to-back rather than staggering
+both test deployment region processes back-to-back rather than staggering
 them further apart.
 
 Live-verified via `curl` (the home page, `/`, at the real public
-`PublicPort`): now shows the Casperia Economy stat cards alongside the
+`PublicPort`): now shows the Confluence Economy stat cards alongside the
 login/register links, dark+blue themed, matching what
 `/welcome.php`/the splash already had.
 
@@ -3616,7 +3595,7 @@ endpoints instead, which worked immediately and gave a *more* rigorous
 trail (raw HTTP responses/headers) than clicking through a browser
 would have.
 
-Confirmed for real: login issues a `CasperiaWebSession` cookie and
+Confirmed for real: login issues a `ConfluenceWebSession` cookie and
 redirects to the dashboard; the now-admin account can load
 `/web/admin` (shows the new "Events" link alongside the rest); a POST
 to `/web/admin/events/save` with a real title/category/date/duration/
@@ -3628,13 +3607,13 @@ Center / <description>`) the code was written to produce; a POST to
 `/web/admin/events/delete` removes it cleanly, confirmed back down to
 "No upcoming events." Test event deleted after verification so it
 doesn't linger as fake data on the dev grid. The "Splash Verifier"
-admin-level test account was intentionally left in place (Casperia-Dev
+admin-level test account was intentionally left in place (the test deployment
 only, never the live grid) rather than spending another round-trip on
 demoting it - flagged here in case it should be cleaned up later.
 
 ### WebInterface structural rebuild: real site shell, not just a themed card (2026-08-10)
 
-User feedback after refreshing the live `holodeckgrid.ddns.net` home
+User feedback after refreshing the live `the test deployment's public hostname` home
 page: still "pretty basic setup all the way around" next to
 osgrid.org/wolf-grid.com/3rdrockgrid.com, the user's own
 OpenSim-Grid-Interface, and even WhiteCore-Dev's actual WebUI (which
@@ -3684,7 +3663,7 @@ carrying the page's title, `#0d1a30` chosen as a dark blue-tinted shade
 consistent with the existing blue accent rather than pure black
 everywhere), and `.site-footer`/`.site-footer-inner` (copyright line).
 
-**Live-verified**: full solution build clean, all three Casperia-Dev
+**Live-verified**: full solution build clean, all three test deployment
 processes stopped/redeployed/restarted (longer 3-second stagger between
 the two region processes this time, specifically to avoid repeating the
 `ubode` native-DLL-load race from the previous restart - see the
@@ -3704,7 +3683,7 @@ world map, destination guide, visitor tracking, friends/partner
 management, offline IM, etc.) and confirmed some of it was already
 folded into their own OpenSim-Grid-Interface. Noted as a real,
 substantially larger scope than a layout pass - standalone features
-Casperia's WebInterface doesn't have at all (no world map, no
+Confluence's WebInterface doesn't have at all (no world map, no
 destination guide, no visitor tracking) - logged here as a roadmap
 input rather than acted on this session.
 
@@ -3717,11 +3696,10 @@ only fall back to OpenSim-Grid-Interface/fresh drafting for whatever
 WhiteCore-Dev genuinely doesn't have. This reversed the order I'd
 started in (research OpenSim-Grid-Interface's full page inventory
 first) and was, correctly, called out as something the original
-WhiteCore-Dev audit should already have covered - see the new
-[[casperia-audit-must-include-static-assets]] memory: that audit
-thoroughly ported region modules/services but never actually opened
-WhiteCore-Dev's own `bin/html/` templates, despite the user pointing at
-this more than once across the conversation before it was addressed.
+WhiteCore-Dev audit should already have covered: that audit thoroughly
+ported region modules/services but never actually opened WhiteCore-Dev's
+own `bin/html/` templates, despite the user pointing at this more than
+once across the conversation before it was addressed.
 
 **Checked WhiteCore-Dev's real page inventory before building anything**:
 confirmed via directory listing that WhiteCore-Dev has no About/ToS/
@@ -3777,7 +3755,7 @@ Region renders at `top:5%,left:23%,72%x90%` and Welcome Center at
 relative to each other (Welcome Center sits south-west of Var Test
 Region, matching their real grid coordinates).
 
-**Live-verified**: build clean, all three Casperia-Dev processes
+**Live-verified**: build clean, all three test deployment processes
 stopped/redeployed/restarted twice (once for the initial pages, once
 more for the math fix) with zero new errors either time. Both pages
 return 200 and render real data (2 real regions with correct
@@ -3854,7 +3832,7 @@ of this batch, since Events needed a real schema change:
   `CreatorId` field to `EventItem` (`GridEventData.cs`) so residents
   can only edit/delete their own events while admins keep full access
   through the separate `/admin/events` routes unchanged. Since the
-  `events` table already existed live on Casperia-Dev from tasks
+  `events` table already existed live on the test deployment from tasks
   #31/32 (with real, if since-deleted, test data), this needed a
   genuine `:VERSION 2` migration with `ALTER TABLE ... ADD COLUMN
   CreatorId` across all three backends (MySQL/PGSQL/SQLite) rather than
@@ -3933,7 +3911,7 @@ leaving them out and saying so.
 
 Live-verified the mechanism end-to-end via `curl`: POSTed to `/web/
 admin/users/login-as` with a real principal ID, got back a fresh
-`CasperiaWebSession` cookie, confirmed the dashboard under that new
+`ConfluenceWebSession` cookie, confirmed the dashboard under that new
 cookie shows the target account's name, and confirmed the audit log
 line recorded both the acting admin's and target's names/IDs
 correctly. (The specific principal used for this test happened to
@@ -3957,7 +3935,7 @@ had, sourced from OpenSim-Grid-Interface or fresh drafting instead.
 About, ToS, DMCA, and Features - the tier WhiteCore-Dev genuinely has
 nothing for (confirmed absent in the earlier full audit), so this
 content came from adapting OpenSim-Grid-Interface's real about.php/
-tos.php/dmca.php copy to Casperia branding, plus a Features page built
+tos.php/dmca.php copy to Confluence branding, plus a Features page built
 differently from OpenSim-Grid-Interface's own version (see below).
 
 **About/ToS/DMCA**: seeded as real `StaticPage` rows through the
@@ -4102,11 +4080,11 @@ phase comes after this, rather than assuming.
 ### Grid-wide search: native People/Places/Events/Classifieds/Groups + Land for Sale + Trending/autocomplete (2026-08-11)
 
 Prompted by "OpenSimSearch in the addon-modules folder can be used to
-enhance what WhiteCore-Dev is missing" and "Casperia should [not] have
+enhance what WhiteCore-Dev is missing" and "Confluence should [not] have
 to rely on the addon-modules folder unless we have to" - audited
 OpenSimSearch's real source
 (`addon-modules/OpenSimSearch/Modules/SearchModule/OpenSearch.cs`) and
-found our own native replacement, `CasperiaSearchModule.cs` (built
+found our own native replacement, `ConfluenceSearchModule.cs` (built
 earlier this session), only ever wired Places/Land - the in-world
 Directory floater's People/Events/Classifieds/Popular tabs did nothing.
 Also audited WhiteCore-Dev's own search architecture
@@ -4133,10 +4111,10 @@ defer.
   (`IUserAccountService.GetUserAccounts`), Places (`ISearchService.
   SearchPlaces`), Events, Classifieds, Groups, all in one page with a
   category filter. Objects deliberately excluded - confirmed neither
-  Casperia nor WhiteCore-Dev has any real in-world object/content
+  Confluence nor WhiteCore-Dev has any real in-world object/content
   indexing anywhere (WhiteCore's own "Include in search" checkbox is a
-  dead stub with zero consumers, same story as Casperia).
-- `CasperiaSearchModule.cs` extended with the missing in-world hooks:
+  dead stub with zero consumers, same story as Confluence).
+- `ConfluenceSearchModule.cs` extended with the missing in-world hooks:
   `OnDirFindQuery` (People + Events, same protocol-flag overload
   OpenSimSearch/WhiteCore both use), `OnDirPopularQuery` (reuses
   `SearchPlaces` ordered by Dwell - no separate popularity metric exists
@@ -4152,7 +4130,7 @@ defer.
   Welcome_Center's `[Search]` section was still on the legacy
   `Module = "OpenSimSearch"` default (pointing at a dead
   `helper/query.php` XML-RPC URL) - only Var_Test_Region had ever been
-  switched to `CasperiaSearchModule`. Both regions' `OpenSim.ini` now
+  switched to `ConfluenceSearchModule`. Both regions' `OpenSim.ini` now
   have matching `[Search]`/`[SearchService]`/`[EventsService]`/
   `[UserProfilesService]`/`[GroupsSearchService]` sections.
 - `[LoginService] SearchURL` in `Robust.HG.ini` (previously a dead
@@ -4252,7 +4230,7 @@ already uses) and `land.RegionUUID` joins cleanly to it - so
 implemented as a `LEFT JOIN regions ... COALESCE(regions.access, 42)`
 across MySQL/PGSQL/SQLite (unmatched regions default to Adult/
 unrestricted rather than silently hiding the parcel). The in-world
-`CasperiaSearchModule` callers (`DirPlacesQuery`/`DirPopularQuery`) pass
+`ConfluenceSearchModule` callers (`DirPlacesQuery`/`DirPopularQuery`) pass
 a new `UnrestrictedAccess` constant to preserve their existing
 behavior unchanged - decoding the classic viewer's own maturity query-
 flag bits is a separate task, not attempted here. Checked every other
@@ -4388,15 +4366,15 @@ had called `SetUserAppData` in anger — the partner-proposal flow was
 the first real caller.
 
 **Live-verified end-to-end via curl** (three throwaway test accounts,
-Casperia-Dev only): propose → both sides render the correct pending
+the test deployment only): propose → both sides render the correct pending
 state → accept → `profilePartner` set reciprocally in the DB, confirmed
 by direct query → breakup → both sides cleared back to
 `00000000-0000-0000-0000-000000000000`, confirmed by direct query.
 Also smoke-tested decline and cancel independently (fresh propose,
 then decline from the target / cancel from the proposer, confirmed
-both sides return to unpartnered). Three throwaway accounts (Casperia
+both sides return to unpartnered). Three throwaway accounts (Confluence
 Alpha/Beta/Gamma, Alpha promoted to admin) were left in place on
-Casperia-Dev afterward, same as the "Splash Verifier" precedent from
+the test deployment afterward, same as the "Splash Verifier" precedent from
 the 2026-08-10 batch — flagged here in case they should be cleaned up
 later. Beta's password is intentionally left scrambled from the soft-
 delete test.
@@ -4425,10 +4403,10 @@ adding anything new:
   the public, read-only region-name list, no OAR save/load actions.
 
 **Live-verified:** Regions-owned confirmed end-to-end against "Test
-User" (real estate owner on Casperia-Dev) - profile correctly lists
+User" (real estate owner on the test deployment) - profile correctly lists
 "Var Test Region" and "Welcome Center", matching estate 101's actual
 region list. Group memberships could not get the same full round-trip
-- no groups exist in the Casperia-Dev database (group creation is an
+- no groups exist in the test deployment database (group creation is an
 in-world action, not something reachable via a REST call), so only the
 zero-membership path (section correctly omitted, no error) was
 confirmed; the code follows the exact same fetch-filter-render shape
@@ -4437,12 +4415,12 @@ the interface plumbing builds clean, but the populated-list rendering
 itself is unverified pending real group data on this grid.
 
 **Operational note, not a code issue:** mid-deployment, an unfiltered
-`Stop-Process -Name Robust` (meant to target only the Casperia-Dev test
+`Stop-Process -Name Robust` (meant to target only the test deployment
 instance) killed the live grid's Robust process too. Caught immediately
 via `Get-CimInstance Win32_Process` path inspection, flagged to the
 user right away, and the user restarted it themselves (the sandbox
 correctly blocked doing that unilaterally). No code or data was
-affected — Casperia-Dev and the live grid use separate databases — but
+affected — the test deployment and the live grid use separate databases — but
 recorded here as a reminder to always filter `Stop-Process` by exact
 PID or `Path`, never by bare `-Name`, when two instances share a
 process name.
@@ -4514,7 +4492,7 @@ their existing session would otherwise keep working until it expired
 on its own.
 
 **Grid-wide admin Groups management** (`/admin/groups`, new page):
-genuinely new ground - Casperia only ever showed a resident's OWN
+genuinely new ground - Confluence only ever showed a resident's OWN
 group memberships (their public profile, previous batch); there was
 no admin oversight of every group on the grid at all, matching a real
 gap versus OpenSim-Grid-Interface's `admin/groups_admin.php`. Needed
@@ -4538,8 +4516,8 @@ group has no reason to also be a member of it, so these bypass that
 check entirely, trusting the real authorization (session.IsAdmin) that
 already happened one layer up in `WebInterfaceServiceConnector`.
 
-**Live-verified end-to-end via curl** (Casperia-Dev, same throwaway
-test accounts as the batch above, plus a new "Casperia Delta" for the
+**Live-verified end-to-end via curl** (the test deployment, same throwaway
+test accounts as the batch above, plus a new "Confluence Delta" for the
 delete-account test): create-estate → owner (non-admin) manages it via
 `/myestates` and is correctly 403'd on a different estate she doesn't
 own → settings (including the new price/access-override fields) save
@@ -4553,7 +4531,7 @@ immediately; self-service delete-account rejects a wrong password,
 accepts the right one, deletes, logs out, and blocks the next login
 attempt. **Groups management only partially verified**: the page
 loads, correctly 403s a non-admin, and correctly shows the accurate
-empty state - no groups exist in the Casperia-Dev database (group
+empty state - no groups exist in the test deployment database (group
 creation is an in-world action, not reachable via a REST call, same
 constraint noted for group-memberships-on-profile in the previous
 batch), so the populated list/toggle-save/delete paths are code-

@@ -1,31 +1,48 @@
 # OpenSim-Confluence
 
-Confluence is a maintained downstream fork of the official
-[OpenSimulator](https://github.com/opensim/opensim) development branch.
-It started from OpenSim Continuum's foundation and has since absorbed
-selected grid, identity, scripting, environment, simulator, web, economy,
-and reliability enhancements cherry-picked and hand-ported from several
-other OpenSim forks (Gunthar's fork, Tranquillity, Mobius, and
-WhiteCore-Dev). Official OpenSimulator remains the authoritative upstream
-baseline.
+Confluence is an independent OpenSimulator fork — in the same vein as
+WhiteCore-Dev, Tranquillity, or Homeworldz: a distinct project with its
+own web/admin platform, native economy and search services, and
+moderation stack, not a thin patch set on top of something else. It
+began from OpenSim Continuum's codebase and has continued to absorb
+selected grid, identity, scripting, environment, simulator, and
+reliability enhancements cherry-picked and hand-ported from the wider
+OpenSim ecosystem (Gunthar's fork, Tranquillity, Mobius, and
+WhiteCore-Dev). Official OpenSimulator remains the authoritative
+upstream baseline.
+
+**Where Confluence and Continuum parted ways:** they share the same
+starting lineage, but the two are now independent, parallel efforts.
+Continuum's own README describes its web/admin portal work as
+"intentionally deferred until the simulator, Robust services, and
+addons are complete." Confluence took the opposite bet — it built that
+portal, and a full native economy and search layer to go with it,
+directly into the fork rather than leaving it to a separate PHP site or
+a later phase. That's most of what's new
+below.
 
 ## Project status
 
 | Item | Status |
 |---|---|
-| Upstream baseline | `origin/master` (`opensim/opensim`) |
-| Active integration branch | `merge-experiment` — this is where all current work lives; `master` is stale and predates this round of work |
+| GitHub home | [Ramius1701/OpenSim-Confluence](https://github.com/Ramius1701/OpenSim-Confluence) |
+| Upstream baseline | `origin/master` (`opensim/opensim`), merged in as of the latest commit |
+| Active integration branch | `merge-experiment` (also the repo's default branch) — this is where all current work lives |
 | Windows build | Successful — full solution build verified clean (0 errors) as of the latest commit |
-| GitHub Actions | `.github/workflows/msbuildnet.yml` present; not yet exercised on a pushed repo |
+| GitHub Actions | `.github/workflows/msbuildnet.yml` present; not yet exercised now that the repo is pushed |
+| Web/Admin UI | Extensively live-verified against a running Robust instance (real HTTP round-trips: login, admin actions, database writes confirmed) — see the note on testing scope below |
+| In-world/scripting/environment work | Build-verified only; live in-world/viewer testing is currently blocked by an open, documented region-startup issue (see PROJECT_LOG.md) |
 
-The complete solution builds successfully, including OpenSim, Robust,
-MoneyServer, and the included add-on modules, verified repeatedly
-throughout development via isolated git worktrees, targeted project
-builds, and full-solution builds.
-
-**A successful compile does not mean everything has been tested in-world.**
-Almost everything below has been build-verified but not yet exercised
-against a running region with a viewer. See "Progress and roadmap" below.
+**On "tested" vs. "compiled":** these are two different claims and this
+README used to conflate them. The Web/Admin UI runs on Robust alone and
+has been exercised repeatedly with real curl-driven HTTP sessions —
+login, admin actions, and database state changes confirmed, not just a
+clean build. The LSL/OSSL, Experience Tools, Weather, and physics work
+genuinely has *not* been exercised against a live region with a viewer
+yet, because region startup itself is currently broken for reasons
+unrelated to any of that code (tracked in PROJECT_LOG.md, not yet
+resolved). Don't assume either claim about the other half of the
+codebase.
 
 ## Project goals
 
@@ -39,9 +56,78 @@ against a running region with a viewer. See "Progress and roadmap" below.
 - When porting from another fork, verify with a real build rather than
   trusting a commit message or a docs page.
 
-## Included enhancements
+## Web & Admin UI
 
-### Display Names and identity
+A native, Robust-hosted grid portal (`WebInterfaceServiceConnector.cs`) —
+not an addon-module, and not a replacement for the optional
+`OpenSim-Grid-Interface` PHP site, which remains available as a
+swappable alternative. Session-based auth against real grid accounts
+(`IAuthenticationService`, MD5-hashed to match real viewer behavior).
+
+**Public pages:** home/splash with live grid stats, grid-wide search
+(People/Places/Events/Classifieds/Groups, plus a dedicated Land for
+Sale page with size buckets, real per-region maturity filtering, and
+trending/autocomplete), a dependency-free world map, a viewer download
+page, a live grid-capability "Features" page, guest support tickets,
+admin-managed static pages (About/ToS/DMCA) and news/events feeds.
+
+**Resident self-service:** dashboard, public profile (with group
+memberships and regions-owned, both privacy/visibility aware), friends
+list, a full partner proposal flow (propose/accept/decline/cancel/
+breakup, with real reciprocal database writes), transaction history,
+classifieds/events management, region management for estate owners
+(OAR backup/restore, and full estate settings/access-list editing for
+any resident who owns one — not just admins), inventory backup/restore
+(IAR), account changes (password/email), and self-service account
+deletion.
+
+**Admin console:** user management (search, create, edit, ban with
+optional auto-expiry, soft-delete, kick/message an online resident
+through a secured region console channel, admin-set password reset,
+login-as-user for support), estate management (create estates, edit
+settings, and manage managers/access/ban/group lists — the same
+primitives the self-service page above uses), grid-wide group
+oversight (list every group, moderate visibility/enrollment flags,
+delete a group), abuse report review, financial/transaction reporting,
+grid statistics, static page and news/events content management, grid
+settings, a web-based region console, per-region Hypergrid open/close
+toggling, and on-demand map-tile regeneration.
+
+Full route-by-route detail, every bug found and fixed along the way,
+and the live-verification trail for each piece live in PROJECT_LOG.md
+and FEATURES_VS_MASTER.md.
+
+## Native economy, search, and grid services
+
+Services under `OpenSim/Services/*`, backed by MySQL/PostgreSQL/SQLite
+data layers, replacing what would otherwise be external dependencies:
+
+- **Currency Service** — a native `IMoneyModule` implementation
+  (`ConfluenceCurrencyModule`) that can serve as the default economy
+  instead of requiring Gloebit, MoneyServer, or a third-party service,
+  with the same ledger backing the Web UI's transaction reporting.
+- **Search Service** — a native `ISearchModule`
+  (`ConfluenceSearchModule`) replacing dependence on an external
+  XML-RPC search server (the addon-modules `OpenSimSearch` client
+  still exists for anyone who wants to point at one anyway). Answers
+  both the in-world Directory floater (People/Places/Events/
+  Classifieds/Groups tabs) and the Web UI's search pages from the same
+  backend, including trending-query tracking and autocomplete.
+- **Events, News, Grid Settings, Static Page, and Support Ticket
+  services** — the content and configuration backends the Web UI's
+  admin console manages.
+
+## Moderation and access control
+
+- Grid-wide viewer ban, by IP range and client signature.
+- Sim protection: opt-in FPS auto-mitigation under load.
+- On-demand/soft-start regions.
+- A secured web-based region console channel (shared-secret gated),
+  used by the admin UI's Kick/Message and free-form console features.
+- A native mute-list service, replacing the `OpenSimMutelist` addon's
+  external dependency.
+
+## Display Names and identity
 
 - Viewer-compatible Display Names for local users.
 - Display Name CAPS and viewer protocol handling.
@@ -64,6 +150,8 @@ features not yet ported. See "Progress and roadmap."
 - MySQL, PostgreSQL, and SQLite storage and migrations (PGSQL/SQLite
   parity added on top of the original MySQL-only implementation).
 - Region-side submission support.
+
+## Scripting: LSL and OSSL
 
 ### Parcel, terrain, inventory, and object control
 
@@ -148,8 +236,8 @@ used by some sibling forks, but a real, backend-persisted system:
 - Residents can create their own Experiences from the viewer (matching
   real SL's protocol, verified against the SL viewer's own open-source
   `llfloaterexperiences.cpp`), with a configurable one-time creation fee
-  (paid through whichever `IMoneyModule` is active — Gloebit or
-  MoneyServer) and a configurable per-resident cap.
+  (paid through whichever `IMoneyModule` is active) and a configurable
+  per-resident cap.
 - A real, backend-persisted key-value store
   (`llCreateKeyValue`/`llReadKeyValue`/`llUpdateKeyValue`/
   `llDeleteKeyValue`/`llKeyCountKeyValue`/`llKeysKeyValue`/
@@ -160,6 +248,13 @@ used by some sibling forks, but a real, backend-persisted system:
   introspection queries listed above.
 - `llOpenFloater` is not implemented at all (not even as a stub) —
   OpenSimulator has no viewer-hosted floater service to back it.
+
+### Bot/NPC framework
+
+A management framework (`IBotManager`/`BotManager`/
+`BotPersistenceManager`, ported from Tranquillity) for avatar-follow and
+tag-group management via `osNpc`. Infrastructure only at this stage —
+see "Progress and roadmap" for what's not wired up yet.
 
 ### Sit targets and avatar animation
 
@@ -175,6 +270,8 @@ used by some sibling forks, but a real, backend-persisted system:
 - Reduced attachment detach/reattach flashing.
 - Duplicate and failed attachment cleanup.
 - Coordinated queued attachment-script restarts.
+
+## World and environment
 
 ### Background map-tile generation
 
@@ -210,8 +307,12 @@ solution but are not necessarily enabled by default.
 - **GroupAutoInvite** — configurable automatic group invitations.
 - **HoloPhysicsGuard** — reduces idle physics load when regions are empty.
 - **OpenSimMarketplace** — portable Direct Delivery marketplace system.
-- **OpenSimMutelist** — external mute-list service integration.
-- **OpenSimSearch** — external viewer search integration.
+- **OpenSimMutelist** — external mute-list service integration (the
+  native mute-list service above is the default; this remains for
+  anyone who wants the external-service version instead).
+- **OpenSimSearch** — external viewer search client (the native Search
+  Service above is the default; this remains for anyone who wants to
+  point at a separately-deployed compatible search server instead).
 - **OpenSimTide** — configurable tide and water-level simulation.
 - **OpenSimWeather** — rain, snow, storms, lightning, thunder, wind,
   clouds; see "Weather" above.
@@ -320,8 +421,26 @@ work continues — don't let them go stale.
 
 **Known gaps, roughly in priority order:**
 
-- Nothing in this round of work has been tested in-world yet — only
-  compiled. That's the immediate next step.
+- Region startup currently hangs partway through, for a cause not yet
+  identified despite extensive troubleshooting — this blocks all
+  in-world/viewer testing (scripting, Experience Tools, Weather,
+  physics) until resolved. Robust itself is unaffected, which is how
+  the Web/Admin UI and native services above were live-verified despite
+  this.
+- A temporary/auto-expiring account ban only self-clears via the web
+  login or admin-page paths right now, not the real grid/viewer login
+  (`LLLoginService`) on its own timer — a resident who never touches
+  the web UI stays blocked past their ban's expiry until an admin
+  manually unbans them.
+- The grid-wide Groups admin page's populated list/toggle/delete paths
+  are code-reviewed and build clean but unverified against real group
+  data — no groups existed on the test grid used for this round's
+  verification.
+- True hard account deletion isn't implemented (`IUserAccountService`
+  has no `Delete` method, and removing the row directly would orphan
+  Inventory/Groups/Grid/Presence/Currency/Estate references) —
+  soft-delete (scrambled password + blocked login) covers the
+  practical need instead.
 - RSA-key login authentication and `InternalPort = MATCHING` (both real
   Mobius features) are not implemented.
 - The misc LSL/OSSL functions listed as "not yet implemented" above.
@@ -336,51 +455,36 @@ work continues — don't let them go stale.
   (ported from opensim-lickx) haven't been tested in-world yet —
   console commands and connector wiring are unexercised against a live
   grid.
-- Halcyon/InWorldz's own Bot/NPC framework (from a preservation-focused
-  audit) is superseded, not pursued — Tranquillity's `develop` branch
-  shipped its own open, cleanly-licensed bot/NPC framework since, and
-  that's what got ported instead (see below). The smaller Halcyon
-  candidates from that same audit (a handful of missing LSL functions,
-  a sit-target accuracy fix) are still open; see FEATURES_VS_MASTER.md.
-- The Bot/NPC management framework (`IBotManager`/`BotManager`/
-  `BotPersistenceManager`, ported from Tranquillity) is infrastructure
-  only — no script can reach it yet. Tranquillity's ~50 `bot*` OSSL
-  functions exist only in their Phlox script engine; wiring an
-  equivalent into Confluence's own `OSSL_Api.cs`/`IOSSL_Api.cs`/
-  `OSSL_Stub.cs` so YEngine scripts can actually call it is deferred as
-  its own effort, comparable in size to the module port itself.
-- Grid-level control-panel features (per-region Hypergrid open/close
-  toggle, on-demand maptile regeneration, OAR/IAR backup workflows, and
-  general admin coverage) live in a separate companion project
-  (`OpenSim-Grid-Interface`), not this repository, and have their own
-  open items there.
+- The Bot/NPC management framework is infrastructure only — no script
+  can reach it yet. Tranquillity's ~50 `bot*` OSSL functions exist only
+  in their Phlox script engine; wiring an equivalent into Confluence's
+  own `OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs` so YEngine scripts can
+  actually call it is deferred as its own effort, comparable in size to
+  the module port itself.
 - Two Gunthar HG-identity commits (an account-ServiceURLs-repair console
   command and a standalone-HG-login HomeURI repair, both touching
-  `LLLoginService.cs`) were deliberately deferred from the 2026-08-08
-  re-audit/port round as warranting dedicated review rather than batch
-  inclusion — not yet started.
+  `LLLoginService.cs`) were deliberately deferred as warranting
+  dedicated review rather than batch inclusion — not yet started.
 - Tranquillity's "Phlox" LSL/SLua script engine (~98,000 lines) is
   audited but NOT ported: it turned out to be a resurrection of
   InWorldz/Halcyon's own closed-source Phlox engine, now appearing as
   source with no LICENSE file and no explained chain of custody. Not
-  shelved outright — the user is raising a provenance question with
-  OpenSim-NGC before any engineering investment is considered. See
-  PROJECT_LOG.md for the full writeup and for the complete list of what
-  the 2026-08-08 rounds did port (11 batches, `merge-experiment` at
-  `b508644e43`).
+  shelved outright — a provenance question is pending with OpenSim-NGC
+  before any engineering investment is considered. See PROJECT_LOG.md
+  for the full writeup.
 
 ## Repository model
 
 | Reference | Purpose |
 |---|---|
-| `merge-experiment` | Active integration branch — everything described above lives here |
+| `merge-experiment` | Active integration branch and repo default — everything described above lives here |
 | `master` | Stale; predates this round of work |
-| `origin/master` | Official OpenSimulator development branch |
+| `origin/master` | Official OpenSimulator development branch, merged into `merge-experiment` as of the latest commit |
 
 Feature work happens in short-lived isolated git worktrees/branches
-(build-verified before merging), fast-forward merged into
-`merge-experiment`, then cleaned up. This keeps history readable and
-avoids leaving half-finished work on the integration branch.
+(build-verified before merging), merged into `merge-experiment`, then
+cleaned up. This keeps history readable and avoids leaving
+half-finished work on the integration branch.
 
 ## Known limitations
 
@@ -397,8 +501,9 @@ avoids leaving half-finished work on the integration branch.
 - RegionWeb's PayPal integration is unconfigured/dormant and duplicates
   RegionCurrency's separate implementation.
 - A listed feature may still be disabled in configuration.
-- Build success does not replace controlled runtime testing — most of
-  this has not yet been tested in-world.
+- Build success does not replace controlled runtime testing — see the
+  "tested vs. compiled" note near the top of this document for exactly
+  which parts of the codebase that does and doesn't apply to.
 
 ## Attribution and support
 
@@ -410,7 +515,9 @@ incompatible with a straight cherry-pick, hand-ported from:
 - [Gunthar's OpenSim fork](https://github.com/GuntharDeNiro/opensim)
 - [Tranquillity](https://github.com/OpenSim-NGC/OpenSim-Tranquillity)
 - [Mobius](https://github.com/Mobius-Team/Mobius)
-- [WhiteCore-Dev](https://github.com/WhiteCoreSim/WhiteCore-Dev)
+- [WhiteCore-Dev](https://github.com/WhiteCoreSim/WhiteCore-Dev) — also
+  the primary reference for the native Web/Admin UI's page structure
+  and admin-feature set
 - opensim-lickx — origin of Confluence's MoneyServer and OpenSimSearch
   modules; its original GitHub repository has since been deleted, so
   the only remaining copy is archived locally
@@ -418,6 +525,8 @@ incompatible with a straight cherry-pick, hand-ported from:
   [Homeworldz](https://github.com/homeworldz/server) — audited as a
   preservation effort for design ideas and code from projects that have
   fallen by the wayside; see FEATURES_VS_MASTER.md for what was found
+- OpenSim-Grid-Interface (a PHP grid portal) — a secondary reference
+  for the Web UI where WhiteCore-Dev had no equivalent page
 
 Historical source provenance remains available in Git history.
 

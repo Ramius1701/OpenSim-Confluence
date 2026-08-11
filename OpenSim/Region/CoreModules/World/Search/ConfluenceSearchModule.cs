@@ -88,7 +88,7 @@ namespace OpenSim.Region.CoreModules.World.Search
             m_searchService = LoadService<ISearchService>(source, "SearchService");
             if (m_searchService == null)
             {
-                m_log.Error("[CASPERIA SEARCH]: Can't load search service");
+                m_log.Error("[CONFLUENCE SEARCH]: Can't load search service");
                 return;
             }
 
@@ -111,13 +111,13 @@ namespace OpenSim.Region.CoreModules.World.Search
                     }
                     catch (Exception e)
                     {
-                        m_log.Error("[CASPERIA SEARCH]: Failed to load user profiles service", e);
+                        m_log.Error("[CONFLUENCE SEARCH]: Failed to load user profiles service", e);
                     }
                 }
             }
 
             m_enabled = true;
-            m_log.Info("[CASPERIA SEARCH]: Native search module is active");
+            m_log.Info("[CONFLUENCE SEARCH]: Native search module is active");
         }
 
         private static T LoadService<T>(IConfigSource source, string sectionName) where T : class
@@ -125,14 +125,14 @@ namespace OpenSim.Region.CoreModules.World.Search
             IConfig serviceConfig = source.Configs[sectionName];
             if (serviceConfig == null)
             {
-                m_log.WarnFormat("[CASPERIA SEARCH]: {0} section missing from configuration - that category will return no results", sectionName);
+                m_log.WarnFormat("[CONFLUENCE SEARCH]: {0} section missing from configuration - that category will return no results", sectionName);
                 return null;
             }
 
             string serviceDll = serviceConfig.GetString("LocalServiceModule", string.Empty);
             if (serviceDll == string.Empty)
             {
-                m_log.WarnFormat("[CASPERIA SEARCH]: No LocalServiceModule named in section {0}", sectionName);
+                m_log.WarnFormat("[CONFLUENCE SEARCH]: No LocalServiceModule named in section {0}", sectionName);
                 return null;
             }
 
@@ -142,7 +142,7 @@ namespace OpenSim.Region.CoreModules.World.Search
             }
             catch (Exception e)
             {
-                m_log.Error("[CASPERIA SEARCH]: Failed to load " + sectionName, e);
+                m_log.Error("[CONFLUENCE SEARCH]: Failed to load " + sectionName, e);
                 return null;
             }
         }

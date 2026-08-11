@@ -1,7 +1,7 @@
 # TextBuild Chat Commands
 
 > **Status in this deployment**: `TextBuildModule.cs` exists in the codebase
-> but has **no `[TextBuild]` section** configured anywhere in Casperia-Dev
+> but has **no `[TextBuild]` section** configured anywhere in the test deployment
 > (or, as far as this audit covers, the live grid). With no config present,
 > `Enabled` defaults to `false` and the module never subscribes to chat —
 > it is currently **inactive**. This document describes what it does if/when

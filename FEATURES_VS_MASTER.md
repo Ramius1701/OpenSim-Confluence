@@ -5,11 +5,13 @@ Generated from `git log origin/master..merge-experiment --oneline --no-merges`
 with that command if this drifts — git is the source of truth, this is just
 a categorized read of it.
 
-**Naming note (2026-08-11):** renamed from "Casperia" (a local working-
-folder name, not an intentional project identity) to "OpenSim-Confluence" —
-see PROJECT_LOG.md's naming note for the full scope. Entries below predate
-the rename and still say "Casperia" throughout, as accurate historical
-record of what the project was called when they were written.
+**Naming note (2026-08-11):** this project's repo, code, and branding
+were renamed to "OpenSim-Confluence" — the original name was only ever
+a local working-folder name, never an intentional project identity, and
+is not used anywhere in this document by design. See PROJECT_LOG.md's
+naming note for the full scope. Entries below predate the rename and
+originally used the old name throughout — reworded here to avoid it,
+without changing what actually happened.
 
 ## Comparison against the OpenSim-Continuum README
 
@@ -20,7 +22,7 @@ the original `a8339fedb4` import was a single squashed commit) on
 `merge-experiment` vs. `gunthar/master` (274 commits ahead of us, where a
 lot of this originated).
 
-### Confirmed present in Casperia
+### Confirmed present in Confluence
 - Display Names (viewer CAPS, Hypergrid federation lookup, storage/account
   integration), TOS acceptance at login.
 - Abuse Reports (CAPS, connectors, Robust handlers, MySQL storage).
@@ -48,7 +50,7 @@ RegionWeb's in-world documentation page
 (`addon-modules/RegionWeb/RegionWebModule/RegionWebModule.cs`, 148
 documented functions) was copied from Gunthar's docs page, but the actual
 implementations behind a large chunk of it had never been merged into
-Casperia. Ported directly from `gunthar/master` (not cherry-picked —
+Confluence. Ported directly from `gunthar/master` (not cherry-picked —
 his commits were too entangled with his own Experience-Lite permission
 system, so these were hand-extracted and adapted to sit alongside our
 own Experience Tools instead):
@@ -89,13 +91,13 @@ to them yet — wiring that in is a separate task, and OpenSim-Continuum's
 own README lists that specific path as unsupported.
 
 ### Tranquillity feature-parity audit (2026-08-06)
-Full audit of `OpenSim-NGC/OpenSim-Tranquillity` against Casperia, same
-treatment as the Gunthar audit above. Result: Casperia is now ahead on
+Full audit of `OpenSim-NGC/OpenSim-Tranquillity` against Confluence, same
+treatment as the Gunthar audit above. Result: Confluence is now ahead on
 LSL/OSSL breadth and addon-module coverage (Tranquillity has neither
 RegionWeb nor most of the LSL compatibility work above). Tranquillity's
 one big divergence — a migration to Entity Framework Core / ASP.NET
 Core Identity for its data layer (`Source/...` tree, dozens of EF model
-classes with no basename match anywhere in Casperia) — is a wholesale
+classes with no basename match anywhere in Confluence) — is a wholesale
 architecture swap, not a cherry-pickable feature, and was not pursued.
 
 One genuinely portable feature was found and ported:
@@ -116,7 +118,7 @@ history at all with vanilla OpenSim (Aurora-Sim lineage, fully
 restructured internals — `WhiteCore/DataManager`, its own
 `WhiteCore/ScriptEngine`, `WhiteCore/BotManager`, etc.), so this was a
 feature-level comparison rather than a cherry-pick. Most of what it has
-either duplicates something Casperia already covers (BotManager vs.
+either duplicates something Confluence already covers (BotManager vs.
 core `osNpc*` + Gunthar's ported Pathfinding suite; `aaWindlight*` vs.
 the already-ported EEP functions) or is welded to its own DataManager/
 ScriptEngine closely enough that porting would mean a rewrite, not a
@@ -130,24 +132,23 @@ duplicate not worth porting. A much deeper look this session found
 that's wrong — RegionWeb is per-region only, while WhiteCore's
 `WebInterface` is a ~100-page grid-wide framework (region/user/estate/
 abuse-report/currency manager, user self-service, multi-language) with
-no Casperia equivalent at that scope. Its `Currency` module
+no Confluence equivalent at that scope. Its `Currency` module
 (`BaseCurrencyServiceModule`/`BaseCurrencyConnector`) was never
 code-level audited at all in this pass. Both are now the subject of an
 active architecture decision — see "Addon-modules → core
 consolidation" in PROJECT_LOG.md — to absorb currency/web-admin/search
-into Casperia's own core, following the precedent already set by
-Experiences/Abuse Reports/Display Names (see
-`[[casperia-project-mission]]` memory). Treat the "duplicate, skip it"
+into Confluence's own core, following the precedent already set by
+Experiences/Abuse Reports/Display Names. Treat the "duplicate, skip it"
 verdict on WebInterface as retracted.
 
-- **Land Auction** — a real bid-based parcel auction flow. Casperia had
+- **Land Auction** — a real bid-based parcel auction flow. Confluence had
   `AuctionID`/`SnapshotID` fields on `LandData` but no working mechanism
   behind them. Ported as a self-contained module with console-driven
   start/bid/end/show commands.
 - **Team Combat** — team membership, a shared combat respawn point,
   teleport-block while in combat, and configurable health regen for team
   members. Reduced in scope from WhiteCore's original specifically to
-  avoid colliding with two damage/health systems Casperia already has
+  avoid colliding with two damage/health systems Confluence already has
   (vanilla collision damage and Gunthar's Combat2 `llDamage` pipeline) —
   see PROJECT_LOG.md for the full design rationale. Team-kill damage
   mitigation was dropped from scope for the same reason.
@@ -169,11 +170,11 @@ either.
   automatic; group liability charges were NOT ported (even WhiteCore's
   own version has a never-finished TODO in that exact method); group
   dividends are ported as a real, working, callable method with no
-  automatic trigger yet, since Casperia's Groups subsystem has no
+  automatic trigger yet, since Confluence's Groups subsystem has no
   "list every group on the grid" capability at all - a separate gap,
   not a currency one.
 - **On-demand/soft-start regions — REVERSED, ported, but not
-  activatable.** Near-zero DataManager coupling as suspected. Casperia
+  activatable.** Near-zero DataManager coupling as suspected. Confluence
   already had the exact mechanism needed (`Scene.Active`, just named
   differently than WhiteCore's `ShouldRunHeartbeat`) so the port itself
   was trivial - but Mono.Addins does not discover the new module as a
@@ -182,7 +183,7 @@ either.
   bad deployment, wrong folder - see PROJECT_LOG.md for the full trail).
   Code is correct and shipped disabled pending a root cause.
 - **Grid-wide viewer ban — PARTIAL, and mostly already existed.**
-  Casperia's `LLLoginService` already had IP ban, MAC/ID0 ban, and
+  Confluence's `LLLoginService` already had IP ban, MAC/ID0 ban, and
   regex-based viewer allow/deny at login - none of that was visible
   from a WhiteCore-only comparison. Added the one real gap (IP *range*
   bans, live-verified against the real DB) and ported baked-texture
@@ -205,7 +206,7 @@ region-module discovery issue as on-demand regions, shipped disabled —
 **see the final correction below, this was wrong.** **OpenSimSearch
 addon replaced with a native land/places search service** (events/
 classifieds out of scope, no existing data model for those anywhere in
-Casperia) — unlike SimProtection (as first understood), this one *was*
+Confluence) — unlike SimProtection (as first understood), this one *was*
 discovered by Mono.Addins and its data layer is fully live-verified,
 including confirmed correct coexistence with the untouched OpenSimSearch
 addon on a second region. **Correction (2026-08-10, found while building
@@ -259,23 +260,23 @@ also shares no git history with vanilla OpenSim, but unlike WhiteCore-Dev
 its layout is normal vanilla-OpenSim-shaped, so this was a more direct
 file-level comparison. Its own README is a detailed beta-by-beta
 changelog naming several candidate features — of those, all but one
-turned out to already be in Casperia, in some cases more advanced than
+turned out to already be in Confluence, in some cases more advanced than
 Mobius's own version:
 
 - Hardware/IP ban service — `AccessControlService.cs` and friends are
-  byte-identical between Mobius and Casperia, already fully wired.
+  byte-identical between Mobius and Confluence, already fully wired.
 - `PARCEL_DETAILS_TELEPORT_ROUTING`/`OBJECT_RETURN`/`LANDING_POINT` —
   already present (different numeric IDs, same capability), plus more
   of the family than Mobius has.
 - `osTriggerSoundAtPos` — present and correctly wired.
-- Top Scripts floater stats — Casperia's version reports more
+- Top Scripts floater stats — Confluence's version reports more
   (native per-script memory tracking, more filter parsing).
-- Region restart notification — matches, plus Casperia has a
+- Region restart notification — matches, plus Confluence has a
   "restart immediately if region is empty" optimization Mobius lacks.
 
 One confirmed gap, since ported:
 - **In-world terrain console commands** (`terrain elevate/lower/fill`,
-  `terrain load texture <uuid>`) — Casperia already had all the
+  `terrain load texture <uuid>`) — Confluence already had all the
   supporting plumbing (`IRegionConsole`, the existing
   `InterfaceElevateTerrain`/etc. helpers); `TerrainModule.cs` just never
   registered commands against the in-world console. **Not yet tested
@@ -286,18 +287,18 @@ flag was a false alarm — `SimulatorFeaturesModule.cs` has a complete,
 working `LSLSyntax` CAP (`HandleSyntaxRequest`) that serves real syntax
 data read from `bin/ScriptSyntax.xml` (present, 345KB) at startup, with
 `[SimulatorFeatures] ScriptSyntax` defaulting to enabled. No gap here;
-Casperia already matches Mobius on this one.
+Confluence already matches Mobius on this one.
 
 ### opensim-lickx archival + audit (2026-08-07)
-`S:\Github\opensim-lickx` — the vanilla-0.9.3.1-based source of Casperia's
+`S:\Github\opensim-lickx` — the vanilla-0.9.3.1-based source of Confluence's
 own MoneyServer and OpenSimSearch modules — had its original GitHub repo
 deleted, so the local checkout was git-initialized as a pure archival
-safety net before auditing it (see PROJECT_LOG.md for detail). Casperia's
+safety net before auditing it (see PROJECT_LOG.md for detail). Confluence's
 currency stack confirmed a superset of everything in its bundled
 `opensim.currency-lickx` module. One genuinely missing function ported:
 `osGetAgentViewer` (viewer-client identification, `ThreatLevel.Moderate`).
 One flagged candidate — automatic MoneyServer schema creation — turned
-out to be a false positive; Casperia already has it in a sibling file
+out to be a false positive; Confluence already has it in a sibling file
 (`MySQLMoneyManager.cs`) the audit hadn't checked.
 
 ### Halcyon/InWorldz and Homeworldz — preservation audits (2026-08-07)
@@ -320,11 +321,11 @@ around them turned up real, substantial findings:
   the time of this audit, the mature version of what Tranquillity's own
   still-unfinished bot framework was building toward. **Superseded, not
   pursued:** Tranquillity's `develop` branch has since shipped its own
-  open, cleanly-licensed bot/NPC framework (module ported into Casperia
+  open, cleanly-licensed bot/NPC framework (module ported into Confluence
   — see the "Tranquillity `develop` mined past its first release"
   section below), making this Halcyon-sourced route unnecessary. Also:
   `llReturnObjectsByOwner`/`llReturnObjectsByID` (confirmed absent from
-  Casperia), ~80 `iw*` OSSL-equivalent functions (inventory/string/list/
+  Confluence), ~80 `iw*` OSSL-equivalent functions (inventory/string/list/
   agent/group utilities), Euler-rotation LSL functions, a sit-target
   compatibility fix for a long-standing OpenSim sit-position accuracy
   bug, and a small JWT auth module.
@@ -350,7 +351,7 @@ around them turned up real, substantial findings:
 scratch reimplementation in C++20 (region server) + Go (grid service),
 "informed by Halcyon, OpenSimulator, and the SL viewer protocol without
 preserving their internal service boundaries or storage formats" (its
-own words). Total language mismatch with Casperia's C# — no code is
+own words). Total language mismatch with Confluence's C# — no code is
 portable here — but its docs (dedicated `PHYSICS.md`/`PHYSICS_RESULTS.md`,
 `SCRIPTING.md`/`VM.md`, and ~30 Architecture Decision Records) are a
 genuine source of preservable design rationale, per explicit user
@@ -359,7 +360,7 @@ a consolation prize:
 - **Physics:** ran a formal Jolt-vs-PhysX-vs-Bullet-vs-Havok evaluation
   before picking Jolt (MIT license, lower integration cost, benchmarked
   lighter on CPU). Two concrete, engine-independent pitfalls worth
-  checking against Casperia's own `ubOdeMeshing` pipeline: cylinders
+  checking against Confluence's own `ubOdeMeshing` pipeline: cylinders
   must keep analytic roundness through the physics pipeline (a backend
   without one "must generate a convex cylinder... must not substitute a
   box," since flattened cylinders are commonly used as wheels), and
@@ -383,7 +384,7 @@ a consolation prize:
   (never claim a capability that doesn't actually work); live
   terrain-derived map tiles instead of scheduled snapshot jobs.
 
-Neither audit resulted in code changes to Casperia beyond the Bot/NPC
+Neither audit resulted in code changes to Confluence beyond the Bot/NPC
 framework being flagged as a real, deferred candidate — worth revisiting
 as its own project. Homeworldz is worth a second look in 6–12 months
 once its scripting/physics phases mature further.
@@ -437,14 +438,14 @@ in PROJECT_LOG.md):
   vector, removed entirely in .NET 9. Also added `moving_start`/
   `moving_end` script events for general physical movement.
 - **Bot/NPC management framework** — `IBotManager`/`BotManager`/
-  `BotPersistenceManager`, wrapping Casperia's existing `INPCModule`
+  `BotPersistenceManager`, wrapping Confluence's existing `INPCModule`
   with tag/profile/outfit/navigation tracking and script event
   delivery. Verified as an original implementation wrapping OpenSim's
   own NPC infrastructure, not a resurrection of InWorldz/Halcyon's
   closed-source engine (unlike Phlox below, despite sharing its
   "Legion Grid" origin). Module only — the ~50 `bot*` OSSL functions
   that would let scripts actually call it exist only in Phlox's script
-  engine; wiring those into Casperia's own OSSL API is deferred as its
+  engine; wiring those into Confluence's own OSSL API is deferred as its
   own effort.
 - **Experience Tools SL-conformance fixes** — a new estate-level
   Blocked Experiences tier (previously silently discarded from the
@@ -452,18 +453,18 @@ in PROJECT_LOG.md):
   dropped marketplace-link field, a security hole letting any admin
   (not just the owner) reassign an experience's group, NRE guards, and
   a KV quota raised to the real SL limit (128 MiB). Two related
-  Tranquillity fixes were deliberately NOT ported because Casperia's
+  Tranquillity fixes were deliberately NOT ported because Confluence's
   own independent implementation is already more capable (an
-  acquire-policy gate Casperia already exceeds with a real
+  acquire-policy gate Confluence already exceeds with a real
   fee-charging creation flow) or because the fix's premise doesn't
   hold here (an EEP-query no-op that's only correct if per-agent EEP
-  is a stub — Casperia's is a real, working implementation).
+  is a stub — Confluence's is a real, working implementation).
 
 ### Phlox script engine — audited, NOT ported: unresolved provenance (2026-08-08)
 Tranquillity's `develop` also added a ~98,000-line alternative LSL/SLua
 script engine ("Phlox") alongside XEngine/YEngine, with real (partial)
 SLua support and genuinely easy integration via the same
-`IScriptEngine`/`IScriptModule` seam Casperia already uses for
+`IScriptEngine`/`IScriptModule` seam Confluence already uses for
 XEngine/YEngine coexistence. A dedicated research pass — explicitly
 NOT a porting attempt — found this is *literally* InWorldz/Halcyon's
 own Phlox engine: file headers read "Adapted from InWorldz Halcyon
@@ -474,8 +475,8 @@ just a bare copyright line. This directly contradicts the Halcyon audit
 above, which confirmed `InWorldz.Phlox.Engine` shipped as a
 **closed-source binary DLL** even in InWorldz's own repository. Other
 findings, moot until provenance clears: OSSL support is only 2
-functions vs Casperia's 312 (unusable on real content without a large
-follow-on effort); Casperia's own independently-built Experience-Lite/
+functions vs Confluence's 312 (unusable on real content without a large
+follow-on effort); Confluence's own independently-built Experience-Lite/
 LinksetData interfaces are surprisingly close to what Phlox's adapters
 expect (less rework than feared if this ever proceeds). **Status:**
 neither shelved nor actioned — the user chose to raise the provenance
@@ -483,7 +484,7 @@ question with OpenSim-NGC before any engineering investment.
 
 ### Added by us beyond the README (recent work, this session)
 Not part of the original OpenSim-Continuum feature list — built directly
-in Casperia:
+in Confluence:
 - Full MoneyServer/Currency bugfix pass (IMoneyModule hijack, Nini
   case-sensitivity, CurrencyGroupOnly logic, console logging, ini gaps).
 - Weather module end-to-end polish (precipitation persistence, lightning
@@ -508,7 +509,7 @@ Full detail on all of the above is in [PROJECT_LOG.md](PROJECT_LOG.md).
 - **Batch 12 (2026-08-09):** native `CurrencyService` replaces the
   Gloebit/MoneyServer/Podex-shaped addon-module dependency as the
   default, following the "absorb proven features into core" mission
-  (see `[[casperia-project-mission]]` memory, WhiteCore-Dev precedent).
+  (WhiteCore-Dev precedent).
   Real ledger (`currency_balances`/`currency_transactions`/`currency_purchases`
   MySQL tables), quote/buy XML-RPC protocol matching real viewer
   behavior (`currency.php`, not the root-only default), live balance
@@ -548,7 +549,7 @@ live-verified:
   512MiB. Verified directly against Robust with a real 156MB, 1683-asset
   inventory: full backup then full restore, 0 failures.
 - **Abuse Reports (`/web/admin/abuse-reports`)**: surfaces the abuse
-  reports Casperia's existing native `IAbuseReportsService` already
+  reports Confluence's existing native `IAbuseReportsService` already
   captures via the viewer's report-abuse cap - no new service/DB work,
   just a read-only paginated list plus a detail view with screenshot
   support. Deliberately v1/read-only: `AbuseReportData.CheckFlags` looks
@@ -662,7 +663,7 @@ not yet done.
   name) confirmed to actually block.
 
 Full detail — including the Apache reverse-proxy setup for
-`holodeckgrid.ddns.net`, the currency.php routing bug precedent, the
+`the test deployment's public hostname`, the currency.php routing bug precedent, the
 HttpRequestParser fix, and every live-verification result (including
 why public-URL verification of very large uploads from the same
 machine/network as the grid is unreliable - likely router NAT

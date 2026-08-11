@@ -133,7 +133,7 @@ namespace OpenSim.Region.CoreModules.World.Currency
             m_currency = scene.RequestModuleInterface<ICurrencyService>();
             if (m_currency == null)
             {
-                m_log.Error("[CASPERIA CURRENCY]: No ICurrencyService available - is [Modules] CurrencyService "
+                m_log.Error("[CONFLUENCE CURRENCY]: No ICurrencyService available - is [Modules] CurrencyService "
                         + "and [CurrencyService] LocalServiceModule configured? This module cannot function "
                         + "without it.");
                 m_isSelectedEconomyModule = false;
