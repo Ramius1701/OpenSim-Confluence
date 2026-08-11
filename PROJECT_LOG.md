@@ -1479,6 +1479,36 @@ since it already has the clearest native reference
 (`BaseCurrencyServiceModule`) and the most redundant/competing vendored
 implementations (three separate currency addons for one job).
 
+**Dual-maintenance rationale confirmed (2026-08-11):** absorbing a
+subsystem into Confluence's own core does not mean retiring its
+addon-module equivalent. Going forward, the addon-modules are kept
+intentionally maintained for two distinct audiences: Confluence
+operators who prefer to swap the native default for their own external
+stack (the "keep it optional/pluggable" constraint already stated
+above), and, separately, third-party grids that stay on plain
+`opensim-master` and never adopt Confluence at all — for that audience,
+the addon-modules directory is the only place a maintained version of
+these features exists, which matters more now that at least one
+original upstream source (opensim-lickx) has already been deleted from
+GitHub outright. Practical consequence: once a subsystem has both a
+native core version and an addon-module version, the two are separate
+codebases from that point on, not shared code — a fix found in one
+(e.g. the native `CurrencyService`) does not automatically apply to the
+other (e.g. `RegionCurrency`/`MoneyServer`), so keeping both maintained
+means periodically porting fixes in both directions rather than
+treating the addon versions as frozen/legacy.
+
+**Concrete precedent for the "one or two addons, not the whole
+platform" audience (per the user, 2026-08-11, not independently
+verified against a repo in this session):** ManfredAabye separately
+distributed the `OpenSimWeather` port as its own standalone addon for
+other `opensim-master` grids, rather than requiring the whole Confluence
+platform to get the weather feature. This is the model the
+dual-maintenance rationale above is built on: Confluence's pitch is the
+complete, batteries-included platform, but nothing stops a single
+addon-module from having a life of its own outside it, the same way
+this one already does.
+
 ## Batch 13: per-region Hypergrid open/close toggle (2026-08-09)
 
 First admin-only page. Chose this specifically because it's the item
