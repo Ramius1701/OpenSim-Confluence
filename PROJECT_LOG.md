@@ -4559,3 +4559,47 @@ constraint noted for group-memberships-on-profile in the previous
 batch), so the populated list/toggle-save/delete paths are code-
 reviewed and build clean but not independently exercised against real
 data.
+
+### First real commit since the fork began + upstream merge (2026-08-11)
+
+Nothing had been committed to git since `dfff44f059` ("Update tracking
+docs for Batches 9-11 and the Phlox provenance finding") despite
+everything documented above having actually been built - 168 files of
+accumulated, uncommitted work (Currency/Search/Events/News/
+GridSettings/StaticPage/SupportTicket services, the full Web/Admin UI,
+moderation, Weather, TextBuild, the project rename). Reviewed the full
+diff for secrets before staging (none found - the handful of
+`password`/`secret` hits were all variable names, header/form field
+reads, or blank/placeholder template values, not real credentials) and
+deliberately excluded pure build-artifact noise that had snuck into
+the working tree: `bin/*.runtimeconfig.json`, `bin/MAP-*.png` (rendered
+map tiles), `bin/stipend_lastcycle.txt` (runtime state), and a stray
+0-byte `findstr` file. Committed as `23d881534c`.
+
+Then fetched and merged `origin/master` (real `opensim/opensim`
+upstream, 16 new commits since the last sync) into `merge-experiment`.
+Two real conflicts, both the same shape - upstream added a
+`MapTilesDirectory` config option (save map tiles to a configurable
+folder instead of always the working directory) to both
+`Warp3DImageModule.cs` and `WorldMapModule.cs`, landing on lines we'd
+also touched. Resolved by keeping both sides' work rather than picking
+one: our existing `try/finally` exception-safety around `m_primMesher`
+in `Warp3DImageModule.CreateMapTile` was preserved *and* the new
+`MapTilesDirectory` path-combining logic was added inside it (upstream
+had dropped the try/finally, presumably an unrelated stylistic choice
+made incidentally rather than something to reproduce); `WorldMapModule.cs`
+just needed both the field declaration and its config-read block kept
+side by side with our own pre-existing `m_storeLegacyMaptileAssets`
+field, since they're unrelated, independent settings. `UuidGatherer.cs`,
+`XMRInstRun.cs`, and `bin/OpenSimDefaults.ini` auto-merged cleanly with
+no conflict. Full solution rebuild after resolving confirmed 0 errors
+(one transient `NETSDK1127` targeting-pack error on the first attempt
+turned out to be stale restore state, not a real problem - a plain
+`dotnet build` without `--no-restore` fixed it). Merge committed as
+`eec4caf3e3`.
+
+The user added a new remote for the repo's first real GitHub home,
+`https://github.com/Ramius1701/OpenSim-Confluence` - `origin` still
+points at the real `opensim/opensim` upstream for pulling future
+updates, matching a fork's usual upstream/origin split just with the
+remote names flipped from convention. Not yet pushed as of this entry.
