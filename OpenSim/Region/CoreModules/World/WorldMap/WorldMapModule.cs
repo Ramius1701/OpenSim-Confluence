@@ -27,7 +27,6 @@
 
 using System;
 using System.Collections;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -101,6 +100,7 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
         protected bool m_exportPrintRegionName = false; // prints the region name exported map
         protected bool m_localV1MapAssets = false; // keep V1 map assets only on  local cache
         protected bool m_storeLegacyMaptileAssets = false;
+        protected string m_mapTilesDirectory = string.Empty; // directory to load/save map tile images
 
         private readonly object m_sceneLock = new object();
         public WorldMapModule()
@@ -161,6 +161,20 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                 Util.GetConfigVarFromSections<bool>(config, "LocalV1MapAssets", configSections, m_localV1MapAssets);
             m_storeLegacyMaptileAssets =
                 Util.GetConfigVarFromSections<bool>(config, "StoreLegacyMaptileAssets", configSections, m_storeLegacyMaptileAssets);
+            m_mapTilesDirectory =
+                Util.GetConfigVarFromSections<string>(config, "MapTilesDirectory", configSections, m_mapTilesDirectory);
+            if(!string.IsNullOrEmpty(m_mapTilesDirectory))
+            {
+                try
+                {
+                    Directory.CreateDirectory(m_mapTilesDirectory);
+                }
+                catch(Exception e)
+                {
+                    m_log.Error($"[WORLD MAP]: failed to create folder {m_mapTilesDirectory} for local map tiles {e.Message}");
+                    m_mapTilesDirectory = null;
+                }
+            }
         }
 
         public virtual void AddRegion(Scene scene)
@@ -175,7 +189,7 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                 m_regionGlobalX = scene.RegionInfo.WorldLocX;
                 m_regionGlobalY = scene.RegionInfo.WorldLocY;
                 m_regionSizeX = scene.RegionInfo.RegionSizeX;
-                m_regionSizeY = scene.RegionInfo.RegionSizeX;
+                m_regionSizeY = scene.RegionInfo.RegionSizeY;
                 m_regionName = scene.RegionInfo.RegionName;
 
                 m_scene.RegisterModuleInterface<IWorldMapModule>(this);
@@ -1348,10 +1362,12 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
             startX--;
             startY--;
 
-            bool doneLocal = false;
+            bool doneLocal;
             string filename = "MAP-" + m_scene.RegionInfo.RegionID.ToString() + ".png";
             try
             {
+                if (!string.IsNullOrEmpty(m_mapTilesDirectory))
+                    filename = Path.Combine(m_mapTilesDirectory, filename);
                 using(Image localMap = Bitmap.FromFile(filename))
                 {
                     int x = regionX - startX;
@@ -1370,7 +1386,11 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                 }
                 doneLocal = true;
             }
-            catch {}
+            catch(Exception ex)
+            {
+                m_log.Error($"[WORLD MAP]: failed Export map file {ex.Message}");
+                return;
+            }
 
             if(regions.Count > 0)
             {
