@@ -77,6 +77,46 @@ namespace OpenSim.Services.AccessControlService
             MainConsole.Instance.Commands.AddCommand("Access", false, "unban ip",
                     "unban ip <ip_address>",
                     "Removes the supplied IP Address from the banned IPs list.", HandleUnBanIPCommand);
+
+            MainConsole.Instance.Commands.AddCommand("Access", false, "ban iprange",
+                    "ban iprange <start_ip> <end_ip>",
+                    "Bans every IP address in the given range (inclusive).", HandleBanIPRangeCommand);
+
+            MainConsole.Instance.Commands.AddCommand("Access", false, "unban iprange",
+                    "unban iprange <start_ip> <end_ip>",
+                    "Removes the given IP range from the banned ranges list.", HandleUnBanIPRangeCommand);
+        }
+
+        private void HandleBanIPRangeCommand(string module, string[] cmd)
+        {
+            if (cmd.Length == 4)
+            {
+                string startIp = cmd[2];
+                string endIp = cmd[3];
+                if (ValidateIPv4(startIp) && ValidateIPv4(endIp))
+                {
+                    m_log.InfoFormat("Banning IP range {0} - {1}", startIp, endIp);
+                    m_Database.BanIPRange(startIp, endIp);
+                }
+                else m_log.Info("Invalid IP Address in range!");
+            }
+            else m_log.Info("[ACCESS] Usage: ban iprange <start_ip> <end_ip>");
+        }
+
+        private void HandleUnBanIPRangeCommand(string module, string[] cmd)
+        {
+            if (cmd.Length == 4)
+            {
+                string startIp = cmd[2];
+                string endIp = cmd[3];
+                if (ValidateIPv4(startIp) && ValidateIPv4(endIp))
+                {
+                    m_log.InfoFormat("Unbanning IP range {0} - {1}", startIp, endIp);
+                    m_Database.UnbanIPRange(startIp, endIp);
+                }
+                else m_log.Info("Invalid IP Address in range!");
+            }
+            else m_log.Info("[ACCESS] Usage: unban iprange <start_ip> <end_ip>");
         }
 
         private void HandleBanIPCommand(string module, string[] cmd)

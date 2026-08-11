@@ -1,0 +1,10 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS grid_settings (
+	SettingKey varchar(64) NOT NULL PRIMARY KEY,
+	SettingValue text NOT NULL
+);
+
+COMMIT;

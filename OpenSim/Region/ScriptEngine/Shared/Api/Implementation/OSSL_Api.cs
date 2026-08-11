@@ -3395,6 +3395,103 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             }
         }
 
+        // Ported from WhiteCore-Dev's Bot.FollowAvatar/BotManager tag
+        // management (see PROJECT_LOG.md Batch 14) - osNpcFollow is
+        // continuous, unlike osNpcMoveToTarget's one-shot move.
+        public void osNpcFollow(LSL_Key npc, LSL_Key target, LSL_Float startDistance, LSL_Float stopDistance)
+        {
+            CheckThreatLevel(ThreatLevel.High, "osNpcFollow");
+
+            INPCModule module = World.RequestModuleInterface<INPCModule>();
+            if (module is not null)
+            {
+                if (!UUID.TryParse(npc.m_string, out UUID npcId))
+                    return;
+
+                if (!module.CheckPermissions(npcId, m_host.OwnerID))
+                    return;
+
+                if (!UUID.TryParse(target.m_string, out UUID targetId))
+                    return;
+
+                module.Follow(npcId, World, targetId, (float)startDistance, (float)stopDistance, Vector3.Zero);
+            }
+        }
+
+        public void osNpcStopFollow(LSL_Key npc)
+        {
+            CheckThreatLevel(ThreatLevel.High, "osNpcStopFollow");
+
+            INPCModule module = World.RequestModuleInterface<INPCModule>();
+            if (module is not null)
+            {
+                if (!UUID.TryParse(npc.m_string, out UUID npcId))
+                    return;
+
+                if (!module.CheckPermissions(npcId, m_host.OwnerID))
+                    return;
+
+                module.StopFollow(npcId, World);
+            }
+        }
+
+        public void osNpcAddTag(LSL_Key npc, string tag)
+        {
+            CheckThreatLevel(ThreatLevel.High, "osNpcAddTag");
+
+            INPCModule module = World.RequestModuleInterface<INPCModule>();
+            if (module is not null)
+            {
+                if (!UUID.TryParse(npc.m_string, out UUID npcId))
+                    return;
+
+                if (!module.CheckPermissions(npcId, m_host.OwnerID))
+                    return;
+
+                module.AddNPCTag(npcId, tag);
+            }
+        }
+
+        // Results are filtered to NPCs the calling script's owner actually has
+        // permission over, same as every other osNpc* call - a tag is a
+        // convenience for managing a group of NPCs you already own, not a way
+        // to discover or affect NPCs owned by others.
+        public LSL_List osNpcGetNPCsWithTag(string tag)
+        {
+            CheckThreatLevel(ThreatLevel.High, "osNpcGetNPCsWithTag");
+
+            LSL_List result = new LSL_List();
+            INPCModule module = World.RequestModuleInterface<INPCModule>();
+            if (module is not null)
+            {
+                foreach (UUID id in module.GetNPCsWithTag(World, tag))
+                {
+                    if (module.CheckPermissions(id, m_host.OwnerID))
+                        result.Add(new LSL_Key(id.ToString()));
+                }
+            }
+
+            return result;
+        }
+
+        public LSL_Integer osNpcDeleteNPCsWithTag(string tag)
+        {
+            CheckThreatLevel(ThreatLevel.High, "osNpcDeleteNPCsWithTag");
+
+            int deleted = 0;
+            INPCModule module = World.RequestModuleInterface<INPCModule>();
+            if (module is not null)
+            {
+                foreach (UUID id in module.GetNPCsWithTag(World, tag))
+                {
+                    if (module.CheckPermissions(id, m_host.OwnerID) && module.DeleteNPC(id, World))
+                        deleted++;
+                }
+            }
+
+            return new LSL_Integer(deleted);
+        }
+
         public void osNpcSetProfileAbout(LSL_Key npc, string about)
         {
             CheckThreatLevel(ThreatLevel.Low, "osNpcSetProfileAbout");

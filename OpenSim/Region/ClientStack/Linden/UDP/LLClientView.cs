@@ -53,7 +53,6 @@ using AssetLandmark = OpenSim.Framework.AssetLandmark;
 using Caps = OpenSim.Framework.Capabilities.Caps;
 using PermissionMask = OpenSim.Framework.PermissionMask;
 using RegionFlags = OpenMetaverse.RegionFlags;
-using System.Linq;
 
 
 namespace OpenSim.Region.ClientStack.LindenUDP
@@ -6484,7 +6483,7 @@ namespace OpenSim.Region.ClientStack.LindenUDP
             } while (TotalnumberIDs > 0);
         }
 
-        public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, uint estateID)
+        public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, UUID[] blocked, uint estateID)
         {
             EstateOwnerMessagePacket packet = new EstateOwnerMessagePacket();
             packet.AgentData.TransactionID = UUID.Random();
@@ -6493,7 +6492,7 @@ namespace OpenSim.Region.ClientStack.LindenUDP
             packet.MethodData.Invoice = invoice;
             packet.MethodData.Method = Utils.StringToBytes("setexperience");
 
-            int numberIDs = allowed.Length + key.Length;
+            int numberIDs = allowed.Length + key.Length + blocked.Length;
 
             EstateOwnerMessagePacket.ParamListBlock[] returnblock = new EstateOwnerMessagePacket.ParamListBlock[5 + numberIDs];
 
@@ -6504,12 +6503,22 @@ namespace OpenSim.Region.ClientStack.LindenUDP
 
             returnblock[0].Parameter = Utils.StringToBytes(estateID.ToString());
 
+            // Real protocol layout (confirmed against the viewer's own parser,
+            // LLDispatchSetEstateExperience::operator() in llfloaterregioninfo.cpp):
+            // strings[1]=send_to_agent_only strings[2]=num_blocked strings[3]=num_trusted(key)
+            // strings[4]=num_allowed, then UUID payload ordered blocked, trusted(key), allowed.
             returnblock[1].Parameter = Utils.StringToBytes("0");
-            returnblock[2].Parameter = Utils.StringToBytes("0");
+            returnblock[2].Parameter = Utils.StringToBytes(blocked.Length.ToString());
             returnblock[3].Parameter = Utils.StringToBytes(key.Length.ToString());
             returnblock[4].Parameter = Utils.StringToBytes(allowed.Length.ToString());
 
             int j = 5;
+
+            for (int i = 0; i < blocked.Length; i++)
+            {
+                returnblock[j].Parameter = blocked[i].GetBytes();
+                j++;
+            }
 
             for (int i = 0; i < key.Length; i++)
             {

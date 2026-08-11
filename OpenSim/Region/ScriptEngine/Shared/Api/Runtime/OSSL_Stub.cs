@@ -830,6 +830,36 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osNpcFollow(LSL_Key npc, LSL_Key target, LSL_Float startDistance, LSL_Float stopDistance)
+        {
+            m_OSSL_Functions.osNpcFollow(npc, target, startDistance, stopDistance);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osNpcStopFollow(LSL_Key npc)
+        {
+            m_OSSL_Functions.osNpcStopFollow(npc);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void osNpcAddTag(LSL_Key npc, string tag)
+        {
+            m_OSSL_Functions.osNpcAddTag(npc, tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List osNpcGetNPCsWithTag(string tag)
+        {
+            return m_OSSL_Functions.osNpcGetNPCsWithTag(tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer osNpcDeleteNPCsWithTag(string tag)
+        {
+            return m_OSSL_Functions.osNpcDeleteNPCsWithTag(tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void osNpcSetProfileAbout(LSL_Key npc, string about)
         {
             m_OSSL_Functions.osNpcSetProfileAbout(npc, about);

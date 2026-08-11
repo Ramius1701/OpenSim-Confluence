@@ -131,5 +131,14 @@ namespace OpenSim.Services.Interfaces
 
         GridUserInfo GetGridUserInfo(string userID);
         GridUserInfo[] GetGridUserInfo(string[] userID);
+
+        // Grid-wide count of users currently marked online (Online==true and
+        // logged in within the last 5 days, same accuracy caveat as the
+        // "show grid users online" console command this mirrors - a region
+        // that crashes without cleanly logging a user out can leave them
+        // shown as online). Added for the WebInterface grid statistics
+        // dashboard, which had no existing way to get this number without
+        // reaching past the service interface into console-command code.
+        int GetOnlineUserCount();
     }
 }

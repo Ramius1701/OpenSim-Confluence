@@ -1048,6 +1048,28 @@ namespace OpenSim.Region.CoreModules.World.Land
             }
             else
                 remote_client.SendLandAccessListData(banlist, (uint)AccessList.Ban, LandData.LocalID);
+
+            // Experience allow/block lists (AL_ALLOW_EXPERIENCE=8, AL_BLOCK_EXPERIENCE=0x10 in the
+            // real viewer protocol - not present in the vendored AccessList enum, so raw values are
+            // used consistently with UpdateAccessList/ClientOnParcelAccessListUpdateRequest above).
+            // These were being bucketed above but never actually sent back to the client, so entries
+            // added via "About Land" -> Experiences persisted correctly server-side but always
+            // appeared empty on next fetch (relog, reopening the panel, etc).
+            if (allowed.Count == 0)
+            {
+                remote_client.SendLandAccessListData(new List<LandAccessEntry>() { new LandAccessEntry() },
+                        8u, LandData.LocalID);
+            }
+            else
+                remote_client.SendLandAccessListData(allowed, 8u, LandData.LocalID);
+
+            if (blocked.Count == 0)
+            {
+                remote_client.SendLandAccessListData(new List<LandAccessEntry>() { new LandAccessEntry() },
+                        0x10u, LandData.LocalID);
+            }
+            else
+                remote_client.SendLandAccessListData(blocked, 0x10u, LandData.LocalID);
         }
 
         public void UpdateAccessList(uint flags, UUID transactionID, List<LandAccessEntry> entries)

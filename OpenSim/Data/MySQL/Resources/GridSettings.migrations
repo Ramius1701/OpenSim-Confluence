@@ -1,0 +1,11 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `grid_settings` (
+	`SettingKey` VARCHAR(64) NOT NULL,
+	`SettingValue` TEXT NOT NULL,
+	PRIMARY KEY (`SettingKey`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;

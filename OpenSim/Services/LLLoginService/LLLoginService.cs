@@ -344,7 +344,8 @@ namespace OpenSim.Services.LLLoginService
         {
             if (m_AccessControlService != null)
             {
-                if (m_AccessControlService.IsIPBanned(clientIP.Address.ToString()))
+                if (m_AccessControlService.IsIPBanned(clientIP.Address.ToString())
+                        || m_AccessControlService.IsIPRangeBanned(clientIP.Address.ToString()))
                 {
                     m_log.InfoFormat("[LLOGIN SERVICE]: Login failed, reason: client with banned ip {0}", clientIP.ToString());
                     return LLFailedLoginResponse.BannedHardwareOrIP;

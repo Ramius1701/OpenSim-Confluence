@@ -1412,7 +1412,7 @@ namespace OpenSim.Region.CoreModules.World.Estate
                     {
                         IClientAPI cli = kvp.Key;
                         UUID invoive = kvp.Value;
-                        cli.SendEstateExperiences(invoive, es.AllowedExperiences, es.KeyExperiences, es.EstateID);
+                        cli.SendEstateExperiences(invoive, es.AllowedExperiences, es.KeyExperiences, es.BlockedExperiences, es.EstateID);
                     }
 
                     sendExperienceLists.Clear();

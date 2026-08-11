@@ -1,0 +1,13 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS static_pages (
+	ID varchar(36) NOT NULL PRIMARY KEY,
+	Slug varchar(64) NOT NULL UNIQUE,
+	Title varchar(255) NOT NULL,
+	Body text NOT NULL,
+	Updated int NOT NULL
+);
+
+COMMIT;

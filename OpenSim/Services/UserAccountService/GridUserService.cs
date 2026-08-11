@@ -99,13 +99,11 @@ namespace OpenSim.Services.UserAccountService
 
         protected void HandleShowGridUsersOnline(string module, string[] cmdparams)
         {
-//            if (cmdparams.Length != 4)
-//            {
-//                MainConsole.Instance.Output("Usage: show grid users online");
-//                return;
-//            }
+            MainConsole.Instance.Output("Users online: {0}", GetOnlineUserCount());
+        }
 
-//            int onlineCount;
+        public int GetOnlineUserCount()
+        {
             int onlineRecentlyCount = 0;
 
             DateTime now = DateTime.UtcNow;
@@ -114,8 +112,6 @@ namespace OpenSim.Services.UserAccountService
             {
                 if (bool.Parse(gu.Data["Online"]))
                 {
-//                    onlineCount++;
-
                     int unixLoginTime = int.Parse(gu.Data["Login"]);
 
                     if ((now - Util.ToDateTime(unixLoginTime)).Days < 5)
@@ -123,7 +119,7 @@ namespace OpenSim.Services.UserAccountService
                 }
             }
 
-            MainConsole.Instance.Output("Users online: {0}", onlineRecentlyCount);
+            return onlineRecentlyCount;
         }
 
         private static ExpiringCacheOS<string, GridUserData> cache = new ExpiringCacheOS<string, GridUserData>(100000);

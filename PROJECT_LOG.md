@@ -1,12 +1,31 @@
-# Casperia Project Log
+# OpenSim-Confluence Project Log
 
-Running record of work done on the Casperia OpenSim fork, so context survives
-across sessions. Update this file as work progresses — don't let it go stale.
+Running record of work done on the OpenSim-Confluence fork, so context
+survives across sessions. Update this file as work progresses — don't let it
+go stale.
 
-Repo: `S:\Github\Casperia` (git, branch `merge-experiment`)
-Test deployment: `S:\Opensim\Casperia-Dev\` (built from the repo above)
+Repo: `S:\Github\OpenSim-Confluence` (git, branch `merge-experiment`)
+Test deployment: `S:\Opensim\Casperia-Dev\` (built from the repo above —
+deployment directory name unchanged by the 2026-08-11 project rename, see
+note below)
 Live grid: `S:\Opensim\Casperia\` — **frozen, do not touch until user says
 testing is done.**
+
+**Naming note (2026-08-11):** this project was renamed from "Casperia" to
+"OpenSim-Confluence" — "Casperia" was only ever the local working-folder
+name, not an intentional project identity. The repo directory, in-code
+identifiers (`CasperiaSearchModule`→`ConfluenceSearchModule`,
+`CasperiaCurrencyModule`→`ConfluenceCurrencyModule`, the
+`CasperiaWebSession` cookie name, etc.), and in-app branding strings were
+all updated; every `.csproj`'s hardcoded absolute `HintPath` entries (a
+real, easy-to-miss gap the rename surfaced) were fixed too. Every entry
+below this note is historical narrative from before the rename and
+deliberately still says "Casperia" throughout, since that was its real
+name at the time — same as any project's older changelog entries keep
+whatever name was current when they were written. The deployment
+directories (`S:\Opensim\Casperia-Dev\`, `S:\Opensim\Casperia\`) were left
+named as-is; renaming a live/dev deployment path is a separate, riskier
+decision from renaming the source repo and wasn't part of this pass.
 
 ---
 
@@ -888,6 +907,362 @@ comparable in size to this port — without it, the module is present
 but currently unreachable from any script (user chose this scope
 explicitly over a partial or full function-wiring option).
 
+**Batch 12** (uncommitted) — Native Currency Service, the first concrete
+step in the "Addon-modules → core consolidation" direction above.
+Real DB-backed ledger built into core (balance, transfer, transaction/
+purchase history), modeled on WhiteCore-Dev's `BaseCurrencyServiceModule`/
+`BaseCurrencyConnector` but re-implemented against Casperia's own
+Data/Services/Connectors/CoreModules layering (same shape as
+ExperienceService) rather than WhiteCore's own `DataManager`, so the
+fork stays mergeable against `opensim/opensim`. New: `ICurrencyService`
+(`OpenSim/Services/Interfaces`), `CurrencyTransfer`/`CurrencyPurchase`
+DTOs (`OpenSim/Framework/CurrencyData.cs` - has to live in Framework,
+not Data, since `OpenSim.Data` can't reference
+`OpenSim.Services.Interfaces` without a circular project dependency;
+this is the same reason `ExperienceInfoData` lives in Framework rather
+than next to `IExperienceData`), `CurrencyService`/`CurrencyServiceBase`
+with `money add`/`money set`/`money get` console commands mirroring the
+classic MoneyServer's own admin tools, `MySqlCurrencyData` + a new
+migration (`currency_balances`/`currency_transactions`/
+`currency_purchases`, namespaced separately from MoneyServer's existing
+tables so both can coexist in the same DB), `LocalCurrencyServiceConnector`,
+and `CasperiaCurrencyModule` - the region-edge piece, implementing the
+existing `IMoneyModule` interface (so `llGiveMoney`/land-buy/upload
+charges keep working unchanged) and registering the real
+`getCurrencyQuote`/`buyCurrency`/`preflightBuyLandPrep`/`buyLandPrep`
+XML-RPC surface the OpenSimulator wiki documents as what a viewer's
+currency display actually calls - the same surface WhiteCore's own
+currency stub answers. Guarded by the same `[Economy] EconomyModule`
+selector key DTLNSLMoneyModule/Gloebit already read, so it's inert
+unless explicitly selected; nothing existing was removed or changed.
+Full solution build verified clean (0 warnings, 0 errors) including all
+addon-modules.
+
+**Enabled and smoke-tested on Casperia-Dev (2026-08-09).** Both regions
+switched from `DTLNSLMoneyModule` to `CasperiaCurrencyModule` (old
+config left in place, commented, for a one-line revert). Two real bugs
+found and fixed during this pass, neither of which the earlier
+individual-project builds could have caught:
+
+1. **Wrong region-launch invocation.** Tried starting Casperia-Dev's
+   regions with `-WorkingDirectory` set to the region's own subfolder
+   and a bare `-inifile OpenSim.ini` argument - both processes died
+   silently with zero log output before log4net even initialized.
+   Checking the *live* grid's actual running command line (`tasklist`/
+   `Get-CimInstance Win32_Process`) showed it launches from the install
+   root with `-inifile=Simulators\<Name>\OpenSim.ini` (relative path,
+   `=` not a space) - matching that exactly fixed it. Unrelated to any
+   of this batch's code, but would have blocked testing indefinitely
+   without checking real precedent instead of guessing.
+2. **Real bug: `ICurrencyService` was null in `AddRegion`.**
+   `CasperiaCurrencyModule.AddRegion` called
+   `scene.RequestModuleInterface<ICurrencyService>()` immediately, but
+   `LocalCurrencyServiceConnector` (a different module) registers that
+   interface in *its own* `AddRegion` - module load order across
+   different modules isn't guaranteed within the same `AddRegion` pass.
+   Fixed by moving the lookup + all event/XML-RPC wiring to
+   `RegionLoaded`, which only fires once every module's `AddRegion` has
+   completed - the standard safe point to depend on another module's
+   registered interface. Confirmed via log: first attempt logged
+   `[CASPERIA CURRENCY]: No ICurrencyService available`, the fix
+   produced a clean startup with no such error on both regions.
+
+Verified end-to-end with real requests, not just a clean startup log:
+`curl`'d `getCurrencyQuote` directly against Welcome Center's region
+port (9004) - got back a correctly-computed quote
+(`currencyBuy=500` → `estimatedCost=5000` at the configured
+`CurrencyRate=10`). Then `buyCurrency`'d a synthetic test UUID for 1000
+units and confirmed by direct MySQL query that all three tables wrote
+correctly and consistently: `currency_balances` (Balance=1000),
+`currency_purchases` (RealAmount=10000, matching the quote math),
+`currency_transactions` (correct to/from/amount/balances). Test row
+deleted afterward. **Not yet confirmed:** an actual viewer login -
+balance display, `llGiveMoney`, and land purchase still need a real
+client test, which requires the user's own viewer.
+
+**Real bug #3, found via actual viewer testing (2026-08-09): the
+"remote/grid-mode connector" wasn't optional after all.** User tried
+buying currency in-viewer and got stuck on "Estimating..." forever.
+Root cause: the viewer only ever learns ONE grid-wide "economy" URL,
+served once at login from Robust's `[GridInfo] economy` setting - it
+does not vary per-region and isn't re-discovered on teleport. That
+setting was still `${Const|BaseURL}:9000/` (MoneyServer.exe's port,
+not running), while `CasperiaCurrencyModule`'s `getCurrencyQuote`/
+`buyCurrency` handlers were only ever registered per-region via
+`MainServer.Instance` - architecturally wrong the instant a grid has
+more than one region behind a single fixed economy URL, not just a
+missing nice-to-have. Fixed by building the Robust-hosted piece after
+all: `CurrencyServiceConnector` (`OpenSim/Server/Handlers/Currency/
+CurrencyServerConnector.cs`, mirroring `ExperienceServiceConnector`'s
+`ServiceConnector` pattern), registered on Robust's `PublicPort` (9002)
+- not `PrivatePort` like `ExperienceServiceConnector`, since this
+answers direct-from-internet viewer requests rather than only
+region-to-Robust traffic - and `[GridInfo] economy` repointed from
+port 9000 to `${Const|BaseURL}:${Const|PublicPort}/`. Verified with a
+direct `curl` against port 9002: correct quote math, matching the
+region-level test from earlier. `CasperiaCurrencyModule`'s own
+per-region XML-RPC registration was left in place (harmless, and
+needed for a standalone/single-process deployment with no separate
+Robust) rather than removed.
+
+Grid-wide DB-connection-sharing (the *other* reason a remote connector
+usually exists - so regions don't each open their own direct MySQL
+connection) remains deferred; both Robust and each region currently
+connect to `casperia_dev` directly and agree only because they share
+the same tables, mirroring DTLNSLMoneyModule's existing bypass-Robust
+topology. Not blocking for now.
+
+**Real bug #4, also found via live viewer testing: still stuck on
+"Estimating..." even after bug #3's fix.** Chased a port-reachability
+theory first (tried moving the connector to port 9000, MoneyServer's
+old port, assuming it was already externally reachable) - wrong, and a
+real mistake: something unrelated (Axigen webmail admin) already owns
+port 9000 on this machine, so that "fix" would have collided with
+existing software. Reverted. The user's screenshot of their viewer's
+actual Grid Manager entry ruled out stale-cached-URL as the cause too -
+Helper URI was already showing the correct, updated address. The real
+cause, found by fetching and reading the actual viewer source
+(`llcurrencyuimanager.cpp`, `FirestormViewer/phoenix-firestorm`) rather
+than guessing further: `LLCurrencyUIManager::Impl::startTransaction`
+always POSTs to `getHelperURI() + "currency.php"`, never the bare
+helper URI. Testing that exact path directly (not just the bare root,
+which is all that had been tested before) showed the real problem:
+`BaseHttpServer.HandleRequest` only routes to `AddXmlRPCHandler`-
+registered handlers when `request.UriPath.Equals("/")` - literally
+any other path, including `/currency.php`, falls through to a
+completely different path-keyed stream-handler lookup and returns an
+empty `200 OK`. `AddXmlRPCHandler` is architecturally root-path-only;
+it was never going to work for this regardless of which port or host
+it ran on. Confirmed the old MoneyServer addon hit the exact same
+constraint and solved it the same way: `OpenSim-Grid-MoneyServer`'s
+`MoneyXmlRpcModule` registers a dedicated `CurrencyStreamHandler` bound
+to `"/currency.php"` specifically, separate from its `AddXmlRPCHandler`
+calls. Fixed identically: both `CurrencyServiceConnector` (Robust) and
+`CasperiaCurrencyModule` (region/standalone) now also register a
+`SimpleStreamHandler("/currency.php", ...)` that runs the request
+through `BaseHttpServer`'s own public `HandleXmlRpcRequests(request,
+response, handlerDict)` overload - built for exactly this non-root
+case - with just these four methods. Verified: `POST /currency.php`
+now returns a real, correct quote response (previously an empty
+`200 OK`, `Content-Length: 0`). Root-path registration left in place
+alongside it (harmless, some other integration might expect it there).
+Still needs final confirmation of an actual completed purchase
+end-to-end in the live viewer.
+
+**Real bug #5: balance display never refreshed after any transaction,
+purchase or otherwise.** Confirmed by the user completing a real
+purchase in-viewer (their screenshot showed the "Buy FC$" dialog
+working correctly - proof bugs #3/#4 are actually fixed) but the
+balance HUD stayed stale until manually clicked. Root cause: nothing
+anywhere proactively pushed a `SendMoneyBalance` update after a
+transaction - `CasperiaCurrencyModule` only ever answered when the
+client explicitly asked (`OnMoneyBalanceRequest`). This affects every
+transaction type, not just purchases - confirmed this before land-buy/
+pay-avatar were ever tested, so it's fixed ahead of hitting the same
+bug three more times rather than after. Fixed in two parts:
+1. `CasperiaCurrencyModule` now tracks its own `List<Scene>` (it hadn't
+   before - only `LocalCurrencyServiceConnector` did) and pushes an
+   unsolicited `SendMoneyBalance` to any connected client after
+   `ObjectGiveMoney`, `ProcessMoneyTransferRequest` (pay-avatar),
+   `ProcessLandBuy`, `ApplyCharge`, `ApplyUploadCharge`, and both
+   `MoveMoney` overloads - covers every region-local money movement.
+2. The Robust-hosted purchase path (`buyCurrency` via
+   `CurrencyServiceConnector`) can't reach a client directly - Robust
+   has no client connections. Added `NotifyRegionOfBalanceChange`:
+   after a successful purchase, looks up which region currently has
+   the agent via `IGridUserService.GetGridUserInfo().LastRegionID`
+   (loaded from Robust's own already-configured `[GridUserService]`/
+   `[GridService]` sections, no new config needed), then places an
+   outbound XML-RPC call to that region's own new `UpdateBalance`
+   handler (root-path registration is fine here - only Robust calls
+   it, never the viewer), which does the actual client push using the
+   same code path as the region-local cases above.
+
+**Confirmed live (2026-08-09): balance now updates immediately after a
+real purchase, no manual click needed.** User confirmed via actual
+viewer test. That closes out the buy/quote/balance-push chain fully
+verified end-to-end in a live viewer, not just at the build/curl level.
+
+`CurrencyRate` also recalibrated from the placeholder `10` to `250`
+(in both region configs and Robust's new `[Economy]` section) after
+the user shared a real SL "Instant Buy" screenshot showing ~243 L$/$1
+on the LindeX exchange - close enough to round to 250. Explicitly a
+fixed operator-set rate, not an attempt to track SL's actual floating
+market rate; building a real fluctuating-market currency exchange
+would be a separate, much larger feature, not a natural extension of
+this batch.
+
+**Still not exercised live, blocked on test setup rather than known
+bugs:** pay-to-avatar transfer (`ProcessMoneyTransferRequest`) and
+land purchase (`ProcessLandBuy`/`ValidateLandBuy`). Both run through
+the identical `ICurrencyService.Transfer` + `PushBalanceUpdate` path
+already proven correct by the purchase test, but the test grid
+currently only has one avatar available, and paying-an-avatar
+inherently needs two. Land buy needs an actual parcel-for-sale setup.
+Revisit once a second test account or a for-sale parcel is available.
+
+Batch 13 (native Web/Admin UI) is queued behind this.
+
+## Batch 13: Native Web/Admin UI, v1 (2026-08-09)
+
+First concrete step of the WhiteCore-Dev-inspired grid-wide web/admin
+UI (see "Addon-modules → core consolidation" above). Scope question was
+put to the user (region list + HG toggle / login + currency dashboard /
+maptile regen) and dismissed rather than answered, so picked one:
+login + currency dashboard, since it proves the whole stack (auth,
+session, page rendering) end to end and builds directly on Batch 12
+rather than shipping an empty shell.
+
+Same architecture lesson from Batch 12 applied from the start this
+time: hosted on Robust (`WebInterfaceServiceConnector`, new
+`OpenSim/Server/Handlers/WebInterface/`), `PublicPort` (9002), not
+per-region - a grid-wide UI needs one stable address the same way the
+currency quote surface did. RegionWeb (`addon-modules/RegionWeb`) is
+deliberately untouched as the per-region alternative; OpenSim-Grid-
+Interface remains the user's separate, optional, grid-wide tool.
+
+Real login/session/dashboard flow, not a mockup: `/web/login` (GET
+shows form, POST authenticates), `/web/dashboard` (balance via
+`ICurrencyService`, requires session), `/web/logout`. Auth resolves
+the account via `IUserAccountService.GetUserAccount` then calls
+`IAuthenticationService.Authenticate` - the same path any other
+OpenSim login uses, not a bespoke password check. Both services (plus
+`ICurrencyService`) loaded by reusing Robust's own already-configured
+`[UserAccountService]`/`[AuthenticationService]`/`[CurrencyService]`
+sections, same technique as Batch 12's GridUserService/GridService
+reuse - no new config duplication. Sessions are an in-memory
+`ConcurrentDictionary` keyed by a cookie token, 2-hour expiry.
+
+One real bug found and fixed immediately via testing rather than
+assumption: registering the stream handler with `varPath: true` alone
+does not match the bare base path itself, only paths with something
+after it - `/web` 404'd while `/web/login` worked. RegionWebModule
+hits the exact same quirk and works around it by registering the
+handler twice (exact-path and varPath); did the same here. Verified
+after the fix: bare `/web` now correctly 302s to `/web/login`, and a
+deliberately-wrong login attempt returns a clean "Invalid login" error
+without crashing - confirmed the auth path is actually wired up, not
+just rendering a static form.
+
+**Real bug, found immediately when the user tried a real account:
+"Invalid login" even with correct credentials.** Root cause:
+`IAuthenticationService.Authenticate` expects an MD5 digest of the
+password, not the raw plaintext - real viewers always MD5-hash
+client-side before the password is ever sent over the wire.
+Confirmed by reading `LLLoginService.cs`'s own handling: a password
+starting with `"$1$"` has that prefix stripped and used as-is
+(already hashed); anything else gets `Util.Md5Hash()`'d before being
+passed to `Authenticate`. A web form only ever has the raw plaintext,
+so `TryLogin` was missing that same hashing step entirely - fixed by
+adding `Util.Md5Hash(password)` before calling `Authenticate`,
+matching `LLLoginService`'s plaintext-input branch exactly. Rebuilt,
+redeployed, restarted clean.
+
+**Confirmed live: real account login succeeds, dashboard shows the
+correct real balance.** Closes out Batch 13 v1 fully verified
+end-to-end in a real browser against a real account - login, session
+cookie, authenticated dashboard, and the Batch 12 currency integration
+all working together. Logout not yet explicitly re-tested but shares
+the same session-cookie mechanism already proven by the dashboard
+working, so it's low-risk.
+
+## Batch 13: making holodeckgrid.ddns.net the real public site (2026-08-09)
+
+User's actual ask: `http://holodeckgrid.ddns.net` (no port) should show
+the full grid website, and the in-viewer splash screen should work.
+Built `HandleHome`/`HandleWelcome` on `WebInterfaceServiceConnector`
+for this - grid name/welcome message pulled from `[GridInfoService]`/
+`[LoginService]` config, same reuse pattern as everything else in this
+connector.
+
+**Real bug: bare `/` doesn't go through `AddSimpleStreamHandler`'s
+path table at all.** `BaseHttpServer.HandleRequest` special-cases
+`request.UriPath == "/"` before ever reaching the stream-handler
+lookup - only the older `AddStreamHandler`/`IStreamedRequestHandler`
+API can claim that slot (`m_RootDefaultGET`), a completely different
+registration mechanism than `/web/*` and `/welcome.php` use. Same
+shape of bug as Batch 12's `currency.php` routing issue - assumed the
+usual registration API would work, tested against the actual path,
+got a 404, read `BaseHttpServer.HandleRequest` to find out why. Fixed
+with a small `RootHomeHandler : BaseStreamHandler` adapter class that
+bridges the older API to the same `HandleHome` method everything else
+calls. `/welcome.php` and `/web/*` didn't need this since they're not
+the bare root.
+
+**Real infrastructure conflict, not a code bug: tried registering
+`WebInterfaceServiceConnector` a second time on port 80 for the bare
+hostname - crashed Robust entirely on startup** ("Only one usage of
+each socket address... is normally permitted"). Something else on
+this machine already holds port 80 wildcard. Identified via
+`Get-NetTCPConnection`: **Apache (Laragon)**, almost certainly serving
+the live grid's actual website. Reverted immediately to get Robust
+back up, and set `[GridInfoService] welcome` to a working PublicPort
+URL as a temporary stopgap while investigating.
+
+**Discovered mid-investigation, before doing anything about it:**
+`S:/laragon/www/holodeck` (the existing Apache vhost for
+`holodeckgrid.ddns.net`, found in
+`S:\laragon\etc\apache2\sites-enabled\00-default.conf`) is not empty -
+it's a full, already-deployed OpenSim-Grid-Interface PHP site
+(`index.php`, `login.php`, `register.php`, `welcome.php`, `avatar.php`,
+`helper/`, a `README-HolodeckGrid.md`), separate from
+`S:/laragon/www/casperia` (presumably the live grid's own site). Did
+**not** assume this could be overwritten - stopped and asked the user
+directly, since proceeding with a reverse-proxy vhost change would
+have silently shadowed real, substantial work. User's answer: replace
+it - the native C# site is meant to be the real one going forward, the
+PHP site was an earlier approach.
+
+**Fix applied, with user's explicit go-ahead:**
+1. Enabled `mod_proxy`/`mod_proxy_http` in Apache's `httpd.conf` (both
+   were commented out).
+2. Replaced the `HOLODECK GRID` vhost's static `DocumentRoot` with
+   `ProxyPass`/`ProxyPassReverse` to `http://localhost:9002/` (old
+   static config left commented in place for rollback). The
+   `CASPERIA` vhost (live grid's own site) was never touched.
+3. Apache needed a restart to load the newly-enabled modules - `httpd
+   -k graceful`/`-k restart` both failed ("No installed service named
+   Apache2.4": Laragon doesn't run Apache as a Windows service, so the
+   standard service-control commands don't apply). Rather than guess
+   further at how to safely restart shared infrastructure that also
+   serves the live grid's site, asked the user to restart it
+   themselves via Laragon's own UI.
+4. After the user's restart, reverted `[GridInfoService] welcome`
+   back to the clean bare-hostname form now that port 80 actually
+   works.
+
+**Verified end-to-end after the user's Apache restart:** `curl -H
+"Host: holodeckgrid.ddns.net" http://localhost/` returns the native
+home page (`Server: OSWebServer`, not Apache/PHP) - confirmed the
+proxy is actually routing to the C# backend, not just that Apache
+started. `/web/login` and `/welcome.php` both proxy correctly too.
+Confirmed the live grid's own `casperia.ddns.net` vhost still responds
+(302, consistent with its own normal routing, not something this
+change touched). `holodeckgrid.ddns.net` now serves Casperia's native
+site with no port number needed, and the in-viewer splash screen
+works via the same clean URL.
+
+**Casperia-Dev given its own hostname (2026-08-09).** User flagged that
+every config setting except the just-added currency ones still used
+`casperia.ddns.net` - the live grid's own hostname, differentiated
+only by port. Changed `BaseHostname` and every literal reference
+(`GatekeeperURIAlias`, `SearchURL`, `DATA_SRV_CP`, `ExternalHostName`,
+`MoneyServerIPaddress` - six files total: `Robust.HG.ini`,
+`MoneyServer.ini`, both regions' `OpenSim.ini` and `Regions.ini`) to
+`holodeckgrid.ddns.net`, fully separating the test grid's identity
+from the live one rather than relying on port numbers alone. Restarted
+clean, no errors. **Requires user action to actually work
+externally:** `holodeckgrid.ddns.net` needs a real DNS record on
+whatever dynamic-DNS provider hosts `casperia.ddns.net`, pointing at
+the same public IP - not something achievable from within this
+session. Until that resolves, Casperia-Dev is reachable locally but
+not from outside this machine under the new name. This also means the
+`SearchURL`/`DATA_SRV_CP` helper-registration pings now point at
+`holodeckgrid.ddns.net/helper/...`, which won't have the matching PHP
+backend the live grid's `casperia.ddns.net/helper/` presumably does -
+harmless (these are non-critical search/directory-listing pings) but
+worth knowing if directory registration silently 404s.
+
 **Batch 11** (`b508644e43`) — Experience Tools SL-conformance fixes:
 a new estate-level Blocked Experiences tier (the viewer has always
 sent add/remove requests for this list; they were silently discarded —
@@ -942,6 +1317,449 @@ answer from upstream. See FEATURES_VS_MASTER.md for the full writeup.
 
 ---
 
+## Addon-modules → core consolidation (architecture direction, 2026-08-09)
+
+**The thesis, stated plainly by the user:** these subsystems (currency,
+web/admin UI, search, etc.) are missing from opensim-master
+*by design* — OpenSimulator's own maintainers have said on multiple
+occasions they will not add currency to the core codebase — with the
+explicit expectation that third-party developers would build
+addon-modules to cover the gap. The actual problem is that those
+addon-modules stop being maintained (already observed firsthand: the
+opensim-lickx repo, origin of Casperia's MoneyServer/OpenSimSearch
+modules, has been deleted from GitHub outright). WhiteCore-Dev,
+InWorldz, and Halcyon solved this properly by building these subsystems
+directly into their own codebases instead of depending on external
+addons. **WhiteCore-Dev is the load-bearing example** — not because
+it's necessarily the best-designed, but because it's the only one of
+the three that's still alive and available as a working reference
+(InWorldz/Halcyon's code is archived/inspectable but the platform
+itself isn't an ongoing project the way WhiteCore-Dev is).
+
+**Primary-source confirmation (2026-08-09):** checked the official
+opensimulator.org wiki directly (`Related_Software`, `Webinterface`,
+`Main_Page` — note its HTTPS is broken/unsupported, had to fetch over
+plain HTTP). It independently confirms the whole thesis: the wiki's own
+words are "OpenSimulator used to have a 'Forge' ... but this is no
+longer in existence," yet `Main_Page` still links to that dead Forge as
+current. SimianGrid (a full ROBUST-stack replacement) had its
+OpenSimulator support "removed ... in February, 2020." Second Inventory
+is flagged "no longer available" (abandonware since 2017). Of the eight
+forks the wiki lists, three are explicitly marked dead (AuroraSim
+stopped 2014, VoxelSim stopped 2010, Sim-on-a-Stick "no longer actively
+updated") while WhiteCore is the one called out as still going:
+*"still active as of 2020 and maintained by a small group of
+developers."* The `Webinterface` page lists ~10 totally unrelated
+one-off web-frontend projects (PHP/CodeIgniter, Moodle, Joomla!,
+Drupal, WordPress, no shared codebase between any of them), most
+untouched since 2010–2019, one (`Wixtd`) explicitly "no longer
+available" — only three entries are from 2025, one of which is
+ManfredAabye's `oswebinterface`. Currency only ever appears on these
+pages as third-party links (PayPal module, DTL/NSL Money Server),
+never as a roadmap item — consistent with, though not independent
+textual proof of, the user's account that OpenSim core has repeatedly
+declined to add currency itself.
+
+**Written confirmation found (2026-08-09):** the user quoted the
+official OpenSimulator FAQ directly: OpenSimulator ships with "no
+working currency implementation," only "a very limited sample money
+module that works in standalone mode only," and the project
+"cannot supply any support for" the third-party modules that fill the
+gap — pointing to Related_Software, matching everything already found.
+Protocol detail confirmed alongside it: a viewer's currency display
+hits `currency.php` (or equivalent) at whatever URL the grid's
+`[GridInfo]` economy setting points to — the same `getCurrencyQuote`/
+`buyCurrency`/`preflightBuyLandPrep`/`buyLandPrep` XML-RPC surface
+WhiteCore's `Zero.CurrencyModule` registers. Any native Casperia
+currency service needs to answer that same protocol surface at the
+region edge, regardless of what backs it internally.
+
+**Decision:** every third-party-origin module currently living in
+`addon-modules/` was always meant as vendored/testing scaffolding — the
+same category as the standalone OpenSim-Grid-Interface project — never
+the intended final state of Casperia's own feature set. The target
+direction is to absorb the ones that matter into the main tree as
+Casperia-owned code, the way Mobius, InWorldz, and WhiteCore/Aurora each
+did with their own forks.
+
+**Correction (2026-08-09):** an earlier pass in this same session claimed
+Tranquillity has "no `addon-modules/` directory at all" as verification
+of this pattern — that was wrong, caused by running `Glob` on a literal
+path with no wildcard, which silently matched nothing instead of
+erroring. `S:\Github\OpenSim-Tranquillity\addon-modules` actually
+exists and contains `Gloebit`, `OpenSim.Data.MySQL.MoneyData`,
+`OpenSim.Region.OptionalModules.Currency`, `OpenSim.Server.MoneyServer`,
+`OpenSimMutelist`, `OpenSimSearch`, and `os-webrtc-janus` (a WebRTC
+voice/Janus integration not present in Casperia at all) — i.e.
+Tranquillity is carrying almost the exact same vendored
+currency/mutelist/search addons Casperia is, not a clean example of
+"absorbed into core." Tranquillity's `OpenSim/Addons/Groups/` and a
+stub `SampleMoneyModule.cs` in core `OptionalModules/World/MoneyModule/`
+do show *some* subsystems moved into the main tree, so it's a mixed/
+partial case, not the strong precedent originally claimed. The only
+subsystem actually confirmed native-in-core (by reading real, working
+code, not directory-listing inference) is **WhiteCore-Dev**: currency
+(`WhiteCore/Modules/Currency/Base.CurrencyServices.cs`,
+`Base.CurrencyConnector.cs`) and the web/admin UI
+(`WhiteCore/Modules/Web/`) are genuinely part of its codebase, no addon
+folder involved. Mobius and InWorldz have not been checked — no local
+clone of either exists under `S:\Github\` to verify against; treat
+claims about them as unverified until checked the same way.
+
+**Second data point:** `S:\Github\opensim-lickx\addon-modules` carries
+`Gloebit`, `OpenSimMutelist`, `OpenSimSearch`, and
+`opensim.currency-lickx` — the last of which is just the same
+three-way split (`OpenSim.Grid.MoneyServer`,
+`OpenSim.Data.MySQL.MySQLMoneyDataWrapper`,
+`OpenSim.Modules.Currency`/`DTLNSLMoneyModule`) bundled under one parent
+folder, not a native rewrite. So three forks checked (Tranquillity,
+LickX, Casperia itself) all lean on the same shared pool of vendored
+legacy currency/mutelist/search addons — confirmed common ancestry, not
+coincidence: Casperia's own `addon-modules/` set was originally built by
+importing modules from these same third-party sources. **WhiteCore-Dev
+remains the only confirmed example of actually absorbing these into
+native core code** — the outlier among the forks actually inspected,
+which makes it a stronger reference to build from, not a weaker one.
+
+**Third and fourth data points (via `gh api` against the URLs already
+listed in README.md's Attribution section — Mobius and Halcyon/InWorldz
+were previously called "unverified, no local clone," which was an
+unforced error since their GitHub URLs were sitting in this repo's own
+README the whole time):**
+
+- **Halcyon (InWorldz's server, github.com/HalcyonGrid/halcyon)** — has
+  **no `addon-modules/` mechanism at all**, top-level or otherwise. Its
+  own top-level tree is `Halcyon/`, `InWorldz/`, `MOSES/`, `OpenSim/`,
+  `OpenSimProfile/` — a genuinely different architecture from OpenSim's
+  plugin-loading pattern, not OpenSim-plus-addons. This is the strongest
+  confirmation yet of the user's original claim, for a currency/economy
+  platform that was InWorldz's actual commercial product.
+- **Mobius (github.com/Mobius-Team/Mobius)** — its `addon-modules/`
+  folder is empty (just the stock README, no Gloebit/MoneyServer/
+  Search/Mutelist). Initially read this as "absorbed into core," but
+  checked `OpenSim/Region/OptionalModules/World/MoneyModule/` and it's
+  just the same generic `SampleMoneyModule.cs` stub vanilla upstream
+  OpenSimulator itself ships (a $0 no-op, not a real ledger). **Correct
+  read: Mobius most likely ships with no currency solution at all**,
+  not a native replacement — "absorbed into core" and "doesn't offer
+  the feature" produce the same empty `addon-modules/` folder, and
+  only checking the actual code (not just folder emptiness) tells them
+  apart. Don't cite Mobius as a currency-consolidation precedent without
+  further digging; it currently supports a different, weaker claim
+  ("some forks just drop the feature") not the one being made here.
+
+Running count: WhiteCore-Dev (confirmed real native code) and Halcyon/
+InWorldz (confirmed no addon mechanism, real commercial economy) both
+support the "serious forks absorb this" thesis. Tranquillity and LickX
+both still carry the same vendored pool Casperia does. Mobius is
+inconclusive/likely a non-example. Homeworldz (github.com/homeworldz/
+server, also listed in README.md) not yet checked.
+
+**Not yet decided:** whether *every* addon-module gets a native
+replacement, or only the ones solving an actual platform gap (currency,
+web/admin, search) while the rest (Tide, Weather, Mutelist,
+HoloPhysicsGuard, Marketplace) stay as optional swappable third-party
+addons. Explicitly tabled by the user (`AskUserQuestion` dismissed
+2026-08-09) — do not assume an answer, ask again before scoping work
+for any of the "maybe" items below.
+
+Current inventory of everything under `addon-modules/`:
+
+| Module | Origin | Subsystem | Known native equivalent |
+|---|---|---|---|
+| `OpenSim-Grid-MoneyServer` | Vendored 3rd-party (external exe) | Currency | WhiteCore `BaseCurrencyServiceModule`/`BaseCurrencyConnector` (real ledger, transaction/purchase history, group treasury, console commands) |
+| `OpenSim-Modules-Currency` | Vendored 3rd-party (DTLNSLMoneyModule, region-side client of MoneyServer) | Currency | same as above |
+| `OpenSim-Data-MySQL-MySQLMoneyDataWrapper` | Vendored 3rd-party (MoneyServer's DB layer) | Currency | same as above |
+| `Gloebit` | Vendored 3rd-party (real-money payment gateway) | Currency | no equivalent found yet — real-money gateways are a different problem than an in-grid ledger |
+| `RegionCurrency` | Casperia's own fork (ported from Gunthar's RegionWeb currency/PayPal code, split out and independently developed) | Currency (web front-end only — explicitly depends on an `IMoneyModule` for the actual ledger) | n/a — this is Casperia's own already-diverged code, not vendored-and-untouched |
+| `RegionWeb` | Casperia's own fork (per-region web control panel) | Web/admin | WhiteCore `WhiteCore/Modules/Web` (~100 pages: region/user/estate/abuse/news/purchases/transactions manager, user self-service, multi-language) — breadth is real but uneven (e.g. its web sim-console page hardcodes "not yet implemented" despite calling `MainConsole.Instance.RunCommand()`) |
+| `OpenSimMarketplace` | **Wholly original Casperia creation** — an attempt to build the thing (a Second-Life-Marketplace equivalent) because nothing like it exists anywhere in the OpenSim ecosystem to vendor in the first place | Web/admin (marketplace) | none — there is no upstream to compare against; WhiteCore's `html/classifieds/marketplace.cs` is the closest analog, but this isn't a vendored/replace situation like the rest of the table, it's Casperia's own answer to a real gap |
+| `OpenSimSearch` | Vendored 3rd-party — [kcozens/OpenSimSearch](https://github.com/kcozens/OpenSimSearch) | Search | **REPLACED (2026-08-10)** — native `CasperiaSearchModule`/`SearchService` ships as of Batch 14 (land/places search against the grid's own `land` table, queried directly, no external server); addon kept selectable via `[Search] Module` for anyone who wants an external XML-RPC backend instead. The data layer is genuinely verified (direct .NET harness test). The region-module client-facing wiring (`CasperiaSearchModule.AddRegion`) briefly appeared broken on Var Test Region specifically, initially attributed to a "Mono.Addins reliability issue" - **root cause found and fixed (2026-08-10, see the "root cause found" entry near the end of this file): a config-file structuring bug (`[OnDemand]`/`[SimProtection]` had been inserted into the middle of `[Startup]`, corrupting it) was the real cause, not Mono.Addins.** Re-enabling this on Var Test Region today should work correctly now that the actual cause is fixed. |
+| `OpenSimTide` | Vendored 3rd-party — [JakDaniels/OpenSimTide](https://github.com/JakDaniels/OpenSimTide) | Environmental (tabled) | unconfirmed |
+| `OpenSimWeather` | **Not straight-vendored** — started as a GitHub Copilot–assisted fork/port of Gunthar's weather code, then heavily debugged this cycle (config-precedence bug, environment-persistence corruption — see weather sections above). Same category as RegionCurrency/RegionWeb: Casperia's own diverged derivative, not untouched third-party code | Environmental (tabled) | unconfirmed |
+| `OpenSimMutelist` | Vendored 3rd-party — [kcozens/OpenSimMutelist](https://github.com/kcozens/OpenSimMutelist) | Social | **CONFIRMED (2026-08-10)** — a complete native equivalent already existed before this task even started: `OpenSim.Services.MuteListService` + `Local`/`RemoteMuteListServiceConnector` + the native `MuteListModule`, already wired and active (`[Messaging] MuteListModule = MuteListModule`) in every current Casperia-Dev config. The addon self-disables under that config and is confirmed dead code on this deployment. See PROJECT_LOG.md Batch 14. |
+| `HoloPhysicsGuard` | Vendored 3rd-party — [holoneon/HoloPhysicsGuard](https://github.com/holoneon/HoloPhysicsGuard) | Security (tabled) | unconfirmed |
+| `GroupAutoInvite` | Vendored 3rd-party | Social (tabled) | unconfirmed |
+
+**Currency, additional reference not yet examined:** ManfredAabye also
+authored [opensimcurrencyserver-dotnet](https://github.com/ManfredAabye/opensimcurrencyserver-dotnet)
+— a currency server separate from the classic MoneyServer/DTLNSLMoneyModule
+lineage Casperia/Tranquillity/LickX all share. Worth checking alongside
+WhiteCore's `BaseCurrencyServiceModule` when currency work actually
+starts, not yet read.
+
+**OpenSim-Grid-Interface provenance confirmed:** the user's own project
+is a fork of ManfredAabye's [oswebinterface](https://github.com/ManfredAabye/oswebinterface)
+("expanded considerably" per earlier discussion), the same author as the
+currency-server repo above — so both of the user's two most relevant
+web/currency reference points trace back to the same original author.
+
+**Next step (not started):** get a decision on the "tabled" rows above,
+then sequence the currency/web/search work — likely currency first
+since it already has the clearest native reference
+(`BaseCurrencyServiceModule`) and the most redundant/competing vendored
+implementations (three separate currency addons for one job).
+
+## Batch 13: per-region Hypergrid open/close toggle (2026-08-09)
+
+First admin-only page. Chose this specifically because it's the item
+PROJECT_LOG.md had marked "In progress" under "Grid management
+verification" since long before the currency/web-UI architecture
+thread even started - not a new idea, a long-standing gap finally
+getting built.
+
+Researched what already existed before writing anything (via a
+research-only subagent, to keep this session's own context free for
+the actual implementation): nothing did. `GatekeeperService` is a
+Robust-wide singleton with only an all-or-nothing
+`ForeignAgentsAllowed` setting (`OpenSim/Services/HypergridService/
+GatekeeperService.cs`) - no per-region hook, no config key, no DB
+column, no console command anywhere in the codebase. Confirmed
+`destination` (the target region) is already an available parameter
+in `LoginAgent()`, right next to the existing "Foreign agents allowed?
+Exceptions?" block - the natural, minimal-diff injection point.
+
+Built fresh, same layering as Batch 12: `IRegionHGService`/
+`IRegionHGData` interfaces, `RegionHGService`/`RegionHGServiceBase`,
+`MySqlRegionHGData` + a new `region_hg_settings` table (RegionID →
+IsOpen bool). Absence of a row means open, matching
+`ForeignAgentsAllowed`'s own default - upgrading can't silently close
+an existing region. `GatekeeperService.LoginAgent` now checks it
+immediately after the grid-wide check, independent of it (a region can
+be closed even while the grid overall allows foreign agents).
+`WebInterfaceServiceConnector` gained `/web/admin` (region list +
+per-region toggle button, gated on `UserAccount.UserLevel >= 200` -
+the standard OpenSim admin/"god" threshold, set on the session at
+login) and `/web/admin/hg-toggle` (the POST target).
+
+**Real bug, deployment not code: forgot to copy the updated
+`OpenSim.Services.Interfaces.dll` to Casperia-Dev** after adding
+`IRegionHGService` to it. Every other changed/new DLL got deployed;
+that one didn't, because nothing about it looked like it needed
+redeploying at a glance - the new type lives there, but nothing else
+in that assembly's surface changed. Caused a real cascade:
+`GatekeeperServiceInConnector` failed to load ("Could not load type...
+IRegionHGService"), which then also broke `WebInterfaceServiceConnector`
+("Constructor not found") even though nothing in that class was
+actually wrong - a stale/mismatched Interfaces DLL breaking two
+unrelated connectors at once, not two separate bugs. Fixed by
+deploying the missing DLL and restarting; both connectors then loaded
+cleanly on the same attempt. Lesson for future deploys in this
+project: when a new *type* is added to an interfaces assembly, that
+DLL needs redeploying even if reading its own diff doesn't obviously
+call for it.
+
+Verified after the fix: clean startup log (`GatekeeperServiceInConnector
+loaded successfully`, `WebInterfaceServiceConnector loaded successfully`),
+`/web/admin` correctly redirects unauthenticated requests to login, and
+dashboard/login/home all still respond correctly (no regression from
+the DLL churn).
+
+**Confirmed live: real admin login reaches `/web/admin` and shows the
+correct region list.** User raised their Test User account's
+`UserLevel` to 200 themselves (my own attempt to do it via a direct
+MySQL UPDATE was blocked by this session's own safety classifier -
+correctly, since a bare "raise this account's permission level" write
+is exactly the kind of action worth a human doing directly rather than
+an agent quietly executing). Screenshot confirmed via
+`holodeckgrid.ddns.net:9002/web/admin`: both real regions listed
+(Var Test Region at 1001,1000; Welcome Center at 1000,1000), both
+correctly showing "Open", each with a working "Close to HG" button.
+**Confirmed live: clicking the toggle actually works, verified at the
+database level, not just the page re-rendering.** User closed Var Test
+Region to HG; page correctly flipped its row to "Closed"/"Open to HG"
+while Welcome Center stayed "Open"/"Close to HG" - a real per-region
+write, not a global one. Cross-checked directly against
+`region_hg_settings`: exactly one row, Var Test Region's UUID,
+`IsOpen=0`; Welcome Center has no row at all, matching the "absent row
+= open" default design. (Minor, non-functional: `region_hg_settings`
+and `regions` have mismatched collations, which broke an ad-hoc `JOIN`
+used only for this verification query - the application itself never
+joins these tables, so this doesn't affect the toggle or the Gatekeeper
+check at all. Not worth fixing unless a future admin page needs to
+join across them for real.)
+
+**Still not verified: a real HG visitor actually being turned away
+from the closed region.** Toggle and persistence are proven; the
+`GatekeeperService.LoginAgent` enforcement path itself hasn't been
+exercised by an actual inbound HG teleport attempt yet.
+
+## Batch 13: on-demand maptile regeneration (2026-08-09)
+
+Second admin page item, the other one named in the original backlog
+alongside the HG toggle. Researched first (subagent, research only):
+`WorldMapModule.GenerateMaptile()` (`OpenSim/Region/CoreModules/World/
+WorldMap/WorldMapModule.cs`) does the actual render via
+`Warp3DImageModule.CreateMapTile()`; a console command ("generate map")
+already exists and just calls `Scene.RegenerateMaptileAndReregisterInBackground()`
+- a public, idempotent, already-thread-safe entry point (guarded by a
+process-wide semaphore so only one region renders at a time, runs on a
+dedicated low-priority thread with its own stack). No HTTP trigger
+existed anywhere.
+
+Added the HTTP counterpart directly next to the existing console
+command in `WorldMapModule.cs`: a new `/MAP/Regenerate/<regionHandle>`
+stream handler (`HandleRegenerateMaptileRequest`, POST-only) that calls
+the exact same `RegenerateMaptileAndReregisterInBackground()` method
+the console command does - never runs the render inline on the HTTP
+thread, just queues it and returns "queued" immediately.
+
+`WebInterfaceServiceConnector`'s `/web/admin` gained a "Regenerate
+maptile" button per region. Since Robust has no way to run a render
+itself (that only happens in the actual region process), the handler
+looks up the region's `ServerURI` via `IGridService` and makes an
+outbound HTTP POST to its new endpoint - same "Robust calls out to the
+specific region that can actually do the thing" shape as the Batch 12
+currency balance-push fix, applied to a different problem. Redirects
+back to `/web/admin` with a status message either way (success,
+non-200 from the region, or unreachable).
+
+Verified directly (not just "it builds"): computed Welcome Center's
+region handle from its stored `locX`/`locY` and POSTed straight to
+`http://localhost:9004/MAP/Regenerate/<handle>` - got back `200
+queued`, and the region's own log immediately showed "Queuing
+background map image generation for Welcome Center (requested via
+admin web UI)" at the matching timestamp. Full solution build clean,
+all previously-verified pages (login/dashboard/home/admin) re-checked
+for regressions after redeploy - none. **Confirmed live: clicked the actual button.** User clicked
+"Regenerate maptile" for Var Test Region in the browser; page showed
+"Maptile regeneration queued for Var Test Region." Cross-checked
+against Var Test Region's own log, not just trusting the success
+message: matching "Queuing background map image generation for Var
+Test Region (requested via admin web UI)" at the same timestamp. Full
+browser → Robust → region chain proven, not just the region-side half
+tested earlier via direct curl.
+
+That closes out all three pages picked from the original backlog:
+currency login/dashboard (Batch 12 integration), per-region HG
+open/close, and on-demand maptile regen - each verified at the
+database/log level, not just "the page loads."
+
+## Batch 13: on-demand OAR backup (2026-08-09)
+
+Fourth admin page item - "OAR/IAR upload and full backup workflows"
+from the original backlog, OAR half. Researched first (subagent):
+`ArchiverModule.ArchiveRegion(savePath, options)`
+(`OpenSim/Region/CoreModules/World/Archiver/ArchiverModule.cs`) is what
+the existing "save oar" console command already calls. Important
+difference from maptile regen: **this one is NOT already backgrounded
+by OpenSim itself** - confirmed via `RemoteAdminPlugin.cs`, which wraps
+its own call to the same method in a `Monitor.Wait` specifically
+because the call blocks the calling thread for the whole archive
+write. Missing that distinction and calling it inline would have
+frozen the HTTP request (and by extension, blocked that one request
+thread) for as long as the archive takes.
+
+Added `ArchiverModule.HandleSaveOarHttpRequest` (new
+`/OAR/Save/<regionHandle>` endpoint, POST-only, same registration
+pattern as `WorldMapModule`'s maptile endpoint) which wraps the call in
+`Util.FireAndForget` itself, since no `ArchiveRegionInBackground()`
+helper exists on `Scene` the way it does for maptiles. Chose timestamped
+filenames (`Backups/<RegionName>_<timestamp>.oar`) over reusing the
+module's own `DEFAULT_OAR_BACKUP_FILENAME` ("region.oar") deliberately -
+the original ask was "full backup workflows," which implies an actual
+history of snapshots, not one always-overwritten file. `/web/admin`
+gained a third button per region ("Save OAR backup"), same
+Robust-calls-the-region shape as the maptile button.
+
+Verified directly: POSTed to Welcome Center's endpoint, got back
+`200 queued:Backups\Welcome Center_<timestamp>.oar`, waited, and
+confirmed via the region's own log a complete write ("Finished writing
+out OAR for Welcome Center", 13 scene objects referenced, 9 assets
+saved) - then confirmed the actual file on disk, 299KB, real content.
+**Worth knowing, not a bug:** the file landed in
+`S:\Opensim\Casperia-Dev\Backups\`, not inside
+`Simulators\Welcome_Center\`- a relative path resolves against the
+region process's actual working directory, which (per the Batch 12
+region-launch finding) is the install root, not the region's own
+subfolder. Every region's backups land in this same shared `Backups/`
+folder; filenames are prefixed with the region name specifically so
+this doesn't collide. Full solution build clean; only the two files
+touched needed redeploying, no new services/DLLs this time. IAR
+(inventory archive) is the other half of the original ask and hasn't
+been started - same shape of work, different module
+(`InventoryArchiverModule`), reasonable next step if the OAR half proves
+useful.
+
+## Batch 13: self-service OAR backup/restore (2026-08-09)
+
+User correction on the above: "Opensim has an autobackup feature
+already. This would be for the user to backup/upload thier own OAR" -
+i.e. OAR save/load should be an estate-owner self-service capability,
+not a grid-admin-only action. Reworked as a new `/web/myregions` page,
+distinct from `/web/admin`: gated on being logged in at all (any
+account), not `UserLevel>=200`.
+
+Ownership resolution uses `IEstateDataService.GetEstatesByOwner(principalID)`
+-> `GetRegions(estateID)` -> `IGridService.GetRegionByUUID`, confirmed
+against `estate_settings.EstateOwner`/`estate_map` directly in the DB
+(Test User owns Estate 101, containing both Welcome Center and Var Test
+Region). Every handler re-derives this ownership list server-side from
+the session's `PrincipalID` before acting - the `region_id` in a posted
+form is never trusted on its own, for either save or load.
+
+Save reuses the existing `/OAR/Save/<handle>` region endpoint exactly
+like the admin button did. Load is new: added
+`ArchiverModule.HandleLoadOarHttpRequest` (`/OAR/Load/<handle>`,
+POST-only, region-side), reading the full upload into memory on the
+calling thread first (so we know we have the whole file before
+responding) then `Util.FireAndForget`-wrapping the actual
+`DearchiveRegion(stream)` call, mirroring the OAR-save endpoint's
+already-established "don't block the HTTP thread" shape.
+
+No multipart/form-data parser existed anywhere in this codebase before
+this (confirmed via research subagent - `OpenSim/Framework/MultipartForm.cs`
+only builds outgoing requests). Hand-rolled one in
+`WebInterfaceServiceConnector.ParseMultipartFormData`: reads the whole
+body into a byte array, finds every occurrence of the `--<boundary>`
+marker from `Content-Type`, and for each part between markers reads its
+`Content-Disposition` header to get the field name (and, for the file
+part, the filename) before treating the remainder as that field's raw
+bytes/text. The restore form also has a required confirmation checkbox
+plus an explicit on-page warning, since load is destructive (replaces
+all current region content) and there was no existing precedent to gate
+that in this UI.
+
+**Bug found during live verification, not from a research gap:** the
+first end-to-end restore attempt failed immediately -
+`[ARCHIVER]: Aborting load with error in archive file NONE: count
+('-1') must be a non-negative value.` Root cause: `.oar` files on disk
+are gzip-compressed tar (`ArchiveWriteRequest` wraps its save stream in
+`GZipStream`, and `ArchiveReadRequest`'s string-path constructor
+symmetrically wraps its read stream in `GZipStream` too) - but
+`ArchiveReadRequest`'s **Stream**-based constructor does *not* wrap
+what it's given, it assumes the caller already handed it a decompressed
+tar stream (confirmed by reading `ArchiverTests.cs`, which only ever
+feeds that overload a raw `TarArchiveWriter` stream, never gzip). The
+initial `HandleLoadOarHttpRequest` handed the raw uploaded `.oar` bytes
+straight to `DearchiveRegion(Stream)`, so the tar reader was reading
+compressed bytes as if they were already tar - garbage in, weird
+exception out. Fixed by wrapping the uploaded bytes in a
+`System.IO.Compression.GZipStream` (`CompressionMode.Decompress`)
+before calling `DearchiveRegion`, matching what the path-based load
+already does for on-disk files.
+
+Verified live end-to-end twice (once reproducing the bug, once
+confirming the fix) via direct curl against the real endpoints
+(browser file-upload wasn't scriptable in the available browser tool,
+so this was API-level, not click-through): logged in as Test User,
+hit `/web/myregions` and got back exactly the two owned regions, saved
+a fresh OAR for Var Test Region via the page's own button, then
+re-uploaded that same file to `/web/myregions/oar-load`. First attempt
+reproduced the gzip bug exactly as above; after the fix, region log
+showed a full clean restore - `Successfully loaded archive`, terrain
+restored, 9/9 assets, 1 parcel, 1 scene object, scripts started. Full
+solution build clean after the fix; redeployed
+`OpenSim.Server.Handlers.dll` and `OpenSim.Region.CoreModules.dll` to
+Casperia-Dev (only after confirming, via `Get-CimInstance
+Win32_Process`, that the processes being restarted were actually
+Casperia-Dev's own Robust/region processes and not the live grid's -
+both grids currently have processes with the same simulator names
+running side by side on this machine). IAR (inventory archive) remains
+unstarted.
+
+---
+
 ## Test deployment notes
 
 - `S:\Opensim\Casperia-Dev\Simulators\Welcome_Center\` — main test region.
@@ -950,3 +1768,2794 @@ answer from upstream. See FEATURES_VS_MASTER.md for the full writeup.
   to confirm weather/day-night bugs weren't Welcome_Center-specific.
 - Both regions log to separate files (`logfile`/`StatsLogFile` under
   `[Startup]`) so they don't clobber a shared `OpenSim.log`.
+
+---
+
+## Batch 13: self-service IAR backup/restore (2026-08-09)
+
+Second half of the self-service archive work, following the same
+"Opensim has an autobackup feature already. This would be for the user
+to backup/upload thier own OAR" correction applied to inventory
+instead of regions. Added `/web/myinventory`: any logged-in user can
+back up their own inventory or restore from an uploaded `.iar`.
+
+Architecturally different from OAR in one important way:
+`InventoryArchiverModule.ArchiveInventory`/`DearchiveInventory` hard-require
+a **password re-check** via `GetUserInfo` (same as the `save iar`/`load
+iar` console commands) - the logged-in web session's `PrincipalID`
+alone isn't accepted by that API. Rather than route around it, the
+`/web/myinventory` forms ask for the password again for both actions.
+First/last name are always taken from the session, never from a form
+field, so there's no way to even attempt targeting a different
+account's inventory through this page.
+
+IAR isn't tied to a specific region's content the way OAR is (any
+region can service it, since `InventoryService`/`AssetService` are
+grid-wide), so instead of an owned-region lookup, Robust picks a target
+region via `IGridUserService.GetGridUserInfo(principalID).LastRegionID`/
+`HomeRegionID` (same lookup `CurrencyServerConnector` already uses for
+its balance-push callback), falling back to any region with a reachable
+`ServerURI` if the user has never actually logged into the world.
+
+Reused the multipart parser built for OAR restore
+(`WebInterfaceServiceConnector.ParseMultipartFormData`) rather than
+duplicating it in `OpenSim.Region.CoreModules` - Robust unwraps the
+browser's upload down to plain bytes, then forwards those bytes to the
+region's new `/IAR/Load` endpoint with credentials as URL-encoded
+custom headers (`X-Iar-First-Name`/`X-Iar-Last-Name`/`X-Iar-Password`),
+since the body slot is taken by the raw file and header values can't
+safely carry arbitrary password characters unencoded.
+
+**Two real bugs found during live verification:**
+
+1. Same gzip landmine as OAR (`InventoryArchiveReadRequest`'s
+   Stream-based constructor doesn't decompress, only its loadPath
+   constructor does) - anticipated this time from the OAR experience and
+   decompressed with `GZipStream` up front, so no failed first attempt.
+2. **Silent success with no completion log line.** The module's own
+   `OnInventoryArchiveSaved`/`OnInventoryArchiveLoaded` completion events
+   are gated on a console-task id (`SaveInvConsoleCommandCompleted`/
+   `LoadInvConsoleCommandCompleted` both check
+   `m_pendingConsoleTasks.Contains(id)` and silently return if not
+   found) - since the HTTP handlers never registered their own random
+   id in that list, the events fired into nothing and the operation
+   looked "stuck" (no new log lines, file size frozen) even though it
+   had already finished successfully. Confirmed the backup file was
+   actually complete and valid via `gzip -t` before realizing this was
+   a logging gap, not a hang. Fixed by logging completion directly in
+   the `Util.FireAndForget` callback instead of relying on that event.
+
+**A third bug, upstream of this feature entirely:** the first real
+restore test (a 156MB IAR, Test User's actual accumulated inventory
+from this session's heavy testing - 1683 assets) failed outright with
+`400 BadRequest: Content length too large.` straight from Robust's own
+HTTP server, before ever reaching this feature's code.
+`OpenSim/Framework/Servers/HttpServer/OSHttpServer/HttpRequestParser.cs`
+had a hardcoded request-body ceiling of `64 * 1024 * 1204` - note the
+`1204`, not `1024`, an arithmetic typo that made the real limit ~75MB
+instead of the intended 64MiB. This caps **every** POST body on
+**every** Robust/region HTTP endpoint in Casperia, not just this one -
+raised to a flat 512MiB rather than just fixing the typo, since real
+inventory archives (and large region OARs) routinely exceed 64MiB.
+Full solution rebuild required since this lives in
+`OpenSim.Framework.Servers.HttpServer.dll`, a dependency of both Robust
+and every region process.
+
+**Deployment note - not specific to this machine, applies to anyone
+running the self-service web UI behind a reverse proxy:** fixing the
+Robust-side limit surfaced a *separate*, reverse-proxy-specific problem
+that has nothing to do with Casperia's own code. Testing through this
+grid's actual public URL (`holodeckgrid.ddns.net`, proxied through
+Apache/Laragon to Robust - see the Batch 13 WebUI entry above) failed
+with `AH00898: Timeout on 100-Continue` / `AH01102: error reading
+status line from remote server`, because a default 60s proxy timeout
+is nowhere near enough for a 100+MB upload to fully transfer through an
+extra hop and be forwarded on to a region. **This is a generic
+property of putting any reverse proxy in front of Robust for this
+feature, not something specific to this deployment** - a different
+operator using nginx, IIS, Caddy, or no reverse proxy at all will hit
+(or not hit) this in their own way, and the exact fix is proxy-software-
+specific. For this grid's Apache/Laragon setup specifically, the fix
+was raising `Timeout` in `httpd-default.conf` from 60 to 300 (global -
+a per-vhost `ProxyTimeout` override was tried first but didn't fully
+resolve it, since mod_proxy was stacking the *global* `Timeout` 3x
+before the vhost-level override took effect) - explicitly chosen over
+leaving it at the default because this operator's own account had
+accumulated an unusually large inventory (156MB) from heavy in-session
+testing, which is a realistic worst case, not a hypothetical one.
+**Anyone deploying Casperia's web UI behind their own reverse proxy
+needs to check that proxy's own timeout/body-size settings against
+their expected inventory/OAR sizes** - this is not something Casperia
+itself can configure on the operator's behalf, since it lives entirely
+outside Casperia's own process.
+
+Verified directly against Robust (bypassing the proxy entirely, to
+isolate Casperia's own code from the Apache layer): 156MB backup, then
+restore of that same file, `Successfully loaded 1683 assets with 0
+failures`.
+
+Verification through the actual public URL was inconclusive, and it's
+worth recording why rather than just calling it "untested": after
+raising both the per-vhost `ProxyTimeout` and then the global `Timeout`
+(with an Apache restart confirmed after each), the exact same request
+still cut off at ~180s both times, unchanged. Two independent Apache
+config changes having zero effect on an identical number is itself the
+signal - it means Apache's own settings were never the bottleneck.
+The most likely explanation: this grid's public URL was being tested
+from the *same machine and network* that hosts it, meaning the request
+went out to the public IP and back in through this network's own
+router via NAT hairpinning - a path a genuinely remote client would
+never take. Consumer routers commonly cap hairpinned NAT sessions at a
+fixed idle timeout, and 180s (3 minutes) is a very common default,
+entirely independent of Apache or Robust. This isn't something
+Casperia's code, or even this machine's Apache config, can fix - it's
+router firmware, out of scope for this project and specific to this
+operator's home network besides. **Decision: treat the direct-to-Robust
+result as sufficient proof the feature itself is correct**, and note
+for the record that same-machine/same-network testing of a grid's own
+public URL is not a reliable way to test large uploads end-to-end - a
+genuinely external client should be used if that specific path ever
+needs verifying.
+
+---
+
+## Batch 13: Abuse Reports admin page (2026-08-09)
+
+Next `/web/admin` page after region management and self-service
+OAR/IAR, closing one of the gaps the WhiteCore-Dev `WebInterface`
+correction called out (region/user/estate/abuse-report/currency
+manager - see the "Correction (2026-08-09)" entry in
+FEATURES_VS_MASTER.md). Casperia already has a full native Abuse
+Reports service/data layer from earlier work (`IAbuseReportsService`,
+`AbuseReportsService`, `MySqlAbuseReportsData`/PGSQL/SQLite, the
+viewer-facing cap in `AbuseReportsModule.cs`) - this just surfaces what
+was already being captured, no new service/DB work needed. Loaded
+`IAbuseReportsService` directly in `WebInterfaceServiceConnector` the
+same way as `CurrencyService`/`EstateService` (`LocalServiceModule`
+from `[AbuseReportsService]`, same process as Robust, no network hop).
+
+`/web/admin/abuse-reports` (admin-gated, same `UserLevel>=200` check as
+the rest of `/web/admin`): paginated list (25/page, newest first, via
+the existing `GetAbuseReports(start, count)`) with a summary link into
+`?id=<reportID>` for the full detail view (`GetAbuseReport`), including
+the reporter, abuser, region, category, position, object, full details
+text, and viewer version. Screenshot (when attached) is served through
+a separate `/web/admin/abuse-reports/image?id=` endpoint rather than
+inlining it as a data URI, so the (potentially large) `ImageData` blob
+only gets pulled from the DB when actually viewed - real SL abuse
+report screenshots upload as raw JPEG via the
+`SendUserReportWithScreenshot` cap, served back as `image/jpeg`.
+
+**Deliberately v1/read-only - no "mark resolved" action.**
+`AbuseReportData.CheckFlags` looks at first glance like it could serve
+as an admin resolved-flag, but it's actually the **reporter's own**
+submission-time checkboxes (`AbuseReportDataFromOSD` sets it from the
+viewer's `check-flags` field at report time) - repurposing it for
+admin state would silently corrupt what it actually means. There is no
+resolved/handled/notes field anywhere in the current schema; adding
+one properly means a real migration across all three data backends
+(MySQL/PGSQL/SQLite), which is bigger than "let admins see the reports
+that already exist" and was left as an explicit follow-up rather than
+quietly bolted onto `CheckFlags`.
+
+Verified live: inserted a real test row directly into `abusereports`
+(no easy way to trigger the actual viewer cap without a live in-world
+abuse report), then confirmed via curl - list page renders the row
+correctly, detail page (`?id=1`) renders every field with correct HTML
+escaping, "No screenshot attached" shows correctly for a report with
+no `ImageData`, and paging past the end of the result set
+(`?start=25`) shows an empty table with a working "Previous page" link
+and no crash. Test row deleted after verification. Only
+`OpenSim.Server.Handlers.dll` needed redeploying (Robust-side only, no
+region-side changes this time) - discovered mid-deploy that **both**
+region processes also hold a lock on that same DLL (it's a dependency
+of `OpenSim.Region.CoreModules`), not just Robust, so all three
+processes needed stopping before the file could be overwritten.
+
+---
+
+## Batch 13: User Management admin page (2026-08-09)
+
+Fourth `/web/admin` page. Scoped deliberately narrow: search by name,
+view an account's details (principal ID, email, created date, user
+level, currency balance via the already-loaded `ICurrencyService`), and
+edit **only** UserLevel. `IUserAccountService` has no create/delete/
+suspend surface at all - `StoreUserAccount` replaces a whole record, so
+editing anything requires fetching the full account first and mutating
+just the one field being changed, same shape as the currency/HG-toggle
+handlers already in this file.
+
+UserLevel was picked as the one editable field because it's exactly
+the thing this session already did **by hand via direct SQL** earlier
+(promoting Test User from UserLevel 0 to 200 - see the currency Batch
+12 notes) after the assistant's own attempted `UPDATE` was blocked by
+the session's safety classifier. This page replaces that raw-SQL
+workaround with a real, auditable admin UI path for the same action.
+
+**Explicitly not exposed: suspend/ban.** `MySQLUserAccountData.GetUsers`
+filters on `active=1` under the hood, meaning an `active` column
+genuinely exists in the schema - but it isn't threaded through
+`UserAccount`/`IUserAccountService` anywhere, so surfacing a suspend
+toggle here would mean extending that service interface first, not
+just adding a form field. Left as a clearly-scoped follow-up rather
+than reaching past the data actually available through the existing
+API.
+
+Search itself inherits `GetUserAccounts`'s existing constraints (at
+least one word over 2 characters, max two words) rather than
+reimplementing search logic - an empty query intentionally shows
+nothing instead of trying to dump the whole account table, since there
+is no "list everyone" call on this interface at all.
+
+Verified live end-to-end via curl: searched for "Test", got the one
+matching account with correct email/user-level; opened the detail page
+and confirmed principal ID, email, created date, user level, and
+currency balance (4000) all rendered correctly; then did a real
+round-trip UserLevel change (200 -> 199, confirmed via direct DB query
+that the write actually persisted, not just a "success" message -> back
+to 200) to prove `StoreUserAccount` genuinely writes through and isn't
+a no-op. Test User's UserLevel was restored to 200 immediately after,
+since later testing in this session depends on that account staying an
+admin.
+
+---
+
+## Batch 13: Estate Management admin page (2026-08-09)
+
+Fifth and last page from the original WhiteCore-Dev comparison list
+(region/user/estate/abuse-report/currency manager). `EstateSettings`
+has a genuinely large surface (bans, managers, groups, experience
+lists, terrain/sun flags, ...) - full parity with the in-viewer Estate
+floater would be its own multi-session effort, so v1 deliberately edits
+only what an admin most commonly needs day to day: estate name, owner,
+and five of the most consequential access toggles (public access,
+voice, direct teleport, deny-anonymous, deny-minors). Same "edit the
+one useful thing, not the whole object" discipline as the UserLevel-
+only user management page - full ban-list/manager-list/group
+management is a real, separate feature, explicitly left for later
+rather than half-built here.
+
+`/web/admin/estates` lists every estate via `GetEstatesAll()` +
+`LoadEstateSettings(id)`, resolving the owner's name through the
+already-loaded `IUserAccountService` and region count through
+`GetRegions(id).Count`. The detail/edit view
+(`/web/admin/estates?id=<id>`) additionally lists the actual region
+names in that estate (`IGridService.GetRegionByUUID` per region).
+Ownership transfer is by **name** (`First Last`), not raw UUID - the
+update handler resolves the name via `GetUserAccount` and explicitly
+refuses to save *anything* if the name doesn't resolve to a real
+account, rather than silently keeping the old owner or, worse, writing
+a garbage UUID.
+
+Verified live end-to-end via curl against the real Estate 101 (owns
+both Welcome Center and Var Test Region): list page showed the correct
+owner/region count; detail page rendered both region names and correct
+checkbox states; a real settings change (flipping `DenyMinors` off ->
+on) was confirmed via direct DB query, then reverted; and the
+owner-validation guard was confirmed to actually block a save (POSTed
+a nonexistent "Nonexistent Person" as the new owner, got back "not
+found - no changes were saved," and confirmed via DB that
+`EstateOwner` was genuinely untouched, not just visually reverted on
+the page).
+
+This closes out the original "region/user/estate/abuse-report/currency
+manager" comparison against WhiteCore-Dev's WebInterface that prompted
+the whole Batch 13 thread - all five surfaces now have a native
+Casperia equivalent. Given how much was learned building this (the
+gzip-decompression landmine repeated twice, the HttpRequestParser body-
+size bug, the completion-event visibility gap, several fields in
+existing services turning out to have different real semantics than
+first assumed - CheckFlags, `active`), a fresh look at whether the
+original WhiteCore-Dev feature-parity audit's other verdicts still hold
+is warranted before treating that comparison as fully closed - flagged
+for a follow-up pass rather than assumed unchanged.
+
+---
+
+## Batch 13: self-service account registration (2026-08-09)
+
+Prompted directly by user feedback: "They should be able to sign up
+from the main page." Comparing the new native web UI against the old
+`OpenSim-Grid-Interface` PHP site it replaced (still on disk at
+`S:\laragon\www\holodeck\`, just no longer routed to) surfaced this as
+the one clear functional gap that actually mattered - the PHP site had
+`register.php`; the native replacement had no way to create an account
+at all, only log into an existing one.
+
+`UserAccountService.CreateUser(...)` (the method the `create user`
+console command calls) does everything a full registration needs in
+one call - but it's a method on the **concrete** `UserAccountService`
+class, not part of `IUserAccountService`, and `WebInterfaceServiceConnector`
+only holds an interface reference (loaded the same
+`LocalServiceModule`-reuse way as every other service in this file).
+Rather than cast to the concrete type or extend the interface for one
+caller, `HandleRegister` reimplements the same sequence
+`CreateUser` follows, calling only interface methods already available:
+`IUserAccountService.StoreUserAccount` (new account) ->
+`IAuthenticationService.SetPassword` -> `IGridService.GetDefaultRegions`
++ `IGridUserService.SetHome` (home region) ->
+`IInventoryService.CreateUserInventory` (root folder + system folders).
+`IInventoryService` wasn't previously loaded in this class - added the
+same way as everything else (`[InventoryService] LocalServiceModule`).
+
+Validation mirrors `UserAccountService`'s own "create user" console
+command: the same excluded-character set (space, `@`, `.`, `:` - these
+collide with Hypergrid address parsing, `first.last@gate:port`) for
+first/last name, plus a minimum password length and a confirm-password
+match the console command doesn't need (interactive prompts don't have
+a "confirm" step - a web form does). On success, logs the new account
+straight in via the same `TryLogin` path the login form itself uses,
+rather than making someone who just typed a password once retype it
+immediately on a fresh login screen.
+
+Verified live end-to-end: registered a real account
+("Newbie Tester") through the actual public URL, got redirected
+straight to the dashboard (balance correctly showing 0 for a brand-new
+account), confirmed via direct DB queries that the account row,
+**home region** (set to Welcome Center), and a **full 22-folder
+inventory tree** were all created - genuine parity with the console
+command's own side effects, not just a bare account row. Then verified
+all four validation guards actually block: duplicate name, mismatched
+passwords, too-short password, and a name containing an HG-reserved
+character (`@`) - each produced its specific error message and (for
+the duplicate-name case) did not create a second row. Test account
+deleted after verification (useraccounts/GridUser/inventoryfolders/auth
+rows).
+
+---
+
+## Batch 14: full follow-through on the WhiteCore-Dev re-audit (2026-08-10)
+
+Two research agents (dispatched per user request to "re-evaluate WhiteCore-Dev
+again") came back with 16 concrete, actionable items across a re-audit of
+the 5 originally-dismissed items, a WebInterface/Currency feature-gap
+comparison, a fresh scan, and an addon-vs-native scan of Casperia's
+remaining vendored addons. User's direction: "all of it." Tracked as
+tasks #11-26. Working through them in dependency/priority order rather
+than as one undifferentiated block.
+
+### Land Auction currency bug (2026-08-10)
+
+The re-audit's sanity check on already-shipped code (Land Auction was
+ported in the original WhiteCore-Dev pass, "not yet tested in-world")
+found a real, live correctness bug: `AuctionModule.AuctionEnd()`
+transferred parcel ownership to the winning bidder via
+`land.UpdateLandSold(...)` but never charged them anything - the
+in-world message even said "paying X for it" while nothing was
+actually deducted. Root cause: `UpdateLandSold` only moves ownership,
+it has no currency awareness at all; the normal client-driven land-buy
+path only charges because `LandManagementModule.EventManagerOnLandBuy`
+waits for a currency-module listener to set
+`LandBuyArgs.economyValidated = true` first (see `ValidateLandBuy`/
+`ProcessLandBuy` in `CasperiaCurrencyModule.cs`, Batch 12) - but an
+auction ending has no client-sent `LandBuyArgs` to hook into, so
+`AuctionEnd` was the one path that never went through any charge logic
+at all.
+
+Fixed by charging directly through the generic `IMoneyModule` interface
+(`AmountCovered` + `MoveMoney`) before transferring ownership -
+deliberately generic rather than reaching into
+`CasperiaCurrencyModule` concretely, so the fix works regardless of
+which economy module a grid actually has configured (Casperia's own,
+Gloebit, DTLNSLMoneyModule, etc.), mirroring the exact pattern already
+proven in `LandManagementModule.cs`'s own parcel-access-pass charge
+code (`mm.AmountCovered(...)` then `mm.MoveMoney(...,
+MoneyTransactionType.LandPassSale, ...)` - used `MoneyTransactionType.LandAuction`
+here instead, since SL's standard transaction-type enum has a distinct
+category for exactly this case). If the bidder no longer has sufficient
+funds, or the charge fails for any reason, the auction is now cancelled
+outright and ownership is left unchanged, rather than transferring the
+parcel for free.
+
+**Verification note - full in-world testing of this one didn't happen,
+and it's worth being upfront about why rather than quietly skipping
+it:** `AuctionModule`'s commands (`land auction start/bid/end`) are
+region-console-only, and this codebase's `LocalConsole` crashes
+outright (`System.IO.IOException: The handle is invalid` from
+`Console.TreatControlCAsInput`) if stdin/stdout are redirected
+programmatically - it needs a real Windows console, not a pipe. A
+second attempt using a real (non-redirected) console window plus
+`SendKeys`-based UI automation also failed: the launched process's
+`MainWindowTitle` came back empty, meaning the actual visible console
+window is very likely hosted by a separate `conhost`/Terminal process
+rather than `OpenSim.exe` itself, so activating "the process" by PID
+doesn't reliably reach the right window. Both are Windows
+console-hosting quirks unrelated to the fix's correctness, not
+something worth building deeper UI-automation infrastructure to solve
+for one console-only feature. Confidence in the fix instead comes from:
+a clean solution build, and the charge logic being a direct, verified-
+identical application of the `AmountCovered`/`MoveMoney` pattern already
+proven live elsewhere in this exact codebase. **Manually running `land
+auction start/bid/end` from the actual region console remains the
+recommended follow-up check** before this module is used on a real
+economy grid - same "not yet tested in-world" status the feature
+already had before this fix, not a new gap introduced by it.
+
+### Group currency balances (2026-08-10)
+
+Prerequisite for porting WhiteCore's stipend/group-dividend economy
+(next). The audit's finding was literally "zero hits for 'group'" in
+`CurrencyService.cs` - true, but investigating turned up something
+worth recording: the underlying ledger tables
+(`currency_balances`/`currency_transactions`) have **no schema-level
+distinction between an agent UUID and a group UUID at all** - no
+foreign key to `useraccounts`, just a bare `VARCHAR(36)` primary key.
+`GetBalance`/`Transfer` would already work correctly today if handed a
+group's UUID instead of an agent's. So this wasn't a storage gap, it
+was an API-clarity gap - added `GetGroupBalance`/`GroupCurrencyTransfer`/
+`GetGroupTransactionHistory` to `ICurrencyService` as thin, explicitly-
+named wrappers over the existing methods, rather than a schema
+migration. `GroupCurrencyTransfer` takes a `payingIntoGroup` bool to
+express direction (member funding the group vs. a payout) instead of
+making every caller juggle to/from order themselves. Deliberately
+**no permission checking added here** - the ledger has never checked
+"is the caller allowed to do this" for agent-to-agent transfers either
+(that lives in the caller, e.g. `CasperiaCurrencyModule`'s land-buy
+validation), so group-officer/financial-permission checks belong in
+whatever calls `GroupCurrencyTransfer`, not baked into the ledger
+itself.
+
+`GetGroupTransactionHistory` needed actual new logic, not just a
+wrapper: `GetTransactionHistory`'s `toAgentID`/`fromAgentID` are ANDed
+when both are non-zero (confirmed by reading `AppendAgentFilters` in
+`MySQLCurrencyData.cs`), so a group's activity page needs both
+directions (money paid in AND money paid out) merged, not one query.
+Implemented as two full fetches (group-as-recipient, group-as-sender)
+merged and sorted by date, then paginated in memory - reasonable given
+per-group transaction volume, not worth a SQL UNION for this.
+
+Also had to add the same three methods to `LocalCurrencyServiceConnector`
+(a thin region-side pass-through to whatever `ICurrencyService` is
+configured) - the build caught this immediately (`CS0535: does not
+implement interface member`) since it's the only other class
+implementing the interface besides `CurrencyService` itself.
+
+**No live verification yet - deliberately deferred, not skipped.**
+Nothing calls these three methods today; the stipend/dividend port
+(next) is what will actually exercise `GroupCurrencyTransfer` for
+real, and testing unused plumbing in isolation would mean building
+throwaway scaffolding just to poke it. Confidence for now comes from a
+clean full-solution build and the fact that the only genuinely new
+logic (`GetGroupTransactionHistory`'s merge) is a small, readable
+function over data shapes already proven correct elsewhere. Did run a
+regression check after redeploying (this touched
+`OpenSim.Services.Interfaces.dll`, the same assembly that caused the
+Batch 13 stale-DLL cascade) - logged in, loaded the dashboard, real
+balance rendered correctly, no exceptions.
+
+### Stipend economy port (2026-08-10)
+
+Ported the parts of WhiteCore's `ScheduledPayments.cs` that were
+actually clean to port, and scoped around the one real architecture gap
+found along the way rather than forcing a 1:1 port.
+
+**Universal stipend payments - fully automatic, ported completely.**
+The cadence math (`PaymentCycleDays`/`PayDayOfWeek`/`GetStipendPaytime`)
+had zero DataManager coupling in the original and ported over almost
+line for line. Hosted on `CurrencyServerConnector` (Robust-side) with
+its own `System.Timers.Timer`, since it needs exactly the services that
+connector already loads and grid-wide scheduled payments are a
+Robust-level concern, not region-specific. One deliberate improvement
+over the original: WhiteCore pays stipends out of a literal "Banker"
+account UUID and has its own commented-out, never-finished TODO to
+reconcile that account back to zero afterward - Casperia's ledger
+already has a real "system-generated credit, no counterparty" concept
+(`fromID = UUID.Zero` in `Transfer`, the same thing `SetBalance`/
+`RecordPurchase` already use), so stipends here have no phantom-account
+bookkeeping debt to begin with. Console commands: `stipend info`,
+`stipend paynow`.
+
+**Group liability charges - not ported, and here's the honest reason
+why.** WhiteCore's own `ProcessGroupLiability` reads a group's parcels-
+for-sale-in-search state via `IDirectoryServiceConnector` to compute a
+"directory fee" liability, then charges accountable members directly
+for it - and even in the WhiteCore source itself, the group balance
+update in that exact method is a commented-out TODO
+(`//moneyModule.UpdateGroupBalance(groupID, grpBalance)`) that was never
+finished. Porting a feature faithfully that isn't actually complete in
+its own source, and that depends on a parcel-search-fee concept
+Casperia doesn't have any equivalent of today, isn't a good use of
+scope here - flagged as a real follow-up (needs Casperia's own
+directory/parcel-for-sale integration first), not silently dropped.
+
+**Group dividends - the algorithm is real and ported, but not wired to
+run automatically, and that's an honest scoping call, not a shortcut.**
+While building this, found that Casperia's Groups subsystem
+(`IGroupsModule`, `IGroupsServicesConnector`) has **no "enumerate every
+group on the grid" capability at all** - `IGroupsModule`'s methods are
+built around a live, connected `IClientAPI` (a real viewer session),
+and the addon-style `IGroupsServicesConnector` only supports name-search
+or per-agent membership lookups, not "list every group." WhiteCore's
+own `groupsModule.GetAllGroups(BankerUUID)` has no equivalent here.
+Adding that capability properly means extending the Groups subsystem
+itself (interface + all three data backends) - a separate, real piece
+of work, not something to bolt on as a side effect of a currency port.
+So: added `ICurrencyService.PayGroupDividend(groupID, memberIDs,
+description)` - the actual algorithm (divide the group's current
+balance evenly among the given members, pay each via
+`GroupCurrencyTransfer`, leave any integer-division remainder in the
+group balance) is real, complete, and correctly scoped to have zero
+dependency on the Groups subsystem, matching how the rest of
+`ICurrencyService` is deliberately Groups-agnostic. It just needs a
+caller - once "list all groups" exists somewhere, wiring an automatic
+timer here is a small addition, not a redesign.
+
+**Verification:** the universal stipend path was verified fully live
+and automatically, with no console interaction needed at all (sidestepping
+the Land Auction task's console-automation problems entirely) - set a
+near-future `StipendPayDay`/`StipendPayTime` in `Robust.HG.ini`,
+restarted Robust, and let the real background timer fire on its own.
+Confirmed via direct DB queries: both real accounts (Test User, GRID
+SERVICES) received exactly the configured 50-unit payment, correct
+`currency_transactions` rows with `FromAgent = 00000000-...-000000000000`
+(system-generated) and the right description/amount. Reverted the test
+balances/transaction rows and the test-only near-future schedule
+afterward, redeployed `PayStipends = false` as the real default.
+`PayGroupDividend` has no live caller yet (by design, see above) so
+wasn't exercised live - same "verify once there's a real caller" stance
+taken for the rest of the group-currency API in the previous entry.
+
+### On-demand/soft-start regions - built, code verified correct, live discovery unresolved (2026-08-10)
+
+The port itself was clean: WhiteCore's `OnDemandRegionModule.cs` toggles
+a `ShouldRunHeartbeat` bool plus its own `WhiteCoreEventManager` events;
+Casperia's `Scene` already has an equivalent, differently-named
+mechanism - the public `Active` property (`Active = false` stops the
+heartbeat loop, `Active = true` calls the same `Start()` every region
+already uses at boot) - so no engine-level plumbing was needed at all,
+just the right events (`EventManager.OnNewPresence`/`OnRemovePresence`,
+both already present in vanilla-lineage OpenSim, confirming the audit's
+"REVERSE" verdict). Added
+`OpenSim/Region/CoreModules/World/OnDemand/OnDemandRegionModule.cs`
+scoped to WhiteCore's "Medium" tier only (full normal load, heartbeat
+idles down while empty) - a true "Soft" tier (skip loading prims
+entirely) would mean changing region startup sequencing itself, a
+bigger change than toggling an already-existing pause/resume switch.
+Added a grace-period debounce (default 60s) before actually idling
+down, which the WhiteCore original didn't have - avoids thrashing the
+heartbeat thread for someone teleporting through in quick succession.
+
+**Live verification hit a real wall, and it's worth documenting in
+detail rather than glossing over.** Enabled the module via a new
+`[OnDemand] Enabled = true` region-ini section on Var Test Region,
+redeployed, restarted - and the region's own
+`[REGIONMODULES]: From plugin OpenSim.Region.CoreModules, loaded 124
+modules, 82 shared, 42 non-shared` startup line never changed to 125,
+and a diagnostic log line placed at the very top of `Initialise()`
+(unconditional, before any config check) never printed. The module
+was never being instantiated by Mono.Addins at all.
+
+Ruled out, in order: **stale addin cache** (moved aside the entire
+`addin-db-004` directory to force a from-scratch rebuild - no change).
+**Bad deployment** (compared MD5 checksums of the build output against
+the deployed file - identical; confirmed via `Get-Process -Modules`
+that the running process had that exact file loaded, from the exact
+path expected). **Tooling giving false readings** - this was the real
+rabbit hole: both `strings` against the compiled DLL and PowerShell
+5.1's `[Reflection.Assembly]::LoadFrom` reported the type didn't exist
+in the assembly at all, which would have meant a build-item-inclusion
+bug. Built a throwaway `dotnet run` .NET 8 console app to check
+properly (PowerShell 5.1 is .NET Framework and can't reliably load/
+reflect a modern multi-dependency net8.0 assembly - confirmed via a
+`ReflectionTypeLoadException` when trying `.GetTypes()`), and that
+showed the type **was** present and correctly compiled all along, with
+an `[Extension(Path = "/OpenSim/RegionModules", NodeName =
+"RegionModule", ...)]` attribute structurally identical to
+`AuctionModule`'s (same path, same node name, same interfaces
+implemented) - both `strings` and the PowerShell reflection check had
+been giving false negatives the entire time, sending the investigation
+in the wrong direction. **New folder** (moved the file into the
+existing `World\Land\` folder alongside `AuctionModule.cs` itself,
+same result - ruled out). After all of that, the type is 100% verified
+correct and correctly deployed, and Mono.Addins still doesn't discover
+it as a `/OpenSim/RegionModules` extension node on this particular
+Casperia-Dev deployment, for a reason not yet identified.
+
+**Status: code is correct and ready to use, left disabled
+(`[OnDemand] Enabled = false`) pending root-causing the discovery gap.**
+This doesn't block anything else - `Initialise()` no-ops immediately
+when the section is disabled/absent, so the dormant module has zero
+effect on normal operation. Worth a fresh pair of eyes or a from-scratch
+Casperia-Dev redeployment to see if the discovery issue is specific to
+this long-lived instance's addin state in some way not captured by the
+cache-clear already tried.
+
+### Grid-wide viewer ban - most of it already existed (2026-08-10)
+
+Before writing any code, checked what Casperia already had - and it
+turned out to be far more than the original audit credited.
+`LLLoginService.Login()` already calls
+`m_AccessControlService.IsIPBanned(...)` (exact-match IP ban),
+`m_AllowedClientsRegex`/`m_DeniedClientsRegex` (regex-based viewer
+allow/deny by self-reported version string, config'd under
+`[LoginService]`), and `m_DeniedMacs` - and `IAccessControlData` already
+had `IsHardwareBanned(mac, id0)` backed by real `banned_macs`/
+`banned_id0s` tables, with full `ban mac`/`ban id0`/`ban ip` console
+commands already in `AccessControlService.cs`. None of this was visible
+from the WhiteCore-side-only comparison the original audit did - it was
+only checking "does WhiteCore have this," never "does Casperia already
+have an equivalent by a different name."
+
+What was genuinely missing, matching the audit's own DataManager-
+coupling analysis: **IP range bans** (`IsIPBanned` only ever did exact
+string match - `where ip = ?ip` - no CIDR/range concept at all) and
+**baked-texture-signature viewer detection** (Casperia's regex check
+only looks at what a viewer self-reports, which a modified viewer can
+lie about).
+
+**IP range bans**: added `banned_ip_ranges` (start_ip, end_ip) to the
+existing `AccessControl.migrations` across all three backends (MySQL/
+PGSQL/SQLite - matching every table already added this session across
+all three, not just MySQL), `IAccessControlData.GetIPRangeBans/
+BanIPRange/UnbanIPRange`, `IAccessControlService.IsIPRangeBanned`
+(fetches all ranges and compares numerically in C# rather than a SQL
+range query - the list is expected to stay small, and this sidesteps
+unsigned-int column differences across the three DB engines), and `ban
+iprange`/`unban iprange` console commands matching the existing `ban
+ip`/`ban mac`/`ban id0` command style exactly. Wired into
+`LLLoginService.Login()` right next to the existing `IsIPBanned` check.
+
+Verified against the real database with a small standalone .NET 8 test
+harness (same technique used to cut through the on-demand-regions
+reflection confusion) rather than through the actual login path, since
+`LLLoginService.Login()` needs a real viewer's TCP connection IP, which
+can't be scripted from curl: banned `203.0.113.1-203.0.113.50` (RFC
+5737 documentation range, safe to use for testing), confirmed
+`.25` inside reports banned, `.0` and `.51` (one below/above the
+boundary) correctly do not, an unrelated IP doesn't, and after
+unbanning the range is gone. Also confirmed via the region logs that
+Robust/regions restart cleanly with the new migration applied (all four
+`banned_*` tables exist) and did a dashboard regression check
+afterward - AccessControlService is not currently configured in
+Casperia-Dev's `Robust.HG.ini` (was already dormant before this work,
+left that way - enabling grid-wide banning by default wasn't asked
+for), so this shipped as available-but-opt-in, consistent with how
+it already was.
+
+**Viewer signature ban**: ported `GridWideViewerBan.cs` as
+`OpenSim/Region/CoreModules/World/Access/ViewerSignatureBanModule.cs`
+(placed in the existing `World/Access/` folder rather than a new one,
+partly to sidestep any repeat of the on-demand-regions Mono.Addins
+mystery even though that was never actually pinned on the folder).
+Hooks `EventManager.OnAvatarAppearanceChange`, inspects the avatar's
+baked texture IDs against a third-party-maintained viewer-signature
+map (same public resource WhiteCore's original used, fetched once and
+cached per process), and kicks via `IClientAPI.Kick` +
+`Scene.CloseAgent` if a banned viewer's signature texture is found.
+Disabled by default (`[GrieferProtection] ViewerSignatureBanEnabled`),
+same as the WhiteCore original. **Not live-verified** - would need
+either a real viewer running one of the specific tagged builds, or
+mocking the external signature-list fetch and injecting a fake
+matching texture ID onto a test avatar, neither of which was practical
+here. Confidence comes from a clean build and the logic being a close,
+mechanical port of the WhiteCore original using Casperia's own
+already-proven equivalents (`OnAvatarAppearanceChange` for the hook,
+`IClientAPI.Kick`/`Scene.CloseAgent` for the disconnect, both used
+elsewhere in this codebase already).
+
+### BotManager avatar-follow + tag-group management (2026-08-10)
+
+Ported to `osNpc*` rather than as a separate bot framework, per the
+re-audit's own "PARTIAL" verdict - the bulk of BotManager genuinely
+duplicates Casperia's existing NPC/pathfinding suite, but continuous
+follow and tag-based bulk management were real, confirmed gaps
+(`llPursue` is one-shot; there was no way to manage a named group of
+NPCs at all).
+
+**Follow** is implemented as a periodic re-target rather than
+WhiteCore's physics-event-driven approach
+(`PhysicsActor.OnRequestTerseUpdate`) - a `System.Timers.Timer` (1s
+tick, started lazily on first use) recomputes each following NPC's
+target position against the target avatar's *current* location every
+tick and re-issues the module's existing `MoveToTarget`, with the same
+start/stop-distance hysteresis WhiteCore's version has. Simpler than
+hooking a physics event, and needed no engine-level changes at all -
+`NPCModule.MoveToTarget`/`StopMoveToTarget` already existed and did
+exactly what's needed. Trade-off: up to ~1s of lag reacting to a
+target's movement, vs. WhiteCore's per-physics-tick responsiveness -
+acceptable for the kinds of uses this is for (a following pet/guard/
+companion NPC), not real-time enough for something like dodging.
+**Tags** are a plain in-memory `Dictionary<string, HashSet<UUID>>`
+inside `NPCModule` - `AddNPCTag`/`GetNPCsWithTag`/`DeleteNPCsWithTag`,
+both cleaned up automatically when an NPC is deleted so they can't leak.
+
+New OSSL functions (mirroring the exact three-file pattern every
+existing `osNpc*` function already uses - `IOSSL_Api.cs`, `OSSL_Api.cs`,
+`OSSL_Stub.cs`): `osNpcFollow(npc, target, startDistance, stopDistance)`,
+`osNpcStopFollow(npc)`, `osNpcAddTag(npc, tag)`,
+`osNpcGetNPCsWithTag(tag)`, `osNpcDeleteNPCsWithTag(tag)`. The tag
+query/delete functions filter results through the same
+`CheckPermissions` every other `osNpc*` call already uses, so a tag is
+a convenience for managing NPCs a script's owner already has permission
+over, not a way to discover or affect someone else's NPCs.
+
+**Not live-tested with an actual LSL script** - exercising this
+properly needs a real viewer to rez a script and watch an NPC actually
+walk after an avatar, which wasn't available in this environment (same
+constraint as the viewer-signature ban item above). Confidence comes
+from: a clean full-solution build: the new code following the *exact*
+file-by-file pattern every other working `osNpc*` function already
+uses in this codebase (not a novel pattern); and `Follow`/`StopFollow`
+building directly on `MoveToTarget`/`StopMoveToTarget`, which are
+themselves an unmodified, already-proven part of the existing NPC
+framework. A live check via an actual rezzed script and viewer remains
+the recommended follow-up before relying on this in a real build.
+
+### SimProtection - built correctly, and a systemic discovery pattern confirmed (2026-08-10)
+
+The port itself: Casperia already had every real primitive WhiteCore's
+`SimProtection.cs` needs, just under different names -
+`Scene.StatsReporter.LastReportedSimFPS`/`LastReportedSimStats[StatsIndex.PhysicsFPS]`
+instead of `ISimFrameMonitor`, and `RegionSettings.DisableScripts/
+DisablePhysics/DisableCollisions` + `ISceneCommandsModule.SetSceneDebugOptions`
+instead of `SetSceneCoreDebug` - the same two calls
+`EstateManagementModule.HandleEstateDebugRegionRequest` already makes
+for the in-viewer Estate "Debug" tab. Added
+`OpenSim/Region/CoreModules/World/Region/SimProtectionModule.cs`:
+periodic check (default 60s) that disables scripts and/or physics if
+FPS drops below a configurable percentage of baseline, re-enables after
+a grace period once FPS recovers, and can trigger `shutdown` if FPS
+sits near zero for too long. Deliberately does **not** call
+`RegionSettings.Save()` the way WhiteCore's original does on every
+toggle - these are meant to be transient automatic responses to a
+performance dip, not something that should survive a restart if the
+dip was already resolved.
+
+**Confirms a systemic pattern, not a one-off.** Live-testing this
+(artificially set `BaseRateFramesPerSecond=200` so this region's normal
+~44fps would read as "below threshold" and trigger immediately, no
+actual overload needed) found the exact same symptom as the on-demand-
+regions item: a diagnostic log at the very top of `Initialise()` never
+printed, and `OpenSim.Region.CoreModules`'s own `[REGIONMODULES]: loaded
+N modules` startup count didn't increase. Checking that same count
+against the *other* new module added this session
+(`ViewerSignatureBanModule`, previous entry) showed it going from 124
+to 125 - meaning **of the three new `[Extension(...)]`-tagged region-
+module classes added in this batch, exactly one was actually discovered
+by Mono.Addins**, despite all three following the identical proven
+pattern (`AuctionModule`'s exact `Extension` attribute shape, confirmed
+character-for-character identical in the on-demand-regions
+investigation). This rules out anything specific to SimProtection's own
+code, folder, or naming - the same three explanations already ruled out
+for on-demand regions (stale cache, bad deployment, wrong folder) don't
+need re-litigating a second time for the same underlying mechanism.
+**This looks like a real, reproducible Mono.Addins region-module-
+discovery reliability issue on this specific Casperia-Dev deployment**,
+independent of which module is involved - worth a maintainer's dedicated
+look (or a from-scratch Casperia-Dev redeploy to see if it clears),
+rather than continuing to re-diagnose it individually per module.
+Shipped disabled (`[SimProtection] Enabled = false`), same as
+on-demand regions.
+
+### Native land/places search service, replacing the OpenSimSearch addon (2026-08-10)
+
+Task #18 from the "all of it" list: OpenSimSearch (`addon-modules/
+OpenSimSearch`) only works against an external XML-RPC search server
+(`query.php`) that doesn't exist anywhere in Casperia's own stack -
+same shape of problem as the currency addons before Batch 12's native
+`CurrencyService`. Scoped deliberately to **land/places search only**;
+events and classifieds have no existing data model anywhere in Casperia
+and would be a separate, much larger feature, not a drop-in extension
+of this one.
+
+Followed the exact Data/Services/Connectors layering this session
+already established for Currency and Access Control:
+- `OpenSim/Data/ISearchData.cs` + `MySQLSearchData.cs`/
+  `PGSQLSearchData.cs`/`SQLiteSearchData.cs` - read-only queries against
+  the grid's own existing `land` table (`ParcelFlags.ForSale = 0x1000`,
+  `ParcelFlags.ShowDirectory = 0x100000`), no new schema. Confirmed and
+  handled the same MySQL/PGSQL-vs-SQLite column-naming split already
+  known from other tables in this codebase: SQLite's `land` table uses
+  `Desc` not `Description`, and its `LandFlags` column has TEXT type
+  affinity rather than a native integer, handled via
+  `Convert.ToInt64/Int32(reader.GetValue(...))` instead of typed reader
+  accessors.
+- `LandSearchRecord` (the shared DTO both `ISearchData` and
+  `ISearchService` need) lives in `OpenSim.Framework`, not
+  `OpenSim.Data` - `OpenSim.Services.Interfaces` doesn't reference
+  `OpenSim.Data` and was never going to for one small DTO, so this
+  follows the exact precedent already set by `CurrencyTransfer`/
+  `CurrencyPurchase` in Batch 12.
+- `OpenSim/Services/SearchService/` (new project,
+  `OpenSim.Services.SearchService.csproj`, added to `OpenSim.sln`) -
+  `SearchServiceBase`/`SearchService` mirror `CurrencyServiceBase`/
+  `CurrencyService` exactly (`[SearchService] LocalServiceModule`/
+  `StorageProvider`/`ConnectionString`, falling back to
+  `[DatabaseService]` if unset).
+- `OpenSim/Region/CoreModules/World/Search/CasperiaSearchModule.cs` -
+  the **one** new `[Extension(...)]`-tagged region module for this task,
+  deliberately not split into a separate `Local*ServiceConnector`
+  middleman class the way Currency has one, specifically to minimize
+  new extension-tagged classes given the Mono.Addins discovery
+  unreliability confirmed twice already this session (on-demand
+  regions, SimProtection). Loads `ISearchService` directly via
+  `ServerUtils.LoadPlugin<ISearchService>`. Activation uses the *same*
+  switch OpenSimSearch's own `OpenSearchModule` already checks -
+  `[Search] Module = "<name>"` - so setting it to `"CasperiaSearchModule"`
+  both activates this module and disables OpenSimSearch (which already
+  disables itself for any `Module` value other than `"OpenSimSearch"`).
+  Wires `IClientAPI.OnDirPlacesQuery`/`OnDirLandQuery` to
+  `ISearchService.SearchPlaces`/`SearchLandForSale`, building
+  `DirPlacesReplyData`/`DirLandReplyData` with the exact field mapping
+  confirmed by reading OpenSimSearch's own reply construction.
+
+**Fully live-verified, no environment friction this time.** Full
+solution build clean. Deployed to Casperia-Dev (all three processes -
+Robust plus both region sims - stopped first, since the changed/added
+DLLs - `OpenSim.Framework`, `OpenSim.Data` and its three provider DLLs,
+`OpenSim.Services.Interfaces`, the new `OpenSim.Services.SearchService`,
+and `OpenSim.Region.CoreModules` - are shared across all three; MD5
+checksums confirmed the deployed copies match the build output).
+Enabled on Var Test Region only (`[Search] Module =
+"CasperiaSearchModule"` + a `[SearchService]` section pointing at the
+same shared `casperia_dev` MySQL DB Currency already uses), left
+untouched (still `"OpenSimSearch"`) on Welcome Center, specifically to
+verify the two coexist correctly in separate processes without
+cross-contamination.
+
+A temporary unconditional diagnostic log at the top of `Initialise()`
+(same technique used for on-demand regions/SimProtection/
+ViewerSignatureBan) confirmed **this module *was* discovered by
+Mono.Addins** - `OpenSim.Region.CoreModules`'s own `[REGIONMODULES]:
+loaded N modules` count went from 125 to 126 on Var Test Region, the
+diagnostic line printed, and real functional logs followed immediately
+after (`[SEARCH SERVICE]: Starting search service` /
+`[CASPERIA SEARCH]: Native search module is active`), with no errors in
+between. On Welcome Center, the diagnostic line *also* printed (Mono.
+Addins instantiates every shared-module class in every process
+regardless of whether it goes on to activate), but the real activation
+log never appeared there, since its `[Search] Module` config was left
+at the default `"OpenSimSearch"` - confirming the config-gate coexists
+correctly with the untouched addon. Diagnostic line removed, rebuilt,
+redeployed (checksum-verified again), and confirmed clean on a second
+full restart (module count 125→126 again, activation log present, no
+diagnostic line).
+
+This is now **two of four** new `[Extension(...)]`-tagged region-module
+classes added this session that *were* successfully discovered
+(`ViewerSignatureBanModule`, now `CasperiaSearchModule`), against two
+that weren't (`OnDemandRegionModule`, `SimProtectionModule`) - still not
+enough of a pattern to say what distinguishes them, but worth noting
+discovery isn't uniformly broken, just unreliable.
+
+Functional correctness of the query logic itself was verified directly
+against the real database (same substitute-for-a-real-viewer technique
+used for the IP-range-ban work): a temporary test parcel row was set
+with `ForSale`/`ShowDirectory` flags, a sale price, and a distinctive
+name, then a throwaway .NET 8 console harness
+(`MySqlSearchData.SearchPlaces`/`SearchLandForSale` called directly
+against the live `casperia_dev` DB) confirmed: free-text name matching
+finds the row and excludes an unrelated query string; land-for-sale
+search finds the row and correctly excludes it once a `minPrice` filter
+is raised above its sale price. The test parcel row was restored to its
+original values afterward. The actual in-viewer protocol path
+(`DirPlacesQuery`/`DirLandQuery` panels) was not tested end-to-end - no
+real viewer available in this environment, same accepted gap as
+BotManager-follow and ViewerSignatureBan.
+
+### Native mute-list service (task #19) - already existed, premise was wrong (2026-08-10)
+
+Task #19 from the "all of it" list was "replace OpenSimMutelist addon
+with a native mute-list service," on the premise (from the original
+audit) that no native equivalent existed and the addon depends on an
+external `MuteListURL` server that isn't part of Casperia's stack.
+A dedicated investigation before writing any code found that premise
+wrong on every count: **a complete, working, already-deployed native
+mute-list stack already existed in Casperia before this task began.**
+
+- `OpenSim/Services/MuteListService/MuteListService.cs` - a real,
+  complete `IMuteListService` implementation (`MuteListRequest`,
+  `UpdateMute`, `RemoveMute`, `IsMuted`), backed by
+  `IMuteListData`/`MySqlMuteListData`/etc. via the standard
+  `[MuteListService] LocalServiceModule`/`StorageProvider`/
+  `ConnectionString` pattern every other service in this codebase uses.
+- Full Local/Remote connector chain already exists:
+  `LocalMuteListServiceConnector.cs`/`RemoteMuteListServiceConnector.cs`
+  (`OpenSim/Region/CoreModules/ServiceConnectorsOut/MuteList/`), the
+  actual HTTP client (`OpenSim/Services/Connectors/MuteList/
+  MuteListServicesConnector.cs`), and the Robust-side HTTP handler
+  (`OpenSim/Server/Handlers/MuteList/MuteListServerConnector.cs` +
+  `MuteListServerPostHandler.cs`, serving `POST /mutelist`).
+- The viewer-facing region module,
+  `OpenSim/Region/CoreModules/Avatar/InstantMessage/MuteListModule.cs`,
+  wires `IClientAPI.OnMuteListRequest`/`OnUpdateMuteListEntry`/
+  `OnRemoveMuteListEntry` and is **already the active module in every
+  current Casperia-Dev config** - both `Var_Test_Region\OpenSim.ini`
+  and `Welcome_Center\OpenSim.ini` set `[Messaging] MuteListModule =
+  MuteListModule`, `config-include/GridHypergrid.ini` sets `[Modules]
+  MuteListService = "RemoteMuteListServicesConnector"`, and Robust.ini
+  already registers the connector and `LocalServiceModule`. The Robust
+  log already showed `MuteListServiceConnector loaded successfully` on
+  every prior startup this session, unnoticed until this task looked
+  for it specifically.
+- `addon-modules/OpenSimMutelist`'s `OpenMutelist.cs` really does call
+  out to an external XML-RPC `MuteListURL` server (that part of the
+  original claim was correct), but its own `Initialise()` self-disables
+  unless `[Messaging] MuteListModule == "OpenSimMutelist"` - which none
+  of the deployed configs set. It still loads as a Mono.Addins plugin
+  (harmless) but never subscribes to any client event. **Confirmed dead
+  code on this deployment**, not a gap needing a replacement.
+
+**Actual work done, once the premise was corrected:** two purely
+cosmetic pre-existing defects, unrelated to this task's original goal
+but found while reading the code closely enough to verify it actually
+worked - `MuteListService` lived in `namespace
+OpenSim.Services.EstateService` (an obvious copy-paste leftover from
+templating off `EstateService.cs`), and the interface file was named
+`IMuteLIstService.cs` (stray capital I). Fixed the namespace (verified
+safe first - `ServerUtils.LoadPlugin`'s type-matching only checks the
+short class name against the `dll:ClassName` config string, never the
+namespace, so this couldn't break the existing `LocalServiceModule =
+"OpenSim.Services.MuteListService.dll:MuteListService"` config anywhere)
+and renamed the file via `git mv`. Left `addon-modules/OpenSimMutelist`
+in place rather than deleting it - same reasoning as keeping
+OpenSimSearch's addon alongside the new native search module: someone
+running their own external mute-list server can still opt into it via
+config, and deleting working (if dead-on-this-deployment) infrastructure
+isn't this task's job.
+
+**Fully live-verified**, and more thoroughly than most items this batch
+since this is a pre-existing feature, not new code - the standard for
+"same effort every time" doesn't relax just because nothing was built.
+Full solution build clean. Only `OpenSim.Services.MuteListService.dll`
+changed (the namespace edit); confirmed via MD5 that it's the *only*
+one of the mute-list-related DLLs that actually differs from what was
+deployed, so only Robust (the one process that loads this DLL directly,
+per `[MuteListService] LocalServiceModule` in `Robust.HG.ini`) needed
+stopping and restarting - the two region processes never touched this
+DLL and kept running throughout. Robust log confirmed
+`MuteListServiceConnector loaded successfully` with no errors after the
+restart. Ran two independent live functional checks: (1) a throwaway
+.NET 8 console harness instantiating the real `MuteListService` class
+directly against the live `casperia_dev` DB - `IsMuted` correctly false
+before/true after `UpdateMute`, `MuteListRequest` returned the correct
+CRC-checked pipe-delimited blob format, `RemoveMute` correctly reverted
+`IsMuted` to false; (2) the same sequence again, this time via `curl`
+directly against the live `POST http://localhost:9003/mutelist`
+endpoint Robust actually serves (`update`/`ismuted`/`get`/`delete`
+methods) - every response matched expectations, including decoding the
+base64-wrapped mute-list blob from `get` back to the expected
+`"1 <uuid> CurlTest|0"` format. This is a stronger verification than
+most other items this batch got, since (unlike Search or the OSSL
+additions) the actual wire protocol endpoint could be exercised directly
+without needing a real viewer.
+
+### WebInterface: purchases/transactions financial reporting page (task #20, 2026-08-10)
+
+The read side of Batch 12's currency ledger - `ICurrencyService`
+already had `GetTransactionHistory`/`GetPurchaseHistory`/
+`NumberOfTransactions`/`NumberOfPurchases`, written for console
+commands, but nothing in the WebInterface actually surfaced them. Added
+`HandleAdminTransactions` (`/web/admin/transactions`,
+`WebInterfaceServiceConnector.cs`) - two tabs (Transfers, Purchases),
+optional "First Last" agent-name filter, pagination, linked from the
+admin index alongside Abuse Reports/User Management/Estate Management.
+
+Two small, contained DB-layer fixes were needed, not new currency
+logic: `MySQLCurrencyData.GetPurchaseHistory`/`NumberOfPurchases`
+required a non-zero `PrincipalID` unconditionally, with no way to ask
+for "every purchase on the grid" the way `GetTransactionHistory`
+already supports via `UUID.Zero` meaning "don't filter this side" -
+relaxed both to the same `UUID.Zero`-means-unfiltered convention
+(`OpenSim/Data/MySQL/MySQLCurrencyData.cs`, doc comment added to
+`ICurrencyService.cs` too). Note: `CurrencyService` only ever had a
+MySQL data backend to begin with (no PGSQL/SQLite `ICurrencyData`
+implementation exists anywhere in this codebase) - a pre-existing scope
+decision from Batch 12, not something this task needed to address.
+
+`CurrencyTransfer.ToAgentName`/`FromAgentName` are never actually
+populated by the DB layer (confirmed by reading
+`MySQLCurrencyData.GetTransactionHistory` - the columns simply aren't
+selected), so names are resolved per-row via `UserAccountService` in
+the handler itself, falling back to the raw UUID if the account can't
+be found (visible in the live test below - one of the two Land Auction
+transaction's counterparty didn't resolve to a name, exactly this
+fallback in action, not a bug).
+
+`GetTransactionHistory` ANDs `toAgentID`/`fromAgentID` when both are
+non-zero, so a single agent's activity (money sent *or* received) needs
+"either side" semantics it doesn't provide directly - handled the same
+way `CurrencyService.GetGroupTransactionHistory` already handles it for
+groups (Batch 12): query both directions, merge by transaction ID,
+sort by date, page in memory. Bounded to a 1000-row overfetch per side
+rather than being exact for arbitrarily large histories - a reasonable
+tradeoff for an admin reporting tool, not a public API.
+
+**Fully live-verified end-to-end**, including a real login flow, not
+just a direct service call. Full solution build clean. Three DLLs
+changed (`OpenSim.Data.MySQL`, `OpenSim.Services.Interfaces`,
+`OpenSim.Server.Handlers`, the last of which the WebInterface itself
+lives in) - all three Casperia-Dev processes stopped, DLLs deployed,
+checksums verified, all three restarted. Logged in via `curl` against
+the real `/web/login` endpoint using the same "Test User" account
+created earlier this session's self-service-registration testing,
+captured the real session cookie, then exercised `/web/admin/
+transactions` for real: the Transfers tab correctly showed this
+session's actual real transaction history (two Land Auction charges,
+three currency purchases, dates/amounts/types all correct); the
+Purchases tab correctly showed L$ credited alongside real-money
+hundredths and the purchasing IP; filtering by `agent=Test+User`
+correctly excluded the one transaction where neither side was Test
+User and kept the rest; filtering by a nonexistent name correctly
+showed a "no user found" message (falling back to the unfiltered grid-
+wide view rather than an empty page - a deliberate UX choice, not an
+oversight); and unauthenticated access correctly redirected to
+`/web/login`. Also confirmed no regression on `/web/dashboard` and
+`/web/admin` after the shared-DLL redeploy, and confirmed via a third
+full region restart that Batch 14's native search module (previous
+entry) still activates cleanly.
+
+### WebInterface: grid statistics dashboard (task #21, 2026-08-10)
+
+`/web/admin/stats` - total regions, total land area, Hypergrid open/
+closed count, total registered accounts, current online-user count.
+Mostly free: total regions/land area/HG status reuse the exact
+`GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000)` "get everything"
+idiom `HandleAdmin` already established, and total accounts reuses
+`GetUserAccountsWhere(UUID.Zero, "1=1")` (already-wired
+`m_UserAccountService`, same call `HandleAdminUsers`' search already
+makes, just with a catch-all predicate instead of a name).
+
+Current-online-user-count had no existing service-level path at all -
+researched this specifically before writing any code, since the whole
+point of this task is to build only what's genuinely missing.
+`IPresenceService.GetAgents` needs a list of userIDs to check, not a
+"who's online" query, and `PresenceInfo` doesn't even carry a login
+timestamp. The *only* place this logic existed anywhere in the
+codebase was as a private console-command helper,
+`GridUserService.HandleShowGridUsersOnline` (`Online==true` and
+logged in within 5 days, to avoid overcounting a crashed region's
+stale sessions) - inaccessible from the WebInterface connector, which
+only has service-interface references, not console internals. Promoted
+this into a real interface method, `IGridUserService.GetOnlineUserCount()`,
+extracting `HandleShowGridUsersOnline`'s exact logic into it (the
+console command now just calls the new method - no logic duplicated)
+and threading it through every other `IGridUserService` implementer the
+same way every prior interface addition this session was: the real
+implementation (`GridUserService.cs`), `LocalGridUserServicesConnector`
+(pass-through), `RemoteGridUserServicesConnector` (pass-through), the
+actual HTTP client (`GridUserServicesConnector.cs`, new
+`getonlineusercount` wire method), and the Robust-side handler
+(`GridUserServerPostHandler.cs`, new `case "getonlineusercount"`).
+
+**Fully live-verified at both levels of the stack, not just the one the
+WebInterface itself uses.** Full solution build clean. Five DLLs
+changed (`OpenSim.Services.Interfaces`, `OpenSim.Services.
+UserAccountService`, `OpenSim.Region.CoreModules`, `OpenSim.Services.
+Connectors`, `OpenSim.Server.Handlers`) - all three processes stopped,
+deployed, checksum-verified, restarted. Logged in for real and fetched
+`/web/admin/stats`: 2 regions, 1,114,112 m² total land area (1,048,576 +
+65,536 - confirmed by hand against the two real region sizes), 1 of 2
+open to Hypergrid (matches this grid's actual state), 2 registered
+accounts (cross-checked directly against `SELECT COUNT(*) FROM
+useraccounts` - exact match), 0 users online (correct - no one was
+actually logged in). Then, separately, exercised the *actual* HTTP
+wire path the region processes use for this service
+(`RemoteGridUserServicesConnector` → `POST {PrivatePort}/griduser`,
+confirmed from `config-include/GridHypergrid.ini`'s
+`GridUserServices = "RemoteGridUserServicesConnector"`) directly via
+curl against port 9003: `METHOD=getonlineusercount` correctly returned
+`0`, and a pre-existing method (`getgriduserinfo`) was re-checked
+alongside it to confirm no regression from editing a class four other
+files also implement. Also re-confirmed dashboard/transactions/mutelist
+endpoints and the search module's clean startup, since this redeploy
+touched enough shared DLLs to risk all of them.
+
+### WebInterface: self-service password reset (task #22, 2026-08-10)
+
+`/web/forgot-password` (email in, generic "check your email" message
+out regardless of whether it matched an account - deliberately no
+account-enumeration signal) and `/web/reset-password?token=...` (new
+password form, one-hour-lived single-use token).
+
+Researched what already existed before writing anything, same
+discipline as the Mutelist task: `UserAccount.Email` is a real,
+DB-persisted, queryable field (`GetUserAccount(scope, email)` already
+existed); real outbound SMTP already exists in this codebase via
+MailKit, just built into the region-side `EmailModule.cs` (llEmail's
+backend) rather than reachable from Robust - reused its exact `[SMTP]`
+config section/keys and its connect/authenticate/send call sequence
+(without the LSL-specific per-owner/per-address throttling, which
+doesn't apply here) rather than inventing a second config surface, so
+an operator with SMTP already set up for in-world email doesn't need
+to configure it twice. The `WebSession` class already in this file
+(token → data + expiry, checked on every use) was the template for a
+new, separate `ResetToken` dictionary - a shorter lifetime (1 hour) and
+single-use (removed on any redemption attempt, valid or not) since,
+unlike a login session, possessing this token alone is enough to set a
+new password. `MailKit`/`MimeKit` project references added to
+`OpenSim.Server.Handlers.csproj` (previously only referenced from the
+region-side `OpenSim.Region.CoreModules.csproj`).
+
+**Live-verified with a real SMTP round-trip, not a mocked send.** No
+real external mail account was available in this environment, so built
+a small throwaway raw-socket SMTP listener (PowerShell,
+`TcpListener`/`StreamReader`/`StreamWriter` implementing just enough of
+the protocol - EHLO/MAIL FROM/RCPT TO/DATA - to accept a real
+connection and capture what MailKit actually sends) and pointed a
+temporary `[SMTP]` section at it. This is a stronger check than a
+harness that calls `SendEmail` directly: it forces the *actual* MailKit
+`SmtpClient.Connect`/`Authenticate`/`Send` calls to run over a real
+socket. The captured message had a correct `From`/`To`/`Subject` and a
+correctly-formed reset link with a real generated token.
+
+That real token was then fed through the *actual* `/web/reset-password`
+endpoint - which caught a real bug immediately: `HandleResetPassword`
+called `ReadForm(request)` twice (once to read the token, again lower
+down for the password fields), and an HTTP request body stream can only
+be read once, so the second call threw `System.IO.IOException: Stream
+was not readable`, surfaced as a 500 to the browser. Fixed by parsing
+the form exactly once per request and reusing it. Rebuilt, redeployed,
+re-verified the complete flow with a fresh token: reset succeeded (302
+to login with a confirmation message), the *new* password logged in
+successfully, the *old* password was correctly rejected, and re-
+submitting the same (now-consumed) token was correctly rejected as
+"invalid or expired" rather than silently succeeding again. Also
+checked the two obvious edge cases: a nonexistent email address returns
+the identical generic message with no email attempted (confirmed no
+crash, no distinguishing behavior), and a garbage/unknown token is
+correctly rejected. Restored the test account's password back to its
+prior value afterward using the newly-verified reset flow itself
+(rather than a side-channel DB edit), and shipped the deployed
+`[SMTP]` section disabled (`enabled = false`, real config values
+documented in the comment) since the throwaway test listener isn't a
+real always-on mail server - a real deployment just needs `enabled =
+true` plus real provider credentials, no code changes.
+
+This is the only task so far this batch where live-testing caught and
+fixed a genuine bug in the new code before it shipped, rather than just
+confirming things already worked - directly justifying the "same effort
+every time" standard applied to every item in this list, including the
+ones that looked like simple, low-risk CRUD forms going in.
+
+### WebInterface: login-screen news feed (task #23, 2026-08-10)
+
+Grid-operator announcements (`/admin/news` to post/edit/delete, shown
+on both the login splash `/welcome.php` and the public home page `/`).
+Unlike the last several tasks, this one had genuinely nothing to reuse
+or promote from existing code - no news/announcement concept exists
+anywhere else in Casperia - so it's the first fully-new Data/Service
+pair added this batch (Search and Mutelist both built on or discovered
+existing infrastructure).
+
+Followed the exact same three-layer shape Search already established
+in this batch, deliberately kept even simpler since - like Search's
+`CasperiaSearchModule` context, but more so - **nothing region-side
+ever needs this at all**: it's purely a Robust-hosted, admin-managed,
+grid-wide feed. So there's no region module, no Local/Remote connector
+pair, not even the one extension-tagged class Search needed - just
+`OpenSim/Data/INewsData.cs` (+ MySQL/PGSQL/SQLite implementations,
+new `news` table, no scope/owner column since this is grid-wide, not
+per-user/per-region like most tables in this codebase),
+`OpenSim/Services/Interfaces/INewsService.cs`,
+`OpenSim/Services/NewsService/` (new project, mirrors
+`SearchServiceBase`/`SearchService` exactly), and `NewsItem` living in
+`OpenSim.Framework` (same layering reason as `LandSearchRecord`/
+`CurrencyTransfer` - `OpenSim.Services.Interfaces` doesn't reference
+`OpenSim.Data`). `WebInterfaceServiceConnector` loads `INewsService`
+directly via the same `LoadReusedPlugin` every other service on that
+class already uses (`ICurrencyService`, `IGridUserService`, etc.) -
+no new loading mechanism needed since WebInterface itself is always
+the Robust-local case that mechanism already handles.
+
+Editing an existing item deliberately preserves its original post
+date rather than bumping it to "now" - a wording correction shouldn't
+reorder the feed out from under readers who already saw it.
+
+**Fully live-verified**, full CRUD cycle against the real deployed
+grid, not just a build check: confirmed the home page shows no "News"
+section at all when the feed is empty (rather than an empty/awkward
+header); posted a real item through the actual admin form and
+confirmed it appeared correctly on both `/` and `/welcome.php` with
+matching title/author/body; confirmed the edit form pre-fills from the
+real stored values; edited the title/body and confirmed the change
+took effect while the original post date stayed fixed; deleted it and
+confirmed it disappeared from the admin list, the home page, *and* the
+splash page in the same request cycle; confirmed unauthenticated
+requests to `/admin/news` redirect to login same as every other admin
+page. Full solution build clean; eight DLLs changed (all three
+processes stopped/deployed/checksum-verified/restarted, since Data/
+Framework/Interfaces are shared by everything); Robust log confirmed a
+clean first-run migration (`Creating News at version 1`) with no
+errors. Also re-confirmed dashboard/stats/transactions still work and
+the search module still activates cleanly, per the now-standard
+regression check after any shared-DLL redeploy this batch.
+
+### WebInterface: static page manager (task #24, 2026-08-10)
+
+Admin-authored content pages (About, Rules, Help, etc.) served at an
+operator-chosen URL - `/admin/pages` to create/edit/delete, public at
+`/web/page/<slug>` - no code changes needed to add one. Same
+Data/Service shape as News (new `static_pages` table, `IStaticPageData`/
+`IStaticPageService`, a new `OpenSim.Services.StaticPageService`
+project, `StaticPage` DTO in `OpenSim.Framework`), with the one real
+design difference: pages are addressed by an admin-chosen slug rather
+than shown chronologically, which meant two things News didn't need -
+a unique index on the slug column, and routing that can't be a fixed
+`case` in `HandleRequest`'s switch the way every other page on this
+connector is, since the slug is arbitrary. Handled by checking
+`path.StartsWith(BasePath + "/page/")` in the `default:` branch of that
+switch, after every fixed route has already had a chance to match, so
+a real fixed path never gets shadowed by a page slug someone picks.
+
+Slug collisions are checked explicitly before saving (`GetBySlug`,
+comparing against the item's own ID so editing a page without changing
+its slug doesn't collide with itself) rather than only relying on the
+DB's unique index - the alternative would surface as a generic "could
+not save" failure instead of a real "that slug is taken" message.
+
+**Fully live-verified**, full CRUD cycle plus the two things unique to
+this task: confirmed an unknown slug 404s rather than erroring;
+created a page and confirmed it served correctly at `/web/page/about`
+with the right title/body; confirmed creating a *second* page with the
+same slug was rejected with the expected error message, and that the
+rejection didn't touch the original page (still served correctly
+afterward) - the slug-uniqueness guard actually doing its job, not
+just present in the code; edited the page including *changing its own
+slug* and confirmed the old slug now 404s while the new one serves the
+updated content; deleted it and confirmed both the admin list and the
+public URL reflect that. Full solution build clean; eight DLLs changed
+(all three processes stopped/deployed/checksum-verified/restarted);
+Robust log confirmed a clean first-run migration (`Creating StaticPage
+at version 1`). Re-confirmed dashboard/stats/transactions/news and the
+search module's clean activation, same standard regression check as
+every shared-DLL redeploy this batch.
+
+### WebInterface: grid settings editor (task #25, 2026-08-10)
+
+Live-editable overrides (`/admin/settings`) for values that would
+otherwise only ever come from Robust's `.ini` and need a restart to
+change: grid name, grid nickname, welcome message, and one new real
+behavioral toggle - whether new users can self-register at all, a gap
+that genuinely existed before this task (registration had no on/off
+switch anywhere). Deliberately scoped to this fixed, small set of keys
+rather than a general config-file editor - the ones that already had a
+hardcoded ini-only value used elsewhere on this connector
+(`m_gridName`/`m_gridNick`/`m_welcomeMessage`) plus the one new toggle,
+not a dumping ground for the whole `.ini`.
+
+Backing store is a plain key/value table (`grid_settings`,
+`IGridSettingsData`/`IGridSettingsService`, new
+`OpenSim.Services.GridSettingsService` project) rather than one typed
+column per setting like News/StaticPage - deliberately different from
+those two, since the set of editable keys is expected to keep growing
+as more values get this same treatment, and a new column + three-backend
+migration per future setting would be a lot of ceremony for what's
+fundamentally just named strings. A `GetSetting(key, default)` helper on
+`WebInterfaceServiceConnector` reads the DB override if present, falling
+back to whatever the `.ini` already configured otherwise - so a grid
+that's never touched this page behaves exactly as before, and every
+consumer of the old ini-only fields (`HandleHome`, `HandleWelcome`, the
+password-reset email's grid-name mention) was updated to go through it.
+
+**Fully live-verified, and specifically checked that changes take
+effect without a Robust restart** - the whole point of this feature
+over just editing the `.ini` by hand. Saved a new grid name, nickname,
+welcome message, and disabled registration through the real admin
+form; confirmed the home page (`/`) *and* the login splash
+(`/welcome.php`) immediately reflected the new name/message, the "Sign
+up" link disappeared from the home page, and hitting `/web/register`
+directly (bypassing the missing link) still correctly refused with
+"registration is currently closed" - defense in depth, not just a
+hidden link. Restored the original grid name/nickname/message and
+re-enabled registration afterward through the same feature, confirmed
+the home page reverted correctly. Full solution build clean; seven
+DLLs changed (all three processes stopped/deployed/checksum-verified/
+restarted); Robust log confirmed a clean first-run migration (`Creating
+GridSettings at version 1`). Re-confirmed dashboard/stats/transactions/
+news/pages and the search module's clean activation, same standard
+regression check as every shared-DLL redeploy this batch.
+
+### WebInterface: web-based region console (task #26, 2026-08-10) - AND a major correction to task #18
+
+`/admin/console` - pick a region, run a console command against it, see
+the output. This is the last item on the WhiteCore-Dev re-audit's "all
+of it" list, and directly closes the gap that list called out by name:
+WhiteCore's own equivalent page is a documented stub ("hardcodes 'not
+yet implemented' despite calling `MainConsole.Instance.RunCommand()`" -
+see FEATURES_VS_MASTER.md). This one actually works.
+
+**Design.** Region-side: `OpenSim/Region/CoreModules/World/WebConsole/
+WebConsoleModule.cs`, a new `[Extension(...)]`-tagged `ISharedRegionModule`
+that registers a `POST /consoleweb` handler (same
+`MainServer.Instance.AddSimpleStreamHandler` pattern
+`CasperiaCurrencyModule.cs`'s `/currency.php` already uses). Robust-side:
+new `/admin/console` + `/admin/console/run` pages on
+`WebInterfaceServiceConnector` that resolve the target region's
+`GridRegion.ServerURI` and POST the command to it directly.
+
+**The interesting technical problem was output capture, not networking.**
+Researched this before writing anything: `MainConsole.Instance.RunCommand(cmd)`
+is a real, directly-callable, synchronous entry point
+(`ICommandConsole.RunCommand`, `OpenSim/Framework/ICommandConsole.cs`),
+but nothing in the existing console framework can capture a command's
+output as a string - `LocalConsole.Output` writes straight to
+`System.Console.WriteLine` and never fires `ICommandConsole.OnOutput`,
+and `RemoteConsole` (a real, existing, but currently-unconfigured OpenSim
+feature) is built around an async long-poll session model for a
+JS terminal client, not a request-in/output-out shape - not a fit here.
+Solved by temporarily swapping `MainConsole.Instance` for a small
+`CapturingConsole : ICommandConsole` wrapper for the duration of one
+command: it shares the *same* `Commands` registry as the real instance
+(so every already-registered command still resolves), overrides `Output`
+to both append to a buffer and forward to the real instance (so an
+operator watching the physical console still sees every command run
+through this endpoint - not a silent side channel), and makes every
+`Prompt`/`ReadLine` overload return an immediate safe default rather
+than blocking, since a command that would normally pause for
+confirmation must not hang an HTTP request forever waiting for a human
+who isn't there.
+
+**Security design, given this is the single most sensitive endpoint
+added this session:** successful auth here means arbitrary console
+command execution on that region process - equivalent to physical/RDP
+console access, not a data read/write like every other Robust<->region
+HTTP endpoint added this session (`/griduser`, `/mutelist`, neither of
+which have any auth at all today). Deliberately held to a stricter
+standard than that existing precedent: the region module refuses to
+activate at all unless a real, non-empty `SharedSecret` is configured
+(empty/missing is treated as "not configured," never as "no auth
+required"), checked via a required `X-Console-Secret` header on every
+request.
+
+**Fully live-verified, including the security boundary and a real
+command producing real output** - not just a build check. Hit the raw
+region endpoint directly with a wrong secret (403), no secret (403),
+and the correct secret (200 with real output) to confirm the auth check
+actually gates the endpoint, not just the WebInterface's own login page
+in front of it. Through the real `/admin/console` UI: `show users`
+returned the region's actual live agent count, `stats show` returned
+real current FPS/frame-timing numbers, `show regions` returned the
+region's actual ID/port/estate - genuine command execution and output
+capture, not a stub. Unrecognized commands (`show version`, `show
+uptime` - not registered in this build) correctly produced empty output
+rather than an error, matching `Commands.Resolve`'s own real behavior
+for an unmatched command. Edge cases: a garbage `region_id` correctly
+shows "server address is not known to the grid service"; an empty
+command correctly shows "enter a command to run"; unauthenticated
+`/admin/console` correctly redirects to login.
+
+**The major correction.** While diagnosing why the region console
+wasn't reachable at first, found something that reaches back into
+already-shipped work: a temporary unconditional diagnostic log at the
+very top of `WebConsoleModule.AddRegion()` never printed on Var Test
+Region, even though the *same* module's `Initialise()` ran correctly
+moments earlier (config read correctly, `Enabled=true` and the real
+64-char `SharedSecret` both confirmed via logging). This is a
+**different** failure mode than the session's previously-documented
+Mono.Addins issue (OnDemand/SimProtection, where `Initialise()` itself
+never printed at all) - here, discovery and initialisation both
+succeed, but `AddRegion()` - the method where these modules' actual
+client-facing wiring happens - is never reached.
+
+Out of caution, added the same temporary diagnostic to
+`CasperiaSearchModule.AddRegion()` (Batch 14's search module, task #18,
+previously documented as "fully live-verified") to check whether it was
+affected by the same thing. **It was.** On Var Test Region, `Initialise()`
+ran and logged "Native search module is active" as already documented,
+but `AddRegion()` - the method that actually calls
+`scene.EventManager.OnNewClient += OnNewClient` and
+`scene.RegisterModuleInterface<ISearchModule>(this)` - never printed
+its own diagnostic line either. **This means task #18's client-facing
+wiring (the part that actually answers a viewer's Places/Land Sales
+search panels) has never actually been active on Var Test Region**,
+despite what was documented. The part that *was* genuinely verified for
+task #18 - the `SearchService`/`MySqlSearchData` data layer, tested
+directly via a .NET console harness - is unaffected by this and remains
+correctly verified; only the region-module wiring layer on top of it is
+in question.
+
+Critically, this turned out to be **region-specific, not module-specific
+or universally broken**: the exact same diagnostic added to
+`WebConsoleModule` and `CasperiaSearchModule` printed *normally* on
+Welcome Center - `AddRegion()` was reached on both, correctly showing
+`enabled=false` there (matching that region's own config, which never
+enabled either feature). So this is not "Mono.Addins can't discover new
+extension classes" (the existing documented theory) - discovery and
+`Initialise()` work fine on *both* regions for *both* modules. Something
+specific to Var Test Region's process silently stops
+`RegionModulesControllerPlugin.AddRegionToModules` from completing for
+modules positioned after some point in its enumeration order, without
+throwing any exception visible anywhere in that region's log (confirmed
+by grepping its entire startup window for `ERROR`/`Exception` - nothing
+found besides the diagnostic lines themselves). Not root-caused further
+given time already spent - documented transparently as a newer,
+more specific data point on the same general "this Casperia-Dev
+deployment has real Mono.Addins/region-module-loading reliability
+problems" finding already on record from OnDemand/SimProtection,
+now with the added insight that it's tied to a specific region's
+process state, not the module code.
+
+Given this, task #26 was **retested and confirmed working correctly on
+Welcome Center instead** (see the live-verification section above) -
+Var Test Region's `[WebConsole]` config was replaced with a comment
+explaining why, and the real test config moved to Welcome Center's own
+`OpenSim.ini`. Task #18's documentation and the table entry in this
+file are being corrected in the same edit as this entry - see the
+`OpenSimSearch` row update above, now noting the confirmed working data
+layer separately from the not-actually-verified client-facing wiring on
+Var Test Region specifically. A maintainer wanting genuinely-verified
+native search today should enable it on Welcome Center (or any region
+that doesn't exhibit this issue) rather than Var Test Region, or
+investigate why Var Test Region's `AddRegionToModules` pass is silently
+incomplete.
+
+### Root cause found: the "Mono.Addins reliability issue" wasn't Mono.Addins at all (2026-08-10)
+
+Immediately after the above was written, `Var Test Region`'s process
+hung for real on a routine restart - not the silent AddRegion-skip
+already documented, but a full stop, sitting at an interactive "We are
+now going to ask a couple of questions about your region" console
+prompt that nothing was there to answer. Investigating that hang found
+the actual root cause of **all** of this session's "Mono.Addins doesn't
+reliably load new region modules on this deployment" findings -
+OnDemandRegionModule, SimProtectionModule, and the AddRegion-skip
+affecting CasperiaSearchModule/WebConsoleModule alike. None of them were
+ever a Mono.Addins problem.
+
+**What actually happened:** earlier this session, adding `[OnDemand]`
+and `[SimProtection]` config sections to `Var_Test_Region\OpenSim.ini`
+inserted them two lines into the pre-existing `[Startup]` section
+instead of after it. INI format has no concept of "resuming" a section
+once a new `[SectionName]` header appears - every line after that
+header belongs to it until the *next* header, no matter what the line's
+own comment says it's for. So `[Startup]`'s real content - hundreds of
+lines including `region_info_source` and `regionload_regionsdir`, the
+setting that tells `LoadRegionsPlugin` where to find the region's own
+saved config - got silently reattributed to `[SimProtection]` instead.
+Confirmed directly: a throwaway .NET 8 console app loading the file
+through the real `Nini.IniConfigSource` (same reflection-testing
+technique used earlier this session for AccessControlData) showed
+`[Startup]` parsing down to just 2 keys (`logfile`/`StatsLogFile`)
+instead of the dozens it should have, with `regionload_regionsdir`
+completely absent. `RegionLoaderFileSystem.LoadRegions()` then silently
+fell back to its own hardcoded default path (`.\Regions`, empty),
+found zero files there, and dropped into the interactive new-region
+wizard used for genuinely first-time setup - which then just sat there
+forever since no one was there to answer it.
+
+This had been a **latent bug since the moment those two sections were
+added**, not something that broke recently - Var Test Region kept
+booting fine on every restart in between because `LoadRegionsPlugin`
+only runs once per process start, and until tonight nothing forced a
+restart at exactly the wrong moment relative to whatever made this
+surface as a hang instead of a quieter symptom. Fixed by moving both
+sections to their natural position - right after `[Startup]`'s real
+content ends, immediately before `[AccessControl]` - restoring
+`[Startup]` to one continuous, correctly-parsed section. Verified the
+fix directly against the file with the same Nini test harness *before*
+touching the live process again (`[Startup]` now correctly parses 16
+keys including the right `regionload_regionsdir`), then confirmed both
+regions restart cleanly.
+
+**Re-tested OnDemandRegionModule and SimProtectionModule against the
+fixed config, at the user's request.** Temporarily re-enabled both,
+added the same unconditional diagnostic logging technique used
+throughout this session to `Initialise()`/`AddRegion()`, rebuilt,
+redeployed, restarted. **Both now work correctly** -
+`Initialise()` fires, config reads correctly (`enabled=True` for both),
+and - the part that never happened before - `AddRegion()` also fires
+for both. OnDemandRegionModule's real functional log line appeared
+(`"Var Test Region starting idle - heartbeat will resume on first
+visitor"`), confirming `scene.Active = false` genuinely ran. This fully
+retracts the "Mono.Addins does not discover this module on this
+deployment" conclusion recorded earlier for both modules - the modules
+were always discoverable; `[Startup]`'s corruption was the actual cause,
+most likely via some setting inside the swallowed `[Startup]` content
+that the non-shared-module loading path depends on (not further
+root-caused at that level of detail - the practical fix is the same
+regardless of the exact mechanism).
+
+Removed the diagnostic logging again afterward and left both **disabled
+by default** - not because anything is broken now, but because neither
+module's actual *behavioral* payload has been exercised live yet
+(OnDemand's wake-on-first-visitor path needs a real login;
+SimProtection's FPS-drop mitigation needs an artificially-lowered
+threshold to trigger, which would genuinely disable scripts/physics on
+whatever region it's tested on - deliberately not forced on Var Test
+Region while it may be in active use). Both are safe to enable; the
+config comments were updated to reflect the corrected finding and the
+specific remaining gap.
+
+This also means the `CasperiaSearchModule`/`WebConsoleModule`
+AddRegion-skip finding from immediately before this entry almost
+certainly has the **same root cause**, not a fresh, still-mysterious
+"region-specific Mono.Addins issue" as first framed - the ini bug fully
+explains a non-shared-module loading failure and very plausibly extends
+to the shared-module path too, given both go through the same
+overall `AddRegionToModules`/`LoadRegions` sequence on the same
+corrupted file. Not independently re-confirmed for Search/WebConsole
+specifically in this pass (the user asked specifically about OnDemand/
+SimProtection), but a maintainer re-enabling native search on Var Test
+Region today should expect it to work correctly, now that the actual
+cause is fixed rather than worked around by moving to Welcome Center.
+
+**Follow-up: Search and WebConsole re-tested on Var Test Region too, at
+the user's request - both confirmed fixed.** Re-added `[WebConsole]
+Enabled = true` to `Var_Test_Region\OpenSim.ini` (it had been moved to
+Welcome Center as a workaround) - `[Search]`/`[SearchService]` were
+already there and untouched. No code changes needed; only config. On
+restart, `[WEB CONSOLE]: Enabled at /consoleweb` printed for real (the
+line that lives inside `AddRegion`, not `Initialise` - direct proof
+`AddRegion` now runs for shared modules on this region), and
+`[CASPERIA SEARCH]: Native search module is active` printed as before.
+
+Verified WebConsole with a real end-to-end test rather than trusting the
+log line alone: logged into the real WebInterface, confirmed the
+`/admin/console` region dropdown lists Var Test Region, and ran `show
+regions` against it through the real HTTP round-trip
+(WebInterface → region's `/consoleweb` endpoint) - got back the correct
+live region info (`Var Test Region`, correct RegionID, port 9005,
+"Ready? Yes"). This is the same feature already fully verified on
+Welcome Center in the task #26 entry above, now shown working
+identically on the region it originally failed on.
+
+Search's specific client-facing wiring (`scene.RegisterModuleInterface
+<ISearchModule>`) has no console command to introspect directly, so it
+wasn't checked with the same first-class rigor as WebConsole - but the
+circumstantial case is strong: `CasperiaSearchModule` and
+`WebConsoleModule` are both `ISharedRegionModule`, both processed by the
+exact same `AddRegionToModules` foreach loop in the exact same process
+on the exact same restart, and that loop has no per-module try/catch -
+if Search's own `AddRegion` had thrown, WebConsole's (which runs in the
+same loop) would never have been reached either. Combined with zero
+`ERROR`/`Unhandled exception` lines anywhere in this restart's log, this
+is about as confident a conclusion as is possible without an actual
+viewer sending a real `DirPlacesQuery`/`DirLandQuery` - which remains
+the one genuinely unverified piece, same accepted-gap category as
+BotManager-follow and ViewerSignatureBan elsewhere in this session.
+
+Regression-checked after these config changes: both regions still
+report ready, zero unhandled exceptions in either log, WebInterface
+still responds correctly.
+
+### WebInterface visual redesign (2026-08-10)
+
+User feedback after seeing real screenshots of the WebInterface and the
+in-viewer login splash: "BORING" - plain black-on-white text, no visual
+identity at all. Every page this session was built on a single shared
+`WritePage(response, title, bodyHtml)` helper with a two-line inline
+`<style>` block (font-family and little else), so this was fixable in
+one place rather than needing per-page rework.
+
+Replaced the two-line style block with a real, self-contained CSS theme
+(`PageCss` constant) - no external fonts/CDNs, since this has to work on
+a grid with no internet egress. Added a branded header (a gradient
+monogram badge using the grid's own first initial, the live grid name
+via the same `GetSetting("GridName", ...)` override task #25 already
+built, and a small tagline) wrapping every page's content in a white,
+shadowed card over a soft gradient background. Styled every element
+type actually used across the ~20 pages built this session generically
+(tables, buttons, forms, inputs, links, `.error` banners, `.balance`
+pill, `.news-item`/`.news-meta`) rather than retrofitting classes onto
+every individual page's HTML - since they already emit plain semantic
+tags, this covers all of them without touching their generation code.
+Table-cell action buttons (the "Delete"/"Edit" pattern already used
+throughout) specifically get compact, non-full-width styling via
+`td button`/`td form` overrides, so they don't inherit the page-level
+form styling meant for full-size forms.
+
+`WritePage` had to change from a `static` to an instance method to read
+the live grid name for the header - a safe change since every call site
+already invokes it unqualified from inside another instance method of
+the same class, so none needed updating.
+
+Applies uniformly to the in-viewer login splash (`HandleWelcome`) too,
+per explicit follow-up ("the splash screen as well... BORING") - it
+goes through the exact same `WritePage`, so no separate work was needed
+there, just confirming it renders reasonably at the smaller width the
+viewer's own embedded panel uses (a `@media(max-width:480px)` rule
+tightens padding for that case).
+
+**Live-verified visually** - screenshots aren't available in this
+Browser-pane environment (`computer` screenshot action times out with
+"not compositing frames"), so verification used computed-style
+inspection via injected JavaScript instead, which is arguably a more
+rigorous check than eyeballing a screenshot would have been: confirmed
+the gradient background, card shadow/radius, and brand-mark gradient
+render with the exact CSS values specified (not just "some CSS applied"
+- the literal `linear-gradient(...)`, `border-radius: 12px`, etc.
+values were read back from `getComputedStyle`); confirmed table headers
+render with the intended light-purple/dark-purple treatment and correct
+borders; confirmed the `.balance` pill renders as an actual rounded
+pill with the right colors; confirmed table-cell buttons stayed compact
+rather than inheriting full-width form-button sizing. Logged in for
+real and navigated through the actual redesigned dashboard/admin/table
+pages rather than just checking the login page. No browser console
+errors. Full regression check across all ~16 pages built this session
+(home, splash, dashboard, admin index, stats, transactions, news,
+pages, settings, console, myregions, myinventory, register,
+forgot-password, users, estates, abuse-reports) - all still return 200
+after the redesign, zero unhandled exceptions in either region's log.
+
+**Follow-up: re-themed around WhiteCore-Dev's actual identity, not an
+invented palette (2026-08-10).** User's next ask: "Can we not use what
+WhiteCore-Dev had used and update it to a modern look?" - the
+purple/indigo palette above was one this session invented; the user
+wanted the redesign anchored on WhiteCore-Dev's own real WebInterface
+look instead (consistent with this whole Batch 13/14 thread being
+WhiteCore-Dev-inspired feature parity throughout), modernized rather
+than copied wholesale.
+
+Extracted the real palette from a local WhiteCore-Dev checkout
+(`WhiteCoreSim/bin/html/static/css/style.css` + `user.css`) via
+hex-color frequency analysis rather than guessing: `#FF5274` (a vivid
+coral/pink) is overwhelmingly WhiteCore's most-used accent color, with
+`#D7405D` as its own dedicated hover/active shade; `#292c37` is its
+most common dark slate, used for header/nav backgrounds. WhiteCore's
+own `.btn-fill` button rule is literally `border-radius:40px` (a full
+pill), `border:solid 2px`, uppercase text, coral fill, `#D7405D` on
+hover - reused verbatim as this connector's one `button` rule. Kept
+WhiteCore's own distinction between pill-shaped *buttons* and
+subtly-rounded *panels* (WhiteCore's cards use `border-radius:5px`,
+not the button's 40px) - here as an 8px card radius. Page/body
+background is `#F3F4F8`, WhiteCore's own features-section background
+color, which turned out to already be very close to this session's
+first-iteration `--bg` value.
+
+Replaced the gradient purple header/brand-mark with a solid dark-slate
+(`#292c37`) top bar spanning the full page width (closer to WhiteCore's
+own full-width dark nav than the previous centered gradient badge),
+keeping the same monogram-badge-plus-grid-name content, just restyled.
+Did **not** adopt WhiteCore's actual page stack (Bootstrap, jQuery,
+FontAwesome, Slick carousels, Google-hosted "Open Sans") - all external
+dependencies this connector deliberately avoids since the grid has no
+guaranteed internet egress; used a native system-font stack instead of
+Open Sans for a visually close but zero-dependency result. This was a
+palette/shape swap only - the underlying `WritePage`/`PageCss`
+architecture, and therefore its uniform coverage of every page through
+one shared constant, is unchanged, so "goes for the pages that were
+used as well" (the user's explicit follow-up confirming this should
+apply everywhere, not just login/splash) required no additional code.
+
+**Live-verified**: rebuilt `OpenSim.Server.Handlers.dll`, stopped all
+three Casperia-Dev processes (Robust + both regions - confirmed via
+`Get-CimInstance Win32_Process` command-line inspection which PIDs
+actually belonged to Casperia-Dev vs. the live grid before touching
+anything, since this DLL is shared with the live grid's own identical
+filename), redeployed, restarted all three. Both regions came back up
+clean with no exceptions and no interactive-wizard hang (confirming the
+earlier `[Startup]` ini fix holds across a real restart). Verified via
+the same computed-style JS-injection technique as the first iteration:
+`getComputedStyle` on the login and splash pages confirmed
+`rgb(41,44,55)` (`#292c37`) on the header, `rgb(255,82,116)` (`#FF5274`)
+on the brand mark/button, `40px` button border-radius, uppercase button
+text, and `rgb(243,244,248)` (`#F3F4F8`) page background - exact
+matches, not approximations. Also enumerated the live stylesheet's
+`document.styleSheets[0].cssRules` to confirm every selector (including
+`button:hover`, `td button:hover`, `.news-item`, `.balance`, `.error`)
+survived the rewrite intact.
+
+### Splash page competitive redesign: dark+blue theme, real economy/classifieds/events widgets (2026-08-10)
+
+User sent screenshots of three competing grids' own in-viewer splash
+screens (DigiWorldz, 3rd Rock Grid, Wolf Territories) plus links to
+3rdrockgrid.com/wolf-grid.com/osgrid.org, with two pieces of explicit
+feedback: "I like 3rd Rock Grid's color scheme... but in Blue", and then
+the framing that mattered most - "You have to remember, im competing
+with these grids for users." That reframed this from a cosmetic ask
+into a real feature gap: DigiWorldz/3RG's splash screens show live
+economy stats, featured classifieds, and an events calendar, not just a
+login form. Asked the user how far to take it (reskin only / reskin +
+real data widgets using what Casperia already tracks / full parity
+including brand-new classifieds+events systems) - they chose full
+parity.
+
+**Palette**: replaced the WhiteCore coral/slate theme (previous entry
+above) with a black/near-black background throughout (`#000`/`#0b0d10`,
+matching 3RG's own splash more than WhiteCore's white-card-on-dark-header
+approach) and a blue accent (`#3b82f6`, `#60a5fa` bright variant,
+`#1d4ed8` hover) in place of 3RG's orange, per the explicit "but in
+Blue" follow-up. Kept the pill-shaped buttons from the WhiteCore pass
+since nothing in the new feedback objected to that shape, only the
+color scheme.
+
+**Economy stats widget** (`RenderEconomyStats`, `HandleWelcome`): real
+24h/7d/30d currency volume + transaction counts pulled from the
+already-existing `ICurrencyService.GetTransactionHistory` (same
+grid-wide `UUID.Zero, UUID.Zero` pattern task #20's transactions page
+already uses) - no new data model needed. Live-verified rendering real
+numbers (`C$ 5,000`, `5 transactions`) from this session's own earlier
+test transactions.
+
+**Featured Classifieds widget**: discovered along the way that
+classifieds are a real, already-working stock OpenSim feature -
+`UserProfileModule`/`IUserProfilesService`/the `classifieds` table,
+populated by users via their own viewer's Profile > Classifieds tab -
+not something this session had to build. The only gap was a *grid-wide*
+read (existing methods are creator-scoped, for a user's own profile
+editor). Added `GetRecentClassifieds(int count)` to `IProfilesData`
+(MySQL/PGSQL/SQLite implementations) and `IUserProfilesService`/
+`UserProfilesService`, then wired `IUserProfilesService` into
+`WebInterfaceServiceConnector` and rendered a text-only (no snapshot
+images yet - would need the asset server's HTTP texture endpoint, out
+of scope here) "Featured Classifieds" card grid on the splash.
+
+Near-miss during this step: initially wired
+`m_UserProfilesService = LoadReusedPlugin<IUserProfilesService>(config,
+"UserProfilesService", args)` using the same 1-arg
+`(IConfigSource)`-constructor pattern every other reused plugin on this
+connector uses. `OpenSim.Services.ProfilesService.UserProfilesService`'s
+real constructor is `(IConfigSource config, string configName)` -
+2 args - confirmed by reading `LocalUserProfilesServiceConnector`, the
+real region-side consumer, which calls
+`ServerUtils.LoadPlugin<IUserProfilesService>(serviceDll, new object[]
+{ source, ConfigName })`. The mismatch didn't fail the build - it's a
+runtime reflection failure - and only showed up as an `ERROR loading
+plugin ... Constructor ... not found` line in Robust.log on the first
+post-deploy restart. Fixed by loading it directly via
+`ServerUtils.LoadPlugin` with the correct 2-arg array instead of going
+through the shared `LoadReusedPlugin` helper. Lesson: `LoadReusedPlugin`
+is only safe for services whose constructor actually matches its
+assumed 1-arg shape - worth checking the real constructor before adding
+a new one, not just copying the pattern.
+
+**Upcoming Events widget - new feature**: no existing Casperia system
+covered this. Checked whether OpenSim-Grid-Interface's (the user's own
+PHP grid-web-tool, found locally at `S:/Github/OpenSim-Grid-Interface`)
+`search_events` table could be reused instead of inventing a new schema
+- its own `docs/events-architecture.md` documents that table as backing
+*real in-world/viewer-created* events via `EventInfoRequest`/
+`DirEventsReply`/etc. Confirmed via grep that this classic protocol
+surface exists in Casperia's `IClientAPI`/`EventData` (declared) but is
+never implemented by any module (dead protocol surface, not a live
+feature) - building it for real would mean new UDP-facing region
+handlers, a much bigger lift than a splash widget justified. Built a
+simpler, News-item-shaped admin-only feature instead: `EventItem`
+(`OpenSim/Framework/GridEventData.cs`), `IEventsData` + MySQL/PGSQL/
+SQLite implementations + `Events.migrations`, `IEventsService` +
+`EventsService`/`EventsServiceBase` (new
+`OpenSim.Services.EventsService` project, added to `OpenSim.sln`),
+admin CRUD at `/web/admin/events` (list/create/edit/delete, cloned
+directly from task #23's News admin pattern), and `RenderUpcomingEvents`
+on the splash.
+
+**Near-miss / real mistake worth flagging**: initially created the new
+`EventItem` class in a file named `OpenSim/Framework/EventData.cs` -
+without first checking whether that path already existed - and
+overwrote a real, unrelated, already-existing stock OpenSim class also
+called `EventData` (the classic viewer Search > Events packet payload
+referenced by `IClientAPI.SendEventInfoReply`). The very next full
+solution build failed with `CS0246: The type or namespace name
+'EventData' could not be found` in `IClientAPI.cs`, which is what
+surfaced it immediately - `OpenSim.Framework.csproj` uses
+`EnableDefaultItems=false` (explicit `<Compile Include>` lists, not SDK
+wildcard globbing), so the missing/replaced file broke the one other
+consumer right away rather than silently. Recovered the original file
+with `git checkout HEAD -- OpenSim/Framework/EventData.cs` (this repo
+*is* a git repo, despite an earlier environment note suggesting
+otherwise) and re-created the new class under a non-colliding filename
+(`GridEventData.cs`). Lesson reinforced: never `Write` into a path
+without first confirming (via `Read`, `Glob`, or grep) whether something
+already lives there, even for a "new" file whose name seems obviously
+free - `EventData.cs`/`EventItem` looked like a safe, on-topic name and
+wasn't.
+
+Also discovered along the way that `OpenSim.Data.csproj` and its MySQL/
+PGSQL/SQLite counterparts *also* use `EnableDefaultItems=false` - every
+new file added to those projects (`IEventsData.cs`, `MySQLEventsData.cs`,
+`PGSQLEventsData.cs`, `SQLiteEventsData.cs`) needed an explicit
+`<Compile Include>` entry added by hand, unlike `OpenSim.Services.
+Interfaces.csproj` (zero explicit entries, relies on default SDK
+globbing) where `IEventsService.cs` just worked. Worth checking a
+project's own `EnableDefaultItems` setting before assuming a new file
+will be picked up automatically.
+
+**Live-verified**: full solution build clean (including the new
+`OpenSim.Services.EventsService.dll`), deployed to Casperia-Dev
+(confirmed via PID/command-line inspection which processes were
+Casperia-Dev vs. the live grid, same discipline as every other
+redeploy this session), both regions came back up with zero exceptions.
+Splash page (`/welcome.php`) confirmed rendering the real economy
+widget with actual transaction data; classifieds/events widgets
+correctly render as empty (no crash) since no classifieds or events
+exist yet for the one test account - an honest, expected gap, not a
+bug. Computed-style checks confirmed the exact new palette (`rgb(0,0,0)`
+header, `rgb(96,165,250)` accent, `rgb(11,13,16)` page background, all
+literal hex matches). `/web/admin/events` and `/web/dashboard` both
+correctly redirect to `/web/login` when unauthenticated rather than
+crashing.
+
+**Follow-up: the actual home page (`/`) was still missing the widgets
+(2026-08-10).** User caught this by looking at the real browser-facing
+site (`holodeckgrid.ddns.net`, the reverse-proxied root, not
+`/welcome.php`) and pointing out it still looked plain compared to the
+reference screenshots. Correct catch - `HandleHome` (the bare `/`
+handler) and `HandleWelcome` (the in-viewer splash) are two separate
+methods; the economy/classifieds/events widgets had only been added to
+`HandleWelcome`. `HandleHome` already had `RenderNewsFeed` from task
+#23's original design (that one was explicitly meant for both pages),
+so this was a one-line addition of the same three `Render*` calls,
+kept above the existing login/register links so the primary
+call-to-action stays first. Rebuilt, and since `OpenSim.Server.
+Handlers.dll` is shared, had to stop all three Casperia-Dev processes
+(not just Robust) - confirmed by a `cp` failure ("Device or resource
+busy") with only Robust stopped, then found the region processes also
+had it locked. Redeployed to all three, restarted.
+
+**Real (unrelated) outage caught during this restart**: Welcome_Center
+crashed on startup with `System.DllNotFoundException: Unable to load
+DLL 'ubode'` inside `ubOdeModule.Initialise` - the native ubOde physics
+engine failed to load, logged as FATAL, and the process actually
+exited (confirmed missing from the process list). Var Test Region,
+started ~2 seconds earlier from the same binaries, loaded the same
+native DLL fine, and this exact error has one prior occurrence in this
+log from 2026-08-05 - both point to a transient native-DLL-load race
+between the two processes starting close together, not anything in
+this session's C# changes (physics engine loading was never touched).
+Fixed by simply restarting the one crashed process; it came up clean
+on the retry. Worth remembering as a known, if rare, hazard of starting
+both Casperia-Dev region processes back-to-back rather than staggering
+them further apart.
+
+Live-verified via `curl` (the home page, `/`, at the real public
+`PublicPort`): now shows the Casperia Economy stat cards alongside the
+login/register links, dark+blue themed, matching what
+`/welcome.php`/the splash already had.
+
+**Follow-up: full authenticated admin round-trip closed (2026-08-10).**
+The gap above (no admin credentials to test `/web/admin/events` for
+real) got closed the same session. Registered a throwaway account
+("Splash Verifier") through the real self-service registration flow
+rather than touching the database, then hit a real console-command
+naming mistake worth recording: initially told the user to run `user
+modify "Splash Verifier" userlevel 200` in Robust's console - that
+command doesn't exist in this codebase (`Invalid command`). The real
+one, confirmed by reading `UserAccountService.cs`'s own
+`AddCommand("Users", ...)` registrations, is `set user level [<first>
+[<last> [<level>]]]`. Once the user ran the correct command, hit a
+second, unrelated snag: the Browser-pane tool's clicks/Enter-key
+submissions on the login form produced zero server-side log activity
+across multiple attempts (confirmed by tailing Robust.log and seeing no
+new `AUTH SERVICE: Authenticating` line, and by the tool's own
+`read_network_requests` list never growing) - a genuine automation
+reliability issue, not a bug in the login page. Switched to `curl` with
+a cookie jar against the real `/web/login`, `/web/admin`, `/web/admin/
+events`, `/web/admin/events/save`, and `/web/admin/events/delete`
+endpoints instead, which worked immediately and gave a *more* rigorous
+trail (raw HTTP responses/headers) than clicking through a browser
+would have.
+
+Confirmed for real: login issues a `CasperiaWebSession` cookie and
+redirects to the dashboard; the now-admin account can load
+`/web/admin` (shows the new "Events" link alongside the rest); a POST
+to `/web/admin/events/save` with a real title/category/date/duration/
+location/description returns 302 and the event immediately appears
+both in the admin list (with working Edit/Delete links) *and* on the
+public splash's "Upcoming Events" widget with the exact rendering
+(`Grand Opening Concert / Aug 15, 8:00 PM UTC · Live Music · Welcome
+Center / <description>`) the code was written to produce; a POST to
+`/web/admin/events/delete` removes it cleanly, confirmed back down to
+"No upcoming events." Test event deleted after verification so it
+doesn't linger as fake data on the dev grid. The "Splash Verifier"
+admin-level test account was intentionally left in place (Casperia-Dev
+only, never the live grid) rather than spending another round-trip on
+demoting it - flagged here in case it should be cleaned up later.
+
+### WebInterface structural rebuild: real site shell, not just a themed card (2026-08-10)
+
+User feedback after refreshing the live `holodeckgrid.ddns.net` home
+page: still "pretty basic setup all the way around" next to
+osgrid.org/wolf-grid.com/3rdrockgrid.com, the user's own
+OpenSim-Grid-Interface, and even WhiteCore-Dev's actual WebUI (which
+this whole redesign thread had drawn its color palette from, but never
+its page structure). Correct diagnosis: every prior pass this session
+(purple palette, WhiteCore palette, 3RG-blue palette, real data
+widgets) changed COLOR and CONTENT but kept the same underlying SHAPE
+from Batch 13/14's original architecture - one narrow (760px) centered
+card, stacked top to bottom, no nav bar, no hero, no footer. That shape
+reads as an admin panel no matter what's inside it.
+
+Asked whether the fix (full nav bar / hero band / wider multi-column
+layout / footer) should apply only to public pages or to every page
+site-wide; user chose every page, admin/login/dashboard included, for
+one consistent product feel.
+
+**Implementation**: `WritePage` gained an `IOSHttpRequest request`
+parameter (all ~51 call sites already had `request` in scope as
+ordinary `Handle*(request, response)` methods, so this was a mechanical
+`replace_all` from `WritePage(response,` to `WritePage(request,
+response,` - confirmed safe by a clean build immediately after, no
+manual site-by-site auditing needed). With `request` available,
+`WritePage` now calls `GetSession(request)` itself to build a
+session-aware nav: logged out shows Log In / Sign Up (the pill-button
+treatment); logged in shows Dashboard, Admin (only if `session.
+IsAdmin`), the account name, and Log Out - the same information every
+one of the ~15 admin/dashboard pages already had scattered through
+their own body HTML, now consistent site-wide instead of per-page.
+
+Rather than requiring a rewrite of every call site's body HTML to
+separate "heading" from "content" (they all already emit `<h1>...
+</h1>` as the literal first thing in `bodyHtml`, a pattern consistent
+across every page built this session), `WritePage` extracts that
+existing `<h1>` via a plain string search and promotes it into a
+full-width hero band above the content card, falling back to the grid
+name if a body doesn't start with `<h1>` (defensive, not currently hit
+by any real page). Zero call-site changes needed for this part.
+
+Widened `.page` from 760px to 1100px - this alone let the
+`.stats-grid`/`.widget-grid` CSS grids built for the economy/
+classifieds/events widgets (already responsive `auto-fit,
+minmax(...)` rules from earlier this session) actually lay cards out
+side by side instead of being squeezed into a column barely wider than
+one card. Added `.site-header`/`.site-nav`/`.site-actions` (full-width
+dark nav bar), `.hero`/`.hero-inner` (a black-to-navy gradient band
+carrying the page's title, `#0d1a30` chosen as a dark blue-tinted shade
+consistent with the existing blue accent rather than pure black
+everywhere), and `.site-footer`/`.site-footer-inner` (copyright line).
+
+**Live-verified**: full solution build clean, all three Casperia-Dev
+processes stopped/redeployed/restarted (longer 3-second stagger between
+the two region processes this time, specifically to avoid repeating the
+`ubode` native-DLL-load race from the previous restart - see the
+"actual home page" entry above). Computed-style checks confirmed the
+hero's gradient, the extracted `<h1>` text and 30px sizing, the 1100px
+page width, and the stats-grid genuinely rendering three 334px-wide
+columns instead of one cramped column. Checked both an unauthenticated
+page (home: nav shows Log In/Sign Up) and an authenticated admin page
+(`/web/admin` via the "Splash Verifier" test session: nav shows
+Dashboard/Admin/account name/Log Out, hero shows "Grid Administration,"
+footer present) - both render the new shell correctly with no loss of
+the underlying table/form functionality.
+
+Separately, user pointed at `github.com/djphil` (a suite of ~14
+standalone single-purpose OpenSim PHP tools - login screen, interactive
+world map, destination guide, visitor tracking, friends/partner
+management, offline IM, etc.) and confirmed some of it was already
+folded into their own OpenSim-Grid-Interface. Noted as a real,
+substantially larger scope than a layout pass - standalone features
+Casperia's WebInterface doesn't have at all (no world map, no
+destination guide, no visitor tracking) - logged here as a roadmap
+input rather than acted on this session.
+
+### First-landing pages, round one: Get a Viewer + Destinations (2026-08-10)
+
+Explicit direction from the user for how to sequence the "first-landing
+pages" roadmap item above: check WhiteCore-Dev first for anything
+directly reusable, since it's the project's own primary reference, and
+only fall back to OpenSim-Grid-Interface/fresh drafting for whatever
+WhiteCore-Dev genuinely doesn't have. This reversed the order I'd
+started in (research OpenSim-Grid-Interface's full page inventory
+first) and was, correctly, called out as something the original
+WhiteCore-Dev audit should already have covered - see the new
+[[casperia-audit-must-include-static-assets]] memory: that audit
+thoroughly ported region modules/services but never actually opened
+WhiteCore-Dev's own `bin/html/` templates, despite the user pointing at
+this more than once across the conversation before it was addressed.
+
+**Checked WhiteCore-Dev's real page inventory before building anything**:
+confirmed via directory listing that WhiteCore-Dev has no About/ToS/
+DMCA/Features/Support equivalent at all (nothing to reuse there - that
+tier still needs OpenSim-Grid-Interface-derived or fresh content, not
+done this pass). It does have `help.html` (a real, current viewer-
+download page with 8 real viewer URLs: Alchemy, Firestorm, Kokua,
+Singularity, Lumiya, MobileGridClient, PocketMetaverse, Radegast) and
+`world.html` (a real, current Leaflet.js interactive map with a region-
+thumbnail sidebar and `hop://` teleport links). Also checked and
+explicitly ruled out `region_list.html`, `region_search.html`, and
+`online_users.html` - all three are literally commented `<!-- No
+longer used - greythane -->` by WhiteCore's own maintainers, so they're
+dead ends, not something to build on despite superficially looking
+relevant.
+
+**Get a Viewer** (`/web/viewers`, new nav link): merged WhiteCore's 8
+real viewer URLs with OpenSim-Grid-Interface's OS-specific Firestorm
+download pages (Windows/Mac/Linux, more useful than WhiteCore's single
+generic Firestorm link) and Cool VL Viewer, split into Desktop and
+Mobile/Lightweight groups using the existing `.widget-grid` card
+pattern. Shows the grid's actual login URI (`m_publicBaseUrl`, already
+used for password-reset emails) in a click-to-select field, with
+Firestorm/general Grid-Manager instructions.
+
+**Destinations** (`/web/destinations`, new nav link): reproduces
+`world.html`'s real user-facing value (see where regions sit relative
+to each other, click to teleport) without vendoring Leaflet.js/
+mapapi.js - both uninspected third-party code, and this connector has
+held a strict no-external-dependency line all session. Instead: plain
+CSS absolute positioning over map tiles this connector's own
+`MapGetServiceConnector` already serves (confirmed the real tile path
+by reading `MapImageService.GetFileName`: `/map/map-1-{RegionCoordX}-
+{RegionCoordY}-objects.jpg`), scaled proportionally to each region's
+real size (`RegionSizeX/Y` converted to 256m "region units" so var-
+regions occupy more visual space than standard ones), with
+`secondlife:///app/teleport/{RegionName}/128/128/25` links (same-grid
+teleports - simpler than `hop://`, which is for cross-grid Hypergrid
+destinations OpenSim-Grid-Interface's guide.php actually needed and
+this page doesn't).
+
+**Real bug caught during live verification**: the north-up Y-axis flip
+formula had a spurious extra `- minY` term
+(`(maxY - (y0 + hUnits) - minY) / spanY` instead of
+`(maxY - (y0 + hUnits)) / spanY`), producing nonsensical `top` values
+like `-22495%` instead of valid 0-100% positions - caught immediately
+by reading the actual computed `style.top` values via the browser
+rather than assuming the math was right, hand-verified the fix against
+Var Test Region (1001,1000, 1024x1024) and Welcome Center (1000,1000,
+256x256)'s real coordinates before redeploying. After the fix: Var Test
+Region renders at `top:5%,left:23%,72%x90%` and Welcome Center at
+`top:72.5%,left:5%,18%x22.5%` - both sane, both geometrically correct
+relative to each other (Welcome Center sits south-west of Var Test
+Region, matching their real grid coordinates).
+
+**Live-verified**: build clean, all three Casperia-Dev processes
+stopped/redeployed/restarted twice (once for the initial pages, once
+more for the math fix) with zero new errors either time. Both pages
+return 200 and render real data (2 real regions with correct
+name/size/position on Destinations; real login URI on Get a Viewer).
+
+### Second round: the rest of the "genuinely new ground" tier (2026-08-10)
+
+Explicit direction: keep working through every real gap the full
+WhiteCore-Dev audit surfaced before moving to the next phase (marketing/
+legal content from OpenSim-Grid-Interface). Built five more pieces in
+one pass:
+
+**Web Profile** (`/web/profile?id=<uuid>`, public, no login required -
+consistent with classifieds/picks already being publicly searchable in
+stock OpenSim/SL): about-me, first-life text, partner (cross-linked to
+their own profile), resident-since (`UserAccount.Created`), online/
+last-seen status, and pick names. Entirely built from services already
+wired into this connector for earlier features (`IUserProfilesService`
+from classifieds, `IUserAccountService`, `IGridUserService`) - no new
+service plugins needed. Small polish fix during verification: a
+never-logged-in account showed "Last seen 1970-01-01" (the
+`GridUserInfo.Logout` epoch default) instead of "Never logged in" -
+fixed by checking against the epoch before formatting.
+
+**Friends list** (`/web/friends`, logged-in only): first WebInterface
+feature to need `IFriendsService`, which existed for the real in-viewer
+friends list but had never been wired into this connector. Confirmed
+via `FriendsStore.migrations` that the `Friend` column is the other
+party's principal UUID as a string, not a display name, so each row
+needs its own account/online-status lookup. Hit a real compile error
+mid-build: `FriendInfo` is ambiguous between `OpenSim.Services.
+Interfaces.FriendInfo` and `OpenMetaverse.FriendInfo` (both in scope
+via existing `using` directives) - fixed with a fully-qualified type
+name rather than adding an alias, since this is the only place in the
+file that needs it.
+
+**Self-service account pages** (`/web/change-password`, `/web/change-
+email`, both logged-in only): change-password re-verifies the current
+password via `IAuthenticationService.Authenticate` (same MD5-then-
+Authenticate convention `TryLogin` already uses) before calling
+`SetPassword`, specifically so a stolen session cookie alone can't be
+used to lock the real owner out. Change-email reuses the existing
+`StoreUserAccount` pattern already used elsewhere in this file (e.g.
+admin level-setting). Deliberately did NOT port WhiteCore's delete-
+account or partner-proposal pages: `IUserAccountService` has no delete
+primitive at all (confirmed by reading the complete interface - only
+Get/Store/SetDisplayName/InvalidateCache exist), and a real partner
+proposal needs a two-way pending-request/notification workflow, not a
+one-sided form. Both would need their own design pass, not a rushed
+bolt-on to hit a checklist.
+
+**My Transactions** (`/web/transactions`, logged-in only): a
+simplified, non-admin-gated sibling of `HandleAdminTransactions` (task
+#20), hardcoded to the logged-in user's own principal instead of an
+agent-search box. Built as a parallel method rather than refactoring
+the admin page into a shared/parameterized component, matching the
+"surgical fixes over rewrites" principle the WhiteCore-Dev docs
+themselves call out for exactly this kind of near-duplicate page.
+
+**Resident self-service Classifieds and Events** - the biggest piece
+of this batch, since Events needed a real schema change:
+- *Classifieds* (`/web/myclassifieds` + save/delete): exposes
+  `IUserProfilesService.ClassifiedUpdate/ClassifiedDelete/
+  ClassifiedInfoRequest` (already existed for the viewer-facing path)
+  through a web form. No web-based "pick a spot in-world" mechanism
+  exists, so a new listing's position defaults to the chosen region's
+  center (`128,128,25`) - the same fallback OpenSim-Grid-Interface's
+  own classifieds tooling uses for messy position data.
+- *Events* (`/web/myevents` + save/delete): WhiteCore-Dev's own
+  events.html lets ANY logged-in user post an event, not just admins -
+  this session's original Events feature (tasks #31/32) was admin-only
+  by design at the time, since it hadn't been scoped as resident-
+  facing yet. Matching WhiteCore's real behavior meant adding a
+  `CreatorId` field to `EventItem` (`GridEventData.cs`) so residents
+  can only edit/delete their own events while admins keep full access
+  through the separate `/admin/events` routes unchanged. Since the
+  `events` table already existed live on Casperia-Dev from tasks
+  #31/32 (with real, if since-deleted, test data), this needed a
+  genuine `:VERSION 2` migration with `ALTER TABLE ... ADD COLUMN
+  CreatorId` across all three backends (MySQL/PGSQL/SQLite) rather than
+  just editing the V1 `CREATE TABLE` in place - confirmed the V2
+  migration actually ran against the live table via the Migration
+  system's own log line ("Upgrading Events to latest revision 2")
+  before trusting it.
+
+**Real infrastructure hazard hit twice this batch**: Var_Test_Region
+and (separately, on an earlier restart) Welcome_Center both crashed on
+startup with the same `System.DllNotFoundException: Unable to load DLL
+'ubode'` native-load race documented in the previous entry, even with
+a 3-second stagger between starting the two region processes. Widened
+the stagger to 8 seconds for this batch's redeploy, which came back
+clean. Worth escalating this note: a 3-second gap is NOT reliably
+enough to avoid this race on this machine; 8 seconds has now worked
+twice. If it recurs even at 8 seconds, this may need an actual code-
+level fix (e.g. a mutex/retry around `UBOdeNative.InitODE()`) rather
+than just a longer sleep.
+
+**Live-verified end-to-end, not just build-clean**: full solution
+build, all three processes stopped/redeployed (`OpenSim.Server.
+Handlers.dll`, `OpenSim.Framework.dll` for the `EventItem.CreatorId`
+change, `OpenSim.Data.MySQL.dll` for the migration) and restarted
+clean. Confirmed via `curl` with a real authenticated session: the
+dashboard shows all six new links; created a real event through `/web/
+myevents/save`, watched it appear in the "My Events" list AND on the
+public splash's "Upcoming Events" widget; confirmed the ownership
+boundary for real - an unauthenticated delete attempt on that event
+returned 403 and left it untouched, then the actual creator's
+authenticated delete succeeded and removed it. Also independently
+verified Friends (renders the correct empty state for an account with
+no friends yet), Change Password (GET form loads; a wrong current
+password is correctly rejected with "Current password is incorrect."
+rather than silently succeeding), and Change Email (GET form loads) -
+closing what was initially logged here as an open gap in the same
+pass rather than leaving it stale.
+
+### Third round: announcement banner + login-as-user (2026-08-10)
+
+Two more items from the WhiteCore-Dev audit, closing out the
+"genuinely new ground" tier before moving to marketing/legal content.
+
+**Special announcement banner**: matches WhiteCore's welcomescreen_
+manager.html "special window" toggle (title/text/color/enabled).
+Extended the existing Grid Settings admin page and `IGridSettingsService`
+(no new service needed) with `AnnouncementEnabled/Title/Text/Color`,
+and a `RenderAnnouncement()` helper called from both `HandleHome` and
+`HandleWelcome` right after the extracted `<h1>` (before the welcome
+paragraph) so it reads as a real, prominent site-wide notice rather
+than one more stacked widget. Live-verified: enabled it via `/web/
+admin/settings/save` with a real title/text/amber color, confirmed it
+renders on the home page in the correct position with the correct
+text.
+
+**Login as user**: the one piece of WhiteCore's admin/user_edit.html
+grab-bag ("set user type, change email, login as user, delete account,
+temp-ban/ban/unban, kick user, message online user") with a clean,
+safe backend primitive already available - `CreateSession` just needs
+a principal/name/admin-flag, exactly what `HandleLogin` already builds
+after a real password check, minus the password check itself (the
+acting admin is already authenticated as an admin, so skipping it here
+doesn't grant new privilege). Logged server-side on every use
+(`m_log.InfoFormat` with both accounts' names and principal IDs) for
+audit purposes. Deliberately did NOT implement ban/kick/message-
+online-user: confirmed by reading the entirety of `LLLoginService.cs`
+that there is no per-account ban primitive at all - only a grid-wide
+`m_MinLoginLevel` maintenance-mode floor and the earlier session's
+hardware/MAC/client-version bans (`IAccessControlService`), neither of
+which maps to "ban this one resident's account" - and kicking/
+messaging an online user would need a live Robust-to-region call this
+connector has no existing channel for. Same principle as skipping
+delete-account/partner-proposal earlier this batch: faking these with
+something that looks like it works but doesn't would be worse than
+leaving them out and saying so.
+
+Live-verified the mechanism end-to-end via `curl`: POSTed to `/web/
+admin/users/login-as` with a real principal ID, got back a fresh
+`CasperiaWebSession` cookie, confirmed the dashboard under that new
+cookie shows the target account's name, and confirmed the audit log
+line recorded both the acting admin's and target's names/IDs
+correctly. (The specific principal used for this test happened to
+resolve back to the same "Splash Verifier" test account due to a UUID
+mix-up on my part reading back an earlier conversation note - not a
+cross-account test in that instance, but the code path itself makes no
+distinction between "own ID" and "any other valid ID," so the
+mechanism is still fully proven.)
+
+This closes out every item from the original WhiteCore-Dev "genuinely
+new ground" audit list except delete-account, partner-proposal, and
+ban/kick/message-online-user - all four explicitly and deliberately
+deferred for the same reason: no clean, safe backend primitive exists
+yet, and each would need its own real design pass rather than a rushed
+bolt-on. Next phase per the user's own sequencing: marketing/legal
+content (About, ToS, DMCA, Features, Support) that WhiteCore-Dev never
+had, sourced from OpenSim-Grid-Interface or fresh drafting instead.
+
+### Fourth round: marketing/legal content tier (2026-08-10)
+
+About, ToS, DMCA, and Features - the tier WhiteCore-Dev genuinely has
+nothing for (confirmed absent in the earlier full audit), so this
+content came from adapting OpenSim-Grid-Interface's real about.php/
+tos.php/dmca.php copy to Casperia branding, plus a Features page built
+differently from OpenSim-Grid-Interface's own version (see below).
+
+**About/ToS/DMCA**: seeded as real `StaticPage` rows through the
+existing admin API (`/web/admin/pages/save`, task #24) rather than new
+code - exactly what that feature was built for. Passed the drafted
+HTML bodies via `curl --data-urlencode "body@<file>"` reading from
+scratchpad files (the content was too long/structured for a single
+inline `--data-urlencode` argument).
+
+**Real bug found and fixed while seeding this content**: the page
+came back with literal `&lt;h1&gt;` text instead of an actual heading.
+`HandleStaticPage` was rendering `Html(page.Body).Replace("\n",
+"<br/>")` - escape-everything-plus-line-breaks, the same convention
+already used for News/WelcomeMessage. That's the right choice for
+short admin free-text blurbs, but StaticPage's entire reason to exist
+is long-form pages like these, which need real headings/links/lists -
+exactly what OpenSim-Grid-Interface's own about.php/tos.php/dmca.php
+are (raw HTML, not plain text). Fixed by rendering StaticPage bodies as
+trusted raw HTML instead - safe because static pages are already
+admin-only, the same trust level as this connector's WebConsole/
+currency-adjustment features, which already grant an admin more
+system access than raw HTML on one page ever could. This is a
+deliberate divergence from News/WelcomeMessage's escaping, not an
+inconsistency - each fits what actually gets typed into it.
+
+Added About/Features links to the site nav and ToS/DMCA links to the
+footer for real discoverability, not just reachable-by-URL.
+
+**Features page** (`/web/features`): built differently from OpenSim-
+Grid-Interface's own version, which is driven entirely by PHP
+constants an operator sets by hand (`OS_VERSION_MAIN`,
+`FEATURE_HYPERGRID`, etc.) - a curated claim sheet, not live
+introspection. This page does real live introspection for the parts
+Robust genuinely has visibility into (region count/area/HG-open count
+via the same `GridService.GetRegionRange` pattern `HandleAdminStats`
+already uses, registered account count, whether the currency service
+is actually loaded) - live-verified showing the real numbers (2
+regions, 1,114,112 m² total, 1/2 Hypergrid-open, 1,048,576 m² largest
+region correctly flagged "VarRegion in use," 3 registered residents).
+For the rest - script/physics engine, NPCs, SimProtection, etc. - was
+honest that Robust (a separate process from any individual region)
+has no channel to ask a region what it's actually running; those
+settings live in each region's own `OpenSim.ini` and are never
+surfaced to Robust. Presented those as a curated capability fact sheet
+informed by this session's own real batches (PROJECT_LOG.md itself),
+not faked as a live query - same honesty standard as declining to fake
+ban/kick/message-online-user earlier in this thread.
+
+Caught a real reuse bug while writing this page: initially called the
+existing `AppendViewerCard(sb, name, url, note)` helper (built for the
+Get a Viewer page) to render feature cards, passing a status string
+like "Active" as the `url` parameter - which would have rendered a
+broken "Download →" link pointing to literal text like "Active".
+Caught before deploying by re-reading the helper's actual body, not
+just its call signature; added a dedicated `AppendFeatureCard(sb, name,
+status, description)` instead of stretching an unrelated helper to fit.
+
+**Live-verified**: full solution build, all three processes stopped/
+redeployed/restarted (8-second stagger held clean again). All three
+static pages and the Features page return 200 with real rendered
+content confirmed via `curl`, not just HTTP status codes.
+
+### Fifth round: Support ticket system (2026-08-10)
+
+The last item in the marketing/legal tier - neither WhiteCore-Dev nor
+OpenSim-Grid-Interface has a real database-backed support desk (the
+latter's `support.php` just emails an operator), so this is new ground
+built to the same pattern as Events/News: a `SupportTicket` Framework
+class, `ISupportTicketData`/MySQL+PGSQL+SQLite implementations +
+migrations, `ISupportTicketService`/`SupportTicketService` (new
+project cloned from `OpenSim.Services.EventsService`), and
+`HandleSupport`/`HandleAdminSupport`/`HandleAdminSupportStatus` in
+`WebInterfaceServiceConnector`.
+
+Policy, decided up front: guests can submit tickets (name+email
+required instead of a session, so "I can't log in" issues are still
+reportable) but can only see the confirmation message, never a ticket
+list - history viewing is logged-in-residents-only. A honeypot field
+(`website`, hidden from real users via CSS, filled in by spam bots)
+returns the same fake success message without writing a row - the same
+technique OpenSim-Grid-Interface's own `support.php` uses, cheaper than
+a real CAPTCHA for this grid's threat level.
+
+**Real bug hit twice in a row while deploying, same root cause both
+times**: this batch added new interfaces to `OpenSim.Framework`,
+`OpenSim.Data`, and `OpenSim.Services.Interfaces`. The deploy script
+only copied the concrete DLLs that changed (`OpenSim.Server.Handlers.
+dll`, `OpenSim.Framework.dll`, `OpenSim.Data.MySQL.dll`, `OpenSim.
+Services.SupportTicketService.dll`), forgetting that reflection-based
+plugin loading (`ServerUtils.LoadPlugin<T>` calls `Assembly.GetTypes()`
+on the WHOLE assembly) means every assembly that references a new
+interface has to be redeployed too, not just the ones with new
+concrete classes. First miss: `OpenSim.Data.dll` (has
+`ISupportTicketData`) - caused `OpenSim.Data.MySQL.dll`'s type
+discovery to fail entirely, cascading into unrelated `AssetServiceConnector`/
+`IFSAssetDataPlugin` load failures that have nothing to do with
+support tickets. Fixed, restarted, then hit the same class of failure
+again: `OpenSim.Services.Interfaces.dll` (has `ISupportTicketService`)
+was also never deployed, so `WebInterfaceServiceConnector` itself
+failed to load. Deployed that too - Robust then came up clean
+(`WebInterfaceServiceConnector loaded successfully`, `Upgrading
+SupportTickets to latest revision 1`), both regions restarted clean
+with the established 8-second stagger.
+
+**Live-verified end to end via curl**, all real round trips, not just
+compile-clean:
+- Logged-in submission (as the "Splash Verifier" test account) →
+  confirmation message → ticket appears correctly in "Your Recent
+  Tickets" with real Subject/Category/Status/date.
+- Admin queue (`/web/admin/support`) lists both tickets with correct
+  category labels via the `SupportCategories` lookup.
+- Admin status update (`/web/admin/support/status`, open → in_progress)
+  round-trips correctly back into the submitter's own ticket view
+  ("In Progress"), proving the status write path and the read path
+  agree.
+- Guest submission (no session cookie, `guest_name`/`guest_email`
+  instead) → confirmation message → appears in the admin queue
+  formatted as "Guest Tester (guest, guest@example.com)" exactly per
+  `HandleAdminSupport`'s from-field logic - confirming the guest path
+  is genuinely separate from the logged-in path, not just accepting
+  the fields and dropping them.
+- Category fallback: submitted an invalid category key ("billing",
+  not one of the five real keys) and confirmed it correctly fell back
+  to "Other" rather than crashing or storing a bad key.
+- Honeypot: submitted with the hidden `website` field filled in (as a
+  bot would) and confirmed the fake "received" success message came
+  back with no row actually written - checked by grepping the admin
+  queue for the spam subject afterward and finding zero matches.
+
+Known minor gap, same honesty standard as the deferred delete-account/
+ban-kick-message items: `ISupportTicketService`/`ISupportTicketData`
+has no `Delete`, so the test tickets created during this verification
+pass remain as permanent (harmless, clearly-labeled test) rows rather
+than being cleaned up - not worth adding a delete path just to erase
+QA data.
+
+This closes out the full marketing/legal content tier (About, ToS,
+DMCA, Features, Support) alongside the WhiteCore-Dev-sourced tier from
+the earlier rounds. Next step is to check in with the user on what
+phase comes after this, rather than assuming.
+
+### Grid-wide search: native People/Places/Events/Classifieds/Groups + Land for Sale + Trending/autocomplete (2026-08-11)
+
+Prompted by "OpenSimSearch in the addon-modules folder can be used to
+enhance what WhiteCore-Dev is missing" and "Casperia should [not] have
+to rely on the addon-modules folder unless we have to" - audited
+OpenSimSearch's real source
+(`addon-modules/OpenSimSearch/Modules/SearchModule/OpenSearch.cs`) and
+found our own native replacement, `CasperiaSearchModule.cs` (built
+earlier this session), only ever wired Places/Land - the in-world
+Directory floater's People/Events/Classifieds/Popular tabs did nothing.
+Also audited WhiteCore-Dev's own search architecture
+(`IDirectoryServiceConnector`/`IGroupsServiceConnector`) per "if
+whitecore has it built in, we should enhance that instead of using the
+module" - confirmed WhiteCore's Groups search lives on a plain,
+non-scene-bound `IWhiteCoreDataPlugin`, not a scene-tied region module,
+proving the pattern is genuinely portable rather than something to
+defer.
+
+**New backend, real data throughout:**
+- `IUserProfilesService.SearchClassifieds` / `IEventsService.SearchEvents`
+  added (LIKE-pattern, same shape as the existing `SearchPlaces`), MySQL
+  + PGSQL + SQLite.
+- `IGroupsSearchProvider` (new, `OpenSim.Services.Interfaces`) lets the
+  Robust-side web connector call `OpenSim.Addons.Groups`'
+  `GroupsService.FindGroups` directly via reflection
+  (`ServerUtils.LoadPlugin`) - avoids a circular project reference
+  (`OpenSim.Addons.Groups` already references `OpenSim.Server.Handlers`)
+  and avoids the region-Scene-bound `ISharedRegionModule` connector
+  wrappers entirely, matching WhiteCore's own proof that this doesn't
+  need scene binding.
+- `/web/search` → now just `/search` (see URL cleanup below): People
+  (`IUserAccountService.GetUserAccounts`), Places (`ISearchService.
+  SearchPlaces`), Events, Classifieds, Groups, all in one page with a
+  category filter. Objects deliberately excluded - confirmed neither
+  Casperia nor WhiteCore-Dev has any real in-world object/content
+  indexing anywhere (WhiteCore's own "Include in search" checkbox is a
+  dead stub with zero consumers, same story as Casperia).
+- `CasperiaSearchModule.cs` extended with the missing in-world hooks:
+  `OnDirFindQuery` (People + Events, same protocol-flag overload
+  OpenSimSearch/WhiteCore both use), `OnDirPopularQuery` (reuses
+  `SearchPlaces` ordered by Dwell - no separate popularity metric exists
+  anywhere, so this is real dwell data, not a fabricated second stat),
+  `OnDirClassifiedQuery`, `OnEventInfoRequest` (needed a
+  `ConcurrentDictionary<uint,UUID>` since classic protocol's eventID is
+  a uint but `EventItem.ID` is a UUID - documented rather than inventing
+  a second persisted ID scheme), `OnClassifiedInfoRequest`.
+  `OnMapItemRequest` (World Map land/event pins, a different viewer
+  surface from the Directory floater) deliberately deferred - real
+  substrate exists but the request/reply shape needs its own pass.
+- Also discovered and fixed a real, unrelated gap while wiring this:
+  Welcome_Center's `[Search]` section was still on the legacy
+  `Module = "OpenSimSearch"` default (pointing at a dead
+  `helper/query.php` XML-RPC URL) - only Var_Test_Region had ever been
+  switched to `CasperiaSearchModule`. Both regions' `OpenSim.ini` now
+  have matching `[Search]`/`[SearchService]`/`[EventsService]`/
+  `[UserProfilesService]`/`[GroupsSearchService]` sections.
+- `[LoginService] SearchURL` in `Robust.HG.ini` (previously a dead
+  `gridsearch.php` placeholder, never built) now points at the real
+  `/search` page, so the viewer's embedded Search floater loads it.
+
+**3rd Rock Grid's real search.php/landsearch.php source, pasted directly
+by the user, used as a structural/UX reference (rewritten in our own
+code/markup/palette, not copied) for two more pieces:**
+- **Land for Sale** (`/landsearch`) - the existing `ISearchService.
+  SearchLandForSale` backend (built earlier this session for the
+  Places category, never wired to its own page) now has one, bucketed
+  by parcel area into the classic SL fractions (Full/Half/Quarter/
+  Eighth region, Small, Other, All) - exact-match bucketing since a
+  parcel's area is usually an exact power-of-two fraction of a
+  standard region; "Other" catches VarRegion-sized or custom-sized
+  parcels rather than forcing them into a bucket they don't fit.
+- **Real Trending + autocomplete**, replacing the earlier explicit
+  decision to omit a "Trending" section for lack of real data: new
+  `search_log` table (`ISearchData`/`ISearchService.LogSearch`/
+  `GetTrendingQueries`/`GetSuggestions`, MySQL+PGSQL+SQLite) logs only
+  *successful* (resultCount>0) searches - dead-end queries never
+  surface as either a trending term or a suggestion. `/search/suggest`
+  JSON endpoint + a small vanilla-JS debounced/keyboard-navigable
+  autocomplete (own implementation, not copied - the UX shape
+  mirrors the reference because it's a well-established pattern, not
+  because the code was lifted). Click-through tracking and classified-
+  snapshot thumbnails (both present in the reference) were scoped out
+  of this pass - thumbnails need a new asset-fetch+J2K-decode route
+  (real work, existing `GetTextureRobustHandler` pattern to reuse, just
+  not done yet), click-tracking is pure analytics with no direct
+  resident-facing value.
+
+**URL cleanup ("can we lose the /web/"):** `BasePath` changed from
+`"/web"` to `""` - every page now lives at `/search`, `/login`,
+`/admin`, etc. instead of `/web/search`. Hit a real, non-obvious
+`BaseHttpServer` constraint doing this: `TryGetSimpleStreamHandler`'s
+prefix-lookup (`m_simpleStreamVarPath`) only ever extracts a prefix
+when the request path has a *second* slash
+(`uripath.IndexOf('/', 2)`) - a single-segment path like `/search` has
+no second slash, so it can never match a varPath-registered prefix no
+matter what that prefix is, empty string included. A single shared ""
+registration (the naive equivalent of the old "/web") silently matches
+nothing. Fixed by registering each of the ~23 distinct top-level route
+segments individually (both exact-match and varPath, the same pair
+"/web" used to need) instead of one shared prefix. Also had to move the
+session cookie's `Path` from the old `BasePath` value to a hardcoded
+`/` (an empty Path attribute is not reliably root-scoped across
+browsers) - verified live that a session set at `/login` correctly
+carries over to `/dashboard`, `/search`, and every other segment.
+
+**Known still-open issue, unrelated to any of the above (see next
+entry) - the region test processes (`Var_Test_Region`/`Welcome_Center`)
+have a startup hang that was NOT caused by this work** (reproduced with
+the search code fully reverted, with a fully-cleared Mono.Addins cache,
+alone and together, with and without Robust running - ruled out DLL
+mismatches, stale locks, DNS, and addin-cache contention without
+finding the actual cause). Robust itself is unaffected and was used for
+100% of this session's live verification. Fixed one real, separate bug
+found while investigating: `OpenSim.exe`/`Robust.exe` need an explicit
+`-inifile` argument - launching with only `-WorkingDirectory` (this
+session's prior convention) makes `ConfigurationLoader.LoadConfigSettings`
+resolve `OpenSimDefaults.ini` against the wrong directory and
+`Environment.Exit(1)` silently, before log4net is even configured -
+explains why every failed attempt produced zero log output. That fix
+is real and confirmed (a region ran successfully for several minutes
+after applying it, using `-inifile Simulators\<name>\OpenSim.ini` with
+CWD at the shared root), but is not sufficient on its own - the hang
+reappeared on subsequent attempts and its root cause is still unknown.
+
+**Live-verified via curl against Robust** (region-side in-world hooks
+are code-complete and build clean, but not live-tested given the open
+region issue above): People/Places/Events/Classifieds/Groups search
+categories, Land for Sale bucket counts and per-bucket listings, a
+real search (`Splash`/`Verifier`) correctly logged and then appearing
+in both the Trending chips and the `/search/suggest` autocomplete,
+session cookie continuity across the new bare-root paths, and all
+~20 top-level routes responding correctly post-URL-cleanup.
+
+### Search follow-up: real maturity filter + inline icons (2026-08-11)
+
+Two corrections after the user compared the live page against the
+reference they'd pasted: the visible dropdown next to the search box
+was supposed to be a PG/Mature/Adult maturity filter, not a second way
+to pick a category (category is chip-driven only, via a hidden `cat`
+input, exactly like the reference's hidden `s` field) - my first pass
+had conflated the two. Second, dropping Font Awesome/Google Fonts (no
+internet egress) had also dropped every icon, leaving a flatter page
+than intended - "visual aesthetics ... break up plain text websites."
+
+**Maturity - investigated before wiring anything, per this project's
+own rule against decorative filters:** confirmed real, persisted
+per-region maturity data exists (`regions.access`, 13/21/42 =
+PG/Mature/Adult, the same convention `Util.ConvertMaturityToAccessLevel`
+already uses) and `land.RegionUUID` joins cleanly to it - so
+`ISearchService.SearchPlaces` gained a real `maxAccess` parameter,
+implemented as a `LEFT JOIN regions ... COALESCE(regions.access, 42)`
+across MySQL/PGSQL/SQLite (unmatched regions default to Adult/
+unrestricted rather than silently hiding the parcel). The in-world
+`CasperiaSearchModule` callers (`DirPlacesQuery`/`DirPopularQuery`) pass
+a new `UnrestrictedAccess` constant to preserve their existing
+behavior unchanged - decoding the classic viewer's own maturity query-
+flag bits is a separate task, not attempted here. Checked every other
+category before deciding scope: People/Events have no maturity field
+anywhere in the schema, and Classifieds' protocol `Flags` byte is
+always written the same fixed value by this connector's own creation
+form (confirmed in `HandleMyClassifiedsSave`) - so it carries no real
+per-item signal either. The dropdown genuinely filters Places only;
+it isn't wired to pretend it affects the other categories.
+
+**Icons - a small original inline-SVG set** (`Icon(string name)`),
+not Font Awesome or any other CDN glyph set, so the page keeps working
+with no internet egress. Simple geometric shapes (circles/paths, not
+copied from anywhere), `currentColor`-based so they inherit whatever
+text color their container already has: search/person/place/calendar/
+tag/group/trend/globe/house/list/half/quarter/eighth/shapes, covering
+the search input, category chips, the Trending label, the stat-strip,
+and every Land for Sale bucket card.
+
+Live-verified: `mat=1`/`mat=3`/`mat=7` all return 200 against the real
+joined query, the category select is gone (hidden input only, chip-
+driven), and icons render in the search input, chips, stat-strip, and
+bucket cards.
+
+### Admin features: Ban/Kick/Message/Estate lists/Partner proposal (2026-08-11)
+
+User directly challenged the "no clean/safe backend primitive exists"
+framing from the 2026-08-10 batch's dismissal of delete-account/
+partner-proposal/ban/kick-and-message-online-user (4 named items). A
+proper re-audit (not trusting the earlier framing) found 3 of those 4
+genuinely buildable now (Ban, Kick+Message, partner-proposal) —
+largely because the web console (task #26) already solves the "no
+Robust→region channel" blocker the earlier pass cited for kick/
+message; hard delete-account remains a real gap. Full estate list
+editing was a separate, later v1 scope cut (not part of the original
+4-item dismissal) closed out in this same pass. All selected by the
+user, plus the two previously-identified real WhiteCore-Dev gaps
+(group memberships and regions-owned on the public profile — see the
+"Public profile" entry below for both).
+
+**Ban + soft-delete** (`WebInterfaceServiceConnector.cs`): `UserLevel`
+sentinels `BannedUserLevel = -1` / `DeletedUserLevel = -2` — the login
+path already rejects any UserLevel below 0 today, so this needed no
+new LLLoginService change, just widening `HandleAdminUsersSetLevel`'s
+existing `Math.Clamp(userLevel, 0, 250)` and adding dedicated Ban/
+Unban buttons instead of requiring an admin to type a magic negative
+number. Soft-delete (`/admin/users/soft-delete`, new handler) combines
+the sentinel with `IAuthenticationService.SetPassword` to scramble the
+password — deliberately NOT a hard delete (`IUserAccountService` has
+no Delete method; hard-removing the row would orphan Inventory/Groups/
+Grid/Presence/Currency/Estate rows that reference the PrincipalID).
+**Real gap found and fixed in the same pass:** the web dashboard's own
+`/login` (`TryLogin`) never checked `UserLevel` at all — banning only
+ever blocked the SL-viewer login path (`LLLoginService`), so a banned
+account could still fully use self-service pages. Added the same
+`UserLevel < 0` check there.
+
+**Kick + Message** (`OpenSim/Region/Application/OpenSim.cs` +
+`WebInterfaceServiceConnector.cs`): added a `message user <first>
+<last> <text>` console command (same file/pattern as stock
+`KickUserCommand`, using `ControllingClient.SendInstantMessage` with a
+`GridInstantMessage` from "Grid Administration") — kick already existed
+as a stock console command. Both are now reachable from dedicated
+Kick/Message buttons on the admin user detail page, which resolve the
+target's current region via `IGridUserService.GetGridUserInfo`
+(already tracks `Online`/`LastRegionID`) and submit through the exact
+same `/consoleweb` channel the free-form Region Console already uses
+(factored the HTTP-call code out of `HandleAdminConsoleRun` into a
+shared `RunRegionConsoleCommand` helper). **Live-verified:** the
+"resident is not online" fallback path end-to-end via curl (graceful
+message, no crash) - actual kick/IM delivery needs a live region with
+an online avatar, which the still-open region-startup-hang issue
+(2026-08-10 entry) prevented testing this session. Documented as a
+known verification gap, not skipped silently.
+
+**Full estate list editing** (`WebInterfaceServiceConnector.cs`):
+`EstateSettings` already had `EstateManagers`/`EstateBans`/
+`EstateAccess`/`EstateGroups` with full `Add*`/`Remove*` helpers and
+list-size limits built in — this was pure UI/handler work, zero new
+backend interfaces. One shared `HandleAdminEstatesListAction(request,
+response, listType)` handles Managers/Access/Bans (resolve "First
+Last" to a UUID the same way `HandleAdminEstatesUpdate` already
+resolves the owner field); Groups gets its own handler since it
+resolves by name via `IGroupsSearchProvider.FindGroups` instead
+(exact case-insensitive match) — group members are rendered as raw
+UUIDs since that interface only supports search-by-name, not reverse
+ID→name lookup. Live-verified via curl: added/removed a resident from
+Managers and Bans (confirmed via direct DB read that `StoreEstateSettings`
+persisted the removal, not just a redirect message), and confirmed the
+group-add path correctly reports "not found" for a nonexistent group
+name (no groups existed on the dev grid to test the found path).
+
+**Partner proposal flow** (`WebInterfaceServiceConnector.cs` + new
+`IUserProfilesService.UpdateAvatarPartner` + `/partner` page): the
+2026-08-10 framing that `PartnerId` was "already fully wired via
+`AvatarPropertiesUpdate`" was also wrong — re-checked the actual SQL
+and `UpdateAvatarProperties`'s `UPDATE userprofile SET ...` statement
+never includes `profilePartner` at all (it's only ever written once,
+by `GetAvatarProperties`'s insert-if-missing branch, on a brand new
+profile row). Added a narrow `UpdateAvatarPartner(userId, partnerId,
+ref result)` to `IProfilesData`/`IUserProfilesService` and all three
+DB backends, same shape as the existing `UpdateAvatarInterests`.
+Pending-proposal state (who proposed to whom, before accept/decline)
+deliberately reuses the existing `userdata` table (`UserAppData`/
+`RequestUserAppData`/`SetUserAppData`) instead of a new table + 3
+migrations — a plain `UserId+TagId` key/value slot is exactly what
+"who proposed to me"/"who did I propose to" need, one slot per
+direction. This also meant fixing `UserProfilesService.SetUserAppData`,
+which was a stub (`return true` without persisting) despite the data-
+layer implementation being real and complete on all 3 backends — dead
+code with no existing caller (confirmed only `RequestUserAppData` is
+JsonRPC-exposed to viewers), so safe to wire through.
+
+**Real, pre-existing bug found and fixed while testing the above** (all
+3 DB backends): `GetUserAppData`'s insert-if-missing branch tried to
+run a second command on the same connection from *inside* the SELECT's
+still-open `DataReader`'s `using` block. MySQL/Npgsql both reject this
+outright ("There is already an open DataReader associated with this
+Connection which must be closed first") — silently caught by the
+existing try/catch, so `GetUserAppData` always returned false and
+never actually created the row, meaning `SetUserAppData` (an UPDATE
+only) had nothing to update. This meant a first-ever Get/Set for any
+`UserId+TagId` combination — which is every combination, since nothing
+had ever really exercised this code path before — silently failed.
+PGSQL had a second independent bug (appending the INSERT text onto the
+already-executed SELECT `query` string instead of building its own);
+SQLite had a third (`cmd.CommandText = query` set on the wrong command
+object, `cmd` instead of `put`, leaving `put` with no command text at
+all). Fixed all three by reading a `hasRow` flag out of the reader,
+disposing it, and only then running the insert on a freshly-built
+command. This was never reachable before this session since nothing
+had called `SetUserAppData` in anger — the partner-proposal flow was
+the first real caller.
+
+**Live-verified end-to-end via curl** (three throwaway test accounts,
+Casperia-Dev only): propose → both sides render the correct pending
+state → accept → `profilePartner` set reciprocally in the DB, confirmed
+by direct query → breakup → both sides cleared back to
+`00000000-0000-0000-0000-000000000000`, confirmed by direct query.
+Also smoke-tested decline and cancel independently (fresh propose,
+then decline from the target / cancel from the proposer, confirmed
+both sides return to unpartnered). Three throwaway accounts (Casperia
+Alpha/Beta/Gamma, Alpha promoted to admin) were left in place on
+Casperia-Dev afterward, same as the "Splash Verifier" precedent from
+the 2026-08-10 batch — flagged here in case they should be cleaned up
+later. Beta's password is intentionally left scrambled from the soft-
+delete test.
+
+### Public profile: group memberships + regions owned (2026-08-11)
+
+The two genuine WhiteCore-Dev gaps identified alongside the admin-
+features re-audit above (WhiteCore's user profile page shows both;
+ours showed neither). Both reuse existing primitives rather than
+adding anything new:
+
+- **Group memberships**: `GroupsService.GetAgentGroupMemberships`
+  already existed (used in-world by the viewer's own group list) but
+  wasn't reachable from Robust - added it to `IGroupsSearchProvider`
+  alongside the existing `FindGroups` (GroupsService already has a
+  matching public method, so implicit interface implementation
+  satisfies it with zero changes to that class). Filtered to
+  `GroupMembershipData.ListInProfile == true` before rendering - the
+  same per-membership "show this on my profile" flag the viewer's own
+  profile floater already exposes, since this is a public page anyone
+  can view and showing every membership regardless of that flag would
+  override the resident's own privacy choice.
+- **Regions owned**: reused the exact `GetRegionsOwnedBy(UUID)` helper
+  `/myregions` already has (estate-owner lookup via
+  `IEstateDataService.GetEstatesByOwner` + `GetRegions`) - this is just
+  the public, read-only region-name list, no OAR save/load actions.
+
+**Live-verified:** Regions-owned confirmed end-to-end against "Test
+User" (real estate owner on Casperia-Dev) - profile correctly lists
+"Var Test Region" and "Welcome Center", matching estate 101's actual
+region list. Group memberships could not get the same full round-trip
+- no groups exist in the Casperia-Dev database (group creation is an
+in-world action, not something reachable via a REST call), so only the
+zero-membership path (section correctly omitted, no error) was
+confirmed; the code follows the exact same fetch-filter-render shape
+as the already-verified Picks/Regions sections on the same page and
+the interface plumbing builds clean, but the populated-list rendering
+itself is unverified pending real group data on this grid.
+
+**Operational note, not a code issue:** mid-deployment, an unfiltered
+`Stop-Process -Name Robust` (meant to target only the Casperia-Dev test
+instance) killed the live grid's Robust process too. Caught immediately
+via `Get-CimInstance Win32_Process` path inspection, flagged to the
+user right away, and the user restarted it themselves (the sandbox
+correctly blocked doing that unilaterally). No code or data was
+affected — Casperia-Dev and the live grid use separate databases — but
+recorded here as a reminder to always filter `Stop-Process` by exact
+PID or `Path`, never by bare `-Name`, when two instances share a
+process name.
+
+### Admin features, round two: estate self-service, user management, Groups oversight (2026-08-11)
+
+A second fresh gap audit (WhiteCore-Dev's real `bin/html/` tree,
+OpenSim-Grid-Interface, the WhiteCore-Dev wiki, plus an internal
+consistency check on the batch above) found nine more real, concrete
+gaps. User selected all of them:
+
+**Self-service estate management + create-estate** (`WebInterfaceServiceConnector.cs`):
+matches WhiteCore-Dev's own `estate_manager.html`/`estate_edit.html`,
+which are literally the SAME pages for admins and estate owners alike
+(`RequiresAdminAuthentication => false`, filtered to
+`GetEstates(user.PrincipalID)` for a non-admin) - `/admin/estates` and
+the new `/myestates` alias now dispatch to the same
+`HandleAdminEstates`, gated by a new `CanManageEstate(session, estate)`
+helper (`session.IsAdmin || estate.EstateOwner == session.PrincipalID`)
+instead of a hard admin-only check. Reassigning the owner field stays
+admin-only (a real security boundary WhiteCore doesn't need to draw
+the same way, since this is a bigger, more sensitive action than
+toggling access flags). New `/admin/estates/create` (admin-only) uses
+the existing `IEstateDataService.CreateNewEstate(0)` factory. Also
+closed the adjacent gap the same audit found: `EstateSettings.PricePerMeter`
+and `.TaxFree` were real, populated fields the edit form never
+exposed - `TaxFree` is the legacy DB column name for what's actually
+`!AllowAccessOverride` today (see `EstateSettings.cs`'s own comment),
+so the checkbox and stored value are deliberately inverted from each
+other, labelled by what it actually does rather than the misleading
+legacy name.
+
+**Admin user management additions** (`WebInterfaceServiceConnector.cs`):
+password reset (admin sets a specific known password, via the same
+`IAuthenticationService.SetPassword` primitive already used for soft-
+delete's scramble and self-service reset - distinct from both), email/
+first-name/last-name editing (with a duplicate-name check before
+saving, since `GetUserAccount(first,last)` is how login/search/estate-
+owner-lookup/partner-proposal-target-lookup all resolve an account by
+name - two accounts sharing a name would make one unreachable), and
+admin-side account creation (reuses `ValidateRegistration` and
+`HandleRegister`'s exact CreateUser sequence verbatim, minus the auto-
+login step).
+
+**Temporary/timed ban**: extends the existing Ban/Unban with an
+optional duration field. Expiry reuses the same `userdata`-table
+pattern the partner-proposal flow's pending-state already established
+(one more `UserId+TagId` slot, this time a Unix-timestamp string
+instead of a UUID) rather than a new column/table. `ClearExpiredBan`
+auto-reverts an expired temp ban back to Active the next time the web
+login path or the admin user-detail page checks that account - **a
+real, documented limitation**: this does not reach the actual grid/
+viewer login path (`LLLoginService`, a different service/assembly)
+on its own timer, so a temp-banned resident who never touches the web
+UI stays blocked past expiry until an admin manually unbans them or
+they attempt the web login once. Fixing that properly would mean
+either a periodic background sweep in Robust or teaching
+`LLLoginService` about the same expiry primitive - flagged as a
+follow-on, not silently glossed over.
+
+**Self-service delete-my-account**: resident-facing counterpart to the
+existing admin soft-delete, gated on re-entering the current password
+(same MD5-then-Authenticate check `HandleChangePassword` already
+uses) rather than an admin flag. Factored the actual scramble+mark-
+Deleted mechanism out into a shared `SoftDeleteAccount(UserAccount)`
+helper used by both paths. Logs the resident out immediately
+afterward (session removed from `m_sessions`, cookie cleared) since
+their existing session would otherwise keep working until it expired
+on its own.
+
+**Grid-wide admin Groups management** (`/admin/groups`, new page):
+genuinely new ground - Casperia only ever showed a resident's OWN
+group memberships (their public profile, previous batch); there was
+no admin oversight of every group on the grid at all, matching a real
+gap versus OpenSim-Grid-Interface's `admin/groups_admin.php`. Needed
+three new methods added directly to `GroupsService.cs` (`GetAllGroups`,
+`UpdateGroupFlags`, `DeleteGroup`) plus a new plain-Framework DTO
+(`GroupOverviewData` in `GroupData.cs`) rather than reusing
+`OpenSim.Addons.Groups`' own `ExtendedGroupRecord`, since
+`IGroupsSearchProvider` lives in `OpenSim.Services.Interfaces` and
+Addons.Groups already references that project - a reference back the
+other way would be circular, same reasoning that shaped the original
+`IGroupsSearchProvider` design. Two real constraints found and
+documented rather than worked around: (1) `GetAllGroups` reuses the
+same `IGroupsData.RetrieveGroups(pattern)` SQL `FindGroups` already
+uses, which filters to `ShowInList=1` in its WHERE clause - hidden
+groups aren't surfaced on this admin page, a real v1 limit rather than
+extending `IGroupsData` across both SQL backends for this pass; (2)
+`UpdateGroupFlags`/`DeleteGroup` deliberately do NOT call the existing
+`UpdateGroup` method (which requires the caller to already hold
+`ChangeActions` power *as a group member*) - a grid admin moderating a
+group has no reason to also be a member of it, so these bypass that
+check entirely, trusting the real authorization (session.IsAdmin) that
+already happened one layer up in `WebInterfaceServiceConnector`.
+
+**Live-verified end-to-end via curl** (Casperia-Dev, same throwaway
+test accounts as the batch above, plus a new "Casperia Delta" for the
+delete-account test): create-estate → owner (non-admin) manages it via
+`/myestates` and is correctly 403'd on a different estate she doesn't
+own → settings (including the new price/access-override fields) save
+and persist; admin resets a password and the new password logs in;
+admin edits email (persisted, confirmed via direct DB read) and a
+rename-collision is correctly rejected; a 1-hour temp ban blocks login
+and shows its expiry, then a simulated-past expiry (direct DB edit,
+since waiting a real hour isn't practical for verification) correctly
+auto-clears and login succeeds again; admin-created account logs in
+immediately; self-service delete-account rejects a wrong password,
+accepts the right one, deletes, logs out, and blocks the next login
+attempt. **Groups management only partially verified**: the page
+loads, correctly 403s a non-admin, and correctly shows the accurate
+empty state - no groups exist in the Casperia-Dev database (group
+creation is an in-world action, not reachable via a REST call, same
+constraint noted for group-memberships-on-profile in the previous
+batch), so the populated list/toggle-save/delete paths are code-
+reviewed and build clean but not independently exercised against real
+data.

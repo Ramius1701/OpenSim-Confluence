@@ -136,5 +136,50 @@ namespace OpenSim.Data.SQLite
                 }
             }
         }
+
+        public System.Collections.Generic.List<(string StartIP, string EndIP)> GetIPRangeBans()
+        {
+            var ranges = new System.Collections.Generic.List<(string, string)>();
+
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand("select start_ip, end_ip from banned_ip_ranges", m_conn))
+                using (IDataReader result = cmd.ExecuteReader())
+                {
+                    while (result.Read())
+                        ranges.Add((result.GetString(0), result.GetString(1)));
+                }
+            }
+
+            return ranges;
+        }
+
+        public bool BanIPRange(string startIp, string endIp)
+        {
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand("insert or ignore into banned_ip_ranges (start_ip, end_ip) values (:startIp, :endIp)", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":startIp", startIp));
+                    cmd.Parameters.Add(new SQLiteParameter(":endIp", endIp));
+                    cmd.ExecuteNonQuery();
+                    return true;
+                }
+            }
+        }
+
+        public bool UnbanIPRange(string startIp, string endIp)
+        {
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand("delete from banned_ip_ranges where start_ip = :startIp and end_ip = :endIp", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":startIp", startIp));
+                    cmd.Parameters.Add(new SQLiteParameter(":endIp", endIp));
+                    cmd.ExecuteNonQuery();
+                    return true;
+                }
+            }
+        }
     }
 }

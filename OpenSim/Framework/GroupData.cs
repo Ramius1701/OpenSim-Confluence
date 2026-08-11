@@ -45,6 +45,24 @@ namespace OpenSim.Framework
         public bool ShowInList = false;
     }
 
+    // Grid-wide admin Groups overview page - a plain Framework DTO rather
+    // than reusing OpenSim.Addons.Groups' ExtendedGroupRecord, since
+    // IGroupsSearchProvider lives in OpenSim.Services.Interfaces and
+    // Addons.Groups already references that project (a reference back the
+    // other way would be circular - see IGroupsSearchProvider.cs).
+    public class GroupOverviewData
+    {
+        public UUID GroupID;
+        public string GroupName;
+        public string Charter;
+        public int MemberCount;
+        public int RoleCount;
+        public bool ShowInList;
+        public bool OpenEnrollment;
+        public bool AllowPublish;
+        public bool MaturePublish;
+    }
+
     public class GroupMembershipData
     {
         // Group base data

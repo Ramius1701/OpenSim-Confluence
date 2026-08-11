@@ -26,6 +26,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Reflection;
 using OpenSim.Framework;
@@ -74,6 +75,104 @@ namespace OpenSim.Data.MySQL
         #endregion Member Functions
 
         #region Classifieds Queries
+        // Grid-wide feed for the WebInterface splash page's "Featured
+        // Classifieds" widget - see IProfilesData.GetRecentClassifieds.
+        // Excludes expired listings the same way the viewer's own search
+        // would (classic OpenSim/SL classifieds are time-limited ads, not
+        // permanent), most recent first.
+        public List<UserClassifiedAdd> GetRecentClassifieds(int count)
+        {
+            List<UserClassifiedAdd> results = new List<UserClassifiedAdd>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(ConnectionString))
+            {
+                dbcon.Open();
+                const string query = "SELECT * FROM classifieds WHERE expirationdate > ?Now ORDER BY creationdate DESC LIMIT ?Count";
+                using (MySqlCommand cmd = new MySqlCommand(query, dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?Now", Util.UnixTimeSinceEpoch());
+                    cmd.Parameters.AddWithValue("?Count", count <= 0 ? 6 : count);
+
+                    using (MySqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            UserClassifiedAdd ad = new UserClassifiedAdd();
+                            ad.ClassifiedId = DBGuid.FromDB(reader["classifieduuid"]);
+                            ad.CreatorId = DBGuid.FromDB(reader["creatoruuid"]);
+                            ad.ParcelId = DBGuid.FromDB(reader["parceluuid"]);
+                            ad.SnapshotId = DBGuid.FromDB(reader["snapshotuuid"]);
+                            ad.CreationDate = Convert.ToInt32(reader["creationdate"]);
+                            ad.ExpirationDate = Convert.ToInt32(reader["expirationdate"]);
+                            ad.ParentEstate = Convert.ToInt32(reader["parentestate"]);
+                            ad.Flags = (byte)reader.GetUInt32("classifiedflags");
+                            ad.Category = Convert.ToInt32(reader["category"]);
+                            ad.Price = reader.GetInt16("priceforlisting");
+                            ad.Name = reader.GetString("name");
+                            ad.Description = reader.GetString("description");
+                            ad.SimName = reader.GetString("simname");
+                            ad.GlobalPos = reader.GetString("posglobal");
+                            ad.ParcelName = reader.GetString("parcelname");
+                            results.Add(ad);
+                        }
+                    }
+                }
+                dbcon.Close();
+            }
+
+            return results;
+        }
+
+        // Grid-wide keyword search for /web/search - same LIKE-on-name-or-
+        // description shape as MySQLSearchData.SearchPlaces, restricted to
+        // non-expired listings same as GetRecentClassifieds above.
+        public List<UserClassifiedAdd> SearchClassifieds(string queryText, int start, int count)
+        {
+            List<UserClassifiedAdd> results = new List<UserClassifiedAdd>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(ConnectionString))
+            {
+                dbcon.Open();
+                const string query = "SELECT * FROM classifieds WHERE expirationdate > ?Now " +
+                        "AND (name LIKE ?query OR description LIKE ?query) " +
+                        "ORDER BY creationdate DESC LIMIT ?start, ?count";
+                using (MySqlCommand cmd = new MySqlCommand(query, dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?Now", Util.UnixTimeSinceEpoch());
+                    cmd.Parameters.AddWithValue("?query", "%" + (queryText ?? string.Empty) + "%");
+                    cmd.Parameters.AddWithValue("?start", start < 0 ? 0 : start);
+                    cmd.Parameters.AddWithValue("?count", count <= 0 ? 100 : count);
+
+                    using (MySqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            UserClassifiedAdd ad = new UserClassifiedAdd();
+                            ad.ClassifiedId = DBGuid.FromDB(reader["classifieduuid"]);
+                            ad.CreatorId = DBGuid.FromDB(reader["creatoruuid"]);
+                            ad.ParcelId = DBGuid.FromDB(reader["parceluuid"]);
+                            ad.SnapshotId = DBGuid.FromDB(reader["snapshotuuid"]);
+                            ad.CreationDate = Convert.ToInt32(reader["creationdate"]);
+                            ad.ExpirationDate = Convert.ToInt32(reader["expirationdate"]);
+                            ad.ParentEstate = Convert.ToInt32(reader["parentestate"]);
+                            ad.Flags = (byte)reader.GetUInt32("classifiedflags");
+                            ad.Category = Convert.ToInt32(reader["category"]);
+                            ad.Price = reader.GetInt16("priceforlisting");
+                            ad.Name = reader.GetString("name");
+                            ad.Description = reader.GetString("description");
+                            ad.SimName = reader.GetString("simname");
+                            ad.GlobalPos = reader.GetString("posglobal");
+                            ad.ParcelName = reader.GetString("parcelname");
+                            results.Add(ad);
+                        }
+                    }
+                }
+                dbcon.Close();
+            }
+
+            return results;
+        }
+
         /// <summary>
         /// Gets the classified records.
         /// </summary>
@@ -777,6 +876,34 @@ namespace OpenSim.Data.MySQL
             }
             return true;
         }
+
+        public bool UpdateAvatarPartner(UUID userId, UUID partnerId, ref string result)
+        {
+            const string query = "UPDATE userprofile SET profilePartner=?partnerId WHERE useruuid=?uuid";
+
+            try
+            {
+                using (MySqlConnection dbcon = new MySqlConnection(ConnectionString))
+                {
+                    dbcon.Open();
+                    using (MySqlCommand cmd = new MySqlCommand(query, dbcon))
+                    {
+                        cmd.Parameters.AddWithValue("?partnerId", partnerId.ToString());
+                        cmd.Parameters.AddWithValue("?uuid", userId.ToString());
+
+                        cmd.ExecuteNonQuery();
+                    }
+                    dbcon.Close();
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.ErrorFormat("[PROFILES_DATA]: UpdateAvatarPartner exception {0}", e.Message);
+                result = e.Message;
+                return false;
+            }
+            return true;
+        }
         #endregion Avatar Interests
 
         public OSDArray GetUserImageAssets(UUID avatarId)
@@ -958,26 +1085,38 @@ namespace OpenSim.Data.MySQL
                         cmd.Parameters.AddWithValue("?Id", props.UserId.ToString());
                         cmd.Parameters.AddWithValue ("?TagId", props.TagId.ToString());
 
+                        // The insert-on-missing branch used to run a second
+                        // command on this same connection from inside the
+                        // reader's using block - MySQL rejects that ("There
+                        // is already an open DataReader associated with this
+                        // Connection which must be closed first"), silently
+                        // caught below, so a first-ever Get for a given
+                        // UserId+TagId always failed and never actually
+                        // created the row. Reading the flag out and doing
+                        // the insert after the reader is disposed fixes it.
+                        bool hasRow;
                         using (MySqlDataReader reader = cmd.ExecuteReader(CommandBehavior.SingleRow))
                         {
-                            if(reader.HasRows)
+                            hasRow = reader.HasRows;
+                            if (hasRow)
                             {
                                 reader.Read();
                                 props.DataKey = (string)reader["DataKey"];
                                 props.DataVal = (string)reader["DataVal"];
                             }
-                            else
-                            {
-                                const string queryB = "INSERT INTO userdata VALUES (?UserId, ?TagId, ?DataKey, ?DataVal)";
-                                using (MySqlCommand put = new MySqlCommand(queryB, dbcon))
-                                {
-                                    put.Parameters.AddWithValue("?UserId", props.UserId.ToString());
-                                    put.Parameters.AddWithValue("?TagId", props.TagId.ToString());
-                                    put.Parameters.AddWithValue("?DataKey", props.DataKey.ToString());
-                                    put.Parameters.AddWithValue("?DataVal", props.DataVal.ToString());
+                        }
 
-                                    put.ExecuteNonQuery();
-                                }
+                        if (!hasRow)
+                        {
+                            const string queryB = "INSERT INTO userdata VALUES (?UserId, ?TagId, ?DataKey, ?DataVal)";
+                            using (MySqlCommand put = new MySqlCommand(queryB, dbcon))
+                            {
+                                put.Parameters.AddWithValue("?UserId", props.UserId.ToString());
+                                put.Parameters.AddWithValue("?TagId", props.TagId.ToString());
+                                put.Parameters.AddWithValue("?DataKey", props.DataKey.ToString());
+                                put.Parameters.AddWithValue("?DataVal", props.DataVal.ToString());
+
+                                put.ExecuteNonQuery();
                             }
                         }
                     }

@@ -195,5 +195,62 @@ namespace OpenSim.Data.MySQL
                 }
             }
         }
+
+        public System.Collections.Generic.List<(string StartIP, string EndIP)> GetIPRangeBans()
+        {
+            var ranges = new System.Collections.Generic.List<(string, string)>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand("SELECT start_ip, end_ip FROM `banned_ip_ranges`", dbcon))
+                using (IDataReader result = cmd.ExecuteReader())
+                {
+                    while (result.Read())
+                        ranges.Add((result.GetString(0), result.GetString(1)));
+                }
+            }
+
+            return ranges;
+        }
+
+        public bool BanIPRange(string startIp, string endIp)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd
+                    = new MySqlCommand("INSERT IGNORE INTO `banned_ip_ranges` (`start_ip`, `end_ip`) VALUES(?startIp, ?endIp)", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?startIp", startIp);
+                    cmd.Parameters.AddWithValue("?endIp", endIp);
+
+                    cmd.ExecuteNonQuery();
+
+                    return true;
+                }
+            }
+        }
+
+        public bool UnbanIPRange(string startIp, string endIp)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd
+                    = new MySqlCommand("DELETE FROM `banned_ip_ranges` WHERE start_ip=?startIp AND end_ip=?endIp LIMIT 1", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?startIp", startIp);
+                    cmd.Parameters.AddWithValue("?endIp", endIp);
+
+                    cmd.ExecuteNonQuery();
+
+                    return true;
+                }
+            }
+        }
     }
 }

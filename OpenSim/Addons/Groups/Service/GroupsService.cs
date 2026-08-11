@@ -39,7 +39,13 @@ using OpenSim.Services.Interfaces;
 
 namespace OpenSim.Groups
 {
-    public class GroupsService : GroupsServiceBase
+    // IGroupsSearchProvider (OpenSim.Services.Interfaces) lets the Robust-
+    // side web connector query FindGroups via reflection (ServerUtils.
+    // LoadPlugin) without a compile-time reference to this project, which
+    // already references OpenSim.Server.Handlers - a direct reference the
+    // other way would be circular. No behavior change, just an added
+    // interface declaration; FindGroups below already matches it exactly.
+    public class GroupsService : GroupsServiceBase, IGroupsSearchProvider
     {
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -206,6 +212,78 @@ namespace OpenSim.Groups
 
             m_Database.StoreGroup(data);
 
+        }
+
+        // Grid-wide admin override - deliberately does NOT call UpdateGroup
+        // above (which requires the RequestingAgentID to already hold
+        // ChangeActions power in the group), since the entire point is
+        // letting a grid admin moderate a group they aren't necessarily a
+        // member of at all. RequestingAgentID is unused here; kept in the
+        // signature to match every other method on this interface and
+        // because the real authorization (is this caller actually a grid
+        // admin?) already happened one layer up, in WebInterfaceServiceConnector.
+        public void UpdateGroupFlags(string RequestingAgentID, UUID GroupID, bool showInList, bool openEnrollment, bool allowPublish, bool maturePublish)
+        {
+            GroupData data = m_Database.RetrieveGroup(GroupID);
+            if (data == null)
+                return;
+
+            data.Data["ShowInList"] = showInList ? "1" : "0";
+            data.Data["OpenEnrollment"] = openEnrollment ? "1" : "0";
+            data.Data["AllowPublish"] = allowPublish ? "1" : "0";
+            data.Data["MaturePublish"] = maturePublish ? "1" : "0";
+
+            m_Database.StoreGroup(data);
+        }
+
+        // Grid-wide admin overview - same RetrieveGroups(pattern) SQL
+        // FindGroups already uses, so (like FindGroups) this only sees
+        // groups with ShowInList=1 - hidden groups aren't surfaced here.
+        // Extending IGroupsData for a true "list literally everything"
+        // query would mean touching every backend (MySQL/PGSQL) for a
+        // narrow admin-page need; left as a known v1 limit rather than
+        // done partially. Unlike FindGroups, does NOT skip zero-member
+        // groups - an admin cleaning up dead/abandoned groups needs to see
+        // those too.
+        public List<GroupOverviewData> GetAllGroups(string RequestingAgentID)
+        {
+            List<GroupOverviewData> result = new List<GroupOverviewData>();
+            GroupData[] data = m_Database.RetrieveGroups(string.Empty);
+            if (data == null)
+                return result;
+
+            foreach (GroupData d in data)
+            {
+                if (d.Data.TryGetValue("Location", out string loc) && loc != string.Empty)
+                    continue;
+
+                ExtendedGroupRecord record = GetGroupRecord(RequestingAgentID, d.GroupID);
+                if (record == null)
+                    continue;
+
+                result.Add(new GroupOverviewData
+                {
+                    GroupID = record.GroupID,
+                    GroupName = record.GroupName,
+                    Charter = record.Charter,
+                    MemberCount = record.MemberCount,
+                    RoleCount = record.RoleCount,
+                    ShowInList = record.ShowInList,
+                    OpenEnrollment = record.OpenEnrollment,
+                    AllowPublish = record.AllowPublish,
+                    MaturePublish = record.MaturePublish
+                });
+            }
+
+            return result;
+        }
+
+        // Grid-wide admin override, same rationale as UpdateGroupFlags above
+        // - no membership/power check, real authorization already happened
+        // in WebInterfaceServiceConnector.
+        public bool DeleteGroup(string RequestingAgentID, UUID GroupID)
+        {
+            return m_Database.DeleteGroup(GroupID);
         }
 
         public ExtendedGroupRecord GetGroupRecord(string RequestingAgentID, UUID GroupID)

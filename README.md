@@ -1,6 +1,6 @@
-# Casperia
+# OpenSim-Confluence
 
-Casperia is a maintained downstream fork of the official
+Confluence is a maintained downstream fork of the official
 [OpenSimulator](https://github.com/opensim/opensim) development branch.
 It started from OpenSim Continuum's foundation and has since absorbed
 selected grid, identity, scripting, environment, simulator, web, economy,
@@ -94,7 +94,7 @@ Deliberately deferred, not forgotten — see roadmap.
   not dispatched.
 - `llIsExperienceTrusted`, `llGetExperiencePermissions`,
   `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats` —
-  Experience introspection queries backed by Casperia's own Experience
+  Experience introspection queries backed by Confluence's own Experience
   Tools system (see below).
 - `osPerlinNoise2D`.
 
@@ -122,7 +122,7 @@ interface declaration against its dispatch stub.
   region- and parcel-level, gated by standard OpenSim estate/parcel
   permissions (`CanIssueEstateCommand` / `CanEditParcelProperties`).
 - `llSetAgentEnvironment`, `llReplaceAgentEnvironment` — per-agent,
-  gated by Casperia's own Experience Tools permission system.
+  gated by Confluence's own Experience Tools permission system.
 - Region and parcel sky/water access.
 
 ### Pathfinding
@@ -141,7 +141,7 @@ or Linden-proprietary navmesh service.
 
 ### Experience Tools
 
-Casperia has its own Experience Tools implementation — not Second Life's
+Confluence has its own Experience Tools implementation — not Second Life's
 full Experience service, and not the smaller "Experience-Lite" design
 used by some sibling forks, but a real, backend-persisted system:
 
@@ -237,6 +237,9 @@ Detailed Marketplace documentation is located at:
 addon-modules/OpenSimMarketplace/README.md
 ```
 
+For every in-world chat command available to avatars/estate managers across
+the whole repo (not just add-ons), see [`INWORLD_COMMANDS.md`](INWORLD_COMMANDS.md).
+
 ## MoneyServer enhancements
 
 The included MoneyServer integration provides:
@@ -291,7 +294,7 @@ See `BUILDING.md` for the official base requirements.
 
 ## Configuration
 
-Casperia does not install live configuration automatically.
+Confluence does not install live configuration automatically.
 
 Review:
 
@@ -343,7 +346,7 @@ work continues — don't let them go stale.
   `BotPersistenceManager`, ported from Tranquillity) is infrastructure
   only — no script can reach it yet. Tranquillity's ~50 `bot*` OSSL
   functions exist only in their Phlox script engine; wiring an
-  equivalent into Casperia's own `OSSL_Api.cs`/`IOSSL_Api.cs`/
+  equivalent into Confluence's own `OSSL_Api.cs`/`IOSSL_Api.cs`/
   `OSSL_Stub.cs` so YEngine scripts can actually call it is deferred as
   its own effort, comparable in size to the module port itself.
 - Grid-level control-panel features (per-region Hypergrid open/close
@@ -399,7 +402,7 @@ avoids leaving half-finished work on the integration branch.
 
 ## Attribution and support
 
-Casperia retains the OpenSimulator license and source history, and
+Confluence retains the OpenSimulator license and source history, and
 started from OpenSim Continuum's consolidation work. Portable
 improvements have been cherry-picked and, where architecturally
 incompatible with a straight cherry-pick, hand-ported from:
@@ -408,7 +411,7 @@ incompatible with a straight cherry-pick, hand-ported from:
 - [Tranquillity](https://github.com/OpenSim-NGC/OpenSim-Tranquillity)
 - [Mobius](https://github.com/Mobius-Team/Mobius)
 - [WhiteCore-Dev](https://github.com/WhiteCoreSim/WhiteCore-Dev)
-- opensim-lickx — origin of Casperia's MoneyServer and OpenSimSearch
+- opensim-lickx — origin of Confluence's MoneyServer and OpenSimSearch
   modules; its original GitHub repository has since been deleted, so
   the only remaining copy is archived locally
 - [Halcyon/InWorldz](https://github.com/HalcyonGrid/halcyon) and
@@ -418,11 +421,11 @@ incompatible with a straight cherry-pick, hand-ported from:
 
 Historical source provenance remains available in Git history.
 
-Report Casperia-specific problems in this repository. Problems
+Report Confluence-specific problems in this repository. Problems
 reproducible on an unmodified official OpenSimulator build should be
 reported to the official OpenSimulator project.
 
 ## License
 
-Casperia is distributed under the same BSD-style license as
+Confluence is distributed under the same BSD-style license as
 OpenSimulator. See `LICENSE.txt`.

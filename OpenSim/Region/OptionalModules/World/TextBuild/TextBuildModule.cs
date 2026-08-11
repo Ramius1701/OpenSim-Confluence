@@ -51,6 +51,9 @@ namespace OpenSim.Region.OptionalModules.World.TextBuild
         private bool m_estateManagerOnly;
         private int m_maxParts;
         private float m_spawnDistance;
+        private int m_terrainConfirmationTimeoutSeconds;
+        private readonly object m_pendingTerrainRequestsSync = new object();
+        private readonly Dictionary<UUID, PendingTerrainRequest> m_pendingTerrainRequests = new Dictionary<UUID, PendingTerrainRequest>();
 
         public string Name { get { return "Text Build Module"; } }
 
@@ -63,10 +66,16 @@ namespace OpenSim.Region.OptionalModules.World.TextBuild
                 return;
 
             m_enabled = config.GetBoolean("Enabled", false);
-            m_commandChannel = config.GetInt("CommandChannel", 0);
+            m_commandChannel = config.GetInt("CommandChannel", 90);
+            if (m_commandChannel == 0)
+            {
+                m_log.Warn("[TEXT BUILD]: CommandChannel=0 would expose build/terrain commands in public chat; using channel 90 instead.");
+                m_commandChannel = 90;
+            }
             m_estateManagerOnly = config.GetBoolean("EstateManagerOnly", true);
             m_maxParts = Math.Max(1, config.GetInt("MaxParts", 64));
             m_spawnDistance = Math.Max(1.0f, config.GetFloat("SpawnDistance", 4.0f));
+            m_terrainConfirmationTimeoutSeconds = Math.Max(5, config.GetInt("TerrainConfirmationTimeoutSeconds", 30));
         }
 
         public void AddRegion(Scene scene)
@@ -104,7 +113,7 @@ namespace OpenSim.Region.OptionalModules.World.TextBuild
             if (!IsBuildCommand(request))
                 return;
 
-            if (chat.Channel != m_commandChannel && chat.Channel != 0)
+            if (chat.Channel != m_commandChannel)
                 return;
 
             request = NormalizeBuildRequest(request);
@@ -120,17 +129,30 @@ namespace OpenSim.Region.OptionalModules.World.TextBuild
             if (sp == null || sp.IsChildAgent)
                 return;
 
+            string argument = StripBuildVerb(request).Trim().ToLower(CultureInfo.InvariantCulture);
+            if (argument == "confirm" || argument == "conferma")
+            {
+                ConfirmPendingTerrain(client);
+                return;
+            }
+
+            if (argument == "cancel" || argument == "annulla")
+            {
+                CancelPendingTerrain(client);
+                return;
+            }
+
             TerrainRecipe terrainRecipe = ResolveTerrainRecipe(request);
             if (terrainRecipe != null)
             {
-                ApplyTerrainRecipe(client, terrainRecipe);
+                QueuePendingTerrain(client, terrainRecipe);
                 return;
             }
 
             BuildTemplate template = ResolveTemplate(request);
             if (template == null)
             {
-                SendReply(client, "TextBuild: I can build car, boat, house, gazebo, portal, fountain, lamp, sofa, dock, table, flat terrain, tropical island, snowy mountains.");
+                SendReply(client, "TextBuild: I can build car, boat, house, gazebo, portal, tree, fountain, lamp, sofa, dock, table, flat terrain, tropical island, snowy mountains, ring island, volcanic island, archipelago, or canyon.");
                 return;
             }
 
@@ -167,16 +189,34 @@ namespace OpenSim.Region.OptionalModules.World.TextBuild
             SendReply(client, string.Format("TextBuild: built {0}.", template.Name));
         }
 
+        private static readonly string[] BuildVerbs =
+        {
+            "build ", "create ", "make ", "costruisci ", "costruiscimi ", "crea "
+        };
+
         private static bool IsBuildCommand(string request)
         {
             string lower = NormalizeBuildRequest(request).ToLower(CultureInfo.InvariantCulture);
 
-            return lower.StartsWith("build ")
-                || lower.StartsWith("create ")
-                || lower.StartsWith("make ")
-                || lower.StartsWith("costruisci ")
-                || lower.StartsWith("costruiscimi ")
-                || lower.StartsWith("crea ");
+            foreach (string verb in BuildVerbs)
+            {
+                if (lower.StartsWith(verb))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string StripBuildVerb(string request)
+        {
+            string lower = request.ToLower(CultureInfo.InvariantCulture);
+            foreach (string verb in BuildVerbs)
+            {
+                if (lower.StartsWith(verb))
+                    return request.Substring(verb.Length);
+            }
+
+            return request;
         }
 
         private static string NormalizeBuildRequest(string request)
@@ -303,6 +343,56 @@ namespace OpenSim.Region.OptionalModules.World.TextBuild
                 return Math.Max(5f, meters);
 
             return fallback;
+        }
+
+        private void QueuePendingTerrain(IClientAPI client, TerrainRecipe recipe)
+        {
+            lock (m_pendingTerrainRequestsSync)
+            {
+                m_pendingTerrainRequests[client.AgentId] =
+                    new PendingTerrainRequest(recipe, DateTime.UtcNow.AddSeconds(m_terrainConfirmationTimeoutSeconds));
+            }
+
+            SendReply(
+                client,
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "TextBuild: this will reshape the ENTIRE region terrain to {0} and cannot be undone. "
+                    + "Type 'build confirm' within {1} seconds to apply, or 'build cancel' to cancel.",
+                    recipe.GetDescription(),
+                    m_terrainConfirmationTimeoutSeconds));
+        }
+
+        private void ConfirmPendingTerrain(IClientAPI client)
+        {
+            PendingTerrainRequest pending;
+            lock (m_pendingTerrainRequestsSync)
+            {
+                if (!m_pendingTerrainRequests.TryGetValue(client.AgentId, out pending))
+                {
+                    SendReply(client, "TextBuild: no pending terrain change to confirm.");
+                    return;
+                }
+
+                m_pendingTerrainRequests.Remove(client.AgentId);
+            }
+
+            if (DateTime.UtcNow > pending.ExpiresUtc)
+            {
+                SendReply(client, "TextBuild: that terrain confirmation expired. Please repeat the original command.");
+                return;
+            }
+
+            ApplyTerrainRecipe(client, pending.Recipe);
+        }
+
+        private void CancelPendingTerrain(IClientAPI client)
+        {
+            bool removed;
+            lock (m_pendingTerrainRequestsSync)
+                removed = m_pendingTerrainRequests.Remove(client.AgentId);
+
+            SendReply(client, removed ? "TextBuild: terrain change cancelled." : "TextBuild: no pending terrain change to cancel.");
         }
 
         private void ApplyTerrainRecipe(IClientAPI client, TerrainRecipe recipe)
@@ -881,6 +971,18 @@ namespace OpenSim.Region.OptionalModules.World.TextBuild
             VolcanicIsland,
             Archipelago,
             Canyon
+        }
+
+        private class PendingTerrainRequest
+        {
+            public readonly TerrainRecipe Recipe;
+            public readonly DateTime ExpiresUtc;
+
+            public PendingTerrainRequest(TerrainRecipe recipe, DateTime expiresUtc)
+            {
+                Recipe = recipe;
+                ExpiresUtc = expiresUtc;
+            }
         }
 
         private class TerrainRecipe

@@ -1,7 +1,8 @@
 # OpenSimWeather 0.3.4
 
 OpenSimWeather is an experimental but production-conscious OpenSimulator region
-module that provides Clear, Sunny, Rain, Storm, and Snow conditions. It uses
+module that provides Clear, Sunny, Rain, Storm, Snow, and Blizzard conditions.
+It uses
 viewer-visible particle systems and can optionally coordinate wind,
 LightShare/EEP-style region environment profiles, lightning, thunder, forecast
 messages, and temporary terrain surface effects.
@@ -82,7 +83,8 @@ into a running simulator process.
 
 ## Commands
 
-With `CommandChannel = 89`:
+See `COMMANDS.md` for the full end-user reference (aliases, permissions,
+report format, troubleshooting). Summary, with `CommandChannel = 89`:
 
 ```text
 /89 weather status
@@ -90,6 +92,7 @@ With `CommandChannel = 89`:
 /89 weather rain
 /89 weather storm
 /89 weather snow
+/89 weather blizzard
 /89 weather clear
 ```
 
@@ -100,9 +103,11 @@ does not repeat a second `Weather:` prefix.
 When `EstateManagerOnly = true`, only estate managers/owners can change the
 weather.
 
-`weather status` reports the current weather, emitter count, coverage mode,
-known exclusion volumes, surface patch count, wetness, snow level, configured
-temperature, and auto-cycle state.
+`weather status` reports a narrative weather report: current conditions,
+temperature (with a plain-language descriptor), emitter coverage, ground
+wetness/snow level, active exclusion volumes, and time until the next
+auto-cycle change. The same report is broadcast publicly to everyone in the
+region whenever the weather actually changes (`AnnounceWeatherChangesInChat`).
 
 `weather clear` clears the active condition but does not disable an enabled
 auto-cycle timer.

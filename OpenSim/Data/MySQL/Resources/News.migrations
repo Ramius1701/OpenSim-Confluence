@@ -1,0 +1,15 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `news` (
+	`ID` VARCHAR(36) NOT NULL,
+	`Title` VARCHAR(255) NOT NULL,
+	`Body` TEXT NOT NULL,
+	`Author` VARCHAR(255) NOT NULL,
+	`Created` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `Created` (`Created`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;

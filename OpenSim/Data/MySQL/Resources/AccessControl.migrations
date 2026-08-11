@@ -19,3 +19,16 @@ CREATE TABLE IF NOT EXISTS `banned_ips` (
 
 COMMIT;
 
+:VERSION 3         # -------------------------------
+
+begin;
+
+CREATE TABLE IF NOT EXISTS `banned_ip_ranges` (
+  `start_ip` VARCHAR(15) NOT NULL,
+  `end_ip` VARCHAR(15) NOT NULL,
+  PRIMARY KEY (`start_ip`, `end_ip`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+COMMIT;
+
+

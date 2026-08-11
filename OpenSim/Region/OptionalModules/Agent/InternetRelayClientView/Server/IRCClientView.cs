@@ -1261,7 +1261,7 @@ namespace OpenSim.Region.OptionalModules.Agent.InternetRelayClientView.Server
 
         }
 
-        public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, uint estateID)
+        public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, UUID[] blocked, uint estateID)
         {
 
         }

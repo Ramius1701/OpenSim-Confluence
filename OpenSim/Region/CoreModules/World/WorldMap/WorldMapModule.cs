@@ -246,6 +246,16 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
             MainServer.Instance.AddSimpleStreamHandler(new SimpleStreamHandler(
                 "/MAP/MapItems/" + m_regionHandle.ToString(), HandleRemoteMapItemRequest));
 
+            // Batch 13: on-demand maptile regen, callable from the native admin
+            // web UI (see WebInterfaceServiceConnector's /web/admin) so an
+            // operator doesn't have to wait for MaptileStartupDelaySeconds or
+            // reach the region's own console. Does exactly what the existing
+            // "generate map" console command does (HandleGenerateMapConsoleCommand
+            // below) - queues the same background job, never runs the render
+            // inline on this HTTP thread.
+            MainServer.Instance.AddSimpleStreamHandler(new SimpleStreamHandler(
+                "/MAP/Regenerate/" + m_regionHandle.ToString(), HandleRegenerateMaptileRequest));
+
             m_scene.EventManager.OnRegisterCaps += OnRegisterCaps;
             m_scene.EventManager.OnNewClient += OnNewClient;
             m_scene.EventManager.OnClientClosed += ClientLoggedOut;
@@ -271,6 +281,7 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
             m_scene.UnregisterModuleInterface<IWorldMapModule>(this);
 
             MainServer.Instance.RemoveSimpleStreamHandler("/MAP/MapItems/" + m_scene.RegionInfo.RegionHandle.ToString());
+            MainServer.Instance.RemoveSimpleStreamHandler("/MAP/Regenerate/" + m_scene.RegionInfo.RegionHandle.ToString());
             string regionimage = "regionImage" + m_scene.RegionInfo.RegionID.ToString();
             regionimage = regionimage.Replace("-", "");
             MainServer.Instance.RemoveIndexPHPMethodHandler(regionimage);
@@ -1431,6 +1442,27 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
 
             m_log.InfoFormat("[WORLD MAP]: Queuing background map image generation for {0}", m_scene.Name);
             m_scene.RegenerateMaptileAndReregisterInBackground();
+        }
+
+        // HTTP counterpart to HandleGenerateMapConsoleCommand above - same
+        // action, triggered by the native admin web UI instead of the console.
+        // POST-only (matches every other state-changing admin action in this
+        // codebase) so a stray GET/crawler/prefetch can't queue an expensive
+        // render by accident.
+        public void HandleRegenerateMaptileRequest(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST" || m_scene == null)
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.MethodNotAllowed;
+                return;
+            }
+
+            m_log.InfoFormat("[WORLD MAP]: Queuing background map image generation for {0} (requested via admin web UI)", m_scene.Name);
+            m_scene.RegenerateMaptileAndReregisterInBackground();
+
+            response.StatusCode = (int)System.Net.HttpStatusCode.OK;
+            byte[] buffer = System.Text.Encoding.UTF8.GetBytes("queued");
+            response.RawBuffer = buffer;
         }
 
         public void HandleRemoteMapItemRequest(IOSHttpRequest request, IOSHttpResponse response)

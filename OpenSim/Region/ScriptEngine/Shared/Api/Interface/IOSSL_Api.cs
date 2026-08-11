@@ -484,6 +484,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
               void osNpcSetRot(LSL_Key npc, rotation rot);
         //ApiDesc Removes the target a given NPC (key) is moving towards.
               void osNpcStopMoveToTarget(LSL_Key npc);
+        //ApiDesc Makes a given NPC (key) continuously follow a target avatar/NPC (key) until osNpcStopFollow is called.
+              void osNpcFollow(LSL_Key npc, LSL_Key target, LSL_Float startDistance, LSL_Float stopDistance);
+        //ApiDesc Stops a given NPC (key) from following its target.
+              void osNpcStopFollow(LSL_Key npc);
+        //ApiDesc Tags a given NPC (key) with a name for later bulk lookup/management via osNpcGetNPCsWithTag/osNpcDeleteNPCsWithTag.
+              void osNpcAddTag(LSL_Key npc, string tag);
+        //ApiDesc Returns a list of NPC keys (owned by the caller) carrying the given tag.
+           LSL_List osNpcGetNPCsWithTag(string tag);
+        //ApiDesc Deletes every NPC (owned by the caller) carrying the given tag. Returns the number deleted.
+        LSL_Integer osNpcDeleteNPCsWithTag(string tag);
         //ApiDesc Sets a given NPC (key) profile about text to a given string.
               void osNpcSetProfileAbout(LSL_Key npc, string about);
         //ApiDesc Sets a given NPC (key) profile image to a given image (asset UUID).

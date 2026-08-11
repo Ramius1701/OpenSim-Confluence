@@ -1,0 +1,13 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS news (
+	ID varchar(36) NOT NULL PRIMARY KEY,
+	Title varchar(255) NOT NULL,
+	Body text NOT NULL,
+	Author varchar(255) NOT NULL,
+	Created int NOT NULL
+);
+
+COMMIT;

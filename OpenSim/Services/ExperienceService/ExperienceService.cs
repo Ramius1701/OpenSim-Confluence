@@ -47,6 +47,18 @@ namespace OpenSim.Services.ExperienceService
                         "suspend experience",
                         "suspend experience <key> <true/false>",
                         "Suspend/unsuspend an experience by its key.", HandleSuspendExperience);
+
+                MainConsole.Instance.Commands.AddCommand("Experience", false,
+                        "set experience scope",
+                        "set experience scope <key> <grid/private/normal>",
+                        "Set an experience's scope classification. Grid-scope experiences "
+                        + "run on every estate by default and can be individually blocked "
+                        + "per-estate (Estate/Region -> Experiences -> Blocked); normal "
+                        + "(land) scope experiences must be explicitly allowed per-estate "
+                        + "instead; private scope experiences are restricted to their "
+                        + "owner/group. This is a grid-operator classification, not "
+                        + "something an experience owner can set themselves.",
+                        HandleSetExperienceScope);
             }
         }
 
@@ -182,6 +194,55 @@ namespace OpenSim.Services.ExperienceService
             {
                 MainConsole.Instance.Output(message);
             }
+        }
+
+        private void HandleSetExperienceScope(string module, string[] cmdparams)
+        {
+            string experience_key;
+            string scope_str;
+
+            if (cmdparams.Length < 4)
+                experience_key = MainConsole.Instance.Prompt("Experience Key");
+            else experience_key = cmdparams[3];
+
+            UUID experienceID;
+            if (!UUID.TryParse(experience_key, out experienceID))
+            {
+                MainConsole.Instance.Output("Invalid key!");
+                return;
+            }
+
+            if (cmdparams.Length < 5)
+                scope_str = MainConsole.Instance.Prompt("Scope (grid/private/normal)", "normal");
+            else scope_str = cmdparams[4];
+
+            scope_str = scope_str.ToLower();
+            if (scope_str != "grid" && scope_str != "private" && scope_str != "normal")
+            {
+                MainConsole.Instance.Output("Scope must be grid, private, or normal.");
+                return;
+            }
+
+            var infos = GetExperienceInfos(new UUID[] { experienceID });
+            if (infos.Length != 1)
+            {
+                MainConsole.Instance.Output("Experience not found!");
+                return;
+            }
+
+            ExperienceInfo info = infos[0];
+            info.properties &= ~((int)ExperienceFlags.Grid | (int)ExperienceFlags.Private);
+
+            if (scope_str == "grid")
+                info.properties |= (int)ExperienceFlags.Grid;
+            else if (scope_str == "private")
+                info.properties |= (int)ExperienceFlags.Private;
+
+            var updated = UpdateExperienceInfo(info);
+            if (updated != null)
+                MainConsole.Instance.Output("Experience '{0}' scope set to {1}.", info.name, scope_str);
+            else
+                MainConsole.Instance.Output("Error updating experience!");
         }
 
         public Dictionary<UUID, bool> FetchExperiencePermissions(UUID agent_id)

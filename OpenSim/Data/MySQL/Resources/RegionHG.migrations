@@ -1,0 +1,11 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `region_hg_settings` (
+	`RegionID` VARCHAR(36) NOT NULL,
+	`IsOpen` TINYINT(1) NOT NULL DEFAULT 1,
+	PRIMARY KEY (`RegionID`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;

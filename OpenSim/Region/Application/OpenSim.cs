@@ -379,6 +379,11 @@ namespace OpenSim
                                           + "Only use this option if you are sure the avatar is inactive and a normal kick user operation does not removed them",
                                           KickUserCommand);
 
+            m_console.Commands.AddCommand("Users", false, "message user",
+                                          "message user <first> <last> <message>",
+                                          "Send an instant message to a user currently on the region",
+                                          MessageUserCommand);
+
             m_console.Commands.AddCommand("Users", false, "show users",
                                           "show users [full]",
                                           "Show user data for users currently on the region",
@@ -579,6 +584,46 @@ namespace OpenSim
             }
 
             MainConsole.Instance.Output("");
+        }
+
+        /// <summary>
+        /// Sends an instant message to a user currently on the region, from the web admin console.
+        /// </summary>
+        /// <param name="module"></param>
+        /// <param name="cmdparams">first, last, and message text of the avatar to message</param>
+        private void MessageUserCommand(string module, string[] cmdparams)
+        {
+            if (cmdparams.Length < 5)
+            {
+                MainConsole.Instance.Output("Usage: message user <first> <last> <message>");
+                return;
+            }
+
+            string messageText = String.Join(" ", cmdparams, 4, cmdparams.Length - 4);
+
+            IList agents = SceneManager.GetCurrentSceneAvatars();
+
+            foreach (ScenePresence presence in agents)
+            {
+                if (presence.Firstname.Equals(cmdparams[2], StringComparison.OrdinalIgnoreCase) &&
+                    presence.Lastname.Equals(cmdparams[3], StringComparison.OrdinalIgnoreCase))
+                {
+                    MainConsole.Instance.Output(
+                            "Messaging user: {0,-16} {1,-16} {2,-37} in region: {3,-16}",
+                            presence.Firstname, presence.Lastname, presence.UUID, presence.Scene.RegionInfo.RegionName);
+
+                    GridInstantMessage im = new GridInstantMessage(presence.Scene, UUID.Zero,
+                            "Grid Administration", presence.UUID,
+                            (byte)InstantMessageDialog.MessageFromAgent, false,
+                            messageText, UUID.Zero, false, presence.AbsolutePosition,
+                            Array.Empty<byte>(), true);
+
+                    presence.ControllingClient.SendInstantMessage(im);
+                    return;
+                }
+            }
+
+            MainConsole.Instance.Output("User not found on any region managed by this simulator.");
         }
 
         /// <summary>

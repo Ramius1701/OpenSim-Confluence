@@ -51,6 +51,24 @@ namespace OpenSim.Region.OptionalModules.World.NPC
         private readonly Dictionary<UUID, NPCAvatar> m_avatars = new Dictionary<UUID, NPCAvatar>();
         private NPCOptionsFlags m_NPCOptionFlags;
 
+        // Follow/tag state (Batch 14, WhiteCore-Dev-inspired) - see INPCModule
+        // for the design rationale (periodic re-target instead of a physics
+        // event hook).
+        private class FollowState
+        {
+            public Scene Scene;
+            public UUID TargetID;
+            public float StartDistance;
+            public float StopDistance;
+            public Vector3 Offset;
+            public bool Approaching;
+        }
+
+        private readonly Dictionary<UUID, FollowState> m_following = new Dictionary<UUID, FollowState>();
+        private readonly Dictionary<string, HashSet<UUID>> m_npcTags = new Dictionary<string, HashSet<UUID>>();
+        private Timer m_followTimer;
+        private const double FollowTickIntervalMs = 1000;
+
         private int m_MaxNumberNPCperScene = 40;
 
         public NPCOptionsFlags NPCOptionFlags {get {return m_NPCOptionFlags;}}
@@ -102,6 +120,12 @@ namespace OpenSim.Region.OptionalModules.World.NPC
 
         public void Close()
         {
+            lock (m_following)
+            {
+                m_followTimer?.Stop();
+                m_followTimer?.Dispose();
+                m_followTimer = null;
+            }
         }
 
         public string Name
@@ -287,6 +311,161 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             return false;
         }
 
+        public bool Follow(UUID agentID, Scene scene, UUID targetID, float startFollowDistance,
+                float stopFollowDistance, Vector3 offset)
+        {
+            lock (m_avatars)
+            {
+                if (!m_avatars.ContainsKey(agentID))
+                    return false;
+            }
+
+            if (scene.GetScenePresence(targetID) == null)
+                return false;
+
+            lock (m_following)
+            {
+                m_following[agentID] = new FollowState
+                {
+                    Scene = scene,
+                    TargetID = targetID,
+                    StartDistance = startFollowDistance,
+                    StopDistance = stopFollowDistance,
+                    Offset = offset,
+                    Approaching = false
+                };
+            }
+
+            EnsureFollowTimerRunning();
+            return true;
+        }
+
+        public bool StopFollow(UUID agentID, Scene scene)
+        {
+            bool wasFollowing;
+            lock (m_following)
+                wasFollowing = m_following.Remove(agentID);
+
+            if (wasFollowing)
+                StopMoveToTarget(agentID, scene);
+
+            return wasFollowing;
+        }
+
+        private void EnsureFollowTimerRunning()
+        {
+            lock (m_following)
+            {
+                if (m_followTimer != null)
+                    return;
+
+                m_followTimer = new Timer(FollowTickIntervalMs) { AutoReset = true };
+                m_followTimer.Elapsed += (_, _) => FollowTick();
+                m_followTimer.Start();
+            }
+        }
+
+        // Recomputes each following NPC's target position against the target
+        // avatar's CURRENT location every tick, re-issuing MoveToTarget - a
+        // moving target is chased by continually resetting where "MoveToTarget"
+        // points, rather than tracking movement via a single long-lived
+        // in-flight command the way WhiteCore's physics-event approach did.
+        private void FollowTick()
+        {
+            List<(UUID AgentID, FollowState State)> snapshot;
+            lock (m_following)
+            {
+                if (m_following.Count == 0)
+                    return;
+
+                snapshot = new List<(UUID, FollowState)>(m_following.Count);
+                foreach (KeyValuePair<UUID, FollowState> kvp in m_following)
+                    snapshot.Add((kvp.Key, kvp.Value));
+            }
+
+            foreach ((UUID agentID, FollowState state) in snapshot)
+            {
+                ScenePresence npc = state.Scene.GetScenePresence(agentID);
+                ScenePresence target = state.Scene.GetScenePresence(state.TargetID);
+
+                if (npc == null || npc.IsChildAgent || target == null || target.IsChildAgent)
+                {
+                    lock (m_following)
+                        m_following.Remove(agentID);
+                    continue;
+                }
+
+                Vector3 targetPos = target.AbsolutePosition + state.Offset;
+                double distance = Util.GetDistanceTo(npc.AbsolutePosition, targetPos);
+                float threshold = state.Approaching ? state.StopDistance : state.StartDistance;
+
+                if (distance <= threshold)
+                {
+                    if (state.Approaching)
+                    {
+                        StopMoveToTarget(agentID, state.Scene);
+                        state.Approaching = false;
+                    }
+                }
+                else
+                {
+                    MoveToTarget(agentID, state.Scene, targetPos, false, false, false);
+                    state.Approaching = true;
+                }
+            }
+        }
+
+        public void AddNPCTag(UUID agentID, string tag)
+        {
+            if (string.IsNullOrEmpty(tag))
+                return;
+
+            lock (m_npcTags)
+            {
+                if (!m_npcTags.TryGetValue(tag, out HashSet<UUID> tagged))
+                {
+                    tagged = new HashSet<UUID>();
+                    m_npcTags[tag] = tagged;
+                }
+                tagged.Add(agentID);
+            }
+        }
+
+        public List<UUID> GetNPCsWithTag(Scene scene, string tag)
+        {
+            List<UUID> result = new List<UUID>();
+            if (string.IsNullOrEmpty(tag))
+                return result;
+
+            lock (m_npcTags)
+            {
+                if (!m_npcTags.TryGetValue(tag, out HashSet<UUID> tagged))
+                    return result;
+
+                foreach (UUID id in tagged)
+                {
+                    if (IsNPC(id, scene))
+                        result.Add(id);
+                }
+            }
+
+            return result;
+        }
+
+        public int DeleteNPCsWithTag(Scene scene, string tag)
+        {
+            List<UUID> toDelete = GetNPCsWithTag(scene, tag);
+            int deleted = 0;
+
+            foreach (UUID id in toDelete)
+            {
+                if (DeleteNPC(id, scene))
+                    deleted++;
+            }
+
+            return deleted;
+        }
+
         public bool Say(UUID agentID, Scene scene, string text)
         {
             return Say(agentID, scene, text, 0);
@@ -432,6 +611,13 @@ namespace OpenSim.Region.OptionalModules.World.NPC
                 lock (m_avatars)
                 {
                     m_avatars.Remove(agentID);
+                }
+                lock (m_following)
+                    m_following.Remove(agentID);
+                lock (m_npcTags)
+                {
+                    foreach (HashSet<UUID> tagged in m_npcTags.Values)
+                        tagged.Remove(agentID);
                 }
                 m_log.DebugFormat("[NPC MODULE]: Removed NPC {0} {1}",
                         agentID, av.Name);

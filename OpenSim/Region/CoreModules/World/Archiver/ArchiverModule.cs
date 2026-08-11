@@ -36,6 +36,8 @@ using Mono.Addins;
 
 using OpenSim.Framework;
 using OpenSim.Framework.Console;
+using OpenSim.Framework.Servers;
+using OpenSim.Framework.Servers.HttpServer;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 
@@ -80,6 +82,27 @@ namespace OpenSim.Region.CoreModules.World.Archiver
             Scene = scene;
             Scene.RegisterModuleInterface<IRegionArchiverModule>(this);
             //m_log.DebugFormat("[ARCHIVER]: Enabled for region {0}", scene.RegionInfo.RegionName);
+
+            // Batch 13: on-demand OAR backup trigger, callable from the native
+            // admin web UI (WebInterfaceServiceConnector's /web/admin) - same
+            // "console command already exists, add the HTTP twin" pattern as the
+            // maptile regen endpoint. Unlike maptile regen, ArchiveRegion() is
+            // NOT already backgrounded by OpenSim itself (confirmed: it's a
+            // plain synchronous call - RemoteAdminPlugin wraps it in its own
+            // Monitor.Wait for this exact reason), so this handler backgrounds
+            // it itself via Util.FireAndForget rather than blocking the HTTP
+            // worker thread for the whole archive-write.
+            MainServer.Instance.AddSimpleStreamHandler(new SimpleStreamHandler(
+                "/OAR/Save/" + scene.RegionInfo.RegionHandle.ToString(), HandleSaveOarHttpRequest));
+
+            // Counterpart for self-service restore (WebInterfaceServiceConnector's
+            // /web/myregions - region owners restoring their own uploaded OAR, not
+            // a grid-admin action). Robust already parsed the browser's multipart
+            // upload and re-posts the raw file bytes here as a plain body, so this
+            // handler doesn't need its own multipart parser - it just reads
+            // request.InputStream directly.
+            MainServer.Instance.AddSimpleStreamHandler(new SimpleStreamHandler(
+                "/OAR/Load/" + scene.RegionInfo.RegionHandle.ToString(), HandleLoadOarHttpRequest));
         }
 
         public void RegionLoaded(Scene scene)
@@ -88,6 +111,8 @@ namespace OpenSim.Region.CoreModules.World.Archiver
 
         public void RemoveRegion(Scene scene)
         {
+            MainServer.Instance?.RemoveSimpleStreamHandler("/OAR/Save/" + scene.RegionInfo.RegionHandle.ToString());
+            MainServer.Instance?.RemoveSimpleStreamHandler("/OAR/Load/" + scene.RegionInfo.RegionHandle.ToString());
         }
 
         public void Close()
@@ -301,6 +326,91 @@ namespace OpenSim.Region.CoreModules.World.Archiver
 //                return;
 
             ArchiveRegion(path, options);
+        }
+
+        // HTTP counterpart to HandleSaveOarConsoleCommand above - same action,
+        // triggered by the native admin web UI instead of the console. Saves
+        // timestamped snapshots into a dedicated Backups/ folder rather than
+        // reusing DEFAULT_OAR_BACKUP_FILENAME, so repeated clicks accumulate a
+        // real backup history instead of silently overwriting the last one -
+        // "full backup workflows" was the original ask, not just a single
+        // always-latest file. POST-only, same reasoning as maptile regen.
+        public void HandleSaveOarHttpRequest(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST")
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.MethodNotAllowed;
+                return;
+            }
+
+            string backupsDir = "Backups";
+            Directory.CreateDirectory(backupsDir);
+            string safeName = string.Join("_", Scene.RegionInfo.RegionName.Split(Path.GetInvalidFileNameChars()));
+            string path = Path.Combine(backupsDir, safeName + "_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + ".oar");
+
+            m_log.InfoFormat("[ARCHIVER MODULE]: Queuing OAR backup for {0} to {1} (requested via admin web UI)", Scene.Name, path);
+
+            // ArchiveRegion() is a plain synchronous call, not already
+            // backgrounded by OpenSim itself (see RemoteAdminPlugin's own
+            // Monitor.Wait wrapper around the same call) - must not run inline
+            // on this HTTP worker thread.
+            Util.FireAndForget(_ => ArchiveRegion(path, new Dictionary<string, object>()));
+
+            response.StatusCode = (int)System.Net.HttpStatusCode.OK;
+            response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("queued:" + path);
+        }
+
+        // Destructive: DearchiveRegion() with default options REPLACES all
+        // scene content in this region (per the underlying "load oar" console
+        // command's own default behavior - no --merge flag here, matching what
+        // WebInterfaceServiceConnector's confirmation checkbox already warned
+        // the user about before this request was ever sent). Reads the full
+        // upload into memory on THIS thread before backgrounding the actual
+        // dearchive - request.InputStream isn't guaranteed to outlive the HTTP
+        // request, so the background thread can't safely read from it directly.
+        public void HandleLoadOarHttpRequest(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST")
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.MethodNotAllowed;
+                return;
+            }
+
+            byte[] oarBytes;
+            using (MemoryStream buffer = new MemoryStream())
+            {
+                request.InputStream.CopyTo(buffer);
+                oarBytes = buffer.ToArray();
+            }
+
+            if (oarBytes.Length == 0)
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.BadRequest;
+                response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("empty upload");
+                return;
+            }
+
+            m_log.InfoFormat("[ARCHIVER MODULE]: Queuing OAR restore for {0} ({1} bytes, requested via self-service web UI)",
+                    Scene.Name, oarBytes.Length);
+
+            Util.FireAndForget(_ =>
+            {
+                // .oar files are gzip-compressed tar (see ArchiveWriteRequest's
+                // own GZipStream on save) - DearchiveRegion(Stream) expects an
+                // already-decompressed tar stream (confirmed against how the
+                // unit tests feed it a raw TarArchiveWriter stream, and how the
+                // string-loadPath constructor wraps GZipStream itself), so the
+                // raw uploaded bytes must be unwrapped here.
+                using (MemoryStream compressed = new MemoryStream(oarBytes))
+                using (System.IO.Compression.GZipStream loadStream =
+                        new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionMode.Decompress))
+                {
+                    DearchiveRegion(loadStream);
+                }
+            });
+
+            response.StatusCode = (int)System.Net.HttpStatusCode.OK;
+            response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("queued");
         }
 
         public void ArchiveRegion(string savePath, Dictionary<string, object> options)

@@ -26,6 +26,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
@@ -35,6 +36,18 @@ namespace OpenSim.Data
 
     public interface IProfilesData
     {
+        // Grid-wide, most-recent-first, excludes expired listings - unlike
+        // GetClassifiedRecords (creator-scoped, id+name only, for a user's
+        // own profile editor), this backs the WebInterface splash page's
+        // "Featured Classifieds" widget, which needs full records across
+        // every creator.
+        List<UserClassifiedAdd> GetRecentClassifieds(int count);
+
+        // Grid-wide keyword search, for the /web/search page - same
+        // LIKE-on-name-or-description shape as ISearchData.SearchPlaces,
+        // scoped to non-expired listings same as GetRecentClassifieds.
+        List<UserClassifiedAdd> SearchClassifieds(string queryText, int start, int count);
+
         OSDArray GetClassifiedRecords(UUID creatorId);
         bool UpdateClassifiedRecord(UserClassifiedAdd ad, ref string result);
         bool DeleteClassifiedRecord(UUID recordId);
@@ -47,6 +60,13 @@ namespace OpenSim.Data
         bool GetAvatarProperties(ref UserProfileProperties props, ref string result);
         bool UpdateAvatarProperties(ref UserProfileProperties props, ref string result);
         bool UpdateAvatarInterests(UserProfileProperties up, ref string result);
+
+        // Narrow update, same shape as UpdateAvatarInterests - PartnerId is
+        // deliberately NOT part of UpdateAvatarProperties' UPDATE statement
+        // (it only ever gets written once, by GetAvatarProperties' insert-if-
+        // missing branch, on a brand new profile row) - this is the one real
+        // way to change it after that, backing the web partner-proposal flow.
+        bool UpdateAvatarPartner(UUID userId, UUID partnerId, ref string result);
         bool GetClassifiedInfo(ref UserClassifiedAdd ad, ref string result);
         bool UpdateUserPreferences(ref UserPreferences pref, ref string result);
         bool GetUserPreferences(ref UserPreferences pref, ref string result);

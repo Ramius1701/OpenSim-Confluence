@@ -56,5 +56,47 @@ namespace OpenSim.Services.AccessControlService
         {
             return m_Database.IsHardwareBanned(mac, id0);
         }
+
+        // Range list is expected to be small (a handful of operator-entered
+        // ranges, not a huge blocklist) - fetching all of them and comparing
+        // in C# each login is simpler and fast enough, and avoids needing
+        // numeric IP columns with different unsigned-int handling across
+        // MySQL/PGSQL/SQLite (see IAccessControlData.GetIPRangeBans).
+        public bool IsIPRangeBanned(string ip)
+        {
+            if (!TryIPToUInt32(ip, out uint candidate))
+                return false;
+
+            foreach ((string startIp, string endIp) in m_Database.GetIPRangeBans())
+            {
+                if (TryIPToUInt32(startIp, out uint start) && TryIPToUInt32(endIp, out uint end)
+                        && candidate >= start && candidate <= end)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryIPToUInt32(string ip, out uint value)
+        {
+            value = 0;
+            if (string.IsNullOrWhiteSpace(ip))
+                return false;
+
+            string[] octets = ip.Split('.');
+            if (octets.Length != 4)
+                return false;
+
+            uint result = 0;
+            foreach (string octet in octets)
+            {
+                if (!byte.TryParse(octet, out byte b))
+                    return false;
+                result = (result << 8) | b;
+            }
+
+            value = result;
+            return true;
+        }
     }
 }

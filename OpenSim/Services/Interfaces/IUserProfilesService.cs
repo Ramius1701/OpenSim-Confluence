@@ -26,6 +26,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using OpenSim.Framework;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
@@ -39,6 +40,13 @@ namespace OpenSim.Services.Interfaces
         bool ClassifiedUpdate(UserClassifiedAdd ad, ref string result);
         bool ClassifiedInfoRequest(ref UserClassifiedAdd ad, ref string result);
         bool ClassifiedDelete(UUID recordId);
+
+        // Grid-wide (not creator-scoped like the above) - backs the
+        // WebInterface splash page's "Featured Classifieds" widget.
+        List<UserClassifiedAdd> GetRecentClassifieds(int count);
+
+        // Grid-wide keyword search - backs the /web/search page.
+        List<UserClassifiedAdd> SearchClassifieds(string queryText, int start, int count);
         #endregion Classifieds
 
         #region Picks
@@ -56,6 +64,11 @@ namespace OpenSim.Services.Interfaces
         #region Profile Properties
         bool AvatarPropertiesRequest(ref UserProfileProperties prop, ref string result);
         bool AvatarPropertiesUpdate(ref UserProfileProperties prop, ref string result);
+
+        // PartnerId is excluded from AvatarPropertiesUpdate's underlying
+        // UPDATE statement (see IProfilesData.UpdateAvatarPartner) - this is
+        // the real way to change it, used by the web partner-proposal flow.
+        bool UpdateAvatarPartner(UUID userId, UUID partnerId, ref string result);
         #endregion Profile Properties
 
         #region User Preferences

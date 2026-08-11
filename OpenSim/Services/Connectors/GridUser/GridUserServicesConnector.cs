@@ -156,6 +156,37 @@ namespace OpenSim.Services.Connectors
             return Get(sendData);
         }
 
+        public int GetOnlineUserCount()
+        {
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["VERSIONMIN"] = ProtocolVersions.ClientProtocolVersionMin.ToString();
+            sendData["VERSIONMAX"] = ProtocolVersions.ClientProtocolVersionMax.ToString();
+            sendData["METHOD"] = "getonlineusercount";
+
+            string reqString = ServerUtils.BuildQueryString(sendData);
+            string uri = m_ServerURI + "/griduser";
+            try
+            {
+                string reply = SynchronousRestFormsRequester.MakeRequest("POST",
+                        uri,
+                        reqString,
+                        m_Auth);
+                if (!string.IsNullOrEmpty(reply))
+                {
+                    Dictionary<string, object> replyData = ServerUtils.ParseXmlResponse(reply);
+                    if (replyData != null && replyData.ContainsKey("result")
+                            && int.TryParse(replyData["result"].ToString(), out int count))
+                        return count;
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.DebugFormat("[GRID USER CONNECTOR]: Exception when contacting grid user server at {0}: {1}", uri, e.Message);
+            }
+
+            return 0;
+        }
+
         #endregion
 
         protected bool Set(Dictionary<string, object> sendData, string userID, UUID regionID, Vector3 position, Vector3 lookAt)

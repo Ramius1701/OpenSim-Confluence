@@ -1,0 +1,16 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS search_log (
+	"ID" serial PRIMARY KEY,
+	"Query" varchar(255) NOT NULL,
+	"Category" varchar(32) NOT NULL,
+	"ResultCount" int NOT NULL,
+	"Created" int NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS search_log_query_idx ON search_log ("Query");
+CREATE INDEX IF NOT EXISTS search_log_created_idx ON search_log ("Created");
+
+COMMIT;

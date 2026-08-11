@@ -28,6 +28,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Reflection;
 using log4net;
 using NDesk.Options;
@@ -35,8 +36,11 @@ using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Framework.Console;
+using OpenSim.Framework.Servers;
+using OpenSim.Framework.Servers.HttpServer;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Server.Base;
 using OpenSim.Services.Interfaces;
 using Mono.Addins;
 
@@ -146,6 +150,14 @@ namespace OpenSim.Region.CoreModules.Avatar.Inventory.Archiver
                     + "   <permissions> can contain one or more of these characters: \"C\" = Copy, \"T\" = Transfer, \"M\" = Modify.\n",
                     HandleSaveInvConsoleCommand);
 
+                // Self-service IAR backup/restore for the web UI (see
+                // WebInterfaceServiceConnector's /web/myinventory) - registered
+                // once per process on this module's first scene, same guard as
+                // the console commands above, since InventoryService/AssetService
+                // are grid-wide and any one region can service the request.
+                MainServer.Instance?.AddSimpleStreamHandler(new SimpleStreamHandler("/IAR/Save", HandleSaveIarHttpRequest));
+                MainServer.Instance?.AddSimpleStreamHandler(new SimpleStreamHandler("/IAR/Load", HandleLoadIarHttpRequest));
+
                 m_aScene = scene;
             }
 
@@ -154,6 +166,11 @@ namespace OpenSim.Region.CoreModules.Avatar.Inventory.Archiver
 
         public void RemoveRegion(Scene scene)
         {
+            if (scene == m_aScene)
+            {
+                MainServer.Instance?.RemoveSimpleStreamHandler("/IAR/Save");
+                MainServer.Instance?.RemoveSimpleStreamHandler("/IAR/Load");
+            }
         }
 
         public void Close() {}
@@ -589,6 +606,126 @@ namespace OpenSim.Region.CoreModules.Avatar.Inventory.Archiver
                 m_log.ErrorFormat("[INVENTORY ARCHIVER]: Could not authenticate password, {0}", e);
                 return null;
             }
+        }
+
+        // Self-service IAR backup: any logged-in web user can back up their
+        // own inventory. Robust forwards first_name/last_name/password as a
+        // normal form-urlencoded body (the web session alone isn't enough -
+        // ArchiveInventory/GetUserInfo hard-require a password re-check, same
+        // as the "save iar" console command, which is deliberate for
+        // something this sensitive).
+        public void HandleSaveIarHttpRequest(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST" || m_aScene == null)
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.MethodNotAllowed;
+                return;
+            }
+
+            string body;
+            using (StreamReader reader = new StreamReader(request.InputStream, request.ContentEncoding ?? System.Text.Encoding.UTF8))
+                body = reader.ReadToEnd();
+
+            Dictionary<string, object> form = ServerUtils.ParseQueryString(body);
+            string firstName = form.TryGetValue("first_name", out object fn) ? fn.ToString() : string.Empty;
+            string lastName = form.TryGetValue("last_name", out object ln) ? ln.ToString() : string.Empty;
+            string password = form.TryGetValue("password", out object pw) ? pw.ToString() : string.Empty;
+
+            if (GetUserInfo(firstName, lastName, password) == null)
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.Forbidden;
+                response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("authentication failed");
+                return;
+            }
+
+            string backupsDir = "Backups";
+            Directory.CreateDirectory(backupsDir);
+            string safeName = string.Join("_", (firstName + "_" + lastName).Split(Path.GetInvalidFileNameChars()));
+            string savePath = Path.Combine(backupsDir, safeName + "_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + ".iar");
+
+            m_log.InfoFormat("[INVENTORY ARCHIVER]: Queuing IAR backup for {0} {1} to {2} (requested via self-service web UI)",
+                    firstName, lastName, savePath);
+
+            // ArchiveInventory(...savePath...) executes synchronously and only
+            // ever returns false on a zlib/Mono mismatch - the module's own
+            // OnInventoryArchiveSaved completion event is console-task-id gated
+            // (SaveInvConsoleCommandCompleted silently no-ops for any id it
+            // didn't itself register in m_pendingConsoleTasks), so it never
+            // fires for this caller. Logging directly here instead of relying
+            // on that event, mirroring OAR's "Finished writing out OAR" line.
+            Util.FireAndForget(_ =>
+            {
+                ArchiveInventory(UUID.Random(), firstName, lastName, "/", password, savePath, new Dictionary<string, object>());
+                m_log.InfoFormat("[INVENTORY ARCHIVER]: Finished self-service IAR backup for {0} {1} to {2}",
+                        firstName, lastName, savePath);
+            });
+
+            response.StatusCode = (int)System.Net.HttpStatusCode.OK;
+            response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("queued:" + savePath);
+        }
+
+        // Self-service IAR restore. The uploaded .iar is gzip-compressed (see
+        // InventoryArchiveWriteRequest's own GZipStream on save) but
+        // DearchiveInventory(Stream) expects an already-decompressed stream,
+        // same landmine as OAR restore had (InventoryArchiveReadRequest's
+        // Stream constructor doesn't wrap it, only the loadPath constructor
+        // does) - decompress here before handing it off. Credentials travel as
+        // headers (URL-encoded, since raw header values can't safely carry
+        // arbitrary password characters) because the request body here is the
+        // raw file, not a form - Robust already unwrapped the browser's
+        // multipart upload down to plain bytes before forwarding.
+        public void HandleLoadIarHttpRequest(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST" || m_aScene == null)
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.MethodNotAllowed;
+                return;
+            }
+
+            string firstName = Uri.UnescapeDataString(request.Headers["X-Iar-First-Name"] ?? string.Empty);
+            string lastName = Uri.UnescapeDataString(request.Headers["X-Iar-Last-Name"] ?? string.Empty);
+            string password = Uri.UnescapeDataString(request.Headers["X-Iar-Password"] ?? string.Empty);
+
+            if (GetUserInfo(firstName, lastName, password) == null)
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.Forbidden;
+                response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("authentication failed");
+                return;
+            }
+
+            byte[] iarBytes;
+            using (MemoryStream buffer = new MemoryStream())
+            {
+                request.InputStream.CopyTo(buffer);
+                iarBytes = buffer.ToArray();
+            }
+
+            if (iarBytes.Length == 0)
+            {
+                response.StatusCode = (int)System.Net.HttpStatusCode.BadRequest;
+                response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("empty upload");
+                return;
+            }
+
+            m_log.InfoFormat("[INVENTORY ARCHIVER]: Queuing IAR restore for {0} {1} ({2} bytes, requested via self-service web UI)",
+                    firstName, lastName, iarBytes.Length);
+
+            // Same event-visibility gap as the save side above - log completion
+            // directly rather than relying on OnInventoryArchiveLoaded, which
+            // is gated on a console-task id this caller never registered.
+            Util.FireAndForget(_ =>
+            {
+                using (MemoryStream compressed = new MemoryStream(iarBytes))
+                using (GZipStream decompressed = new GZipStream(compressed, CompressionMode.Decompress))
+                {
+                    DearchiveInventory(UUID.Random(), firstName, lastName, "/", password, decompressed, new Dictionary<string, object>());
+                }
+                m_log.InfoFormat("[INVENTORY ARCHIVER]: Finished self-service IAR restore for {0} {1}",
+                        firstName, lastName);
+            });
+
+            response.StatusCode = (int)System.Net.HttpStatusCode.OK;
+            response.RawBuffer = System.Text.Encoding.UTF8.GetBytes("queued");
         }
 
         /// <summary>

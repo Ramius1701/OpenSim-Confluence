@@ -1,0 +1,22 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `support_tickets` (
+	`ID` VARCHAR(36) NOT NULL,
+	`UserId` VARCHAR(36) NOT NULL,
+	`UserName` VARCHAR(255) NOT NULL,
+	`ContactEmail` VARCHAR(255) NOT NULL,
+	`Category` VARCHAR(32) NOT NULL,
+	`Subject` VARCHAR(255) NOT NULL,
+	`Message` TEXT NOT NULL,
+	`Status` VARCHAR(20) NOT NULL DEFAULT 'open',
+	`Created` INT NOT NULL,
+	`Updated` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `UserId` (`UserId`) USING BTREE,
+	INDEX `Status` (`Status`) USING BTREE,
+	INDEX `Created` (`Created`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;

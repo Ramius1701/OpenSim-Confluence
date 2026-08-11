@@ -15,3 +15,15 @@ CREATE TABLE IF NOT EXISTS banned_ips (
 );
 
 COMMIT;
+
+:VERSION 2
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS banned_ip_ranges (
+	start_ip varchar(15) NOT NULL,
+	end_ip varchar(15) NOT NULL,
+	PRIMARY KEY (start_ip, end_ip)
+);
+
+COMMIT;

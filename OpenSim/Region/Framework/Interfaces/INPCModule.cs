@@ -302,6 +302,60 @@ namespace OpenSim.Region.Framework.Interfaces
         /// </returns>
         UUID GetOwner(UUID agentID);
 
+        // Ported from WhiteCore-Dev's Bot.FollowAvatar (see PROJECT_LOG.md
+        // Batch 14) - continuous following of a target avatar, unlike
+        // MoveToTarget's one-shot move to a fixed point. Implemented as a
+        // periodic re-target against the moving target's current position
+        // rather than WhiteCore's physics-event-driven approach, which is
+        // simpler and needs no engine-level hooking, at the cost of being
+        // slightly less immediately responsive between ticks.
+        /// <summary>
+        /// Make an NPC continuously follow a target avatar.
+        /// </summary>
+        /// <param name="agentID">The UUID of the NPC</param>
+        /// <param name="scene"></param>
+        /// <param name="targetID">The avatar (or NPC) to follow</param>
+        /// <param name="startFollowDistance">Resume approaching once farther than this</param>
+        /// <param name="stopFollowDistance">Stop approaching once this close</param>
+        /// <param name="offset">Offset from the target's position to aim for</param>
+        /// <returns>
+        /// True if the operation succeeded, false if there was no such agent,
+        /// the agent was not an NPC, or the target does not exist.
+        /// </returns>
+        bool Follow(UUID agentID, Scene scene, UUID targetID, float startFollowDistance,
+                float stopFollowDistance, Vector3 offset);
+
+        /// <summary>
+        /// Stop an NPC that is following a target avatar.
+        /// </summary>
+        /// <param name="agentID">The UUID of the NPC</param>
+        /// <param name="scene"></param>
+        /// <returns>
+        /// True if the operation succeeded, false if there was no such agent
+        /// or the agent was not an NPC.
+        /// </returns>
+        bool StopFollow(UUID agentID, Scene scene);
+
+        // Ported from WhiteCore-Dev's BotManager tag-based bulk management
+        // (AddTagToBot/GetBotsWithTag/RemoveBots) - lets a script manage a
+        // named group of NPCs (e.g. "guards") without tracking every UUID
+        // itself.
+        /// <summary>
+        /// Tag an NPC so it can be found/managed as part of a named group later.
+        /// </summary>
+        void AddNPCTag(UUID agentID, string tag);
+
+        /// <summary>
+        /// Get every currently-existing NPC carrying the given tag, in the given scene.
+        /// </summary>
+        System.Collections.Generic.List<UUID> GetNPCsWithTag(Scene scene, string tag);
+
+        /// <summary>
+        /// Delete every currently-existing NPC carrying the given tag, in the given scene.
+        /// </summary>
+        /// <returns>The number of NPCs deleted.</returns>
+        int DeleteNPCsWithTag(Scene scene, string tag);
+
         NPCOptionsFlags NPCOptionFlags {get;}
     }
 }

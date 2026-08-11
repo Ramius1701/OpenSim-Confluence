@@ -97,6 +97,16 @@ namespace OpenSim.Services.ProfilesService
 
             return false;
         }
+
+        public System.Collections.Generic.List<UserClassifiedAdd> GetRecentClassifieds(int count)
+        {
+            return ProfilesData.GetRecentClassifieds(count);
+        }
+
+        public System.Collections.Generic.List<UserClassifiedAdd> SearchClassifieds(string queryText, int start, int count)
+        {
+            return ProfilesData.SearchClassifieds(queryText, start, count);
+        }
         #endregion Classifieds
 
         #region Picks
@@ -145,6 +155,11 @@ namespace OpenSim.Services.ProfilesService
         public bool AvatarPropertiesUpdate(ref UserProfileProperties prop, ref string result)
         {
             return ProfilesData.UpdateAvatarProperties(ref prop, ref result);
+        }
+
+        public bool UpdateAvatarPartner(UUID userId, UUID partnerId, ref string result)
+        {
+            return ProfilesData.UpdateAvatarPartner(userId, partnerId, ref result);
         }
         #endregion Profile Properties
 
@@ -253,7 +268,11 @@ namespace OpenSim.Services.ProfilesService
 
         public bool SetUserAppData(UserAppData prop, ref string result)
         {
-            return true;
+            // Was a stub returning true without persisting anything - the
+            // data-layer implementation (all 3 backends) has always been
+            // real, it was just never called from here. Backs the web
+            // partner-proposal flow's pending-proposal bookkeeping below.
+            return ProfilesData.SetUserAppData(prop, ref result);
         }
         #endregion UserData
     }

@@ -1,0 +1,25 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `events` (
+	`ID` VARCHAR(36) NOT NULL,
+	`Title` VARCHAR(255) NOT NULL,
+	`Category` VARCHAR(64) NOT NULL,
+	`Description` TEXT NOT NULL,
+	`EventDate` INT NOT NULL,
+	`DurationMinutes` INT NOT NULL,
+	`Location` VARCHAR(255) NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `EventDate` (`EventDate`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;
+
+:VERSION 2 # -----------------
+
+BEGIN;
+
+ALTER TABLE `events` ADD COLUMN `CreatorId` VARCHAR(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+
+COMMIT;

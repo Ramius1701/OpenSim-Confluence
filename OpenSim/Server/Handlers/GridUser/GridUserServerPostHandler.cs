@@ -91,6 +91,8 @@ namespace OpenSim.Server.Handlers.GridUser
                         return GetGridUserInfo(request);
                     case "getgriduserinfos":
                         return GetGridUserInfos(request);
+                    case "getonlineusercount":
+                        return GetOnlineUserCount();
                 }
                 m_log.DebugFormat("[GRID USER HANDLER]: unknown method request: {0}", method);
             }
@@ -235,6 +237,17 @@ namespace OpenSim.Server.Handlers.GridUser
                     i++;
                 }
             }
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] GetOnlineUserCount()
+        {
+            int count = m_GridUserService.GetOnlineUserCount();
+
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            result["result"] = count.ToString();
 
             string xmlString = ServerUtils.BuildXmlResponse(result);
             return Util.UTF8NoBomEncoding.GetBytes(xmlString);

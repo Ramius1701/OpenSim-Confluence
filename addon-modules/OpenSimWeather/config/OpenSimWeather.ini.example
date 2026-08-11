@@ -1,7 +1,13 @@
 ;; OpenSimWeather 0.3.3 common configuration example
 ;;
-;; Put this [Weather] section in OpenSim.ini, or in a file explicitly included
-;; by OpenSim.ini. Do not place it in Regions.ini.
+;; Copy this file to config/OpenSimWeather.ini (dropping the .example
+;; extension) - OpenSimDefaults.ini's "Include-modules" glob picks up
+;; addon-modules/*/config/*.ini automatically. That glob expansion happens
+;; AFTER OpenSim.ini has already been merged. Nini's Merge only overwrites a
+;; key if THIS file also defines that same key, so any key set below always
+;; wins over the same key in OpenSim.ini/Regions.ini, but a key left unset
+;; here falls through to whatever OpenSim.ini/Regions.ini set instead. To
+;; guarantee a setting is authoritative, define it here explicitly.
 ;;
 ;; This example contains the settings most region operators normally need.
 ;; See OpenSimWeather.reference.ini.example and the focused examples for every
@@ -43,6 +49,10 @@
     EmitterGrid = 0
     EmitterSpacingMeters = 24
     EmitterHeight = 18.0
+    ;; Scales particle burst counts. Range 0.1-20; rain/storm/snow/blizzard
+    ;; each have their own hardcoded ceiling above which raising this further
+    ;; has no visible effect. 1.0 is intentionally subtle; most operators who
+    ;; want visibly heavy weather will want something in the 4-8 range.
     Intensity = 1.0
 
     ;; Wandering coverage only. Pool size stays constant regardless of region
@@ -57,6 +67,8 @@
     StormTexture =
     SnowTexture =
     LightningTexture =
+    ;; BlizzardTexture defaults to SnowTexture if left unset.
+    ;; BlizzardTexture =
 
     ;; Particle systems cannot collide with roofs. These options suppress
     ;; covered cells and permit explicit no-weather volumes in complex builds.
@@ -81,8 +93,29 @@
     ;; Automatic cycling and entry messages are opt-in.
     AutoCycleEnabled = false
     AutoCycleHours = 6.0
-    AutoCycleChoices = storm,rain,snow,sunny,clear
+    AutoCycleChoices = storm,rain,snow,blizzard,sunny,clear
     SendWeatherIMOnEntry = false
+    ;; Placeholders: {RegionName} {Weather} {Temperature} {EmitterCount}
+    ;;               {AutoCycle} {NextForecast}
+    WeatherIMMessage = Weather forecast for {RegionName}: current conditions are {Weather}, {Temperature}C. Next forecast: {NextForecast}. Stay tuned for further regional updates.
+
+    ;; Base temperature (C) per weather kind, applied whenever weather
+    ;; changes (manually or via auto cycle) and re-rolled with +/- variance.
+    ;; Repeated "weather status" checks between weather changes always
+    ;; report the same value.
+    ClearTemperatureC = 14
+    SunnyTemperatureC = 22
+    RainTemperatureC = 12
+    StormTemperatureC = 9
+    SnowTemperatureC = -2
+    BlizzardTemperatureC = -12
+    TemperatureVarianceC = 3
+
+    ;; Broadcasts a "weather report" style announcement to everyone in the
+    ;; region (region-wide chat) whenever the weather actually changes, in
+    ;; addition to the private reply "weather status" always gives to
+    ;; whoever asks.
+    AnnounceWeatherChangesInChat = true
 
     ;; Experimental temporary terrain overlays are opt-in.
     SurfaceEffectsEnabled = false

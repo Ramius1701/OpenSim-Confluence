@@ -1427,7 +1427,7 @@ namespace OpenSim.Tests.Common
             throw new NotImplementedException();
         }
 
-        public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, uint estateID)
+        public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, UUID[] blocked, uint estateID)
         {
             throw new NotImplementedException();
         }

@@ -29,6 +29,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using log4net;
 using Mono.Addins;
@@ -50,7 +51,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             Sunny,
             Rain,
             Storm,
-            Snow
+            Snow,
+            Blizzard
         }
 
         private enum CoverageMode
@@ -172,6 +174,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private UUID m_rainTexture = Util.BLANK_TEXTURE_UUID;
         private UUID m_stormTexture = Util.BLANK_TEXTURE_UUID;
         private UUID m_snowTexture = Util.BLANK_TEXTURE_UUID;
+        private UUID m_blizzardTexture = Util.BLANK_TEXTURE_UUID;
         private UUID m_lightningTexture = Util.BLANK_TEXTURE_UUID;
         private Timer m_activeAreaTimer;
         private int m_activeAreaBusy;
@@ -195,6 +198,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private float m_rainWindStrength;
         private float m_stormWindStrength;
         private float m_snowWindStrength;
+        private float m_blizzardWindStrength;
         private bool m_avoidCoveredAreas;
         private float m_coverProbeHeight;
         private int m_coverProbeGrid;
@@ -236,6 +240,14 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private UUID m_puddleTexture = Util.BLANK_TEXTURE_UUID;
         private UUID m_snowSurfaceTexture = Util.BLANK_TEXTURE_UUID;
         private float m_temperatureC;
+        private float m_clearTemperatureC;
+        private float m_sunnyTemperatureC;
+        private float m_rainTemperatureC;
+        private float m_stormTemperatureC;
+        private float m_snowTemperatureC;
+        private float m_blizzardTemperatureC;
+        private float m_temperatureVarianceC;
+        private bool m_announceWeatherInChat;
         private float m_freezingPointC;
         private float m_wetnessLevel;
         private float m_snowLevel;
@@ -300,10 +312,11 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             m_wanderingChurnFraction = Clamp(config.GetFloat("WanderingChurnFraction", 0.25f), 0.02f, 1f);
             m_emitterRadiusScale = Clamp(config.GetFloat("EmitterRadiusScale", 0.62f), 0.1f, 1.25f);
             m_emitterHeight = Clamp(config.GetFloat("EmitterHeight", 18f), 4f, 4096f);
-            m_intensity = Clamp(config.GetFloat("Intensity", 1f), 0.1f, 10f);
+            m_intensity = Clamp(config.GetFloat("Intensity", 1f), 0.1f, 20f);
             m_rainTexture = ReadTexture(config, "RainTexture", Util.BLANK_TEXTURE_UUID);
             m_stormTexture = ReadTexture(config, "StormTexture", m_rainTexture);
             m_snowTexture = ReadTexture(config, "SnowTexture", Util.BLANK_TEXTURE_UUID);
+            m_blizzardTexture = ReadTexture(config, "BlizzardTexture", m_snowTexture);
             m_lightningTexture = ReadTexture(config, "LightningTexture", Util.BLANK_TEXTURE_UUID);
 
             m_adjustClouds = config.GetBoolean("AdjustEnvironment", config.GetBoolean("AdjustClouds", false));
@@ -324,6 +337,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             m_rainWindStrength = Math.Max(0f, config.GetFloat("RainWindStrength", 0.45f));
             m_stormWindStrength = Math.Max(0f, config.GetFloat("StormWindStrength", 1.35f));
             m_snowWindStrength = Math.Max(0f, config.GetFloat("SnowWindStrength", 0.22f));
+            m_blizzardWindStrength = Math.Max(0f, config.GetFloat("BlizzardWindStrength", 1.55f));
 
             m_avoidCoveredAreas = config.GetBoolean("AvoidCoveredAreas", true);
             m_coverProbeHeight = Clamp(config.GetFloat("CoverProbeHeight", 256f), 8f, 4096f);
@@ -382,7 +396,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             m_weatherIMDelaySeconds = Clamp(config.GetInt("WeatherIMDelaySeconds", 8), 0, 3600);
             m_weatherIMMessage = config.GetString(
                 "WeatherIMMessage",
-                "Weather forecast for {RegionName}: current conditions are {Weather}. Next forecast: {NextForecast}. Stay tuned for further regional updates.").Trim();
+                "Weather forecast for {RegionName}: current conditions are {Weather}, {Temperature}C. Next forecast: {NextForecast}. Stay tuned for further regional updates.").Trim();
 
             m_surfaceEffectsEnabled = config.GetBoolean("SurfaceEffectsEnabled", false);
             m_puddlesEnabled = config.GetBoolean("PuddlesEnabled", true);
@@ -390,6 +404,14 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             m_puddleTexture = ReadTexture(config, "PuddleTexture", Util.BLANK_TEXTURE_UUID);
             m_snowSurfaceTexture = ReadTexture(config, "SnowSurfaceTexture", Util.BLANK_TEXTURE_UUID);
             m_temperatureC = Clamp(config.GetFloat("TemperatureC", 10f), -100f, 100f);
+            m_clearTemperatureC = Clamp(config.GetFloat("ClearTemperatureC", m_temperatureC), -100f, 100f);
+            m_sunnyTemperatureC = Clamp(config.GetFloat("SunnyTemperatureC", 22f), -100f, 100f);
+            m_rainTemperatureC = Clamp(config.GetFloat("RainTemperatureC", 12f), -100f, 100f);
+            m_stormTemperatureC = Clamp(config.GetFloat("StormTemperatureC", 9f), -100f, 100f);
+            m_snowTemperatureC = Clamp(config.GetFloat("SnowTemperatureC", -2f), -100f, 100f);
+            m_blizzardTemperatureC = Clamp(config.GetFloat("BlizzardTemperatureC", -12f), -100f, 100f);
+            m_temperatureVarianceC = Clamp(config.GetFloat("TemperatureVarianceC", 3f), 0f, 50f);
+            m_announceWeatherInChat = config.GetBoolean("AnnounceWeatherChangesInChat", true);
             m_freezingPointC = Clamp(config.GetFloat("FreezingPointC", 0f), -20f, 20f);
             m_rainWetnessPerHour = Math.Max(0f, config.GetFloat("RainWetnessPerHour", 0.35f));
             m_stormWetnessPerHour = Math.Max(0f, config.GetFloat("StormWetnessPerHour", 0.75f));
@@ -600,13 +622,15 @@ namespace OpenSim.Region.OptionalModules.World.Weather
 
             if (!TryResolveWeather(request, out WeatherKind weather))
             {
-                SendReply(client, "Use weather rain, weather storm, weather snow, weather sunny, weather clear, or weather status.");
+                SendReply(client, "Use weather rain, weather storm, weather snow, weather blizzard, weather sunny, weather clear, or weather status.");
                 return;
             }
 
             if (weather == WeatherKind.Clear)
             {
                 ClearWeather(true, true);
+                UpdateTemperatureForWeather(WeatherKind.Clear);
+                AnnounceWeatherChange(WeatherKind.Clear);
                 SendReply(client, "Clear.");
                 return;
             }
@@ -634,6 +658,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     m_weatherOwnerId = ownerId;
                     lock (m_sync)
                         m_currentWeather = weather;
+                    UpdateTemperatureForWeather(weather);
 
                     // Sky/wind changes are near-instant; emitter creation can take
                     // a noticeable moment on large regions. Apply the environment
@@ -686,6 +711,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                         emitterCount,
                         CoverageModeName(m_coverageMode));
 
+                    AnnounceWeatherChange(weather);
                     return true;
                 }
                 catch (Exception e)
@@ -1146,6 +1172,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 if (weather == WeatherKind.Clear)
                 {
                     ClearWeather(true, true);
+                    UpdateTemperatureForWeather(WeatherKind.Clear);
+                    AnnounceWeatherChange(WeatherKind.Clear);
                     m_log.InfoFormat("[WEATHER]: Auto cycle selected clear in {0}", scene.RegionInfo.RegionName);
                 }
                 else if (ApplyWeather(weather, UUID.Zero))
@@ -1278,6 +1306,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 m_autoCycleChoices.Add(WeatherKind.Storm);
                 m_autoCycleChoices.Add(WeatherKind.Rain);
                 m_autoCycleChoices.Add(WeatherKind.Snow);
+                m_autoCycleChoices.Add(WeatherKind.Blizzard);
                 m_autoCycleChoices.Add(WeatherKind.Sunny);
             }
         }
@@ -1430,21 +1459,24 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 BlendFuncDest = 9    // PSYS_PART_BF_ONE_MINUS_SOURCE_ALPHA
             };
 
-            if (weather == WeatherKind.Snow)
+            if (weather == WeatherKind.Snow || weather == WeatherKind.Blizzard)
             {
-                particles.PartStartColor = new Color4(1f, 1f, 1f, 0.78f);
-                particles.PartEndColor = new Color4(0.95f, 0.98f, 1f, 0.08f);
-                particles.PartStartScaleX = 0.12f;
-                particles.PartStartScaleY = 0.12f;
-                particles.PartEndScaleX = 0.24f;
-                particles.PartEndScaleY = 0.24f;
-                particles.BurstSpeedMin = 0.05f;
-                particles.BurstSpeedMax = 0.22f;
-                particles.BurstRate = RandomRange(0.045f, 0.085f) * emitterVariance;
-                particles.PartMaxAge = 12.0f;
-                particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.2f * m_intensity * densityVariance), 1, 5);
+                bool blizzard = weather == WeatherKind.Blizzard;
+                float snowIntensity = blizzard ? m_intensity * 1.75f : m_intensity;
+
+                particles.PartStartColor = new Color4(1f, 1f, 1f, blizzard ? 0.88f : 0.78f);
+                particles.PartEndColor = new Color4(0.95f, 0.98f, 1f, blizzard ? 0.14f : 0.08f);
+                particles.PartStartScaleX = blizzard ? 0.16f : 0.12f;
+                particles.PartStartScaleY = blizzard ? 0.16f : 0.12f;
+                particles.PartEndScaleX = blizzard ? 0.3f : 0.24f;
+                particles.PartEndScaleY = blizzard ? 0.3f : 0.24f;
+                particles.BurstSpeedMin = blizzard ? 0.35f : 0.05f;
+                particles.BurstSpeedMax = blizzard ? 1.4f : 0.22f;
+                particles.BurstRate = (blizzard ? RandomRange(0.03f, 0.055f) : RandomRange(0.045f, 0.085f)) * emitterVariance;
+                particles.PartMaxAge = blizzard ? 5.5f : 12.0f;
+                particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.2f * snowIntensity * densityVariance), 1, blizzard ? 16 : 5);
                 Vector2 snowWind = WeatherWindVector(weather, driftVariance);
-                particles.PartAcceleration = new Vector3(snowWind.X, snowWind.Y, -0.55f);
+                particles.PartAcceleration = new Vector3(snowWind.X, snowWind.Y, blizzard ? -0.85f : -0.55f);
                 return particles;
             }
 
@@ -1465,7 +1497,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             particles.BurstSpeedMax = storm ? 2.2f : 1.45f;
             particles.BurstRate = (storm ? RandomRange(0.024f, 0.045f) : RandomRange(0.032f, 0.06f)) * emitterVariance;
             particles.PartMaxAge = storm ? 1.9f : 2.35f;
-            particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.4f * rainIntensity * densityVariance), 1, storm ? 28 : 20);
+            particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.4f * rainIntensity * densityVariance), 1, storm ? 50 : 36);
             Vector2 rainWind = WeatherWindVector(weather, driftVariance);
             particles.PartAcceleration = new Vector3(rainWind.X, rainWind.Y, storm ? -18f : -12f);
 
@@ -1478,6 +1510,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             {
                 case WeatherKind.Snow:
                     return m_snowTexture;
+                case WeatherKind.Blizzard:
+                    return m_blizzardTexture;
                 case WeatherKind.Storm:
                     return m_stormTexture;
                 case WeatherKind.Rain:
@@ -1506,6 +1540,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             {
                 case WeatherKind.Storm:
                     return m_stormWindStrength;
+                case WeatherKind.Blizzard:
+                    return m_blizzardWindStrength;
                 case WeatherKind.Snow:
                     return m_snowWindStrength;
                 case WeatherKind.Rain:
@@ -1783,6 +1819,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 source.Configs["Weather.Environment.Storm"], CreateDefaultEnvironmentProfile(WeatherKind.Storm));
             m_environmentProfiles[WeatherKind.Snow] = LoadEnvironmentProfile(
                 source.Configs["Weather.Environment.Snow"], CreateDefaultEnvironmentProfile(WeatherKind.Snow));
+            m_environmentProfiles[WeatherKind.Blizzard] = LoadEnvironmentProfile(
+                source.Configs["Weather.Environment.Blizzard"], CreateDefaultEnvironmentProfile(WeatherKind.Blizzard));
         }
 
         private EnvironmentProfile LoadEnvironmentProfile(IConfig config, EnvironmentProfile defaults)
@@ -1896,6 +1934,32 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     SunGlowSize = 1.6f,
                     SceneGamma = 0.92f,
                     StarBrightness = 0.02f,
+                };
+            }
+
+            if (weather == WeatherKind.Blizzard)
+            {
+                return new EnvironmentProfile
+                {
+                    CloudCoverage = 0.96f,
+                    CloudScale = 0.78f,
+                    CloudColor = new Vector4(0.3f, 0.32f, 0.36f, 1f),
+                    CloudXYDensity = new Vector3(1.42f, 0.68f, 1.02f),
+                    CloudDetailXYDensity = new Vector3(1.6f, 0.74f, 0.3f),
+                    CloudScrollX = 0.52f,
+                    CloudScrollY = 0.12f,
+                    Horizon = new Vector4(0.22f, 0.23f, 0.26f, 1f),
+                    BlueDensity = new Vector4(0.1f, 0.12f, 0.16f, 1f),
+                    Ambient = new Vector4(0.17f, 0.18f, 0.2f, 1f),
+                    SunMoonColor = new Vector4(0.22f, 0.23f, 0.26f, 1f),
+                    HazeHorizon = 0.5f,
+                    HazeDensity = 0.85f,
+                    DensityMultiplier = 0.34f,
+                    DistanceMultiplier = 0.7f,
+                    SunGlowFocus = 0.05f,
+                    SunGlowSize = 1.2f,
+                    SceneGamma = 0.85f,
+                    StarBrightness = 0.01f,
                 };
             }
 
@@ -2020,6 +2084,13 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 else
                     m_wetnessLevel = Clamp(m_wetnessLevel + 0.025f, 0f, 1f);
             }
+            else if (weather == WeatherKind.Blizzard)
+            {
+                if (m_temperatureC <= m_freezingPointC + 0.5f)
+                    m_snowLevel = Clamp(m_snowLevel + 0.1f, 0f, 1f);
+                else
+                    m_wetnessLevel = Clamp(m_wetnessLevel + 0.05f, 0f, 1f);
+            }
 
             QueueSurfaceUpdate(true);
         }
@@ -2047,6 +2118,13 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     m_snowLevel += (float)(m_snowAccumulationPerHour * elapsedHours);
                 else
                     m_wetnessLevel += (float)(m_rainWetnessPerHour * 0.5f * elapsedHours);
+            }
+            else if (weather == WeatherKind.Blizzard)
+            {
+                if (m_temperatureC <= m_freezingPointC + 0.5f)
+                    m_snowLevel += (float)(m_snowAccumulationPerHour * 1.75f * elapsedHours);
+                else
+                    m_wetnessLevel += (float)(m_rainWetnessPerHour * elapsedHours);
             }
             else if (weather == WeatherKind.Sunny)
             {
@@ -2519,7 +2597,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     m_windModule.WindParamSet(plugin, "avgDirection", m_windDirectionDegrees);
                     m_windModule.WindParamSet(plugin, "varStrength", Math.Max(0.5f, strength * 1.6f));
                     m_windModule.WindParamSet(plugin, "varDirection", m_windDirectionVarianceDegrees);
-                    m_windModule.WindParamSet(plugin, "rateChange", weather == WeatherKind.Storm ? 1.8f : 0.8f);
+                    m_windModule.WindParamSet(plugin, "rateChange", (weather == WeatherKind.Storm || weather == WeatherKind.Blizzard) ? 1.8f : 0.8f);
                 }
             }
             catch (Exception e)
@@ -2754,6 +2832,12 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     weather = WeatherKind.Snow;
                     return true;
 
+                case "blizzard":
+                case "snowstorm":
+                case "bufera":
+                    weather = WeatherKind.Blizzard;
+                    return true;
+
                 case "rain":
                 case "pioggia":
                 case "piove":
@@ -2818,20 +2902,149 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 surfacePatchCount = m_surfacePatches.Count;
             }
 
-            SendReply(
-                client,
-                string.Format(
+            SendReply(client, BuildWeatherReport(weather, emitterCount, exclusionVolumeCount, surfacePatchCount));
+        }
+
+        private string BuildWeatherReport(WeatherKind weather, int emitterCount, int exclusionVolumeCount, int surfacePatchCount)
+        {
+            Scene scene = m_scene;
+            string regionName = scene == null ? "the region" : scene.RegionInfo.RegionName;
+            float temperatureC = m_temperatureC;
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendFormat(CultureInfo.InvariantCulture, "Weather report for {0}: ", regionName);
+            sb.Append(WeatherNarrative(weather));
+            sb.AppendFormat(
+                CultureInfo.InvariantCulture,
+                " {0:0.#}C and {1}.",
+                temperatureC,
+                TemperatureDescriptor(temperatureC));
+
+            if (IsPrecipitationWeather(weather))
+            {
+                sb.AppendFormat(
                     CultureInfo.InvariantCulture,
-                    "{0}, emitters={1}, coverage={2}, exclusions={3}, surface patches={4}, wetness={5:0.00}, snow={6:0.00}, temperature={7:0.0}C, auto={8}.",
-                    WeatherName(weather),
-                    emitterCount,
+                    " Coverage: {0} ({1} emitters).",
                     CoverageModeName(m_coverageMode),
+                    emitterCount);
+            }
+
+            if (m_surfaceEffectsEnabled)
+            {
+                sb.AppendFormat(
+                    CultureInfo.InvariantCulture,
+                    " Ground: {0:0}% wet, {1:0}% snow-covered.",
+                    Clamp(m_wetnessLevel, 0f, 1f) * 100f,
+                    Clamp(m_snowLevel, 0f, 1f) * 100f);
+            }
+
+            if (exclusionVolumeCount > 0)
+            {
+                sb.AppendFormat(
+                    CultureInfo.InvariantCulture,
+                    " {0} exclusion volume{1} active.",
                     exclusionVolumeCount,
-                    surfacePatchCount,
-                    m_wetnessLevel,
-                    m_snowLevel,
-                    m_temperatureC,
-                    m_autoCycleEnabled ? string.Format(CultureInfo.InvariantCulture, "{0:0.##}h", m_autoCycleHours) : "off"));
+                    exclusionVolumeCount == 1 ? string.Empty : "s");
+            }
+
+            sb.AppendFormat(CultureInfo.InvariantCulture, " Next forecast: {0}.", FormatNextForecast());
+
+            return sb.ToString();
+        }
+
+        private static string WeatherNarrative(WeatherKind weather)
+        {
+            switch (weather)
+            {
+                case WeatherKind.Rain:
+                    return "Rain is falling.";
+                case WeatherKind.Storm:
+                    return "A storm is raging, with heavy rain and lightning.";
+                case WeatherKind.Snow:
+                    return "Snow is falling.";
+                case WeatherKind.Blizzard:
+                    return "A blizzard is raging, with heavy snow and wind.";
+                case WeatherKind.Sunny:
+                    return "Skies are sunny and clear.";
+                default:
+                    return "Skies are clear.";
+            }
+        }
+
+        private static string TemperatureDescriptor(float temperatureC)
+        {
+            if (temperatureC <= -10f)
+                return "bitterly cold";
+            if (temperatureC <= 0f)
+                return "freezing";
+            if (temperatureC <= 10f)
+                return "cold";
+            if (temperatureC <= 18f)
+                return "cool";
+            if (temperatureC <= 24f)
+                return "mild";
+            if (temperatureC <= 30f)
+                return "warm";
+            return "hot";
+        }
+
+        private void AnnounceWeatherChange(WeatherKind weather)
+        {
+            if (!m_announceWeatherInChat)
+                return;
+
+            Scene scene = m_scene;
+            if (scene == null)
+                return;
+
+            int emitterCount;
+            int exclusionVolumeCount;
+            int surfacePatchCount;
+            lock (m_weatherChangeSync)
+            {
+                lock (m_sync)
+                {
+                    emitterCount = m_emitters.Count;
+                    exclusionVolumeCount = m_exclusionVolumes.Count;
+                }
+
+                surfacePatchCount = m_surfacePatches.Count;
+            }
+
+            string report = BuildWeatherReport(weather, emitterCount, exclusionVolumeCount, surfacePatchCount);
+            scene.ForEachRootScenePresence(sp =>
+            {
+                if (sp != null && !sp.IsDeleted && sp.ControllingClient != null)
+                    SendRegionWeatherMessage(sp, report);
+            });
+        }
+
+        private void UpdateTemperatureForWeather(WeatherKind weather)
+        {
+            float baseTemp = WeatherBaseTemperatureC(weather);
+            float jitter = m_temperatureVarianceC > 0f
+                ? RandomRange(-m_temperatureVarianceC, m_temperatureVarianceC)
+                : 0f;
+            m_temperatureC = Clamp(baseTemp + jitter, -100f, 100f);
+        }
+
+        private float WeatherBaseTemperatureC(WeatherKind weather)
+        {
+            switch (weather)
+            {
+                case WeatherKind.Sunny:
+                    return m_sunnyTemperatureC;
+                case WeatherKind.Rain:
+                    return m_rainTemperatureC;
+                case WeatherKind.Storm:
+                    return m_stormTemperatureC;
+                case WeatherKind.Snow:
+                    return m_snowTemperatureC;
+                case WeatherKind.Blizzard:
+                    return m_blizzardTemperatureC;
+                default:
+                    return m_clearTemperatureC;
+            }
         }
 
         private void SendWeatherIM(UUID agentID)
@@ -2869,6 +3082,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             return m_autoCycleForecastWarningMessage
                 .Replace("{RegionName}", scene.RegionInfo.RegionName)
                 .Replace("{NextWeather}", WeatherName(nextWeather))
+                .Replace("{NextTemperature}", WeatherBaseTemperatureC(nextWeather).ToString("0.#", CultureInfo.InvariantCulture))
                 .Replace("{TimeUntilNextForecast}", FormatTimeUntilNextForecast())
                 .Replace("{NextForecast}", FormatNextForecast());
         }
@@ -2899,6 +3113,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             return m_weatherIMMessage
                 .Replace("{RegionName}", scene.RegionInfo.RegionName)
                 .Replace("{Weather}", WeatherName(weather))
+                .Replace("{Temperature}", m_temperatureC.ToString("0.#", CultureInfo.InvariantCulture))
                 .Replace("{EmitterCount}", emitterCount.ToString(CultureInfo.InvariantCulture))
                 .Replace("{AutoCycle}", m_autoCycleEnabled ? string.Format(CultureInfo.InvariantCulture, "{0:0.##}h", m_autoCycleHours) : "off")
                 .Replace("{NextForecast}", FormatNextForecast());
@@ -2959,6 +3174,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     return "storm";
                 case WeatherKind.Snow:
                     return "snow";
+                case WeatherKind.Blizzard:
+                    return "blizzard";
                 case WeatherKind.Sunny:
                     return "sunny";
                 default:
@@ -3010,7 +3227,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
 
         private static bool IsPrecipitationWeather(WeatherKind weather)
         {
-            return weather == WeatherKind.Rain || weather == WeatherKind.Storm || weather == WeatherKind.Snow;
+            return weather == WeatherKind.Rain || weather == WeatherKind.Storm
+                || weather == WeatherKind.Snow || weather == WeatherKind.Blizzard;
         }
 
         private void SendReply(IClientAPI client, string message)

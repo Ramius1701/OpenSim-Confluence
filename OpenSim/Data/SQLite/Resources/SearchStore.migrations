@@ -1,0 +1,16 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS search_log (
+	ID INTEGER PRIMARY KEY AUTOINCREMENT,
+	Query VARCHAR(255) NOT NULL,
+	Category VARCHAR(32) NOT NULL,
+	ResultCount INTEGER NOT NULL,
+	Created INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS search_log_query_idx ON search_log (Query);
+CREATE INDEX IF NOT EXISTS search_log_created_idx ON search_log (Created);
+
+COMMIT;

@@ -17,6 +17,14 @@ namespace OSHttpServer.Parser
         private osUTF8Slice m_curHeaderValue = new();
         private int m_bodyBytesLeft;
 
+        // Was "64 * 1024 * 1204" (note the 1204, not 1024) - a typo that made
+        // the real ceiling ~75MB instead of the intended 64MiB. Raised
+        // outright rather than just fixing the typo: this caps every POST
+        // body on every Robust/region HTTP endpoint, including the self-service
+        // OAR/IAR uploads (see WebInterfaceServiceConnector), and real region
+        // archives/inventory archives routinely exceed 64MiB.
+        private const int MaxContentLength = 512 * 1024 * 1024;
+
         /// <summary>
         /// More body bytes have been received.
         /// </summary>
@@ -170,7 +178,7 @@ namespace OSHttpServer.Parser
             {
                 if (!m_curHeaderValue.TryParseInt(out m_bodyBytesLeft))
                     throw new BadRequestException("Content length is not a number.");
-                if(m_bodyBytesLeft > 64 * 1024 * 1204)
+                if(m_bodyBytesLeft > MaxContentLength)
                     throw new BadRequestException("Content length too large.");
             }
 

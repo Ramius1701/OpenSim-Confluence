@@ -1,0 +1,23 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS events (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"Title" varchar(255) NOT NULL,
+	"Category" varchar(64) NOT NULL,
+	"Description" text NOT NULL,
+	"EventDate" int NOT NULL,
+	"DurationMinutes" int NOT NULL,
+	"Location" varchar(255) NOT NULL
+);
+
+COMMIT;
+
+:VERSION 2
+
+BEGIN;
+
+ALTER TABLE events ADD COLUMN "CreatorId" varchar(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+
+COMMIT;

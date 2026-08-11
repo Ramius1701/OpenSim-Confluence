@@ -1,0 +1,18 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"UserId" varchar(36) NOT NULL,
+	"UserName" varchar(255) NOT NULL,
+	"ContactEmail" varchar(255) NOT NULL,
+	"Category" varchar(32) NOT NULL,
+	"Subject" varchar(255) NOT NULL,
+	"Message" text NOT NULL,
+	"Status" varchar(20) NOT NULL DEFAULT 'open',
+	"Created" int NOT NULL,
+	"Updated" int NOT NULL
+);
+
+COMMIT;

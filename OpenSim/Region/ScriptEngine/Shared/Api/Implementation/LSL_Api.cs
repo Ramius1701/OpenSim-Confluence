@@ -21398,7 +21398,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             result.Add(new LSL_Integer(enabled ? 1 : 0));
             result.Add(new LSL_String("trusted"));
             result.Add(new LSL_Integer(trusted ? 1 : 0));
-            // Casperia's Experience key-value store has no configured capacity
+            // Confluence's Experience key-value store has no configured capacity
             // ceiling to report, unlike Gunthar's local dictionary-backed store -
             // -1 signals "no limit exposed by this build" rather than a fabricated number.
             result.Add(new LSL_String("max_keys"));

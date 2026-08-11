@@ -67,6 +67,8 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
         private const string EstateDefaultTagline = "Virtual world feature showroom";
         private const string EstateDefaultDescription =
             "Beautiful maps, a website for every region, live weather, local money, AI help for building, boats that move like real boats, Second Life scripts that work and one-click sharing to many grids such as OSGrid, Neverworld, Craft and more.";
+        private const string EstateDefaultBrandTop = "Confluence";
+        private const string EstateDefaultBrandBottom = "Grid";
         private const string RegionWebFeatureTitle = "Your region gets a website";
         private const string RegionWebFeatureBody =
             "Show each region with its own shareable web page, including maps, photos, news, visitor info and live details, without building a separate website.";
@@ -92,7 +94,6 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             "Estate owners get a protected web admin panel to edit OpenSim settings, save with automatic backups, reload what is safe live and see clearly when a restart is still required.";
         private const string EstateAdminFeatureOverview =
             "This estate adds a practical control room for people who run regions. Instead of opening files over remote desktop for every small change, an estate owner can request an inworld admin token, open a protected web panel, browse the allowed OpenSim configuration files, edit raw INI text or one setting at a time, save with automatic backups and ask the simulator to reload the parts that can safely change while the region is online.";
-        private const string VanillaSimRepositoryUrl = "https://github.com/GuntharDeNiro/opensim";
 
         private readonly object m_sync = new object();
         private readonly Dictionary<UUID, Scene> m_scenesByID = new Dictionary<UUID, Scene>();
@@ -544,7 +545,9 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 scenes = new List<Scene>(m_scenesByID.Values);
 
             EstatePageContent content = LoadEstateContent();
+            List<EstateRegionEntry> estateRegions = GetEstateRegionEntries(scenes);
             EstateStats stats = GetEstateStats(scenes);
+            stats.RegionCount = estateRegions.Count;
             string carousel = BuildEstateCarousel(scenes);
             bool hasCarousel = !string.IsNullOrEmpty(carousel);
 
@@ -586,16 +589,32 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
             html.Append("<section id=\"regions\" class=\"wrap list\"><h2>Regions</h2><div class=\"region-grid\">");
 
-            foreach (Scene scene in scenes.OrderBy(s => s.RegionInfo.RegionName))
+            foreach (EstateRegionEntry entry in estateRegions.OrderBy(e => e.Name))
             {
-                RegionPageContent regionContent = LoadContent(scene);
-                string slug = MakeSlug(scene.RegionInfo.RegionName);
-                html.Append("<a class=\"region-card\" href=\"")
-                    .Append(Html(m_basePath)).Append("/").Append(Url(slug)).Append("/\">")
-                    .Append("<img src=\"").Append(Html(GetHeroURL(scene, regionContent))).Append("\" alt=\"\">")
-                    .Append("<strong>").Append(Html(regionContent.Title)).Append("</strong>")
-                    .Append("<span>").Append(Html(regionContent.Tagline)).Append("</span>")
-                    .Append("</a>");
+                string slug = MakeSlug(entry.Name);
+                if (entry.IsLocal)
+                {
+                    RegionPageContent regionContent = LoadContent(entry.LocalScene);
+                    html.Append("<a class=\"region-card\" href=\"")
+                        .Append(Html(m_basePath)).Append("/").Append(Url(slug)).Append("/\">")
+                        .Append("<img src=\"").Append(Html(GetHeroURL(entry.LocalScene, regionContent))).Append("\" alt=\"\">")
+                        .Append("<strong>").Append(Html(regionContent.Title)).Append("</strong>")
+                        .Append("<span>").Append(Html(regionContent.Tagline)).Append("</span>")
+                        .Append("</a>");
+                }
+                else
+                {
+                    // Sibling region running in a different simulator process: its own RegionWeb
+                    // instance owns the map tile/profile content, so link out to it directly rather
+                    // than guessing at content this process has no way to read. The map tile route
+                    // (/index.php) is a top-level simulator route, not scoped under m_basePath.
+                    html.Append("<a class=\"region-card\" href=\"")
+                        .Append(Html(entry.RemoteBaseURL)).Append(Html(m_basePath)).Append("/").Append(Url(slug)).Append("/\">")
+                        .Append("<img src=\"").Append(Html(entry.RemoteBaseURL)).Append(Html(GetMapURLByRegionID(entry.RegionID))).Append("\" alt=\"\">")
+                        .Append("<strong>").Append(Html(entry.Name)).Append("</strong>")
+                        .Append("<span>News, photos and visitor information</span>")
+                        .Append("</a>");
+                }
             }
 
             html.Append("</div></section></main>");
@@ -3900,6 +3919,89 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 return new List<Scene>(m_scenesByID.Values);
         }
 
+        // Regions belonging to the same estate can be split across several separate simulator
+        // processes (each region loaded as its own OpenSim.exe, common for var regions). This
+        // module's own scene list only ever contains regions loaded in THIS process, so an estate
+        // page built from GetSceneSnapshot() alone silently omits sibling regions running elsewhere
+        // even though they share the same owner and EstateID. IEstateDataService.GetRegions(estateID)
+        // is a direct database read (not a network call to the sibling process) since every region
+        // in a Confluence grid normally points at the same estate database, so this works even when the
+        // sibling simulator is a completely separate process - only entries GridService can still
+        // resolve are included, so a region that's been deleted from the grid silently drops out
+        // rather than showing a broken card.
+        private List<EstateRegionEntry> GetEstateRegionEntries(List<Scene> localScenes)
+        {
+            List<EstateRegionEntry> entries = new List<EstateRegionEntry>();
+            HashSet<UUID> seen = new HashSet<UUID>();
+
+            foreach (Scene scene in localScenes)
+            {
+                entries.Add(new EstateRegionEntry
+                {
+                    RegionID = scene.RegionInfo.RegionID,
+                    Name = scene.RegionInfo.RegionName,
+                    IsLocal = true,
+                    LocalScene = scene
+                });
+                seen.Add(scene.RegionInfo.RegionID);
+            }
+
+            Scene reference = localScenes.FirstOrDefault();
+            if (reference == null)
+                return entries;
+
+            IEstateDataService estateData = reference.EstateDataServiceSafe;
+            IGridService gridService = reference.GridService;
+            if (estateData == null || gridService == null)
+                return entries;
+
+            int estateID = (int)reference.RegionInfo.EstateSettings.EstateID;
+
+            List<UUID> siblingIDs;
+            try
+            {
+                siblingIDs = estateData.GetRegions(estateID);
+            }
+            catch (Exception e)
+            {
+                m_log.DebugFormat("[REGION WEB]: Could not read sibling regions for estate {0}: {1}", estateID, e.Message);
+                return entries;
+            }
+
+            if (siblingIDs == null)
+                return entries;
+
+            foreach (UUID regionID in siblingIDs)
+            {
+                if (regionID.IsZero() || !seen.Add(regionID))
+                    continue;
+
+                global::OpenSim.Services.Interfaces.GridRegion gridRegion;
+                try
+                {
+                    gridRegion = gridService.GetRegionByUUID(UUID.Zero, regionID);
+                }
+                catch (Exception e)
+                {
+                    m_log.DebugFormat("[REGION WEB]: Could not resolve sibling region {0}: {1}", regionID, e.Message);
+                    continue;
+                }
+
+                if (gridRegion == null)
+                    continue;
+
+                entries.Add(new EstateRegionEntry
+                {
+                    RegionID = regionID,
+                    Name = gridRegion.RegionName,
+                    IsLocal = false,
+                    RemoteBaseURL = gridRegion.ServerURI.TrimEnd('/')
+                });
+            }
+
+            return entries;
+        }
+
         private static bool SplitAvatarName(string name, out string firstName, out string lastName)
         {
             firstName = string.Empty;
@@ -4642,6 +4744,9 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             content.Tagline = EstateDefaultTagline;
             content.Description = EstateDefaultDescription;
             content.HeroImage = string.Empty;
+            content.BrandTop = EstateDefaultBrandTop;
+            content.BrandBottom = EstateDefaultBrandBottom;
+            content.RepositoryUrl = string.Empty;
             AddDefaultFeatures(content.Features);
 
             string file = Path.Combine(m_absoluteContentDirectory, "estate.ini");
@@ -4666,6 +4771,14 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             content.Tagline = config.GetString("Tagline", content.Tagline).Trim();
             content.Description = config.GetString("Description", content.Description).Trim();
             content.HeroImage = config.GetString("HeroImage", string.Empty).Trim();
+            content.BrandTop = config.GetString("BrandTop", content.BrandTop).Trim();
+            content.BrandBottom = config.GetString("BrandBottom", content.BrandBottom).Trim();
+            content.RepositoryUrl = config.GetString("RepositoryUrl", content.RepositoryUrl).Trim();
+            if (string.IsNullOrEmpty(content.BrandTop) && string.IsNullOrEmpty(content.BrandBottom))
+            {
+                content.BrandTop = EstateDefaultBrandTop;
+                content.BrandBottom = EstateDefaultBrandBottom;
+            }
             if (IsLegacyEstateBrand(content.Title))
                 content.Title = "This estate";
             if (IsLegacyEstateBrand(content.Tagline) || IsLegacyEstateTagline(content.Tagline))
@@ -5257,6 +5370,11 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 + "Tagline = \"" + EscapeIni(EstateDefaultTagline) + "\"\n"
                 + "Description = \"" + EscapeIni(EstateDefaultDescription) + "\"\n"
                 + "HeroImage = \"\"\n"
+                + "; Nav bar wordmark, split across two stacked lines (small line on top, bold line below).\n"
+                + "BrandTop = \"" + EscapeIni(EstateDefaultBrandTop) + "\"\n"
+                + "BrandBottom = \"" + EscapeIni(EstateDefaultBrandBottom) + "\"\n"
+                + "; Optional: link the nav bar GitHub icon at your own repository. Leave blank to hide it.\n"
+                + "RepositoryUrl = \"\"\n"
                 + "; Feature entries use title|description.\n"
                 + "Feature1 = \"High quality world map|Terrain textures, water depth shading, land detail, aerial tone mapping, mesh/sculpt geometry projection, cleaner water alpha handling, background generation and cooperative rendering make map tiles sharper, more geographic and safer for simulator responsiveness.\"\n"
                 + "Feature2 = \"" + RegionWebFeatureTitle + "|" + RegionWebFeatureBody + "\"\n"
@@ -5965,7 +6083,12 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
         private string GetMapURL(Scene scene)
         {
-            string regionImage = "regionImage" + scene.RegionInfo.RegionID.ToString().Replace("-", "");
+            return GetMapURLByRegionID(scene.RegionInfo.RegionID);
+        }
+
+        private static string GetMapURLByRegionID(UUID regionID)
+        {
+            string regionImage = "regionImage" + regionID.ToString().Replace("-", "");
             return "/index.php?method=" + regionImage;
         }
 
@@ -6385,7 +6508,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             StringBuilder css = new StringBuilder(8192);
             css.Append(":root{--ink:#05070a;--paper:#f4f7f9;--card:#fff;--text:#111820;--muted:#68727c;--line:#dfe7eb;--dark:#11161b;--dark2:#1d2227;--accent:#12bdf4;--accent2:#c700ff;--shadow:0 22px 60px rgba(5,10,15,.14)}")
                 .Append("html{scroll-behavior:smooth;scroll-padding-top:88px}body{margin:0;background:var(--paper);color:var(--text);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}a{color:#0079b6;text-decoration:none}a:hover{color:#00aeea}img{max-width:100%;display:block}.wrap{max-width:1320px;margin:0 auto;padding:0 28px}")
-                .Append(".site-nav{position:sticky;top:0;z-index:1000;background:#020304;border-bottom:2px solid var(--accent);box-shadow:0 14px 40px rgba(0,0,0,.32)}.nav-wrap{display:flex;align-items:center;justify-content:space-between;gap:28px;min-height:68px}.site-nav a{color:#f6f7f8;font-weight:900}.brand{display:flex;align-items:center;gap:13px;color:#fff;min-width:190px}.brand-mark{position:relative;width:52px;height:52px;flex:0 0 52px;border:3px solid var(--accent);border-radius:14px;background:linear-gradient(135deg,rgba(18,189,244,.18),rgba(199,0,255,.14));box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 10px 28px rgba(18,189,244,.22);transform:rotate(-6deg);overflow:hidden}.brand-mark:before{content:'V';position:absolute;left:8px;top:4px;color:var(--accent);font-size:30px;line-height:1;font-weight:1000;transform:rotate(6deg)}.brand-mark:after{content:'S';position:absolute;right:7px;bottom:2px;color:#fff;font-size:30px;line-height:1;font-weight:1000;transform:rotate(6deg)}.brand-mark span{position:absolute;left:9px;right:9px;top:25px;height:3px;background:var(--accent);border-radius:999px;transform:rotate(-22deg)}.brand-mark span:before{content:'';position:absolute;right:-4px;top:-4px;width:11px;height:11px;background:var(--accent2);border-radius:50%;box-shadow:0 0 18px rgba(199,0,255,.5)}.brand-type{display:grid;text-transform:uppercase;line-height:.84;color:#fff}.brand-type span{font-size:16px;font-weight:1000;letter-spacing:.08em}.brand-type strong{font-size:35px;font-weight:1000;letter-spacing:0}.nav-links{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:28px}.nav-links a{font-size:17px}.nav-links a:hover{color:var(--accent)}.nav-github{display:inline-flex;align-items:center;gap:8px}.nav-github svg{width:21px;height:21px;fill:currentColor}.nav-cta{background:var(--accent2);color:#fff!important;padding:11px 20px;border-radius:5px;box-shadow:0 12px 30px rgba(199,0,255,.24)}.nav-cta:hover{background:#a900e0!important;color:#fff!important}")
+                .Append(".site-nav{position:sticky;top:0;z-index:1000;background:#020304;border-bottom:2px solid var(--accent);box-shadow:0 14px 40px rgba(0,0,0,.32)}.nav-wrap{display:flex;align-items:center;justify-content:space-between;gap:28px;min-height:68px}.site-nav a{color:#f6f7f8;font-weight:900}.brand{display:flex;align-items:center;gap:13px;color:#fff;min-width:190px}.brand-mark{position:relative;width:52px;height:52px;flex:0 0 52px;border:3px solid var(--accent);border-radius:14px;background:linear-gradient(135deg,rgba(18,189,244,.18),rgba(199,0,255,.14));box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 10px 28px rgba(18,189,244,.22);transform:rotate(-6deg);overflow:hidden}.brand-mark:before{content:'C';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-4deg);color:var(--accent);font-size:34px;line-height:1;font-weight:1000}.brand-mark span{position:absolute;left:9px;right:9px;top:25px;height:3px;background:var(--accent);border-radius:999px;transform:rotate(-22deg)}.brand-mark span:before{content:'';position:absolute;right:-4px;top:-4px;width:11px;height:11px;background:var(--accent2);border-radius:50%;box-shadow:0 0 18px rgba(199,0,255,.5)}.brand-type{display:grid;text-transform:uppercase;line-height:.84;color:#fff}.brand-type span{font-size:16px;font-weight:1000;letter-spacing:.08em}.brand-type strong{font-size:35px;font-weight:1000;letter-spacing:0}.nav-links{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:28px}.nav-links a{font-size:17px}.nav-links a:hover{color:var(--accent)}.nav-github{display:inline-flex;align-items:center;gap:8px}.nav-github svg{width:21px;height:21px;fill:currentColor}.nav-cta{background:var(--accent2);color:#fff!important;padding:11px 20px;border-radius:5px;box-shadow:0 12px 30px rgba(199,0,255,.24)}.nav-cta:hover{background:#a900e0!important;color:#fff!important}")
                 .Append(".page-links{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 22px}.page-links a,.back{display:inline-flex;align-items:center;min-height:38px;background:#fff;border:1px solid var(--line);border-radius:6px;color:#111820;padding:0 13px;font-weight:900;box-shadow:0 8px 22px rgba(12,18,24,.06)}.page-links a:hover,.back:hover{border-color:var(--accent);color:#0079b6}.estate-hero{position:relative;min-height:640px;background-size:cover;background-position:center;background-repeat:no-repeat;display:flex;align-items:center;color:#fff;overflow:hidden;background-color:#090d14}.estate-hero-plain{background:#090d14}.estate-carousel{position:absolute;inset:0;z-index:0;background:#090d14}.estate-slide{position:absolute;inset:0;opacity:0;transition:opacity 2.2s ease;transform:scale(1.025)}.estate-slide.is-active{opacity:1}.estate-slide img{width:100%;height:100%;object-fit:cover;filter:saturate(1.08) contrast(1.05)}.estate-carousel-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.78),rgba(0,0,0,.42) 48%,rgba(0,0,0,.30)),linear-gradient(0deg,rgba(3,8,12,.90),rgba(3,8,12,.10) 45%,rgba(3,8,12,.18));pointer-events:none}.estate-hero .wrap{position:relative;z-index:2;padding-top:118px;padding-bottom:88px}.estate-hero p{max-width:860px;color:#f2f6f8;font-size:21px}.estate-hero>div>p:first-child,.hero p,.feature-kicker{margin:0 0 12px;color:var(--accent);text-transform:uppercase;font-size:15px;font-weight:1000;letter-spacing:.08em}.estate-hero h1{max-width:790px;margin:0;color:#fff;font-size:76px;line-height:.92;text-transform:uppercase}.hero-feature-strip{display:flex;flex-wrap:wrap;gap:9px;max-width:920px;margin:24px 0 0}.hero-feature-strip span{display:inline-flex;align-items:center;min-height:32px;border:1px solid rgba(18,189,244,.55);border-radius:6px;background:rgba(2,3,4,.62);color:#fff;padding:0 11px;font-size:14px;font-weight:1000;box-shadow:0 10px 28px rgba(0,0,0,.26)}.hero-feature-strip span:nth-child(4),.hero-feature-strip span:nth-child(8){border-color:rgba(199,0,255,.62)}.estate-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}.estate-actions a{background:var(--accent2);color:#fff;padding:12px 18px;border-radius:5px;font-weight:1000;box-shadow:0 12px 32px rgba(199,0,255,.24)}.estate-actions a+a{background:#fff;color:#111820}.estate-actions a:hover{color:#fff;background:#a900e0}.estate-actions a+a:hover{color:#0079b6;background:#edf9ff}")
                 .Append("main{background:var(--paper)}.estate-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:-38px;position:relative;z-index:2}.estate-stats div{background:#fff;border:1px solid var(--line);border-radius:8px;padding:20px;box-shadow:var(--shadow)}.estate-stats strong{display:block;font-size:34px;line-height:1}.estate-stats span{color:var(--muted);font-weight:800}.feature-section{padding-top:58px}.feature-section h2,.list h2{font-size:36px;line-height:1.05;margin:0 0 22px}.feature-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}.feature-card{display:block;background:#fff;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:22px;min-height:190px;box-shadow:0 12px 36px rgba(5,10,15,.07)}.feature-card:hover{border-color:var(--accent);transform:translateY(-2px);transition:transform .16s ease,border-color .16s ease}.feature-card h3{margin:0 0 8px;font-size:22px}.feature-card p{margin:0;color:#56616a}.feature-card span{display:inline-block;margin-top:18px;color:#0079b6;font-weight:1000}.feature-page,.script-reference,.wallet-page{padding-top:50px;padding-bottom:78px}.feature-page{max-width:920px}.feature-page h1,.script-reference h1,.wallet-page h1{font-size:56px;line-height:1;margin:0 0 18px}.feature-page .lead,.script-reference .lead,.wallet-page .lead{font-size:22px;color:#45505a;margin:0 0 22px}.feature-page section{border-top:1px solid var(--line);padding-top:26px;margin-top:28px}.feature-page h2{font-size:30px;margin:0 0 12px}.feature-page li{margin:0 0 10px;color:#38424b}")
                 .Append(".hero{position:relative;min-height:430px;background-size:cover;background-position:center;background-repeat:no-repeat;display:flex;align-items:flex-end;color:#fff;overflow:hidden;background-color:#090d14}.hero .wrap{position:relative;z-index:2;padding-top:100px;padding-bottom:54px}.hero h1{margin:0;color:#fff;font-size:64px;line-height:.95;text-transform:uppercase}.meta{margin-top:16px;color:#edf4f7}.layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:36px;padding-top:42px;padding-bottom:64px}.story{min-width:0}.story>p{font-size:19px;color:#34404a}.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin:32px 0}.gallery figure{margin:0;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 12px 34px rgba(5,10,15,.08)}.gallery img{aspect-ratio:4/3;object-fit:cover}.gallery figcaption{padding:11px;color:#59636c;font-size:14px}.panel{align-self:start}.map{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:1px solid var(--line);box-shadow:var(--shadow)}.stats,.parcels{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:20px;box-shadow:0 12px 34px rgba(5,10,15,.07)}.stats h2,.parcels h2,.story h2{margin:0 0 14px}.stats dl{display:grid;grid-template-columns:1fr auto;gap:8px 16px;margin:0}.stats dt{color:var(--muted)}.stats dd{margin:0;font-weight:900}.parcels div{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding:10px 0}.parcels div:first-of-type{border-top:0}.parcels span{color:var(--muted)}")
@@ -6405,7 +6528,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 .Append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
                 .Append("<title>").Append(Html(title)).Append("</title>")
                 .Append("<link rel=\"icon\" type=\"image/svg+xml\" href=\"")
-                .Append(VanillaSimFaviconDataUri())
+                .Append(BrandFaviconDataUri())
                 .Append("\">")
                 .Append("<style>")
                 .Append(RegionWebCss())
@@ -6414,16 +6537,21 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             return html;
         }
 
-        private static string VanillaSimFaviconDataUri()
+        private static string BrandFaviconDataUri()
         {
-            const string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#05070a'/><rect x='8' y='8' width='48' height='48' rx='11' fill='#111820' stroke='#12bdf4' stroke-width='4'/><path d='M17 18l8 28 8-28' fill='none' stroke='#12bdf4' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/><path d='M45 21c-8-4-17 2-9 8 8 5 2 13-8 8' fill='none' stroke='#fff' stroke-width='7' stroke-linecap='round'/><circle cx='45' cy='20' r='6' fill='#c700ff'/></svg>";
+            const string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#05070a'/><rect x='8' y='8' width='48' height='48' rx='11' fill='#111820' stroke='#12bdf4' stroke-width='4'/><text x='32' y='45' font-family='Arial,Helvetica,sans-serif' font-size='36' font-weight='900' fill='#12bdf4' text-anchor='middle'>C</text><circle cx='45' cy='20' r='6' fill='#c700ff'/></svg>";
             return "data:image/svg+xml," + Uri.EscapeDataString(svg);
         }
 
         private void AppendGlobalNavigation(StringBuilder html)
         {
+            EstatePageContent estate = LoadEstateContent();
+            string brandTop = string.IsNullOrEmpty(estate.BrandTop) ? EstateDefaultBrandTop : estate.BrandTop;
+            string brandBottom = string.IsNullOrEmpty(estate.BrandBottom) ? EstateDefaultBrandBottom : estate.BrandBottom;
+
             html.Append("<nav class=\"site-nav\" aria-label=\"This estate navigation\"><div class=\"wrap nav-wrap\"><a class=\"brand\" href=\"")
-                .Append(Html(m_basePath)).Append("/\"><span class=\"brand-mark\" aria-hidden=\"true\"><span></span></span><span class=\"brand-type\"><span>Vanilla</span><strong>Sim</strong></span></a><div class=\"nav-links\">")
+                .Append(Html(m_basePath)).Append("/\"><span class=\"brand-mark\" aria-hidden=\"true\"><span></span></span><span class=\"brand-type\"><span>")
+                .Append(Html(brandTop)).Append("</span><strong>").Append(Html(brandBottom)).Append("</strong></span></a><div class=\"nav-links\">")
                 .Append("<a href=\"").Append(Html(m_basePath)).Append("/#regions\">Regions</a>")
                 .Append("<a href=\"").Append(Html(m_basePath)).Append("/#features\">Features</a>");
 
@@ -6432,9 +6560,12 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
             html.Append("<a href=\"").Append(Html(m_basePath)).Append("/admin\">Admin</a>");
 
-            html.Append("<a class=\"nav-github\" href=\"").Append(Html(VanillaSimRepositoryUrl))
-                .Append("\" target=\"_blank\" rel=\"noopener\" aria-label=\"This estate GitHub repository\">")
-                .Append("<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.68 7.68 0 0 1 8 3.86c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z\"/></svg><span>GitHub</span></a>");
+            if (!string.IsNullOrWhiteSpace(estate.RepositoryUrl))
+            {
+                html.Append("<a class=\"nav-github\" href=\"").Append(Html(estate.RepositoryUrl))
+                    .Append("\" target=\"_blank\" rel=\"noopener\" aria-label=\"This estate GitHub repository\">")
+                    .Append("<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.68 7.68 0 0 1 8 3.86c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z\"/></svg><span>GitHub</span></a>");
+            }
 
             html.Append("</div></div></nav>");
         }
@@ -7065,6 +7196,9 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             public string Tagline;
             public string Description;
             public string HeroImage;
+            public string BrandTop;
+            public string BrandBottom;
+            public string RepositoryUrl;
             public readonly List<FeatureItem> Features = new List<FeatureItem>();
         }
 
@@ -7072,6 +7206,19 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
         {
             public string Title;
             public string Body;
+        }
+
+        // A region belonging to the same estate as the reference scene. IsLocal is true when the
+        // region is loaded in this same simulator process (LocalScene is then non-null and its live
+        // content/stats can be read directly); otherwise the region runs in a sibling simulator
+        // process and only the Grid-registered name and its own RegionWeb base URL are known.
+        private class EstateRegionEntry
+        {
+            public UUID RegionID;
+            public string Name;
+            public bool IsLocal;
+            public Scene LocalScene;
+            public string RemoteBaseURL;
         }
 
         private class FeaturePageContent

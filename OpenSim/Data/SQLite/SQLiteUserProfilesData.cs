@@ -85,6 +85,93 @@ namespace OpenSim.Data.SQLite
         }
 
         #region IProfilesData implementation
+        // Grid-wide feed for the WebInterface splash page's "Featured
+        // Classifieds" widget - see IProfilesData.GetRecentClassifieds.
+        public List<UserClassifiedAdd> GetRecentClassifieds(int count)
+        {
+            List<UserClassifiedAdd> results = new List<UserClassifiedAdd>();
+            string query = "SELECT * FROM classifieds WHERE expirationdate > :Now ORDER BY creationdate DESC LIMIT :Count";
+
+            using (SQLiteCommand cmd = (SQLiteCommand)m_connection.CreateCommand())
+            {
+                cmd.CommandText = query;
+                cmd.Parameters.AddWithValue(":Now", Util.UnixTimeSinceEpoch());
+                cmd.Parameters.AddWithValue(":Count", count <= 0 ? 6 : count);
+
+                using (IDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        UserClassifiedAdd ad = new UserClassifiedAdd();
+                        ad.ClassifiedId = new UUID(reader["classifieduuid"].ToString());
+                        ad.CreatorId = new UUID(reader["creatoruuid"].ToString());
+                        ad.ParcelId = new UUID(reader["parceluuid"].ToString());
+                        ad.SnapshotId = new UUID(reader["snapshotuuid"].ToString());
+                        ad.CreationDate = Convert.ToInt32(reader["creationdate"]);
+                        ad.ExpirationDate = Convert.ToInt32(reader["expirationdate"]);
+                        ad.ParentEstate = Convert.ToInt32(reader["parentestate"]);
+                        ad.Flags = (byte)Convert.ToUInt32(reader["classifiedflags"]);
+                        ad.Category = Convert.ToInt32(reader["category"]);
+                        ad.Price = Convert.ToInt16(reader["priceforlisting"]);
+                        ad.Name = reader["name"].ToString();
+                        ad.Description = reader["description"].ToString();
+                        ad.SimName = reader["simname"].ToString();
+                        ad.GlobalPos = reader["posglobal"].ToString();
+                        ad.ParcelName = reader["parcelname"].ToString();
+                        results.Add(ad);
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // Grid-wide keyword search for /web/search - same LIKE-on-name-or-
+        // description shape as SQLiteSearchData.SearchPlaces, restricted to
+        // non-expired listings same as GetRecentClassifieds above.
+        public List<UserClassifiedAdd> SearchClassifieds(string queryText, int start, int count)
+        {
+            List<UserClassifiedAdd> results = new List<UserClassifiedAdd>();
+            string query = "SELECT * FROM classifieds WHERE expirationdate > :Now " +
+                    "AND (name LIKE :query OR description LIKE :query) " +
+                    "ORDER BY creationdate DESC LIMIT :Count OFFSET :Start";
+
+            using (SQLiteCommand cmd = (SQLiteCommand)m_connection.CreateCommand())
+            {
+                cmd.CommandText = query;
+                cmd.Parameters.AddWithValue(":Now", Util.UnixTimeSinceEpoch());
+                cmd.Parameters.AddWithValue(":query", "%" + (queryText ?? string.Empty) + "%");
+                cmd.Parameters.AddWithValue(":Start", start < 0 ? 0 : start);
+                cmd.Parameters.AddWithValue(":Count", count <= 0 ? 100 : count);
+
+                using (IDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        UserClassifiedAdd ad = new UserClassifiedAdd();
+                        ad.ClassifiedId = new UUID(reader["classifieduuid"].ToString());
+                        ad.CreatorId = new UUID(reader["creatoruuid"].ToString());
+                        ad.ParcelId = new UUID(reader["parceluuid"].ToString());
+                        ad.SnapshotId = new UUID(reader["snapshotuuid"].ToString());
+                        ad.CreationDate = Convert.ToInt32(reader["creationdate"]);
+                        ad.ExpirationDate = Convert.ToInt32(reader["expirationdate"]);
+                        ad.ParentEstate = Convert.ToInt32(reader["parentestate"]);
+                        ad.Flags = (byte)Convert.ToUInt32(reader["classifiedflags"]);
+                        ad.Category = Convert.ToInt32(reader["category"]);
+                        ad.Price = Convert.ToInt16(reader["priceforlisting"]);
+                        ad.Name = reader["name"].ToString();
+                        ad.Description = reader["description"].ToString();
+                        ad.SimName = reader["simname"].ToString();
+                        ad.GlobalPos = reader["posglobal"].ToString();
+                        ad.ParcelName = reader["parcelname"].ToString();
+                        results.Add(ad);
+                    }
+                }
+            }
+
+            return results;
+        }
+
         public OSDArray GetClassifiedRecords(UUID creatorId)
         {
             OSDArray data = new OSDArray();
@@ -735,6 +822,31 @@ namespace OpenSim.Data.SQLite
             return true;
         }
 
+        public bool UpdateAvatarPartner(UUID userId, UUID partnerId, ref string result)
+        {
+            string query = "UPDATE userprofile SET profilePartner=:partnerId WHERE useruuid=:uuid";
+
+            try
+            {
+                using (SQLiteCommand cmd = (SQLiteCommand)m_connection.CreateCommand())
+                {
+                    cmd.CommandText = query;
+                    cmd.Parameters.AddWithValue(":partnerId", partnerId.ToString());
+                    cmd.Parameters.AddWithValue(":uuid", userId.ToString());
+
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.ErrorFormat("[PROFILES_DATA]" +
+                                  ": UpdateAvatarPartner exception {0}", e.Message);
+                result = e.Message;
+                return false;
+            }
+            return true;
+        }
+
 
         public bool UpdateUserPreferences(ref UserPreferences pref, ref string result)
         {
@@ -838,31 +950,38 @@ namespace OpenSim.Data.SQLite
                     cmd.Parameters.AddWithValue(":Id", props.UserId.ToString());
                     cmd.Parameters.AddWithValue (":TagId", props.TagId.ToString());
 
+                    // The insert-on-missing branch used to run a second
+                    // command on this same connection from inside the
+                    // reader's using block, append the INSERT text onto the
+                    // already-executed SELECT `query` string instead of
+                    // using its own, and set that garbled text on `cmd`
+                    // rather than `put` (which never got a CommandText at
+                    // all) - between the three, a first-ever Get for a given
+                    // UserId+TagId always failed and never created the row.
+                    // Reading the flag out, disposing the reader, and
+                    // building a fresh INSERT command fixes all three.
+                    bool hasRow;
                     using (reader = cmd.ExecuteReader(CommandBehavior.SingleRow))
                     {
-                        if(reader.Read())
+                        hasRow = reader.Read();
+                        if (hasRow)
                         {
                             props.DataKey = (string)reader["DataKey"];
                             props.DataVal = (string)reader["DataVal"];
                         }
-                        else
+                    }
+
+                    if (!hasRow)
+                    {
+                        using (SQLiteCommand put = (SQLiteCommand)m_connection.CreateCommand())
                         {
-                            query += "INSERT INTO userdata VALUES ( ";
-                            query += ":UserId,";
-                            query += ":TagId,";
-                            query += ":DataKey,";
-                            query += ":DataVal) ";
+                            put.CommandText = "INSERT INTO userdata VALUES (:UserId, :TagId, :DataKey, :DataVal)";
+                            put.Parameters.AddWithValue(":UserId", props.UserId.ToString());
+                            put.Parameters.AddWithValue(":TagId", props.TagId.ToString());
+                            put.Parameters.AddWithValue(":DataKey", props.DataKey.ToString());
+                            put.Parameters.AddWithValue(":DataVal", props.DataVal.ToString());
 
-                            using (SQLiteCommand put = (SQLiteCommand)m_connection.CreateCommand())
-                            {
-                                cmd.CommandText = query;
-                                put.Parameters.AddWithValue(":UserId", props.UserId.ToString());
-                                put.Parameters.AddWithValue(":TagId", props.TagId.ToString());
-                                put.Parameters.AddWithValue(":DataKey", props.DataKey.ToString());
-                                put.Parameters.AddWithValue(":DataVal", props.DataVal.ToString());
-
-                                put.ExecuteNonQuery();
-                            }
+                            put.ExecuteNonQuery();
                         }
                     }
                 }

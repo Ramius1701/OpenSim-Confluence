@@ -58,6 +58,7 @@ namespace OpenSim.Services.HypergridService
         private static IGridUserService m_GridUserService;
         private static IBansService m_BansService;
         private static IAccessControlService m_AccessControlService;
+        private static IRegionHGService m_RegionHGService;
 
         private static Regex m_AllowedClientsRegex = null;
         private static Regex m_DeniedClientsRegex = null;
@@ -151,6 +152,19 @@ namespace OpenSim.Services.HypergridService
                     m_BansService = ServerUtils.LoadPlugin<IBansService>(bansService, args);
                 if (!string.IsNullOrEmpty(accessControlService))
                     m_AccessControlService = ServerUtils.LoadPlugin<IAccessControlService>(accessControlService, args);
+
+                // Batch 13: per-region Hypergrid open/close toggle. Optional -
+                // absence of [RegionHGService] means every region behaves exactly
+                // as before (subject only to the grid-wide ForeignAgentsAllowed
+                // check above), so this can't regress an existing deployment that
+                // hasn't opted in.
+                IConfig regionHGServiceConfig = config.Configs["RegionHGService"];
+                if (regionHGServiceConfig != null)
+                {
+                    string regionHGServiceDll = regionHGServiceConfig.GetString("LocalServiceModule", string.Empty);
+                    if (!string.IsNullOrEmpty(regionHGServiceDll))
+                        m_RegionHGService = ServerUtils.LoadPlugin<IRegionHGService>(regionHGServiceDll, args);
+                }
 
                 if (simService is not null)
                     m_SimulationService = simService;
@@ -451,6 +465,17 @@ namespace OpenSim.Services.HypergridService
                     reason = m_DeniedMessage;
                     m_log.InfoFormat("[GATEKEEPER SERVICE]: Foreign agents are not permitted {0} {1} @ {2}. Refusing service.",
                         aCircuit.firstname, aCircuit.lastname, aCircuit.ServiceURLs["HomeURI"]);
+                    return false;
+                }
+
+                // Per-region toggle, independent of the grid-wide check above -
+                // a region can be individually closed to HG visitors even while
+                // the grid overall allows foreign agents.
+                if (m_RegionHGService != null && !m_RegionHGService.IsRegionOpen(destination.RegionID))
+                {
+                    reason = m_DeniedMessage;
+                    m_log.InfoFormat("[GATEKEEPER SERVICE]: Region {0} is closed to Hypergrid visitors. Refusing {1} {2}.",
+                        destination.RegionName, aCircuit.firstname, aCircuit.lastname);
                     return false;
                 }
             }

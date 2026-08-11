@@ -4,5 +4,9 @@ namespace OpenSim.Services.Interfaces
     {
         bool IsIPBanned(string ip);
         bool IsHardwareBanned(string mac, string id0);
+
+        // WhiteCore-Dev-inspired range ban check (see PROJECT_LOG.md Batch 14) -
+        // distinct from IsIPBanned's exact-match check.
+        bool IsIPRangeBanned(string ip);
     }
 }

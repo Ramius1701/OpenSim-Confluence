@@ -279,6 +279,40 @@ namespace OpenSim.Region.CoreModules.World.Land
                 return;
             }
 
+            // Bug fix: this used to transfer ownership straight to the highest
+            // bidder without ever charging them - land.UpdateLandSold() only
+            // moves ownership, it has no idea about currency at all. The
+            // normal client-driven land-buy path (LandManagementModule's
+            // EventManagerOnLandBuy) only fires after a currency-module
+            // listener sets LandBuyArgs.economyValidated = true, which is
+            // where the actual charge happens; an auction ending has no
+            // client-sent LandBuyArgs to hook, so the charge has to happen
+            // directly here, through the generic IMoneyModule interface
+            // (works with whatever economy module is actually configured -
+            // ConfluenceCurrencyModule, Gloebit, DTLNSLMoneyModule, etc. -
+            // rather than assuming one specific implementation).
+            IMoneyModule moneyModule = m_scene.RequestModuleInterface<IMoneyModule>();
+            if (moneyModule is not null && highestBid.Amount > 0)
+            {
+                if (!moneyModule.AmountCovered(highestBid.AuctionBidder, highestBid.Amount))
+                {
+                    m_log.WarnFormat(
+                        "[AUCTION MODULE]: Highest bidder for parcel \"{0}\" no longer has sufficient funds ({1}) - auction cancelled, no ownership change made",
+                        land.LandData.Name, highestBid.Amount);
+                    return;
+                }
+
+                string payDescription = "Land auction for parcel \"" + land.LandData.Name + "\"";
+                if (!moneyModule.MoveMoney(highestBid.AuctionBidder, land.LandData.OwnerID, highestBid.Amount,
+                        MoneyTransactionType.LandAuction, payDescription))
+                {
+                    m_log.WarnFormat(
+                        "[AUCTION MODULE]: Payment failed for parcel \"{0}\" auction - auction cancelled, no ownership change made",
+                        land.LandData.Name);
+                    return;
+                }
+            }
+
             IMessageTransferModule messageTransfer = m_scene.RequestModuleInterface<IMessageTransferModule>();
             if (messageTransfer is not null)
             {

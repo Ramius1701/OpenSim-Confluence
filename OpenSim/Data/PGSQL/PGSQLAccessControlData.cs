@@ -123,5 +123,49 @@ namespace OpenSim.Data.PGSQL
                 return true;
             }
         }
+
+        public System.Collections.Generic.List<(string StartIP, string EndIP)> GetIPRangeBans()
+        {
+            var ranges = new System.Collections.Generic.List<(string, string)>();
+
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand("select start_ip, end_ip from banned_ip_ranges", conn))
+            {
+                conn.Open();
+                using (NpgsqlDataReader result = cmd.ExecuteReader())
+                {
+                    while (result.Read())
+                        ranges.Add((result.GetString(0), result.GetString(1)));
+                }
+            }
+
+            return ranges;
+        }
+
+        public bool BanIPRange(string startIp, string endIp)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand("insert into banned_ip_ranges (start_ip, end_ip) values (:startIp, :endIp) on conflict do nothing", conn))
+            {
+                cmd.Parameters.AddWithValue(":startIp", startIp);
+                cmd.Parameters.AddWithValue(":endIp", endIp);
+                conn.Open();
+                cmd.ExecuteNonQuery();
+                return true;
+            }
+        }
+
+        public bool UnbanIPRange(string startIp, string endIp)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand("delete from banned_ip_ranges where start_ip = :startIp and end_ip = :endIp", conn))
+            {
+                cmd.Parameters.AddWithValue(":startIp", startIp);
+                cmd.Parameters.AddWithValue(":endIp", endIp);
+                conn.Open();
+                cmd.ExecuteNonQuery();
+                return true;
+            }
+        }
     }
 }

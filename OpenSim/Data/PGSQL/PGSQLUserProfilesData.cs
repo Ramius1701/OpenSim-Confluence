@@ -87,6 +87,99 @@ namespace OpenSim.Data.PGSQL
         /// <param name='creatorId'>
         /// Creator identifier.
         /// </param>
+        // Grid-wide feed for the WebInterface splash page's "Featured
+        // Classifieds" widget - see IProfilesData.GetRecentClassifieds.
+        public System.Collections.Generic.List<UserClassifiedAdd> GetRecentClassifieds(int count)
+        {
+            System.Collections.Generic.List<UserClassifiedAdd> results = new System.Collections.Generic.List<UserClassifiedAdd>();
+
+            using (NpgsqlConnection dbcon = new NpgsqlConnection(ConnectionString))
+            {
+                string query = @"SELECT * FROM classifieds WHERE expirationdate > :Now ORDER BY creationdate DESC LIMIT :Count";
+                dbcon.Open();
+                using (NpgsqlCommand cmd = new NpgsqlCommand(query, dbcon))
+                {
+                    cmd.Parameters.Add(m_database.CreateParameter("Now", Util.UnixTimeSinceEpoch()));
+                    cmd.Parameters.Add(m_database.CreateParameter("Count", count <= 0 ? 6 : count));
+
+                    using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            UserClassifiedAdd ad = new UserClassifiedAdd();
+                            ad.ClassifiedId = DBGuid.FromDB(reader["classifieduuid"]);
+                            ad.CreatorId = DBGuid.FromDB(reader["creatoruuid"]);
+                            ad.ParcelId = DBGuid.FromDB(reader["parceluuid"]);
+                            ad.SnapshotId = DBGuid.FromDB(reader["snapshotuuid"]);
+                            ad.CreationDate = Convert.ToInt32(reader["creationdate"]);
+                            ad.ExpirationDate = Convert.ToInt32(reader["expirationdate"]);
+                            ad.ParentEstate = Convert.ToInt32(reader["parentestate"]);
+                            ad.Flags = (byte)Convert.ToInt16(reader["classifiedflags"]);
+                            ad.Category = Convert.ToInt32(reader["category"]);
+                            ad.Price = Convert.ToInt16(reader["priceforlisting"]);
+                            ad.Name = reader["name"].ToString();
+                            ad.Description = reader["description"].ToString();
+                            ad.SimName = reader["simname"].ToString();
+                            ad.GlobalPos = reader["posglobal"].ToString();
+                            ad.ParcelName = reader["parcelname"].ToString();
+                            results.Add(ad);
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // Grid-wide keyword search for /web/search - same ILIKE-on-name-or-
+        // description shape as PGSQLSearchData.SearchPlaces, restricted to
+        // non-expired listings same as GetRecentClassifieds above.
+        public System.Collections.Generic.List<UserClassifiedAdd> SearchClassifieds(string queryText, int start, int count)
+        {
+            System.Collections.Generic.List<UserClassifiedAdd> results = new System.Collections.Generic.List<UserClassifiedAdd>();
+
+            using (NpgsqlConnection dbcon = new NpgsqlConnection(ConnectionString))
+            {
+                string query = @"SELECT * FROM classifieds WHERE expirationdate > :Now " +
+                        "AND (name ILIKE :query OR description ILIKE :query) " +
+                        "ORDER BY creationdate DESC LIMIT :Count OFFSET :Start";
+                dbcon.Open();
+                using (NpgsqlCommand cmd = new NpgsqlCommand(query, dbcon))
+                {
+                    cmd.Parameters.Add(m_database.CreateParameter("Now", Util.UnixTimeSinceEpoch()));
+                    cmd.Parameters.Add(m_database.CreateParameter("query", "%" + (queryText ?? string.Empty) + "%"));
+                    cmd.Parameters.Add(m_database.CreateParameter("Start", start < 0 ? 0 : start));
+                    cmd.Parameters.Add(m_database.CreateParameter("Count", count <= 0 ? 100 : count));
+
+                    using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            UserClassifiedAdd ad = new UserClassifiedAdd();
+                            ad.ClassifiedId = DBGuid.FromDB(reader["classifieduuid"]);
+                            ad.CreatorId = DBGuid.FromDB(reader["creatoruuid"]);
+                            ad.ParcelId = DBGuid.FromDB(reader["parceluuid"]);
+                            ad.SnapshotId = DBGuid.FromDB(reader["snapshotuuid"]);
+                            ad.CreationDate = Convert.ToInt32(reader["creationdate"]);
+                            ad.ExpirationDate = Convert.ToInt32(reader["expirationdate"]);
+                            ad.ParentEstate = Convert.ToInt32(reader["parentestate"]);
+                            ad.Flags = (byte)Convert.ToInt16(reader["classifiedflags"]);
+                            ad.Category = Convert.ToInt32(reader["category"]);
+                            ad.Price = Convert.ToInt16(reader["priceforlisting"]);
+                            ad.Name = reader["name"].ToString();
+                            ad.Description = reader["description"].ToString();
+                            ad.SimName = reader["simname"].ToString();
+                            ad.GlobalPos = reader["posglobal"].ToString();
+                            ad.ParcelName = reader["parcelname"].ToString();
+                            results.Add(ad);
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
         public OSDArray GetClassifiedRecords(UUID creatorId)
         {
             OSDArray data = new OSDArray();
@@ -790,6 +883,34 @@ namespace OpenSim.Data.PGSQL
             return true;
         }
 
+        public bool UpdateAvatarPartner(UUID userId, UUID partnerId, ref string result)
+        {
+            string query = "UPDATE userprofile SET \"profilePartner\"=:partnerId WHERE \"useruuid\"=:uuid";
+
+            try
+            {
+                using (NpgsqlConnection dbcon = new NpgsqlConnection(ConnectionString))
+                {
+                    dbcon.Open();
+                    using (NpgsqlCommand cmd = new NpgsqlCommand(query, dbcon))
+                    {
+                        cmd.Parameters.Add(m_database.CreateParameter("partnerId", partnerId));
+                        cmd.Parameters.Add(m_database.CreateParameter("uuid", userId));
+
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.Error("[PROFILES_DATA]: UpdateAvatarPartner exception ", e);
+                result = e.Message;
+                return false;
+            }
+
+            return true;
+        }
+
         #endregion Avatar Interests
 
         public OSDArray GetUserImageAssets(UUID avatarId)
@@ -981,31 +1102,39 @@ namespace OpenSim.Data.PGSQL
                         cmd.Parameters.Add(m_database.CreateParameter("Id", props.UserId));
                         cmd.Parameters.Add(m_database.CreateParameter("TagId", props.TagId));
 
+                        // The insert-on-missing branch used to (a) run a
+                        // second command on this same connection from inside
+                        // the reader's using block, which Npgsql rejects
+                        // while the reader is still open, and (b) append the
+                        // INSERT text onto the already-executed SELECT
+                        // `query` string instead of using its own - between
+                        // the two, a first-ever Get for a given
+                        // UserId+TagId always failed and never created the
+                        // row. Reading the flag out, disposing the reader,
+                        // and building a fresh INSERT string fixes both.
+                        bool hasRow;
                         using (NpgsqlDataReader reader = cmd.ExecuteReader(CommandBehavior.SingleRow))
                         {
-                            if (reader.HasRows)
+                            hasRow = reader.HasRows;
+                            if (hasRow)
                             {
                                 reader.Read();
                                 props.DataKey = (string)reader["DataKey"];
                                 props.DataVal = (string)reader["DataVal"];
                             }
-                            else
+                        }
+
+                        if (!hasRow)
+                        {
+                            string insertQuery = "INSERT INTO userdata VALUES (:UserId, :TagId, :DataKey, :DataVal)";
+                            using (NpgsqlCommand put = new NpgsqlCommand(insertQuery, dbcon))
                             {
-                                query += "INSERT INTO userdata VALUES ( ";
-                                query += ":UserId,";
-                                query += ":TagId,";
-                                query += ":DataKey,";
-                                query += ":DataVal) ";
+                                put.Parameters.Add(m_database.CreateParameter("UserId", props.UserId));
+                                put.Parameters.Add(m_database.CreateParameter("TagId", props.TagId));
+                                put.Parameters.Add(m_database.CreateParameter("DataKey", props.DataKey.ToString()));
+                                put.Parameters.Add(m_database.CreateParameter("DataVal", props.DataVal.ToString()));
 
-                                using (NpgsqlCommand put = new NpgsqlCommand(query, dbcon))
-                                {
-                                    put.Parameters.Add(m_database.CreateParameter("UserId", props.UserId));
-                                    put.Parameters.Add(m_database.CreateParameter("TagId", props.TagId));
-                                    put.Parameters.Add(m_database.CreateParameter("DataKey", props.DataKey.ToString()));
-                                    put.Parameters.Add(m_database.CreateParameter("DataVal", props.DataVal.ToString()));
-
-                                    put.ExecuteNonQuery();
-                                }
+                                put.ExecuteNonQuery();
                             }
                         }
                     }
