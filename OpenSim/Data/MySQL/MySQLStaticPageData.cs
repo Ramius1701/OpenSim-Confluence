@@ -36,7 +36,7 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT ID, Slug, Title, Body, Updated FROM static_pages WHERE ID = ?ID", dbcon))
+                        "SELECT ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin FROM static_pages WHERE ID = ?ID", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", id.ToString());
 
@@ -58,7 +58,7 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT ID, Slug, Title, Body, Updated FROM static_pages WHERE Slug = ?Slug", dbcon))
+                        "SELECT ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin FROM static_pages WHERE Slug = ?Slug", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?Slug", slug);
 
@@ -82,7 +82,7 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT ID, Slug, Title, Body, Updated FROM static_pages ORDER BY Slug ASC", dbcon))
+                        "SELECT ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin FROM static_pages ORDER BY Slug ASC", dbcon))
                 {
                     using (IDataReader reader = cmd.ExecuteReader())
                     {
@@ -102,13 +102,18 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "REPLACE INTO static_pages (ID, Slug, Title, Body, Updated) VALUES (?ID, ?Slug, ?Title, ?Body, ?Updated)", dbcon))
+                        "REPLACE INTO static_pages (ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin) " +
+                        "VALUES (?ID, ?Slug, ?Title, ?Body, ?Updated, ?ShowInNav, ?NavOrder, ?RequiresLogin, ?RequiresAdmin)", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", page.ID.ToString());
                     cmd.Parameters.AddWithValue("?Slug", page.Slug);
                     cmd.Parameters.AddWithValue("?Title", page.Title);
                     cmd.Parameters.AddWithValue("?Body", page.Body);
                     cmd.Parameters.AddWithValue("?Updated", Utils.DateTimeToUnixTime(page.Updated));
+                    cmd.Parameters.AddWithValue("?ShowInNav", page.ShowInNav);
+                    cmd.Parameters.AddWithValue("?NavOrder", page.NavOrder);
+                    cmd.Parameters.AddWithValue("?RequiresLogin", page.RequiresLogin);
+                    cmd.Parameters.AddWithValue("?RequiresAdmin", page.RequiresAdmin);
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -137,7 +142,11 @@ namespace OpenSim.Data.MySQL
                 Slug = reader.GetString(1),
                 Title = reader.GetString(2),
                 Body = reader.GetString(3),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(4)))
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(4))),
+                ShowInNav = Convert.ToBoolean(reader.GetValue(5)),
+                NavOrder = Convert.ToInt32(reader.GetValue(6)),
+                RequiresLogin = Convert.ToBoolean(reader.GetValue(7)),
+                RequiresAdmin = Convert.ToBoolean(reader.GetValue(8))
             };
         }
     }

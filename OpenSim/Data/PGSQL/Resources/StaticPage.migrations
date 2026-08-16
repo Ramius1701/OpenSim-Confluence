@@ -11,3 +11,14 @@ CREATE TABLE IF NOT EXISTS static_pages (
 );
 
 COMMIT;
+
+:VERSION 2
+
+BEGIN;
+
+ALTER TABLE static_pages ADD COLUMN "ShowInNav" smallint NOT NULL DEFAULT 0;
+ALTER TABLE static_pages ADD COLUMN "NavOrder" int NOT NULL DEFAULT 0;
+ALTER TABLE static_pages ADD COLUMN "RequiresLogin" smallint NOT NULL DEFAULT 0;
+ALTER TABLE static_pages ADD COLUMN "RequiresAdmin" smallint NOT NULL DEFAULT 0;
+
+COMMIT;

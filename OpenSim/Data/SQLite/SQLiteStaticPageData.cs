@@ -35,7 +35,7 @@ namespace OpenSim.Data.SQLite
             lock (this)
             {
                 using (SQLiteCommand cmd = new SQLiteCommand(
-                        "SELECT ID, Slug, Title, Body, Updated FROM static_pages WHERE ID = :id", m_conn))
+                        "SELECT ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin FROM static_pages WHERE ID = :id", m_conn))
                 {
                     cmd.Parameters.Add(new SQLiteParameter(":id", id.ToString()));
 
@@ -55,7 +55,7 @@ namespace OpenSim.Data.SQLite
             lock (this)
             {
                 using (SQLiteCommand cmd = new SQLiteCommand(
-                        "SELECT ID, Slug, Title, Body, Updated FROM static_pages WHERE Slug = :slug", m_conn))
+                        "SELECT ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin FROM static_pages WHERE Slug = :slug", m_conn))
                 {
                     cmd.Parameters.Add(new SQLiteParameter(":slug", slug));
 
@@ -77,7 +77,7 @@ namespace OpenSim.Data.SQLite
             lock (this)
             {
                 using (SQLiteCommand cmd = new SQLiteCommand(
-                        "SELECT ID, Slug, Title, Body, Updated FROM static_pages ORDER BY Slug ASC", m_conn))
+                        "SELECT ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin FROM static_pages ORDER BY Slug ASC", m_conn))
                 {
                     using (IDataReader reader = cmd.ExecuteReader())
                     {
@@ -95,13 +95,18 @@ namespace OpenSim.Data.SQLite
             lock (this)
             {
                 using (SQLiteCommand cmd = new SQLiteCommand(
-                        "INSERT OR REPLACE INTO static_pages (ID, Slug, Title, Body, Updated) VALUES (:id, :slug, :title, :body, :updated)", m_conn))
+                        "INSERT OR REPLACE INTO static_pages (ID, Slug, Title, Body, Updated, ShowInNav, NavOrder, RequiresLogin, RequiresAdmin) " +
+                        "VALUES (:id, :slug, :title, :body, :updated, :shownav, :navorder, :reqlogin, :reqadmin)", m_conn))
                 {
                     cmd.Parameters.Add(new SQLiteParameter(":id", page.ID.ToString()));
                     cmd.Parameters.Add(new SQLiteParameter(":slug", page.Slug));
                     cmd.Parameters.Add(new SQLiteParameter(":title", page.Title));
                     cmd.Parameters.Add(new SQLiteParameter(":body", page.Body));
                     cmd.Parameters.Add(new SQLiteParameter(":updated", Utils.DateTimeToUnixTime(page.Updated)));
+                    cmd.Parameters.Add(new SQLiteParameter(":shownav", page.ShowInNav ? 1 : 0));
+                    cmd.Parameters.Add(new SQLiteParameter(":navorder", page.NavOrder));
+                    cmd.Parameters.Add(new SQLiteParameter(":reqlogin", page.RequiresLogin ? 1 : 0));
+                    cmd.Parameters.Add(new SQLiteParameter(":reqadmin", page.RequiresAdmin ? 1 : 0));
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -128,7 +133,11 @@ namespace OpenSim.Data.SQLite
                 Slug = reader.GetString(1),
                 Title = reader.GetString(2),
                 Body = reader.GetString(3),
-                Updated = Utils.UnixTimeToDateTime(System.Convert.ToUInt32(reader.GetValue(4)))
+                Updated = Utils.UnixTimeToDateTime(System.Convert.ToUInt32(reader.GetValue(4))),
+                ShowInNav = System.Convert.ToInt32(reader.GetValue(5)) != 0,
+                NavOrder = System.Convert.ToInt32(reader.GetValue(6)),
+                RequiresLogin = System.Convert.ToInt32(reader.GetValue(7)) != 0,
+                RequiresAdmin = System.Convert.ToInt32(reader.GetValue(8)) != 0
             };
         }
     }
