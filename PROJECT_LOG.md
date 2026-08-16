@@ -6156,3 +6156,23 @@ in), version target confirmed still generating the real
 to the live grid - this is a build-infrastructure correctness fix with
 no runtime behavior change, so it can just sit in source until the next
 real deploy.
+
+### Status update: the 2026-08-11 region-startup hang has not recurred (2026-08-16)
+
+Closing the loop on the "known still-open issue" from the URL-cleanup
+entry above: this whole session involved many region starts/restarts
+(the full-rebuild-and-sync cycles, the land-buy investigation, the
+prebuild.xml regeneration testing) across several hours, plus an
+extended real-viewer session - login, teleport between Var Test Region
+and Welcome Center, weather actively rendering, and a full currency/
+land-purchase transaction all completed successfully. Zero recurrence
+of the hang.
+
+Not claiming it's fixed - its root cause was never conclusively
+identified on 2026-08-11 (DLL mismatches, stale locks, DNS, and
+addin-cache contention were all ruled out without finding the actual
+cause), and nothing this session specifically targeted it. Just an
+honest update on observed behavior: it's no longer blocking anything in
+practice, so README.md's "Known gaps" no longer lists it as the
+top-priority blocker. If it recurs, re-open investigation rather than
+assuming this entry means it's permanently resolved.

@@ -31,18 +31,21 @@ below.
 | Windows build | Successful — full solution build verified clean (0 errors) as of the latest commit |
 | GitHub Actions | `.github/workflows/msbuildnet.yml` present; not yet exercised now that the repo is pushed |
 | Web/Admin UI | Extensively live-verified against a running Robust instance (real HTTP round-trips: login, admin actions, database writes confirmed) — see the note on testing scope below |
-| In-world/scripting/environment work | Build-verified only; live in-world/viewer testing is currently blocked by an open, documented region-startup issue (see PROJECT_LOG.md) |
+| In-world/viewer testing | Live-verified with a real viewer (Firestorm) against a running region: login, teleport between regions, weather rendering, and a full end-to-end currency/land-purchase transaction all confirmed working over an extended live session. An intermittent region-startup hang was tracked as an open blocker for a period (see PROJECT_LOG.md) but has not recurred across many region starts/restarts since, including a full session's worth on 2026-08-16 — its root cause was never conclusively identified, so treat it as currently non-blocking rather than definitively fixed. |
 
 **On "tested" vs. "compiled":** these are two different claims and this
 README used to conflate them. The Web/Admin UI runs on Robust alone and
 has been exercised repeatedly with real curl-driven HTTP sessions —
 login, admin actions, and database state changes confirmed, not just a
-clean build. The LSL/OSSL, Experience Tools, Weather, and physics work
-genuinely has *not* been exercised against a live region with a viewer
-yet, because region startup itself is currently broken for reasons
-unrelated to any of that code (tracked in PROJECT_LOG.md, not yet
-resolved). Don't assume either claim about the other half of the
-codebase.
+clean build. Region startup and basic in-world presence (login,
+teleport, weather, a real currency/land-purchase round-trip) are now
+also live-verified against a real viewer, not just build-verified. That
+said, live verification of *specific* LSL/OSSL functions, Experience
+Tools behavior, and the physics/environment tuning work individually is
+still narrower than "the region runs" — don't read general region
+stability as proof every scripting function or physics change has been
+exercised in-world; those remain build-verified only unless a
+PROJECT_LOG entry says otherwise for that specific piece.
 
 ## Project goals
 
@@ -470,12 +473,15 @@ work continues — don't let them go stale.
 
 **Known gaps, roughly in priority order:**
 
-- Region startup currently hangs partway through, for a cause not yet
-  identified despite extensive troubleshooting — this blocks all
-  in-world/viewer testing (scripting, Experience Tools, Weather,
-  physics) until resolved. Robust itself is unaffected, which is how
-  the Web/Admin UI and native services above were live-verified despite
-  this.
+- An intermittent region-startup hang was tracked here as the top
+  blocker for a period — as of 2026-08-16, it has not recurred across
+  an extended live session's worth of region starts/restarts (real
+  viewer login, teleport, weather, and a full currency/land-purchase
+  transaction all confirmed working), so it's no longer treated as
+  actively blocking. Its root cause was never conclusively identified
+  though, so this isn't a confirmed fix - just an update on current
+  observed behavior. Watch for recurrence rather than assuming it's
+  gone for good.
 - A temporary/auto-expiring account ban only self-clears via the web
   login or admin-page paths right now, not the real grid/viewer login
   (`LLLoginService`) on its own timer — a resident who never touches
