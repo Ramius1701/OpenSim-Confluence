@@ -6334,3 +6334,54 @@ existed in this grid's own deployed copy. Needs one more natural restart
 to confirm the fix holds (no more sub-minute weather changes), but the
 diagnosis itself is solid - this was never an interval-math bug in
 `WeatherModule.cs`.
+
+## Ported the two deferred Gunthar HG-identity commits (2026-08-16)
+
+These sat in README.md's roadmap as "deliberately deferred as warranting
+dedicated review" since the original batch work - never actually
+reviewed until now. Traced both in Gunthar's own history: they're not
+two independent fixes, the second (`4c0d5e1e58`, 2026-06-04) is a
+same-week refinement of the first (`9d492061ab`, 2026-06-02), both
+touching the same `LLLoginService.SetServiceURLs` method - ported the
+combined final state as one change rather than applying two
+sequential diffs.
+
+**The real problem, and why it's directly relevant to this grid
+specifically:** this deployment's own hostname is dynamic DNS
+(confirmed earlier this session, during the land-buy investigation).
+The pre-port code only ever repaired a HomeURI/GatekeeperURI that was
+completely *missing* - once a value was stored, even a stale one from
+before a DNS change, nothing ever touched it again. A resident who
+logged in once, then the grid's IP changed, would keep exporting the
+old `@IP:port` identity to every foreign Hypergrid they visited,
+indefinitely, with no way to self-correct.
+
+**Three files changed, matching Gunthar's original split:**
+- `LLLoginService.cs`: `SetServiceURLs` now does a case-insensitive
+  *equality* check against the canonical HomeURI/GatekeeperURI, not
+  just a missing-value check - fixes stale-but-present values on every
+  local login. Also stopped early-returning when `account.ServiceURLs`
+  is null (a brand-new local account), which is what broke standalone
+  HG login for freshly-created accounts in the first place.
+- `UserAgentService.cs`: new `ApplyCanonicalHomeURI`, called on every
+  outbound Hypergrid launch (`LoginAgentToGrid`) - rewrites the agent
+  circuit's ServiceURLs to canonical values before the traveler ever
+  reaches a foreign grid, independent of whether their stored account
+  data has been touched by a local login recently.
+- `UserAccountService.cs`: new `repair user service urls <first> <last>
+  [<home-uri>]` console command - manual counterpart for an admin to
+  fix an account that hasn't logged in since a stale identity was
+  stored, without waiting for the resident to do it themselves.
+
+Built clean across all three affected projects (`OpenSim.Services.
+LLLoginService`, `OpenSim.Services.HypergridService`, `OpenSim.Services.
+UserAccountService`), 0 errors each - no interface touched, all
+internal method bodies plus one new console command on existing
+classes. Deployment blocked (dlls locked, Robust still running) -
+needs the next restart. Once up: `SetServiceURLs`/
+`ApplyCanonicalHomeURI` will exercise automatically on any normal
+login/HG teleport, no special test needed. The `repair user service
+urls` console command is Robust-hosted, same limitation as UserAlias's
+write commands - no WebConsole-relay equivalent for Robust's own
+console, so that specific piece stays unverified until there's a way
+to reach it directly.
