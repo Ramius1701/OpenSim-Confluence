@@ -124,10 +124,16 @@ and FEATURES_VS_MASTER.md.
 Services under `OpenSim/Services/*`, backed by MySQL/PostgreSQL/SQLite
 data layers, replacing what would otherwise be external dependencies:
 
-- **Currency Service** — a native `IMoneyModule` implementation
-  (`ConfluenceCurrencyModule`) that can serve as the default economy
-  instead of requiring Gloebit, MoneyServer, or a third-party service,
-  with the same ledger backing the Web UI's transaction reporting.
+- **Currency Service** — **in-world virtual currency only**, not a
+  real-world payment/financial service. A native `IMoneyModule`
+  implementation (`ConfluenceCurrencyModule`) that can serve as the
+  default economy instead of requiring Gloebit, MoneyServer, or a
+  third-party service, with the same ledger backing the Web UI's
+  transaction reporting. The same "in-world currency, not a financial
+  product" scope applies equally to the classic MoneyServer integration
+  described under "MoneyServer enhancements" below — whichever one a
+  grid owner enables, both are strictly in-world virtual currency
+  systems.
 - **Search Service** — a native `ISearchModule`
   (`ConfluenceSearchModule`) replacing dependence on an external
   XML-RPC search server (the addon-modules `OpenSimSearch` client
@@ -364,6 +370,11 @@ For every in-world chat command available to avatars/estate managers across
 the whole repo (not just add-ons), see [`INWORLD_COMMANDS.md`](INWORLD_COMMANDS.md).
 
 ## MoneyServer enhancements
+
+**In-world virtual currency only**, same scope note as the native
+Currency Service above — this is not a real-world payment or financial
+service, just an alternate `IMoneyModule` implementation for grid
+owners who prefer it over the native one.
 
 The included MoneyServer integration provides:
 

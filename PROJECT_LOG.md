@@ -50,6 +50,13 @@ from renaming the source repo and wasn't part of this pass.
   via `.ini` config wherever that's reasonable - grid owners choosing
   what runs on their own grid is a design requirement, not optional
   polish.
+- "Currency"/"economy" anywhere in this project - the native
+  ConfluenceCurrencyModule/CurrencyService or the classic MoneyServer
+  integration, whichever a grid owner enables - means in-world virtual
+  currency only, never a real-world payment/financial service. Keep
+  that scope explicit in anything written about either one (see
+  README.md's "Native economy, search, and grid services" and
+  "MoneyServer enhancements" sections).
 
 ---
 
