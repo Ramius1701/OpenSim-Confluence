@@ -57,6 +57,16 @@ from renaming the source repo and wasn't part of this pass.
   that scope explicit in anything written about either one (see
   README.md's "Native economy, search, and grid services" and
   "MoneyServer enhancements" sections).
+- Search is core, not an optional/toggleable feature like Currency or
+  the content-management services - a working grid search is baseline
+  functionality every grid owner needs, per the user (2026-08-16):
+  search has been a real, recurring pain point for OpenSim users since
+  the platform's inception, reliant by default on an external XML-RPC
+  server most grid owners never stand up. Don't add an Enabled=false
+  path to ConfluenceSearchModule or the Robust SearchService the way
+  the other custom services get one - the only real choice is *which*
+  backend answers search (native vs. the OpenSimSearch addon pointing
+  at an external server), not whether search exists at all.
 
 ---
 

@@ -134,13 +134,22 @@ data layers, replacing what would otherwise be external dependencies:
   described under "MoneyServer enhancements" below — whichever one a
   grid owner enables, both are strictly in-world virtual currency
   systems.
-- **Search Service** — a native `ISearchModule`
-  (`ConfluenceSearchModule`) replacing dependence on an external
-  XML-RPC search server (the addon-modules `OpenSimSearch` client
-  still exists for anyone who wants to point at one anyway). Answers
-  both the in-world Directory floater (People/Places/Events/
-  Classifieds/Groups tabs) and the Web UI's search pages from the same
-  backend, including trending-query tracking and autocomplete.
+- **Search Service** — treated as **core, not an optional add-on**: a
+  working grid search is baseline functionality every grid owner needs,
+  the way it always should have been in OpenSim rather than something
+  requiring a separately-deployed external server. Search has been a
+  real, recurring pain point for OpenSim users since the platform's
+  inception — reliant by default on an external XML-RPC server most
+  grid owners never stand up, leaving Directory search silently empty
+  out of the box. A native `ISearchModule` (`ConfluenceSearchModule`)
+  answers both the in-world
+  Directory floater (People/Places/Events/Classifieds/Groups tabs) and
+  the Web UI's search pages from the same backend, including
+  trending-query tracking and autocomplete. The addon-modules
+  `OpenSimSearch` client still exists for anyone who specifically wants
+  to point at a separately-deployed compatible search server instead,
+  but that's a choice of *which* backend answers search, not whether
+  search exists at all.
 - **Events, News, Grid Settings, Static Page, and Support Ticket
   services** — the content and configuration backends the Web UI's
   admin console manages.
