@@ -6176,3 +6176,54 @@ honest update on observed behavior: it's no longer blocking anything in
 practice, so README.md's "Known gaps" no longer lists it as the
 top-priority blocker. If it recurs, re-open investigation rather than
 assuming this entry means it's permanently resolved.
+
+## Future opportunity (logged, not started): real PBR terrain support (2026-08-16)
+
+Came out of an offhand observation about OpenSim's rendering limitations
+(clouds don't shadow the sun, no moon-phase lighting) - not fixable, both
+are client rendering engine limitations shared with real SL itself, not
+something server-side code controls. But it led to a real, verified
+finding worth acting on later.
+
+**Confirmed genuinely unclaimed territory, not assumed:** checked three
+separate codebases - this repo's own merged-upstream tree (`origin/master`
+= real `opensim/opensim`), Gunthar's original fork (`opensim-vanilla`),
+and Tranquillity - for the actual capability backend real PBR terrain
+editing needs. `SimulatorFeaturesModule.cs` echoes back
+`"PBRTerrainEnabled": true`, but only because it's parroting a flag the
+*viewer* itself sets during capability negotiation (`VTPBR`/`VETPBR`) -
+not a real feature announcement. The capability a viewer actually calls
+to read/write PBR terrain composition data is `"ModifyRegion"`
+(confirmed against Firestorm's own `llpbrterrainfeatures.cpp`, which is
+built from the same source tree LL ships for real SL - `queueQuery`/
+`queueModify` both call `region.getCapability("ModifyRegion")`). Searched
+all three codebases for that capability name: zero matches, anywhere. If
+a viewer tried to actually edit PBR terrain against any of these grids
+today, the request would just fail - the "enabled" flag is misleading.
+
+**Why this matters, per the user:** Second Life itself already supports
+PBR materials and glTF, with SLua (next-gen Lua-based scripting,
+supplementing/replacing LSL) reportedly shipping soon if not already -
+this is the direction the platform is actually heading, not a
+speculative bet. Building real `ModifyRegion`/PBR-terrain support before
+any other OpenSim-family grid does would be a genuine, verified
+competitive advantage, not a "some other fork already has this" cherry-pick
+situation - nobody's built it yet, as far as three real codebases show.
+
+**Scope, for when this gets picked up:** a substantial from-scratch
+build, not a port - comparable in size to Experience Tools or the native
+currency service. Needs: understanding the exact JSON schema Firestorm's
+`LLModifyRegion`/`LLPBRTerrainFeatures` sends and expects, server-side
+storage design for per-terrain-layer PBR material (glTF) assignments,
+and a real `ModifyRegion` capability handler wired into
+`SimulatorFeaturesModule`'s existing (currently just echoed) flag. Not
+started - logged here so it survives to a future session rather than
+being lost to this conversation.
+
+Per the user: real PBR/glTF terrain support alone would put Confluence
+"way ahead of opensim-master" - not an incremental nice-to-have, a
+direct hit on the project's actual mission (stay ahead of upstream by
+shipping features the ecosystem has proven valuable but core
+OpenSimulator hasn't). Same category as the Experience Tools/Abuse
+Reports/Display Names precedent, and worth treating with that priority
+when it does get picked up.
