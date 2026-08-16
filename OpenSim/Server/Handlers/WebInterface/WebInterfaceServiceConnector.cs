@@ -3710,62 +3710,13 @@ namespace OpenSim.Server.Handlers.WebInterface
         // (default 0) at login, so a negative level blocks login today with
         // no change needed there - these constants just give the two
         // negative values a clear, consistent meaning across the admin UI.
-        private const int BannedUserLevel = -1;
+        // BannedUserLevel, the ban-expiry storage, and the clear-if-expired
+        // logic live in the shared AccountBanHelper (OpenSim.Services.
+        // Interfaces) now, not here - LLLoginService needs the exact same
+        // check for the real grid/viewer login path, which didn't have it
+        // before (see PROJECT_LOG.md). DeletedUserLevel has no expiry
+        // concept and stays local, since only this admin UI needs it.
         private const int DeletedUserLevel = -2;
-
-        // Timed-ban expiry, same reused-userdata-table pattern as the
-        // partner proposal tags above (see PartnerIncomingTag) - one more
-        // UserId+TagId slot, this time holding a Unix timestamp string
-        // instead of a UUID. Zero/absent means "no expiry" (permanent ban).
-        private static readonly UUID BanExpiryTag = new UUID("9b1f9b1a-0000-4a00-8000-000000000003");
-
-        private DateTime? GetBanExpiry(UUID userId)
-        {
-            if (m_UserProfilesService == null)
-                return null;
-
-            UserAppData data = new UserAppData { UserId = userId.ToString(), TagId = BanExpiryTag.ToString() };
-            string result = string.Empty;
-            m_UserProfilesService.RequestUserAppData(ref data, ref result);
-
-            return long.TryParse(data.DataVal, out long unixSeconds) && unixSeconds > 0
-                    ? DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime
-                    : (DateTime?)null;
-        }
-
-        private void SetBanExpiry(UUID userId, DateTime? expiry)
-        {
-            if (m_UserProfilesService == null)
-                return;
-
-            UserAppData data = new UserAppData { UserId = userId.ToString(), TagId = BanExpiryTag.ToString() };
-            string result = string.Empty;
-            m_UserProfilesService.RequestUserAppData(ref data, ref result);
-            data.DataKey = "BanExpiry";
-            data.DataVal = expiry.HasValue ? new DateTimeOffset(expiry.Value, TimeSpan.Zero).ToUnixTimeSeconds().ToString() : "0";
-            m_UserProfilesService.SetUserAppData(data, ref result);
-        }
-
-        // Called wherever an account's UserLevel is read for a login/admin
-        // decision - a temp-banned account whose timer has run out reverts
-        // to Active on next check rather than needing an admin to manually
-        // unban it. Returns true if it just cleared an expired ban (callers
-        // that already loaded the account's old UserLevel into a local
-        // should re-check after calling this).
-        private bool ClearExpiredBan(UserAccount account)
-        {
-            if (account == null || account.UserLevel != BannedUserLevel || m_UserAccountService == null)
-                return false;
-
-            DateTime? expiry = GetBanExpiry(account.PrincipalID);
-            if (expiry == null || expiry.Value > DateTime.UtcNow)
-                return false;
-
-            account.UserLevel = 0;
-            m_UserAccountService.StoreUserAccount(account);
-            SetBanExpiry(account.PrincipalID, null);
-            return true;
-        }
 
         private void HandleLandSearch(IOSHttpRequest request, IOSHttpResponse response)
         {
@@ -5966,16 +5917,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 else
                 {
-                    ClearExpiredBan(account);
+                    AccountBanHelper.ClearExpiredBan(account, m_UserAccountService, m_UserProfilesService);
 
                     string created = DateTimeOffset.FromUnixTimeSeconds(account.Created).UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
                     string balance = m_CurrencyService != null
                             ? m_CurrencyService.GetBalance(account.PrincipalID).ToString()
                             : "n/a";
 
-                    DateTime? banExpiry = account.UserLevel == BannedUserLevel ? GetBanExpiry(account.PrincipalID) : null;
+                    DateTime? banExpiry = account.UserLevel == AccountBanHelper.BannedUserLevel ? AccountBanHelper.GetBanExpiry(m_UserProfilesService, account.PrincipalID) : null;
                     string statusLabel = account.UserLevel == DeletedUserLevel ? "Deleted"
-                            : account.UserLevel == BannedUserLevel
+                            : account.UserLevel == AccountBanHelper.BannedUserLevel
                                 ? (banExpiry.HasValue ? "Banned until " + banExpiry.Value.ToString("yyyy-MM-dd HH:mm") + " UTC" : "Banned")
                             : "Active";
 
@@ -6042,14 +5993,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "</form>"
                             + "<h2>Ban / Unban</h2>"
                             + "<p class=\"news-meta\">A banned account fails login immediately (same check the grid-wide minimum login level already uses), without touching its password or data. "
-                            + "A timed ban auto-clears back to Active the next time this page or the login form checks that account - it does not (yet) reach the real grid/viewer login path on its own timer.</p>"
+                            + "A timed ban auto-clears back to Active the next time the account tries to log in - including the real grid/viewer login, not just this page or the web login form.</p>"
                             + "<form method=\"post\" action=\"" + BasePath + "/admin/users/set-level\">"
                             + "<input type=\"hidden\" name=\"principal_id\" value=\"" + account.PrincipalID + "\">"
-                            + "<input type=\"hidden\" name=\"user_level\" value=\"" + (account.UserLevel == BannedUserLevel ? "0" : BannedUserLevel.ToString()) + "\">"
-                            + (account.UserLevel == BannedUserLevel
+                            + "<input type=\"hidden\" name=\"user_level\" value=\"" + (account.UserLevel == AccountBanHelper.BannedUserLevel ? "0" : AccountBanHelper.BannedUserLevel.ToString()) + "\">"
+                            + (account.UserLevel == AccountBanHelper.BannedUserLevel
                                 ? string.Empty
                                 : "<label>Ban duration (hours, blank = permanent): <input type=\"number\" name=\"ban_hours\" min=\"1\"></label> ")
-                            + "<button type=\"submit\">" + (account.UserLevel == BannedUserLevel ? "Unban this user" : "Ban this user") + "</button>"
+                            + "<button type=\"submit\">" + (account.UserLevel == AccountBanHelper.BannedUserLevel ? "Unban this user" : "Ban this user") + "</button>"
                             + "</form>"
                             + presenceBlock
                             + (account.UserLevel != DeletedUserLevel
@@ -6175,9 +6126,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                                 ? "User level updated."
                                 : "Failed to update user level.";
 
-                        if (userLevel == BannedUserLevel && int.TryParse(FormValue(form, "ban_hours"), out int banHours) && banHours > 0)
+                        if (userLevel == AccountBanHelper.BannedUserLevel && int.TryParse(FormValue(form, "ban_hours"), out int banHours) && banHours > 0)
                         {
-                            SetBanExpiry(principalID, DateTime.UtcNow.AddHours(banHours));
+                            AccountBanHelper.SetBanExpiry(m_UserProfilesService, principalID, DateTime.UtcNow.AddHours(banHours));
                             message = "User banned until " + DateTime.UtcNow.AddHours(banHours).ToString("yyyy-MM-dd HH:mm") + " UTC.";
                         }
                         else
@@ -6185,7 +6136,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             // Any other level change (unban, permanent ban,
                             // manual level edit) clears a stale expiry so it
                             // can't resurrect a ban that was already lifted.
-                            SetBanExpiry(principalID, null);
+                            AccountBanHelper.SetBanExpiry(m_UserProfilesService, principalID, null);
                         }
                     }
                 }
@@ -8216,14 +8167,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             // LLLoginService blocks any UserLevel below its m_MinLoginLevel
             // (default 0) for the real grid/viewer login - this is the same
             // check for the web dashboard's own separate login path, so a
-            // banned/deleted account (see BannedUserLevel/DeletedUserLevel)
-            // can't still use self-service pages while locked out in-world.
-            // ClearExpiredBan here is what actually lifts a timed ban once
-            // its timer runs out - see that method's comment for the real
-            // limitation (this only clears it in the DB on next check, it
-            // doesn't reach into LLLoginService's own separate viewer-login
-            // check on a timer of its own).
-            ClearExpiredBan(account);
+            // banned/deleted account (see AccountBanHelper.BannedUserLevel/
+            // DeletedUserLevel) can't still use self-service pages while
+            // locked out in-world. AccountBanHelper.ClearExpiredBan here is
+            // what actually lifts a timed ban once its timer runs out -
+            // LLLoginService calls the exact same helper on its own login
+            // path now too, so this is no longer the only path that can
+            // self-clear an expired ban.
+            AccountBanHelper.ClearExpiredBan(account, m_UserAccountService, m_UserProfilesService);
             if (account.UserLevel < 0)
                 return "This account has been suspended. Contact a grid administrator.";
 

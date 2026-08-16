@@ -159,6 +159,15 @@ data layers, replacing what would otherwise be external dependencies:
 
 ## Moderation and access control
 
+- Temporary/timed account bans self-clear on their own once expired,
+  regardless of which login path a resident uses — the real
+  grid/viewer login (`LLLoginService`) and the web dashboard/admin
+  login both check and clear an expired ban the same way
+  (`AccountBanHelper`, shared between them), rather than only the web
+  paths self-clearing while a resident who never touches the web UI
+  stayed blocked past their ban's expiry until an admin manually
+  unbanned them. Live-verified via a real login attempt through the
+  actual `LLLoginService` XML-RPC path.
 - Grid-wide viewer ban, by IP range and client signature.
 - Sim protection: opt-in FPS auto-mitigation under load.
 - On-demand/soft-start regions.
@@ -492,11 +501,6 @@ work continues — don't let them go stale.
   though, so this isn't a confirmed fix - just an update on current
   observed behavior. Watch for recurrence rather than assuming it's
   gone for good.
-- A temporary/auto-expiring account ban only self-clears via the web
-  login or admin-page paths right now, not the real grid/viewer login
-  (`LLLoginService`) on its own timer — a resident who never touches
-  the web UI stays blocked past their ban's expiry until an admin
-  manually unbans them.
 - The grid-wide Groups admin page's populated list/toggle/delete paths
   are code-reviewed and build clean but unverified against real group
   data — no groups existed on the test grid used for this round's

@@ -6619,3 +6619,75 @@ process - `Owner: Test User`, `Sale Price: 500`, `Flags: ...ForSale...`
 - that it loaded the corrected state fresh rather than clobbering it
 again. This time it's actually persistent, since nothing holds a
 stale in-memory copy anymore.
+
+### Temp-ban auto-expiry fix - LLLoginService now self-clears too, live-verified
+
+Picked back up the last README-listed gap: a temporary/timed account
+ban only self-cleared via the web dashboard login or admin user-detail
+page (`WebInterfaceServiceConnector.ClearExpiredBan`, checking a
+`UserAppData`-stored expiry timestamp against `UserAccount.UserLevel
+== -1`). `LLLoginService` - the real grid/viewer login - had no
+awareness of the expiry concept at all: it only ever compared
+`UserLevel < MinLoginLevel`, so a resident who never touched the web
+UI stayed blocked past their ban's expiry until an admin manually
+unbanned them.
+
+Extracted the ban-expiry constant/storage/clear-logic
+(`BanExpiryTag`, `GetBanExpiry`, `SetBanExpiry`, `ClearExpiredBan`)
+out of `WebInterfaceServiceConnector.cs` into a new shared static
+class, `AccountBanHelper` (`OpenSim/Services/Interfaces/
+AccountBanHelper.cs`) - `OpenSim.Services.Interfaces` was the right
+home since it only needs types from itself and `OpenSim.Framework`
+(the `UserAppData` POCO), and both `WebInterfaceServiceConnector`'s
+project and `LLLoginService`'s project already reference it, so no
+new project references were needed anywhere (avoiding the
+`GenerateGitVersionInfo`/prebuild-regen fragility that comes with
+touching `.csproj` files). Wired `IUserProfilesService` into
+`LLLoginService` (it never had one before - loaded the same way
+`WebInterfaceServiceConnector` already does, `[UserProfilesService]`
+section's `LocalServiceModule` key, 2-arg constructor), and call
+`AccountBanHelper.ClearExpiredBan(account, m_UserAccountService,
+m_UserProfilesService)` right before the existing `UserLevel <
+m_MinLoginLevel` check in `Login()` - a no-op for a permanent ban, a
+non-banned account, or an unconfigured `UserProfilesService`.
+
+Full solution build (`dotnet build OpenSim.sln`) came back clean - 0
+errors, 0 warnings - worth doing given the change touched
+`OpenSim.Services.Interfaces`, one of the most widely-referenced
+projects in the tree, not just the two call sites that needed it.
+
+Live-verified via a real XML-RPC `login_to_simulator` call against
+Robust's login endpoint (not just a web-page click) - chose this
+because the ban check in `LLLoginService.Login()` runs *before*
+password authentication, so a deliberately wrong password is enough
+to distinguish the two failure reasons the response carries:
+`"presence"` (`LoginBlockedProblem`, blocked by user level) vs.
+`"key"` (`UserProblem`, bad credentials) - no need to know the real
+password to prove which check gate a login attempt actually reached.
+Three-step test against Test User's real account:
+1. **Baseline** - not banned, wrong password: `reason: key`, as
+   expected.
+2. **Negative control** - `UserLevel` set to -1 with a ban-expiry
+   timestamp an hour in the future: `reason: presence` - confirms the
+   gate itself blocks correctly.
+3. **The actual fix** - same banned account, expiry backdated an hour
+   into the past (still `UserLevel = -1` in the DB going in): the
+   login attempt came back `reason: key`, not `presence` - meaning
+   `ClearExpiredBan` ran and let it past the level check on this one
+   real grid-login attempt. Confirmed via direct DB query immediately
+   after: `UserLevel` back to `0` and the `BanExpiry` `userdata` row
+   cleared to `"0"` - no manual admin action, no web page touched,
+   just the one XML-RPC login call. Account was already back to a
+   clean, unbanned state afterward, so nothing needed reverting.
+
+Deployed `OpenSim.Services.Interfaces.dll`, `OpenSim.Services.
+LLLoginService.dll`, and the already-updated `OpenSim.Server.
+Handlers.dll` (bundling this fix with the still-undeployed
+region-restart-button fix from earlier) to the live Robust install -
+Robust-only, no region-side copies of any of these three exist. Hit
+one more real (if mundane) snag deploying: two of the three DLLs kept
+reporting "Device or resource busy" even after confirming `Robust.exe`
+was fully stopped - turned out to be leftover `dotnet build`
+server/compiler processes (MSBuild node reuse, VBCSCompiler) from this
+session's own builds still holding the files open; `dotnet
+build-server shutdown` plus a short wait cleared it.

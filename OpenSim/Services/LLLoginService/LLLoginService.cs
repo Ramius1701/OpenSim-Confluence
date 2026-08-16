@@ -68,6 +68,7 @@ namespace OpenSim.Services.LLLoginService
         protected IAvatarService m_AvatarService;
         protected IUserAgentService m_UserAgentService;
         protected IAccessControlService m_AccessControlService;
+        protected IUserProfilesService m_UserProfilesService;
 
         protected GatekeeperServiceConnector m_GatekeeperConnector;
 
@@ -244,6 +245,22 @@ namespace OpenSim.Services.LLLoginService
                 m_UserAgentService = ServerUtils.LoadPlugin<IUserAgentService>(agentService, args);
             if (accessControlService != string.Empty)
                 m_AccessControlService = ServerUtils.LoadPlugin<IAccessControlService>(accessControlService, args);
+
+            // Not required - only used so a timed account ban can self-clear
+            // on the real grid/viewer login the same way it already does on
+            // the web dashboard/admin login (AccountBanHelper.ClearExpiredBan
+            // in Login() below). Same [UserProfilesService] LocalServiceModule
+            // and 2-arg (config, configName) constructor shape
+            // WebInterfaceServiceConnector already uses for this service -
+            // its concrete implementation doesn't take the shared 1-arg
+            // (config) constructor everything else here uses.
+            IConfig userProfilesSection = config.Configs["UserProfilesService"];
+            if (userProfilesSection != null)
+            {
+                string userProfilesDll = userProfilesSection.GetString("LocalServiceModule", string.Empty);
+                if (!string.IsNullOrEmpty(userProfilesDll))
+                    m_UserProfilesService = ServerUtils.LoadPlugin<IUserProfilesService>(userProfilesDll, new object[] { config, "UserProfilesService" });
+            }
 
             // Get the Hypergrid inventory service (exists only if Hypergrid is enabled)
             string hgInvServicePlugin = m_LoginServerConfig.GetString("HGInventoryServicePlugin", string.Empty);
@@ -444,6 +461,17 @@ namespace OpenSim.Services.LLLoginService
                         "[LLOGIN SERVICE]: Login failed for {0} {1}, reason: user not found", firstName, lastName);
                     return LLFailedLoginResponse.UserProblem;
                 }
+
+                // A timed ban (WebInterfaceServiceConnector's admin "Ban /
+                // Unban" page) stores its expiry via AccountBanHelper, not a
+                // change LLLoginService would otherwise ever see - without
+                // this, an expired temp ban only self-cleared via the web
+                // login or admin pages, so a resident who never touched the
+                // web UI stayed blocked past the ban's expiry until an admin
+                // manually unbanned them. No-op for a permanent ban, an
+                // account that isn't banned, or if UserProfilesService isn't
+                // configured.
+                AccountBanHelper.ClearExpiredBan(account, m_UserAccountService, m_UserProfilesService);
 
                 if (account.UserLevel < m_MinLoginLevel)
                 {
