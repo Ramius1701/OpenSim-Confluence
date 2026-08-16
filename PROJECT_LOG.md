@@ -6402,3 +6402,17 @@ completely *missing* value and would have left this stale-but-present
 one untouched forever. `ApplyCanonicalHomeURI` (the Hypergrid-travel
 half) remains unverified - would need an actual HG teleport, not just
 a local login, to exercise.
+
+**`ApplyCanonicalHomeURI` also live-verified - the user did a real HG
+round trip.** Logged: `UserAgentService` request to launch Test User to
+a genuine foreign grid (`alternatemetaverse.com:8002`), then back home
+to `holodeckgrid.ddns.net`. Zero errors or exceptions the entire way -
+`ApplyCanonicalHomeURI` executed on a real outbound launch without
+breaking anything. The account was already correct going in (from the
+local-login test above), so this didn't produce a fresh "stale value
+caught" moment on this specific code path, but confirmed
+`ServiceURLs` stayed correct on both ends of the trip and the new code
+runs clean on genuine Hypergrid travel - same proven comparison logic
+as the local-login half, just applied to `AgentCircuitData` instead of
+the account record. Both halves of this port are now live-verified,
+not just build-verified.
