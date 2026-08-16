@@ -6177,53 +6177,75 @@ practice, so README.md's "Known gaps" no longer lists it as the
 top-priority blocker. If it recurs, re-open investigation rather than
 assuming this entry means it's permanently resolved.
 
-## Future opportunity (logged, not started): real PBR terrain support (2026-08-16)
+## Future opportunity (logged, not started): real PBR terrain support + SLua (2026-08-16)
 
 Came out of an offhand observation about OpenSim's rendering limitations
 (clouds don't shadow the sun, no moon-phase lighting) - not fixable, both
 are client rendering engine limitations shared with real SL itself, not
 something server-side code controls. But it led to a real, verified
-finding worth acting on later.
+finding worth acting on later, refined twice over the course of the
+conversation as more evidence came in - final accurate picture below.
 
-**Confirmed genuinely unclaimed territory, not assumed:** checked three
-separate codebases - this repo's own merged-upstream tree (`origin/master`
-= real `opensim/opensim`), Gunthar's original fork (`opensim-vanilla`),
-and Tranquillity - for the actual capability backend real PBR terrain
-editing needs. `SimulatorFeaturesModule.cs` echoes back
+**PBR materials on objects: already implemented, not a gap.** Checked
+`OpenSim/Region/OptionalModules/Materials/MaterialsModule.cs` - the
+`RenderMaterials` capability already accepts a `gltf_json` field per
+prim face (`side`/texture index) and stores it on the object's shape
+data. This is real, working object-level PBR material assignment,
+already in Confluence's tree. Traced its origin: diffed this file
+against Gunthar's own checkout (`opensim-vanilla`) - only 6 lines
+different across the whole 1,477-line file, and the `PRIM_GLTF_*`
+constants backing it trace to a real 2024 UbitUmarov commit (genuine
+upstream OpenSim core, not Gunthar-specific). So "Gunthar tried to do
+work with glTF" turned out to mean this same already-merged code, not
+separate unclaimed work sitting in his fork - correcting the initial
+assumption that his attempt was something new to cherry-pick.
+
+**PBR *terrain* materials: confirmed genuinely unclaimed, this is the
+real gap.** Checked three separate codebases - this repo's own
+merged-upstream tree (`origin/master` = real `opensim/opensim`),
+Gunthar's fork, and Tranquillity - for the actual capability backend
+real PBR terrain editing needs. `SimulatorFeaturesModule.cs` echoes back
 `"PBRTerrainEnabled": true`, but only because it's parroting a flag the
 *viewer* itself sets during capability negotiation (`VTPBR`/`VETPBR`) -
 not a real feature announcement. The capability a viewer actually calls
 to read/write PBR terrain composition data is `"ModifyRegion"`
-(confirmed against Firestorm's own `llpbrterrainfeatures.cpp`, which is
-built from the same source tree LL ships for real SL - `queueQuery`/
+(confirmed against Firestorm's own `llpbrterrainfeatures.cpp`, built
+from the same source tree LL ships for real SL - `queueQuery`/
 `queueModify` both call `region.getCapability("ModifyRegion")`). Searched
 all three codebases for that capability name: zero matches, anywhere. If
 a viewer tried to actually edit PBR terrain against any of these grids
 today, the request would just fail - the "enabled" flag is misleading.
+So: object materials, done; terrain materials, nothing, anywhere.
 
-**Why this matters, per the user:** Second Life itself already supports
-PBR materials and glTF, with SLua (next-gen Lua-based scripting,
-supplementing/replacing LSL) reportedly shipping soon if not already -
-this is the direction the platform is actually heading, not a
-speculative bet. Building real `ModifyRegion`/PBR-terrain support before
-any other OpenSim-family grid does would be a genuine, verified
-competitive advantage, not a "some other fork already has this" cherry-pick
-situation - nobody's built it yet, as far as three real codebases show.
+**SLua: confirmed real and currently live, not speculative.** User
+provided the actual source -
+[LL's official announcement](https://community.secondlife.com/news/featured-news/announcing-the-slua-open-beta-modern-scripting-comes-to-second-life-r11237/),
+December 2, 2025: SLua is a modern scripting language built on Luau
+(Roblox's Lua variant), in open beta on the SL production grid since
+that date - ~8.5 months live as of this session. Faster execution than
+LSL/Mono, ~50% less memory, native tables/dictionaries, dynamic event
+subscription (`LLEvents`), multiple independent timers (`LLTimers`),
+coroutines, native JSON. Full LSL-knowledge compatibility, not a
+replacement forcing a rewrite. No evidence found of any OpenSim fork
+(checked the same three codebases) having touched this at all - a
+second, likely even larger, genuinely unclaimed opportunity alongside
+PBR terrain.
 
-**Scope, for when this gets picked up:** a substantial from-scratch
-build, not a port - comparable in size to Experience Tools or the native
-currency service. Needs: understanding the exact JSON schema Firestorm's
-`LLModifyRegion`/`LLPBRTerrainFeatures` sends and expects, server-side
-storage design for per-terrain-layer PBR material (glTF) assignments,
-and a real `ModifyRegion` capability handler wired into
-`SimulatorFeaturesModule`'s existing (currently just echoed) flag. Not
-started - logged here so it survives to a future session rather than
-being lost to this conversation.
+**Why this matters, per the user:** this alone would put Confluence "way
+ahead of opensim-master" - not an incremental nice-to-have, a direct hit
+on the project's actual mission (stay ahead of upstream by shipping
+features the ecosystem has proven valuable but core OpenSimulator
+hasn't). Same category as the Experience Tools/Abuse Reports/Display
+Names precedent.
 
-Per the user: real PBR/glTF terrain support alone would put Confluence
-"way ahead of opensim-master" - not an incremental nice-to-have, a
-direct hit on the project's actual mission (stay ahead of upstream by
-shipping features the ecosystem has proven valuable but core
-OpenSimulator hasn't). Same category as the Experience Tools/Abuse
-Reports/Display Names precedent, and worth treating with that priority
-when it does get picked up.
+**Scope, for when either gets picked up:** both are substantial
+from-scratch builds, not ports - each comparable in size to Experience
+Tools or the native currency service, likely bigger for SLua (a second
+scripting VM/runtime, not just a capability handler). PBR terrain needs:
+understanding the exact JSON schema Firestorm's `LLModifyRegion`/
+`LLPBRTerrainFeatures` sends and expects, server-side storage design for
+per-terrain-layer PBR material (glTF) assignments, and a real
+`ModifyRegion` capability handler wired into `SimulatorFeaturesModule`'s
+existing (currently just echoed) flag. SLua needs its own investigation
+pass before scoping - not started. Both logged here so they survive to
+a future session rather than being lost to this conversation.

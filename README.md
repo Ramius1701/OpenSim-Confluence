@@ -520,18 +520,29 @@ work continues — don't let them go stale.
   command and a standalone-HG-login HomeURI repair, both touching
   `LLLoginService.cs`) were deliberately deferred as warranting
   dedicated review rather than batch inclusion — not yet started.
-- **Real PBR/glTF terrain support** — genuinely unclaimed territory,
-  verified rather than assumed: the `"ModifyRegion"` capability real PBR
-  terrain editing needs doesn't exist in this repo's own merged-upstream
-  tree, Gunthar's fork, or Tranquillity. `SimulatorFeaturesModule.cs`
-  currently echoes `PBRTerrainEnabled: true` only because it's parroting
-  a flag the viewer itself sets, not because anything backs it — the
-  capability request fails today on all three. Second Life already
-  supports PBR/glTF; building the real capability backend first would be
-  a genuine competitive edge, not a port from anywhere. Substantial
-  from-scratch build (comparable to Experience Tools or the native
-  currency service) — logged, not started. See PROJECT_LOG.md for the
-  full investigation.
+- **Real PBR terrain support** — genuinely unclaimed territory, verified
+  rather than assumed. Object-level PBR materials (per-face `gltf_json`
+  overrides via the `RenderMaterials` capability) already work — that
+  part is done, inherited from real upstream OpenSim. Terrain is the
+  actual gap: the `"ModifyRegion"` capability real PBR terrain editing
+  needs doesn't exist in this repo's own merged-upstream tree, Gunthar's
+  fork, or Tranquillity. `SimulatorFeaturesModule.cs` currently echoes
+  `PBRTerrainEnabled: true` only because it's parroting a flag the
+  viewer itself sets, not because anything backs it — the capability
+  request fails today on all three. Building the real capability backend
+  first would be a genuine competitive edge, not a port from anywhere.
+  Substantial from-scratch build (comparable to Experience Tools or the
+  native currency service) — logged, not started. See PROJECT_LOG.md
+  for the full investigation.
+- **SLua** — Second Life's modern Luau-based (Roblox's Lua variant)
+  scripting language, in open beta on the SL production grid since
+  2025-12-02 ([LL's announcement](https://community.secondlife.com/news/featured-news/announcing-the-slua-open-beta-modern-scripting-comes-to-second-life-r11237/)):
+  faster than LSL/Mono, ~50% less memory, native tables, dynamic event
+  subscription, multiple timers, coroutines, native JSON — while staying
+  compatible with existing LSL knowledge. No evidence found of any
+  OpenSim fork having touched this (checked the same three codebases as
+  above). A second, likely larger, genuinely unclaimed opportunity —
+  logged, not started, needs its own investigation pass before scoping.
 - Tranquillity's "Phlox" LSL/SLua script engine (~98,000 lines) is
   audited but NOT ported: it turned out to be a resurrection of
   InWorldz/Halcyon's own closed-source Phlox engine, now appearing as
