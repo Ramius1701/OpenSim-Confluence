@@ -114,6 +114,22 @@ namespace OpenSim.Server.Handlers.MapImage
                 path = bits[2];
                 path = path.Trim('/');
             }
+            // BUG FIX: the common no-scope case (bits.Length == 2, e.g. the
+            // real request path "map/map-1-1000-1000-objects.jpg") never
+            // reduced path down to just the filename - it stayed as the
+            // full "map/map-1-1000-1000-objects.jpg" string, which
+            // MapImageService.GetMapTile then Path.Combine'd onto the tile
+            // storage folder, producing a bogus nested "map/" subdirectory
+            // that never existed on disk (confirmed: real tiles sit directly
+            // in maptiles/<scopeID>/map-1-X-Y-objects.jpg, one level up from
+            // where this bug was looking). Every tile request silently
+            // failed and fell back to the generic water-tile placeholder
+            // (or 404'd if that wasn't configured) - not a routing/config
+            // problem, a real path-construction bug in this handler.
+            else if (bits.Length == 2)
+            {
+                path = bits[1];
+            }
 
             if(path.Length == 0)
             {
