@@ -1,0 +1,20 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `webmessages` (
+	`ID` VARCHAR(36) NOT NULL,
+	`SenderID` VARCHAR(36) NOT NULL,
+	`ReceiverID` VARCHAR(36) NOT NULL,
+	`Subject` VARCHAR(150) NOT NULL,
+	`Body` TEXT NOT NULL,
+	`Created` INT NOT NULL,
+	`IsRead` TINYINT(1) NOT NULL DEFAULT 0,
+	`SenderDeleted` TINYINT(1) NOT NULL DEFAULT 0,
+	`ReceiverDeleted` TINYINT(1) NOT NULL DEFAULT 0,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `ReceiverID` (`ReceiverID`) USING BTREE,
+	INDEX `SenderID` (`SenderID`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;

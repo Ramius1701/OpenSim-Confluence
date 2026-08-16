@@ -1,0 +1,17 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS webmessages (
+	ID varchar(36) NOT NULL PRIMARY KEY,
+	SenderID varchar(36) NOT NULL,
+	ReceiverID varchar(36) NOT NULL,
+	Subject varchar(150) NOT NULL,
+	Body text NOT NULL,
+	Created int NOT NULL,
+	IsRead int NOT NULL DEFAULT 0,
+	SenderDeleted int NOT NULL DEFAULT 0,
+	ReceiverDeleted int NOT NULL DEFAULT 0
+);
+
+COMMIT;
