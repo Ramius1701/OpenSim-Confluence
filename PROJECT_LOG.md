@@ -6249,3 +6249,37 @@ per-terrain-layer PBR material (glTF) assignments, and a real
 existing (currently just echoed) flag. SLua needs its own investigation
 pass before scoping - not started. Both logged here so they survive to
 a future session rather than being lost to this conversation.
+
+## Untested in-world ports: config prep for TeamCombatModule + UserAliasService (2026-08-16)
+
+Resuming the "untested in-world ports" verification pass from earlier
+(interrupted by the Weather module investigation above). Of the four
+candidates - User Alias, Team Combat, in-world terrain console commands,
+`osGetAgentViewer` - two turned out to need a live avatar connected via
+a real viewer to test at all (terrain commands use `IRegionConsole.
+SendConsoleOutput`, which targets a specific avatar's in-world viewer
+console, not the shared `MainConsole` the WebConsole HTTP relay wraps;
+`osGetAgentViewer` needs a live avatar to query by definition) - nothing
+to do there until Jeffery's back online. The other two just needed
+config wiring, done now while the grid's down:
+
+- `[TeamCombatModule] Enabled = true` added to `Var_Test_Region`'s ini -
+  was never configured at all, so `combat team join/leave/show` had no
+  effect (confirmed live: `Commands.Resolve` silently no-ops on an
+  unregistered command, same empty-response shape as a genuine relay
+  bug, which is what led to first suspecting the WebConsole relay itself
+  was broken before `land auction start` proved it works fine).
+- `UserAliasServiceConnector` wired into `Robust.HG.ini`'s
+  `[ServiceListeners]`, plus a new `[UserAliasService]` section - wasn't
+  configured anywhere on this grid before. Verified it correctly falls
+  back to `[DatabaseService]`'s connection string like other services,
+  so no separate DB setup needed; will auto-create its table via
+  migrations on first load.
+
+Both are config-only changes, no rebuild needed - just require the next
+region/Robust restart to take effect. Once up: `combat team join/leave/
+show` should be testable via the WebConsole relay (no avatar needed,
+confirmed from reading `HandleTeamJoin`/`HandleTeamLeave`/
+`HandleTeamShow` - they operate on any UUID regardless of online
+status), and UserAlias's read endpoints (`getuserforalias`/
+`getuseraliases`) should at least be reachable for the first time.
