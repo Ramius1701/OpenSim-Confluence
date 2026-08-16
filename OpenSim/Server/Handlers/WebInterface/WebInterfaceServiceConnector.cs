@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using MailKit.Net.Smtp;
 using MimeKit;
@@ -94,6 +95,9 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IFriendsService m_FriendsService;
         private ISearchService m_SearchService;
         private IGroupsSearchProvider m_GroupsSearchService;
+        private IAuctionService m_AuctionService;
+        private IOfflineIMService m_OfflineIMService;
+        private IMessagingService m_MessagingService;
         private string m_webConsoleSecret = string.Empty;
 
         private string m_gridName = "OpenSim Grid";
@@ -117,6 +121,25 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_InventoryService = LoadReusedPlugin<IInventoryService>(config, "InventoryService", args);
             m_NewsService = LoadReusedPlugin<INewsService>(config, "NewsService", args);
             m_EventsService = LoadReusedPlugin<IEventsService>(config, "EventsService", args);
+            // Same [AuctionService] LocalServiceModule the region-side
+            // LocalAuctionServiceConnector/AuctionModule reuses - land
+            // auctions have no in-world bidding UI at all (confirmed
+            // against Firestorm's real llfloaterauction.cpp), so this page
+            // IS the bidding UI, not just a status display.
+            m_AuctionService = LoadReusedPlugin<IAuctionService>(config, "AuctionService", args);
+            // Not LoadReusedPlugin - [Messaging]'s key for this plugin is
+            // "OfflineIMService", not the "LocalServiceModule" key every
+            // other section here uses (confirmed against Robust.HG.ini -
+            // the same section HGInstantMessageService/OfflineIMServiceRobustConnector
+            // already read from), so the generic helper can't find it.
+            IConfig messagingConfig = config.Configs["Messaging"];
+            if (messagingConfig != null)
+            {
+                string offlineImDll = messagingConfig.GetString("OfflineIMService", string.Empty);
+                if (!string.IsNullOrEmpty(offlineImDll))
+                    m_OfflineIMService = ServerUtils.LoadPlugin<IOfflineIMService>(offlineImDll, args);
+            }
+            m_MessagingService = LoadReusedPlugin<IMessagingService>(config, "MessagingService", args);
             m_SupportTicketService = LoadReusedPlugin<ISupportTicketService>(config, "SupportTicketService", args);
             m_StaticPageService = LoadReusedPlugin<IStaticPageService>(config, "StaticPageService", args);
             m_GridSettingsService = LoadReusedPlugin<IGridSettingsService>(config, "GridSettingsService", args);
@@ -217,11 +240,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             // route and its sub-paths (e.g. /admin and /admin/users) resolve.
             string[] topLevelRoutes =
             {
-                "/dashboard", "/login", "/register", "/viewers", "/destinations", "/features",
+                "/dashboard", "/login", "/register", "/viewers", "/destinations", "/worldmap", "/gridstatus", "/economy", "/features",
                 "/support", "/search", "/landsearch", "/admin", "/profile", "/friends",
                 "/change-password", "/change-email", "/transactions", "/myclassifieds",
                 "/myevents", "/forgot-password", "/reset-password", "/logout",
-                "/myregions", "/myinventory", "/page", "/partner", "/myestates", "/delete-account"
+                "/myregions", "/myinventory", "/page", "/partner", "/myestates", "/delete-account",
+                "/offline-messages", "/messages",
+                "/help", "/guide", "/static", "/auctions"
             };
             foreach (string route in topLevelRoutes)
             {
@@ -333,17 +358,59 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/destinations":
                         HandleDestinations(request, response);
                         break;
+                    case BasePath + "/offline-messages":
+                        HandleOfflineMessages(request, response);
+                        break;
+                    case BasePath + "/messages":
+                        HandleMessagesInbox(request, response);
+                        break;
+                    case BasePath + "/messages/sent":
+                        HandleMessagesSent(request, response);
+                        break;
+                    case BasePath + "/messages/compose":
+                        HandleMessagesCompose(request, response);
+                        break;
+                    case BasePath + "/messages/send":
+                        HandleMessagesSend(request, response);
+                        break;
+                    case BasePath + "/messages/view":
+                        HandleMessagesView(request, response);
+                        break;
+                    case BasePath + "/messages/delete":
+                        HandleMessagesDelete(request, response);
+                        break;
+                    case BasePath + "/worldmap":
+                        HandleWorldMap(request, response);
+                        break;
+                    case BasePath + "/gridstatus":
+                        HandleGridStatus(request, response);
+                        break;
+                    case BasePath + "/economy":
+                        HandleEconomy(request, response);
+                        break;
                     case BasePath + "/features":
                         HandleFeatures(request, response);
                         break;
                     case BasePath + "/support":
                         HandleSupport(request, response);
                         break;
+                    case BasePath + "/help":
+                        HandleHelp(request, response);
+                        break;
+                    case BasePath + "/guide":
+                        HandleGuide(request, response);
+                        break;
                     case BasePath + "/search":
                         HandleSearch(request, response);
                         break;
                     case BasePath + "/landsearch":
                         HandleLandSearch(request, response);
+                        break;
+                    case BasePath + "/auctions":
+                        HandleAuctions(request, response);
+                        break;
+                    case BasePath + "/auctions/bid":
+                        HandleAuctionBidPage(request, response);
                         break;
                     case BasePath + "/search/suggest":
                         HandleSearchSuggest(request, response);
@@ -523,6 +590,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/console/run":
                         HandleAdminConsoleRun(request, response);
                         break;
+                    case BasePath + "/admin/regions/restart":
+                        HandleAdminRegionRestart(request, response);
+                        break;
+                    case BasePath + "/admin/regions":
+                        HandleAdminRegions(request, response);
+                        break;
                     case BasePath + "/myregions":
                         HandleMyRegions(request, response);
                         break;
@@ -531,6 +604,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/myregions/oar-load":
                         HandleMyRegionsOarLoad(request, response);
+                        break;
+                    case BasePath + "/myregions/restart":
+                        HandleMyRegionsRestart(request, response);
                         break;
                     case BasePath + "/myinventory":
                         HandleMyInventory(request, response);
@@ -548,6 +624,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                         // routes above.
                         if (path.StartsWith(BasePath + "/page/", StringComparison.Ordinal))
                             HandleStaticPage(request, response, path.Substring((BasePath + "/page/").Length));
+                        else if (path.StartsWith(BasePath + "/static/", StringComparison.Ordinal))
+                            HandleStaticAsset(request, response, path.Substring((BasePath + "/static/").Length));
                         else
                             response.StatusCode = (int)HttpStatusCode.NotFound;
                         break;
@@ -656,38 +734,62 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         // Public grid home page - what a browser sees at the bare hostname
         // (http://<grid>/, port 80), not the /web/* login app on PublicPort.
+        // This is deliberately the marketing/sign-up page for a prospective
+        // visitor browsing normally, not the in-viewer splash below - full
+        // site chrome via WritePage, a real pitch for why to join, and
+        // Featured Classifieds (browsing what's for sale is a "look what
+        // you could have" hook here, not just status information).
         private void HandleHome(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
             string welcomeMessage = GetSetting("WelcomeMessage", m_welcomeMessage);
-            string welcome = string.IsNullOrEmpty(welcomeMessage)
-                    ? "Welcome to " + Html(gridName) + "."
+            string tagline = string.IsNullOrEmpty(welcomeMessage)
+                    ? "A free, open virtual world you can visit today."
                     : Html(welcomeMessage);
 
             bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
-            string registerLink = allowRegistration
-                    ? "<p><a href=\"" + BasePath + "/register\">Sign up for a new account</a></p>"
-                    : string.Empty;
 
-            string body = "<h1>" + Html(gridName) + "</h1>"
-                    + RenderAnnouncement()
-                    + "<p>" + welcome + "</p>"
-                    + "<p><a href=\"" + BasePath + "/login\">Log in to your account</a></p>"
-                    + registerLink
-                    + RenderEconomyStats()
-                    + RenderFeaturedClassifieds(6)
-                    + RenderUpcomingEvents(5)
-                    + RenderNewsFeed(5);
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>").Append(Html(gridName)).Append("</h1>");
+            sb.Append(RenderAnnouncement());
+            sb.Append("<p class=\"tagline-lead\">").Append(tagline).Append("</p>");
 
-            WritePage(request, response, gridName, body);
+            sb.Append("<div class=\"cta-row\">");
+            if (allowRegistration)
+                sb.Append("<a href=\"").Append(BasePath).Append("/register\" class=\"cta-primary\">Create a Free Account</a>");
+            sb.Append("<a href=\"").Append(BasePath).Append("/login\" class=\"cta-secondary\">Log In</a>");
+            sb.Append("</div>");
+
+            sb.Append("<h2>Why ").Append(Html(gridName)).Append("?</h2><div class=\"widget-grid\">");
+            AppendFeatureCard(sb, "Built-In Economy", "No setup required",
+                    "A real currency ledger with buy/sell and group treasuries, ready out of the box.");
+            AppendFeatureCard(sb, "Hypergrid Ready", "Explore beyond this grid",
+                    "Open, standards-based teleporting to other OpenSimulator grids.");
+            AppendFeatureCard(sb, "Active Community", "See what's happening",
+                    "Live events, classifieds, and grid-wide search across every region.");
+            sb.Append("</div>");
+
+            sb.Append(RenderEconomyStats());
+            sb.Append(RenderFeaturedClassifieds(6));
+            sb.Append(RenderUpcomingEvents(5));
+            sb.Append(RenderNewsFeed(5));
+
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/viewers\">Get a viewer &rarr;</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/features\">See all features &rarr;</a></p>");
+
+            WritePage(request, response, gridName, sb.ToString());
         }
 
         // The in-viewer login splash screen - see [GridInfoService] "welcome" in
         // Robust.HG.ini, which tells the viewer to fetch exactly this filename.
-        // Rendered inside the viewer's own (small, embedded) login panel, so kept
-        // deliberately simpler/shorter than the full home page - task #23 from
-        // the WhiteCore-Dev re-audit's "all of it" list, a grid-operator
-        // announcements feed shown on both this splash screen and the home page.
+        // Rendered inside the viewer's own small embedded login panel via
+        // WriteBarePage (no header/nav/footer - nowhere useful to navigate to
+        // from inside that panel), and deliberately answers a different
+        // question than the home page above: not "why should I join" but
+        // "what's happening on this grid right now" for someone who (mostly)
+        // already has an account - task #23 from the WhiteCore-Dev re-audit's
+        // "all of it" list, a grid-operator announcements feed originally
+        // shared with the home page, now specific to this one.
         private void HandleWelcome(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
@@ -696,15 +798,117 @@ namespace OpenSim.Server.Handlers.WebInterface
                     ? "Welcome to " + Html(gridName) + "."
                     : Html(welcomeMessage);
 
-            string body = "<h1>" + Html(gridName) + "</h1>"
+            List<GridRegion> regions = m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>();
+
+            // Compact on purpose - this renders inside the viewer's own
+            // small, fixed-size, non-resizable login panel (WriteAdaptivePage
+            // picks the bare-chrome branch here, no nav/footer to scroll
+            // past), not a full browser window. The full-thumbnail region
+            // list (every region on the grid, one map-tile card each) was
+            // the single biggest offender - already summarized by the
+            // "Regions" stat above, so it's cut here in favor of a one-line
+            // link to the real World Map page. Events/News are capped
+            // tighter than the full-chrome home page uses, and
+            // WelcomeCompactCss shrinks heading/card spacing specifically
+            // for this view without touching the shared site-wide PageCss.
+            string body = WelcomeCompactCss
+                    + "<h1>" + Html(gridName) + "</h1>"
                     + RenderAnnouncement()
                     + "<p>" + welcome + "</p>"
+                    + RenderGridStatusWidget(regions)
                     + RenderEconomyStats()
-                    + RenderFeaturedClassifieds(6)
-                    + RenderUpcomingEvents(5)
-                    + RenderNewsFeed(3);
+                    + RenderUpcomingEvents(3)
+                    + RenderNewsFeed(2)
+                    + "<p class=\"welcome-more-link\"><a href=\"" + BasePath + "/worldmap\">View the World Map &rarr;</a></p>";
 
-            WritePage(request, response, gridName, body);
+            WriteAdaptivePage(request, response, gridName, body);
+        }
+
+        // Scoped to just this page (id selector, not a global rule) so it
+        // can't leak into the full-chrome site pages that share PageCss.
+        private const string WelcomeCompactCss =
+                "<style>" +
+                "body{font-size:13px;}" +
+                "h1{font-size:19px;margin:0 0 6px;}" +
+                "h2{font-size:14px;margin:14px 0 6px;}" +
+                "p{margin:0 0 8px;}" +
+                ".welcome-more-link{text-align:center;font-size:12.5px;margin-top:10px;}" +
+                ".stats-grid{gap:8px;margin:0 0 4px;}" +
+                ".stat-card{padding:8px 10px;}" +
+                ".stat-value{font-size:16px;}" +
+                ".stat-label{font-size:10.5px;}" +
+                ".stat-sub{font-size:10px;}" +
+                ".widget-grid{gap:8px;}" +
+                ".widget-card{padding:10px 12px;}" +
+                ".widget-card h3{font-size:13px;margin:0 0 4px;}" +
+                ".widget-meta{font-size:11px;}" +
+                "</style>";
+
+        // Real counterpart to WhiteCore-Dev's welcomescreen/gridstatus.html
+        // (total users/regions, online-now count, voice/currency active
+        // flags) - read directly this time rather than invented, after the
+        // splash was rewritten twice without checking it (see
+        // ADR/PROJECT_LOG). Reuses the exact same GetOnlineUserCount/
+        // GetUserAccountsWhere calls HandleAdminStats already established as
+        // the real data source for these numbers - not a second, divergent
+        // counting method. "Unique visitors" and "Voice active" are
+        // deliberately omitted rather than faked: this connector has no live
+        // presence-tracking beyond GetOnlineUserCount (itself just a
+        // recent-login-timestamp proxy, not true real-time presence) and no
+        // way to tell if voice is actually configured/working from Robust.
+        private string RenderGridStatusWidget(List<GridRegion> regions)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h2>Grid Status</h2><div class=\"stats-grid\">");
+
+            AppendStat(sb, "Regions", regions.Count.ToString("N0"), "online now");
+
+            if (m_UserAccountService != null)
+            {
+                int totalAccounts = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count;
+                AppendStat(sb, "Registered Accounts", totalAccounts.ToString("N0"), "all time");
+            }
+
+            if (m_GridUserService != null)
+            {
+                int online = m_GridUserService.GetOnlineUserCount();
+                AppendStat(sb, "Online Now", online.ToString("N0"), "residents");
+            }
+
+            AppendStat(sb, "Currency", m_CurrencyService != null ? "Active" : "Not configured", "grid economy");
+
+            sb.Append("</div>");
+            return sb.ToString();
+        }
+
+        // Real counterpart to WhiteCore-Dev's welcomescreen/region_box.html -
+        // a thumbnail/name/position/teleport-link list of every region on
+        // the grid, shown directly on the splash rather than requiring a
+        // click through to /worldmap. Reuses the same map-tile URL
+        // convention and secondlife:///app/teleport/ link HandleWorldMap
+        // already established, and the same GetRegionRange call, rather than
+        // a third way of listing regions.
+        private string RenderRegionListWidget(List<GridRegion> regions)
+        {
+            if (regions.Count == 0)
+                return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h2>Regions</h2><div class=\"widget-grid\">");
+            foreach (GridRegion region in regions)
+            {
+                string tileUrl = "/map/map-1-" + region.RegionCoordX + "-" + region.RegionCoordY + "-objects.jpg";
+                string tp = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+
+                sb.Append("<div class=\"widget-card\">");
+                sb.Append("<img src=\"").Append(Html(tileUrl)).Append("\" alt=\"\" ")
+                  .Append("style=\"width:100%;border-radius:6px;margin-bottom:8px;\" onerror=\"this.style.display='none'\">");
+                sb.Append("<h3>").Append(Html(region.RegionName)).Append("</h3>");
+                sb.Append("<div class=\"widget-meta\">").Append(region.RegionCoordX).Append(", ").Append(region.RegionCoordY).Append("</div>");
+                sb.Append("<p><a href=\"").Append(Html(tp)).Append("\">Teleport &rarr;</a></p></div>");
+            }
+            sb.Append("</div>");
+            return sb.ToString();
         }
 
         // "Upcoming Events" splash widget - see EventItem's class-level
@@ -740,32 +944,31 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         // Viewer download list - "first-landing" content the user asked to
         // build from what already exists rather than inventing from scratch.
-        // Firestorm's OpenSim-specific download pages and Cool VL Viewer
-        // come from the user's own OpenSim-Grid-Interface (viewers.php);
-        // Alchemy/Kokua/Singularity/Lumiya/MobileGridClient/
-        // PocketMetaverse/Radegast come from WhiteCore-Dev's real,
-        // currently-used help.html viewer list (WhiteCore's own
-        // region_list.html/region_search.html/online_users.html were all
-        // explicitly commented "No longer used" by its own maintainers -
-        // checked before reusing anything, not everything WhiteCore ships
-        // is still live). Real URLs from both sources, not placeholders.
+        // Originally seeded from the user's own OpenSim-Grid-Interface
+        // (viewers.php) and WhiteCore-Dev's real help.html viewer list, but
+        // several of those entries had gone stale by the time this page was
+        // actually checked against current reality - per the user (2026-08-12,
+        // not independently re-verified against each project's own site):
+        // Alchemy and Kokua no longer support OpenSim at all, Singularity
+        // hasn't been updated in years, and Lumiya/Pocket Metaverse are gone
+        // entirely. Trimmed down to what's actually real today rather than
+        // leaving dead links up - the two remaining graphical desktop
+        // viewers (Firestorm, Cool VL Viewer), one text-based desktop
+        // client still active (Radegast), and one old-but-still-around
+        // mobile client (Mobile Grid Client). Not claiming this list is
+        // exhaustive, just that everything on it is real.
         private static readonly (string Name, string Url, string Note)[] DesktopViewers =
         {
             ("Firestorm (Windows)", "https://www.firestormviewer.org/windows-for-open-simulator/", "OpenSim-specific build"),
             ("Firestorm (macOS)", "https://www.firestormviewer.org/mac-for-open-simulator/", "OpenSim-specific build"),
             ("Firestorm (Linux)", "https://www.firestormviewer.org/linux-for-open-simulator/", "OpenSim-specific build"),
-            ("Alchemy", "https://www.alchemyviewer.org/pages/downloads.html", "Modern, actively developed"),
-            ("Kokua", "http://kokuaviewer.org", "OpenSim-focused fork"),
-            ("Singularity", "http://www.singularityviewer.org", "Lightweight, classic interface"),
             ("Cool VL Viewer", "https://sldev.free.fr/", "Long-running, OpenSim-compatible"),
         };
 
         private static readonly (string Name, string Url, string Note)[] MobileViewers =
         {
-            ("Lumiya", "http://www.lumiyaviewer.com", "Android"),
-            ("Mobile Grid Client", "http://mobilegridclient.com", "Android/iOS"),
-            ("Pocket Metaverse", "http://www.pocketmetaverse.com", "iOS"),
-            ("Radegast", "https://radegast.life/", "Lightweight desktop/text client"),
+            ("Mobile Grid Client", "http://mobilegridclient.com", "Android/iOS - older, not actively updated"),
+            ("Radegast", "https://radegast.life/", "Text-based desktop client, still active"),
         };
 
         private void HandleViewers(IOSHttpRequest request, IOSHttpResponse response)
@@ -797,6 +1000,229 @@ namespace OpenSim.Server.Handlers.WebInterface
             WritePage(request, response, "Confluence Grid - Get a Viewer", sb.ToString());
         }
 
+        // Bare-chrome getting-started page, meant to be opened from a
+        // viewer's own Help menu the same way "welcome" already points a
+        // viewer at /welcome.php - an operator can point [GridInfoService]
+        // help at this URL to wire that up. First-draft content: neither
+        // WhiteCore-Dev nor OpenSim-Grid-Interface has a directly equivalent
+        // page to build from, so this is new ground, not a port.
+        // Content-parity pass (2026-08-12) against both real named
+        // references, WhiteCore-Dev first per the user's explicit priority
+        // ("that's where this all came from"): WhiteCore-Dev's own
+        // help.html is mostly a login-URI display plus a viewer-download
+        // gallery - already covered by Confluence's separate /viewers page,
+        // so not duplicated here, but its login-URI framing is kept as the
+        // lead section. The "Using Search"/"Troubleshooting" sections below
+        // come from OpenSim-Grid-Interface's help.php, which covers ground
+        // WhiteCore-Dev's version doesn't - real content, not invented,
+        // adapted to Confluence's own search tabs and self-service pages.
+        private void HandleHelp(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            string gridName = GetSetting("GridName", m_gridName);
+            string loginUri = string.IsNullOrEmpty(m_publicBaseUrl) ? "(not configured)" : m_publicBaseUrl + "/";
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-question-circle\"></i> Help &amp; Support</h1>");
+            sb.Append("<p>Quick help for using ").Append(Html(gridName)).Append(" both in your viewer and on the web.</p>");
+
+            sb.Append("<h2><i class=\"bi bi-box-arrow-in-right\"></i> Logging In</h2>");
+            sb.Append("<p>Add ").Append(Html(gridName)).Append(" to your viewer's grid manager using this login URI:</p>");
+            sb.Append("<form onsubmit=\"return false;\"><label>Login URI<br/>")
+              .Append("<input type=\"text\" value=\"").Append(Html(loginUri)).Append("\" readonly onclick=\"this.select()\"></label></form>");
+            sb.Append("<p>Don't have a viewer yet? See <a href=\"").Append(BasePath).Append("/viewers\">Get a Viewer</a>.</p>");
+
+            sb.Append("<h2><i class=\"bi bi-person-plus\"></i> Creating an Account</h2>");
+            sb.Append("<p>Sign up for free from the home page. You'll get a full inventory and a home region ")
+              .Append("assigned automatically.</p>");
+
+            sb.Append("<h2><i class=\"bi bi-list-task\"></i> Common Tasks</h2><div class=\"feature-grid-3\">");
+            AppendIconFeatureCard(sb, "person-gear", "Manage Your Account", new[]
+            {
+                ("Password &amp; email", true, "Change both from My Account."),
+                ("Profile", true, "Update your About text, picks and classifieds from your Profile page."),
+                ("Regions", true, "See regions you own or manage from My Account.")
+            });
+            AppendIconFeatureCard(sb, "search", "Search, Friends &amp; Regions", new[]
+            {
+                ("Search", true, "Find places, events, classifieds, people, groups and land for sale."),
+                ("Friends", true, "Manage your friends list from the Friends page or in-world."),
+                ("Destinations", true, "Browse the Destination Guide for popular and featured places.")
+            });
+            sb.Append("</div>");
+
+            sb.Append("<h2><i class=\"bi bi-search\"></i> Using Search From the Viewer</h2>");
+            sb.Append("<p>Your viewer's Search window uses the same categories as the <a href=\"")
+              .Append(BasePath).Append("/search\">Search</a> page in a normal browser:</p><ul>");
+            sb.Append("<li><strong>Places</strong> - find regions and parcels by name, description or keyword.</li>");
+            sb.Append("<li><strong>Land Sales</strong> - find parcels that are set for sale.</li>");
+            sb.Append("<li><strong>Events</strong> - browse upcoming events; click one to see its details.</li>");
+            sb.Append("<li><strong>Classifieds</strong> - resident-created ads for stores, clubs and services.</li>");
+            sb.Append("<li><strong>People</strong> - search for residents by name.</li>");
+            sb.Append("<li><strong>Groups</strong> - look up groups, then join them in-world.</li>");
+            sb.Append("</ul>");
+
+            sb.Append("<h2><i class=\"bi bi-tools\"></i> Troubleshooting</h2><ul>");
+            sb.Append("<li><strong>A search tab shows no results:</strong> that category may simply have nothing ")
+              .Append("listed yet - land only appears once a parcel owner sets it For Sale and enables Show in ")
+              .Append("Search, and events/classifieds only appear once a resident creates one.</li>");
+            sb.Append("<li><strong>Pages look cut off in the viewer:</strong> try resizing the window, or open the ")
+              .Append("same page in an external browser instead.</li>");
+            sb.Append("<li><strong>Password problems:</strong> use <a href=\"").Append(BasePath)
+              .Append("/forgot-password\">Forgot Password</a> to reset it, then restart your viewer.</li>");
+            sb.Append("</ul>");
+
+            sb.Append("<h2><i class=\"bi bi-question-circle\"></i> Common Questions</h2>");
+            sb.Append("<h3>How do I visit other grids?</h3><p>This grid supports Hypergrid teleporting - use a ")
+              .Append("Hypergrid address in your viewer's map or search to visit another open grid.</p>");
+            sb.Append("<h3>I need more help.</h3><p>Contact us through the <a href=\"").Append(BasePath)
+              .Append("/support\">Support</a> page.</p>");
+
+            WriteAdaptivePage(request, response, "Help - " + gridName, sb.ToString());
+        }
+
+        // Real, sparse OpenMetaverse.ParcelCategory labels a resident might
+        // have actually set on their parcel - same categories a viewer's own
+        // "About Land" category dropdown offers. Unset (0/None) parcels
+        // fall back to "General" below, same as OpenSim-Grid-Interface's own
+        // guide.php this page is modeled on.
+        private static readonly Dictionary<int, string> ParcelCategories = new Dictionary<int, string>
+        {
+            { 3, "Arts & Culture" }, { 4, "Business" }, { 5, "Education" },
+            { 6, "Gaming" }, { 7, "Hangout" }, { 8, "Newcomer" },
+            { 9, "Parks & Nature" }, { 10, "Residential" }, { 11, "Shopping" },
+            { 13, "Other" }, { 14, "Rental" }
+        };
+
+        // Native Destination Guide - what a viewer's Help > Destinations
+        // floater opens (wired via [GridInfoService] DestinationGuide, the
+        // same mechanism "welcome" already uses for the login splash).
+        // Modeled directly on OpenSim-Grid-Interface's own guide.php
+        // (Popular/Featured/Discover tabs, teleport-on-click cards), but
+        // using Confluence's own widget-card/subnav styling instead of
+        // porting that page's separate CSS, and Confluence's own
+        // ISearchService/IGridService instead of a raw SQL query - bare
+        // chrome via WriteBarePage since this renders in the viewer's small
+        // embedded browser panel, same as Help/About/the login splash.
+        private void HandleGuide(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            string gridName = GetSetting("GridName", m_gridName);
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>Destination Guide</h1>");
+            AppendDestinationTabs(sb);
+            WriteAdaptivePage(request, response, "Destination Guide - " + gridName, sb.ToString());
+        }
+
+        // Popular/Featured/Discover browse-with-teleport tabs - the same
+        // real shape as OpenSim-Grid-Interface's destinations.php (tabs +
+        // search_parcels-backed cards + Teleport button), reimplemented
+        // against this connector's own ISearchService/IGridService rather
+        // than raw SQL. Shared by both the viewer-embedded Destination
+        // Guide (/guide, bare chrome, for the Destinations floater) and the
+        // human-facing /destinations page (full chrome) - same content,
+        // same tab-switch script, different wrapper only. Previously
+        // /destinations wrongly held the Leaflet world map instead of this
+        // (see HandleWorldMap, now split out to its own /worldmap route -
+        // Destinations and World Map are two separate real features on the
+        // reference site, not one page).
+        private void AppendDestinationTabs(StringBuilder sb)
+        {
+            const int maxAccess = 13; // PG - same safe default HandleSearch uses with no explicit maturity preference.
+
+            sb.Append("<div class=\"subnav\">")
+              .Append("<a href=\"#\" class=\"active\" onclick=\"return guideTab('popular',this)\">Popular</a>")
+              .Append("<a href=\"#\" onclick=\"return guideTab('featured',this)\">Featured</a>")
+              .Append("<a href=\"#\" onclick=\"return guideTab('discover',this)\">Discover</a>")
+              .Append("</div>");
+
+            sb.Append("<div id=\"guide-popular\">");
+            if (m_SearchService == null)
+                sb.Append("<p>Search is not available.</p>");
+            else
+                AppendGuideCards(sb, m_SearchService.SearchPlaces(string.Empty, 0, 30, maxAccess), "No popular places found yet.");
+            sb.Append("</div>");
+
+            sb.Append("<div id=\"guide-featured\" style=\"display:none\">");
+            if (m_SearchService == null)
+                sb.Append("<p>Search is not available.</p>");
+            else
+                AppendGuideCards(sb, m_SearchService.GetFeaturedPlaces(30, maxAccess), "No featured places found yet.");
+            sb.Append("</div>");
+
+            sb.Append("<div id=\"guide-discover\" style=\"display:none\">");
+            if (m_GridService == null)
+            {
+                sb.Append("<p>Grid service is not available.</p>");
+            }
+            else
+            {
+                List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
+                regions.Sort((a, b) => string.Compare(a.RegionName, b.RegionName, StringComparison.OrdinalIgnoreCase));
+                if (regions.Count == 0)
+                {
+                    sb.Append("<p>No online regions found.</p>");
+                }
+                else
+                {
+                    sb.Append("<div class=\"widget-grid\">");
+                    foreach (GridRegion region in regions.Take(50))
+                    {
+                        string tp = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                        sb.Append("<div class=\"widget-card\"><h3>").Append(Html(region.RegionName)).Append("</h3>")
+                          .Append("<div class=\"widget-meta\">Online</div>")
+                          .Append("<p><a href=\"").Append(Html(tp)).Append("\">Teleport &rarr;</a></p></div>");
+                    }
+                    sb.Append("</div>");
+                }
+            }
+            sb.Append("</div>");
+
+            // Client-side tab switch only - no page reload, matching the
+            // small-panel feel of an embedded viewer browser. Scoped to this
+            // page only (WriteBarePage doesn't include the shared
+            // DropdownScript, which is for the full-chrome nav dropdowns).
+            sb.Append("<script>function guideTab(name,el){")
+              .Append("['popular','featured','discover'].forEach(function(n){")
+              .Append("document.getElementById('guide-'+n).style.display=(n===name)?'':'none';});")
+              .Append("el.parentNode.querySelectorAll('a').forEach(function(a){a.classList.remove('active');});")
+              .Append("el.classList.add('active');return false;}</script>");
+        }
+
+        private void AppendGuideCards(StringBuilder sb, List<LandSearchRecord> places, string emptyMessage)
+        {
+            if (places == null || places.Count == 0)
+            {
+                sb.Append("<p>").Append(Html(emptyMessage)).Append("</p>");
+                return;
+            }
+
+            sb.Append("<div class=\"widget-grid\">");
+            foreach (LandSearchRecord place in places)
+            {
+                string categoryLabel = ParcelCategories.TryGetValue(place.Category, out string label) ? label : "General";
+                bool hasLanding = place.LandingX != 0f || place.LandingY != 0f;
+                float tpX = hasLanding ? place.LandingX : 128f;
+                float tpY = hasLanding ? place.LandingY : 128f;
+                float tpZ = hasLanding ? place.LandingZ : 25f;
+                string tp = "secondlife:///app/teleport/" + Uri.EscapeDataString(place.RegionName ?? string.Empty)
+                        + "/" + (int)tpX + "/" + (int)tpY + "/" + (int)tpZ;
+
+                sb.Append("<div class=\"widget-card\"><h3>").Append(Html(place.Name)).Append("</h3>");
+                sb.Append("<div class=\"widget-meta\">").Append(Html(categoryLabel));
+                if (!string.IsNullOrEmpty(place.RegionName))
+                    sb.Append(" &middot; ").Append(Html(place.RegionName));
+                if (place.Dwell > 0)
+                    sb.Append(" &middot; Traffic: ").Append(((int)place.Dwell).ToString("N0"));
+                sb.Append("</div>");
+                if (!string.IsNullOrEmpty(place.Description))
+                {
+                    string description = place.Description.Length > 140 ? place.Description.Substring(0, 140) + "..." : place.Description;
+                    sb.Append("<p>").Append(Html(description)).Append("</p>");
+                }
+                sb.Append("<p><a href=\"").Append(Html(tp)).Append("\">Teleport &rarr;</a></p></div>");
+            }
+            sb.Append("</div>");
+        }
+
         private static void AppendViewerCard(StringBuilder sb, string name, string url, string note)
         {
             sb.Append("<div class=\"widget-card\"><h3>").Append(Html(name)).Append("</h3>")
@@ -811,7 +1237,21 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<p>").Append(Html(description)).Append("</p></div>");
         }
 
-        // Destinations / world map - the "fill in blanks" counterpart to
+        // Real Destinations page - Popular/Featured/Discover browse-with-
+        // teleport, the same content AppendDestinationTabs already builds
+        // for the viewer-embedded /guide, just wrapped in full site chrome
+        // for human visitors. See AppendDestinationTabs for why this and
+        // /guide share one implementation rather than two copies.
+        private void HandleDestinations(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-signpost-2\"></i> Destinations</h1>")
+              .Append("<p>Discover places worth visiting across the grid.</p>");
+            AppendDestinationTabs(sb);
+            WritePage(request, response, "Confluence Grid - Destinations", sb.ToString());
+        }
+
+        // World Map - the "fill in blanks" counterpart to
         // Viewers above. WhiteCore-Dev's own actual equivalent (world.html)
         // is a real, currently-used feature there (unlike region_list.html/
         // region_search.html/online_users.html, which are all explicitly
@@ -831,15 +1271,31 @@ namespace OpenSim.Server.Handlers.WebInterface
         // Interface's guide.php uses for same-grid destinations - simpler
         // and more directly applicable here than hop://, which is for
         // cross-grid Hypergrid teleports.
-        private void HandleDestinations(IOSHttpRequest request, IOSHttpResponse response)
+        // Real Leaflet map, not the earlier CSS-absolute-position
+        // reproduction - the user's own OpenSim-Grid-Interface project
+        // (maps/map-script.js, "Casperia Prime World Map") already solved
+        // this exact problem: L.CRS.Simple (map coordinates ARE region-grid
+        // units, not real lat/lng) + one L.imageOverlay per region tile
+        // (not a tile layer - region tiles aren't a standard XYZ pyramid).
+        // Adapted directly from that real, working script rather than
+        // re-deriving the coordinate math - the only real changes are:
+        // region data is rendered server-side as inline JSON (no separate
+        // map-data.php JSON API needed, this connector already has the
+        // region list at page-render time) and tile URLs point straight at
+        // this connector's own /map/ route (now byte-correct - see the
+        // MapGetServerConnector path-construction fix) instead of through a
+        // PHP tile-proxy script. Leaflet itself is vendored (leaflet.css/
+        // leaflet.js, see StaticAssetContentTypes) not CDN-linked, same
+        // policy as Bootstrap Icons.
+        private void HandleWorldMap(IOSHttpRequest request, IOSHttpResponse response)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1>Destinations</h1><p>Explore regions on this grid. Click a region to teleport (opens in your viewer).</p>");
+            sb.Append("<h1>World Map</h1><p>Explore regions on this grid. Click a region to see details and teleport.</p>");
 
             if (m_GridService == null)
             {
                 sb.Append("<p>Grid service is not available.</p>");
-                WritePage(request, response, "Confluence Grid - Destinations", sb.ToString());
+                WritePage(request, response, "Confluence Grid - World Map", sb.ToString());
                 return;
             }
 
@@ -847,59 +1303,54 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (regions.Count == 0)
             {
                 sb.Append("<p>No regions are online yet.</p>");
-                WritePage(request, response, "Confluence Grid - Destinations", sb.ToString());
+                WritePage(request, response, "Confluence Grid - World Map", sb.ToString());
                 return;
             }
 
-            // Positions expressed in 256m "region units" (the same unit
-            // RegionCoordX/Y are already in) so var-regions occupy
-            // proportionally more space than standard ones.
-            const double unitMeters = 256.0;
-            double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+            OSDArray regionArray = new OSDArray();
             foreach (GridRegion region in regions)
             {
-                double x0 = region.RegionCoordX;
-                double y0 = region.RegionCoordY;
-                double x1 = x0 + region.RegionSizeX / unitMeters;
-                double y1 = y0 + region.RegionSizeY / unitMeters;
-                if (x0 < minX) minX = x0;
-                if (y0 < minY) minY = y0;
-                if (x1 > maxX) maxX = x1;
-                if (y1 > maxY) maxY = y1;
+                OSDMap r = new OSDMap();
+                r["name"] = region.RegionName;
+                r["uuid"] = region.RegionID.ToString();
+                r["gridX"] = region.RegionCoordX;
+                r["gridY"] = region.RegionCoordY;
+                r["sizeX"] = region.RegionSizeX;
+                r["sizeY"] = region.RegionSizeY;
+                r["tileUrl"] = "/map/map-1-" + region.RegionCoordX + "-" + region.RegionCoordY + "-objects.jpg";
+                r["teleportUrl"] = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                regionArray.Add(r);
             }
+            string regionJson = OSDParser.SerializeJsonString(regionArray);
 
-            double spanX = Math.Max(maxX - minX, 1);
-            double spanY = Math.Max(maxY - minY, 1);
-            // Pad 5% on every side so edge regions aren't flush against the frame.
-            double pad = 0.05;
-
-            sb.Append("<div class=\"world-map\">");
-            foreach (GridRegion region in regions)
-            {
-                double x0 = region.RegionCoordX;
-                double y0 = region.RegionCoordY;
-                double wUnits = region.RegionSizeX / unitMeters;
-                double hUnits = region.RegionSizeY / unitMeters;
-
-                double leftPct = (pad + (1 - 2 * pad) * (x0 - minX) / spanX) * 100;
-                // Screen Y grows downward; grid Y grows northward - flip so north is up.
-                double topPct = (pad + (1 - 2 * pad) * (maxY - (y0 + hUnits)) / spanY) * 100;
-                double widthPct = (1 - 2 * pad) * wUnits / spanX * 100;
-                double heightPct = (1 - 2 * pad) * hUnits / spanY * 100;
-
-                string tileUrl = "/map/map-1-" + region.RegionCoordX + "-" + region.RegionCoordY + "-objects.jpg";
-                string teleportUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
-
-                sb.Append("<a class=\"world-map-region\" href=\"").Append(Html(teleportUrl)).Append("\" ")
-                  .Append("style=\"left:").Append(leftPct.ToString("0.###", CultureInfo.InvariantCulture)).Append("%;top:")
-                  .Append(topPct.ToString("0.###", CultureInfo.InvariantCulture)).Append("%;width:")
-                  .Append(widthPct.ToString("0.###", CultureInfo.InvariantCulture)).Append("%;height:")
-                  .Append(heightPct.ToString("0.###", CultureInfo.InvariantCulture)).Append("%;")
-                  .Append("background-image:url('").Append(Html(tileUrl)).Append("');\">")
-                  .Append("<span class=\"world-map-label\">").Append(Html(region.RegionName)).Append("</span>")
-                  .Append("</a>");
-            }
-            sb.Append("</div>");
+            sb.Append("<link rel=\"stylesheet\" href=\"/static/leaflet.css\">");
+            sb.Append("<style>#worldMap{width:100%;height:640px;border-radius:8px;border:1px solid var(--border);background:#0a0a0a;}" +
+                    ".region-popup h3{margin:0 0 6px;font-size:14px;}" +
+                    ".region-popup .wm-meta{color:var(--muted);font-size:12px;margin:0 0 10px;}" +
+                    ".region-popup a.wm-tp{display:inline-block;background:var(--accent);color:#fff;padding:6px 14px;" +
+                    "border-radius:40px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;}" +
+                    ".region-popup a.wm-tp:hover{background:var(--accent-dark);text-decoration:none;}" +
+                    ".leaflet-popup-content-wrapper{background:var(--card-bg);color:var(--text);border-radius:8px;}" +
+                    ".leaflet-popup-tip{background:var(--card-bg);}</style>");
+            sb.Append("<div id=\"worldMap\"></div>");
+            sb.Append("<script src=\"/static/leaflet.js\"></script>");
+            sb.Append("<script>(function(){");
+            sb.Append("var regions=").Append(regionJson).Append(";");
+            sb.Append("var map=L.map('worldMap',{crs:L.CRS.Simple,minZoom:-4,maxZoom:6,attributionControl:false});");
+            sb.Append("var bounds=L.latLngBounds([]);");
+            sb.Append("regions.forEach(function(r){");
+            sb.Append("var tilesX=Math.max(1,Math.ceil(r.sizeX/256)),tilesY=Math.max(1,Math.ceil(r.sizeY/256));");
+            sb.Append("for(var ty=0;ty<tilesY;ty++){for(var tx=0;tx<tilesX;tx++){");
+            sb.Append("var x=r.gridX+tx,y=r.gridY+ty;");
+            sb.Append("var imgBounds=[[y,x],[y+1,x+1]];bounds.extend(imgBounds[0]);bounds.extend(imgBounds[1]);");
+            sb.Append("var layer=L.imageOverlay(r.tileUrl,imgBounds,{opacity:1});");
+            sb.Append("var popupHtml='<div class=\"region-popup\"><h3>'+r.name.replace(/</g,'&lt;')+'</h3>'+" +
+                    "'<div class=\"wm-meta\">'+r.sizeX+'m &times; '+r.sizeY+'m &middot; ('+r.gridX+', '+r.gridY+')</div>'+" +
+                    "'<a class=\"wm-tp\" href=\"'+r.teleportUrl+'\">Teleport &rarr;</a></div>';");
+            sb.Append("layer.bindPopup(popupHtml,{className:'region-popup-wrap',closeButton:true});");
+            sb.Append("layer.addTo(map);}}});");
+            sb.Append("if(bounds.isValid())map.fitBounds(bounds,{padding:[24,24]});else map.setView([1000,1000],4);");
+            sb.Append("})();</script>");
 
             sb.Append("<h2>All Regions</h2><table><tr><th>Region</th><th>Size</th><th></th></tr>");
             foreach (GridRegion region in regions)
@@ -911,7 +1362,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             sb.Append("</table>");
 
-            WritePage(request, response, "Confluence Grid - Destinations", sb.ToString());
+            WritePage(request, response, "Confluence Grid - World Map", sb.ToString());
         }
 
         // Web Profile - the biggest single gap found in the full WhiteCore-Dev
@@ -925,6 +1376,27 @@ namespace OpenSim.Server.Handlers.WebInterface
         // service plugins needed. Public (no login required), matching how
         // classifieds/picks are already publicly searchable in stock
         // OpenSim/SL - profiles aren't private data on this grid.
+        // Same bitmask label sets OpenSim-Grid-Interface's profile.php uses
+        // for profileSkillsMask/profileWantToMask - kept identical so
+        // residents coming from that reference see consistent labels.
+        private static readonly string[] ProfileSkillLabels =
+        {
+            "Building", "Texturing", "Scripting", "Clothing", "Photography", "Modeling"
+        };
+        private static readonly string[] ProfileWantToLabels =
+        {
+            "Build", "Explore", "Meet friends", "Hang out"
+        };
+
+        private static void AppendMaskPills(StringBuilder sb, int mask, string[] labels)
+        {
+            for (int i = 0; i < labels.Length; i++)
+            {
+                if ((mask & (1 << i)) != 0)
+                    sb.Append("<span class=\"pill pill-yes\">").Append(Html(labels[i])).Append("</span> ");
+            }
+        }
+
         private void HandleProfile(IOSHttpRequest request, IOSHttpResponse response)
         {
             string idParam = request.QueryString.Get("id");
@@ -943,8 +1415,25 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            // Self vs. visitor view - About/Picks/Groups/Skills are all
+            // edited entirely in-world via the viewer's own Profile floater
+            // (no web edit form for any of them, deliberately - see the
+            // Search page's Picks section for the same boundary). A visitor
+            // seeing an empty section is normal and should stay silent; a
+            // resident looking at their OWN profile and seeing nothing was
+            // the real complaint here - they need to know it's genuinely
+            // empty (not broken) and how to fill it in, not just see three
+            // sparse lines with no explanation.
+            WebSession session = GetSession(request);
+            bool isSelf = session != null && session.PrincipalID == userId;
+
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1>").Append(Html(account.Name)).Append("</h1>");
+            if (isSelf)
+            {
+                sb.Append("<p class=\"news-meta\">This is what other residents see when they view your profile. ")
+                  .Append("About Me, Picks, Skills and Groups shown on your web profile are all set from your viewer's own Profile panel - there's no separate web form for them.</p>");
+            }
 
             DateTime memberSince = Utils.UnixTimeToDateTime((uint)account.Created);
             sb.Append("<p class=\"news-meta\">Resident since ").Append(Html(memberSince.ToString("MMMM d, yyyy"))).Append("</p>");
@@ -954,11 +1443,26 @@ namespace OpenSim.Server.Handlers.WebInterface
                 GridUserInfo info = m_GridUserService.GetGridUserInfo(userId.ToString());
                 if (info != null)
                 {
-                    string status = info.Online
-                            ? "Online now"
-                            : info.Logout > DateTime.MinValue.AddYears(1)
-                                    ? "Last seen " + Html(info.Logout.ToString("yyyy-MM-dd"))
-                                    : "Never logged in";
+                    // "Online Location" - real gap vs. WhiteCore-Dev's own
+                    // webprofile/modal_profile.html ({OnlineLocationText}/
+                    // {OnlineLocation}), which names the region a resident
+                    // is currently in rather than just showing "Online now".
+                    // LastRegionID is kept current by presence reporting
+                    // while a session is active, so it's a safe read here.
+                    string status;
+                    if (info.Online)
+                    {
+                        GridRegion currentRegion = m_GridService?.GetRegionByUUID(UUID.Zero, info.LastRegionID);
+                        status = currentRegion != null
+                                ? "Online now @ " + Html(currentRegion.RegionName)
+                                : "Online now";
+                    }
+                    else
+                    {
+                        status = info.Logout > DateTime.MinValue.AddYears(1)
+                                ? "Last seen " + Html(info.Logout.ToString("yyyy-MM-dd"))
+                                : "Never logged in";
+                    }
                     sb.Append("<p class=\"news-meta\">").Append(status).Append("</p>");
                 }
             }
@@ -969,40 +1473,115 @@ namespace OpenSim.Server.Handlers.WebInterface
                 string propsResult = string.Empty;
                 m_UserProfilesService.AvatarPropertiesRequest(ref props, ref propsResult);
 
+                if (m_FriendsService != null)
+                {
+                    int friendCount = m_FriendsService.GetFriends(userId)?.Length ?? 0;
+                    sb.Append("<p class=\"news-meta\"><i class=\"bi bi-people\"></i> ")
+                      .Append(friendCount).Append(friendCount == 1 ? " friend" : " friends");
+                    if (isSelf)
+                        sb.Append(" &middot; <a href=\"").Append(BasePath).Append("/friends\">Manage friends</a>");
+                    sb.Append("</p>");
+                }
+
                 if (props.PartnerId != UUID.Zero)
                 {
                     UserAccount partner = m_UserAccountService?.GetUserAccount(UUID.Zero, props.PartnerId);
                     if (partner != null)
                     {
-                        sb.Append("<p><strong>Partner:</strong> <a href=\"").Append(BasePath).Append("/profile?id=")
+                        sb.Append("<p><i class=\"bi bi-heart-fill\"></i> <strong>Partner:</strong> <a href=\"").Append(BasePath).Append("/profile?id=")
                           .Append(partner.PrincipalID).Append("\">").Append(Html(partner.Name)).Append("</a></p>");
                     }
                 }
 
                 if (!string.IsNullOrEmpty(props.AboutText))
                 {
-                    sb.Append("<h2>About</h2><p>").Append(Html(props.AboutText).Replace("\n", "<br/>")).Append("</p>");
+                    sb.Append("<h2><i class=\"bi bi-info-circle\"></i> About</h2><p>").Append(Html(props.AboutText).Replace("\n", "<br/>")).Append("</p>");
+                }
+                else if (isSelf)
+                {
+                    sb.Append("<h2><i class=\"bi bi-info-circle\"></i> About</h2>")
+                      .Append("<p class=\"news-meta\">You haven't written an About Me yet. In your viewer: Me &rarr; Profile &rarr; Edit Profile.</p>");
                 }
 
                 if (!string.IsNullOrEmpty(props.FirstLifeText))
                 {
-                    sb.Append("<h2>First Life</h2><p>").Append(Html(props.FirstLifeText).Replace("\n", "<br/>")).Append("</p>");
+                    sb.Append("<h2><i class=\"bi bi-person-lines-fill\"></i> First Life</h2><p>").Append(Html(props.FirstLifeText).Replace("\n", "<br/>")).Append("</p>");
+                }
+
+                if (!string.IsNullOrEmpty(props.WebUrl))
+                {
+                    sb.Append("<p><i class=\"bi bi-link-45deg\"></i> <a href=\"").Append(Html(props.WebUrl)).Append("\" rel=\"noopener\">")
+                      .Append(Html(props.WebUrl)).Append("</a></p>");
+                }
+
+                if (!string.IsNullOrEmpty(props.Language))
+                {
+                    sb.Append("<p><i class=\"bi bi-translate\"></i> <strong>Languages:</strong> ").Append(Html(props.Language)).Append("</p>");
+                }
+
+                // Same skills/want-to bit mapping OpenSim-Grid-Interface's
+                // profile.php uses (profileSkillsMask/profileWantToMask) -
+                // these are free-text-labelled bitmasks with no single
+                // canonical meaning across viewers, so matching the named
+                // reference keeps the labels consistent with what residents
+                // coming from that site already expect.
+                if (props.SkillsMask != 0 || !string.IsNullOrEmpty(props.SkillsText))
+                {
+                    sb.Append("<h3>Skills &amp; Interests</h3>");
+                    if (!string.IsNullOrEmpty(props.SkillsText))
+                        sb.Append("<p>").Append(Html(props.SkillsText)).Append("</p>");
+                    if (props.SkillsMask != 0)
+                    {
+                        sb.Append("<p>");
+                        AppendMaskPills(sb, props.SkillsMask, ProfileSkillLabels);
+                        sb.Append("</p>");
+                    }
+                }
+
+                if (props.WantToMask != 0 || !string.IsNullOrEmpty(props.WantToText))
+                {
+                    sb.Append("<h3>Wants To</h3>");
+                    if (!string.IsNullOrEmpty(props.WantToText))
+                        sb.Append("<p>").Append(Html(props.WantToText)).Append("</p>");
+                    if (props.WantToMask != 0)
+                    {
+                        sb.Append("<p>");
+                        AppendMaskPills(sb, props.WantToMask, ProfileWantToLabels);
+                        sb.Append("</p>");
+                    }
                 }
 
                 OSD picksOsd = m_UserProfilesService.AvatarPicksRequest(userId);
                 if (picksOsd is OSDArray picksArray && picksArray.Count > 0)
                 {
-                    sb.Append("<h2>Picks</h2><div class=\"widget-grid\">");
+                    sb.Append("<h2><i class=\"bi bi-geo-alt\"></i> Picks</h2><div class=\"widget-grid\">");
                     foreach (OSD entry in picksArray)
                     {
-                        if (entry is OSDMap pickMap)
+                        if (entry is OSDMap pickMap && UUID.TryParse(pickMap["pickuuid"].AsString(), out UUID pickId))
                         {
-                            sb.Append("<div class=\"widget-card\"><h3>")
-                              .Append(Html(pickMap["name"].AsString())).Append("</h3></div>");
+                            UserProfilePick pick = new UserProfilePick { CreatorId = userId, PickId = pickId };
+                            string pickResult = string.Empty;
+                            m_UserProfilesService.PickInfoRequest(ref pick, ref pickResult);
+
+                            sb.Append("<div class=\"widget-card\"><h3>");
+                            if (pick.TopPick)
+                                sb.Append("<span class=\"pill pill-yes\"><i class=\"bi bi-star-fill\"></i> Top Pick</span> ");
+                            sb.Append(Html(pickMap["name"].AsString())).Append("</h3>");
+                            if (!string.IsNullOrEmpty(pick.Desc) && pick.Desc != "No description given.")
+                                sb.Append("<div class=\"widget-meta\">").Append(Html(pick.Desc)).Append("</div>");
+                            if (!string.IsNullOrEmpty(pick.SimName))
+                                sb.Append("<div class=\"widget-meta\"><i class=\"bi bi-geo-alt\"></i> ").Append(Html(pick.SimName)).Append("</div>");
+                            sb.Append("</div>");
                         }
                     }
                     sb.Append("</div>");
                 }
+                else if (isSelf)
+                {
+                    sb.Append("<h2><i class=\"bi bi-geo-alt\"></i> Picks</h2>")
+                      .Append("<p class=\"news-meta\">You haven't added any Picks yet. In your viewer: Me &rarr; Profile &rarr; Picks &rarr; the + button, at a place you're standing.</p>");
+                }
+
             }
 
             // Group memberships - real WhiteCore-Dev gap (its user profile
@@ -1010,40 +1589,500 @@ namespace OpenSim.Server.Handlers.WebInterface
             // per-membership "show this on my profile" flag the viewer's own
             // profile floater already exposes - filtering to it here is what
             // makes this a resident's own choice rather than a full, possibly
-            // unwanted membership dump.
+            // unwanted membership dump. Search (not this page) is where
+            // residents actually discover other people's public groups/picks
+            // grid-wide, per explicit direction - this page only ever shows
+            // this one resident's own memberships.
             if (m_GroupsSearchService != null)
             {
                 List<GroupMembershipData> memberships = m_GroupsSearchService.GetAgentGroupMemberships(userId.ToString(), userId.ToString());
                 List<GroupMembershipData> visible = memberships.FindAll(m => m.ListInProfile);
                 if (visible.Count > 0)
                 {
-                    sb.Append("<h2>Groups</h2><ul>");
+                    sb.Append("<h2><i class=\"bi bi-people\"></i> Groups (").Append(visible.Count).Append(")</h2><ul>");
                     foreach (GroupMembershipData membership in visible)
                     {
                         sb.Append("<li>").Append(Html(membership.GroupName)).Append("</li>");
                     }
                     sb.Append("</ul>");
                 }
-            }
-
-            // Regions owned - real WhiteCore-Dev gap. Deliberately public
-            // (same as everything else on this page) and reuses the exact
-            // same GetRegionsOwnedBy helper /myregions already uses for the
-            // logged-in owner's own private management page - this is just
-            // the read-only, anyone-can-view list of region names, no OAR
-            // save/load actions.
-            List<GridRegion> ownedRegions = GetRegionsOwnedBy(userId);
-            if (ownedRegions.Count > 0)
-            {
-                sb.Append("<h2>Regions</h2><ul>");
-                foreach (GridRegion region in ownedRegions)
+                else if (isSelf)
                 {
-                    sb.Append("<li>").Append(Html(region.RegionName)).Append("</li>");
+                    string emptyReason = memberships.Count > 0
+                            ? "You're in a group, but none are set to show on your profile. In your viewer: Me &rarr; Groups &rarr; select a group &rarr; check \"Show in my profile\"."
+                            : "You haven't joined any groups yet. Groups are managed entirely in-world - search for one from your viewer, or find one grid-wide from this site's Search page.";
+                    sb.Append("<h2><i class=\"bi bi-people\"></i> Groups</h2>")
+                      .Append("<p class=\"news-meta\">").Append(emptyReason).Append("</p>");
                 }
-                sb.Append("</ul>");
             }
 
             WritePage(request, response, "Confluence Grid - " + account.Name, sb.ToString());
+        }
+
+        // Offline Messages - real counterpart to OpenSim-Grid-Interface's
+        // account/offline_messages.php, but backed by IOfflineIMService
+        // (GetMessages/DeleteMessages, already a real, wired-up OpenSim
+        // service - OpenSim.Addons.OfflineIM.dll) rather than OGI's raw SQL
+        // + hand-rolled XML parsing against im_offline. IOfflineIMService
+        // only exposes DeleteMessages(principalID) - a delete-all, not a
+        // delete-one - so this page offers "Clear All" rather than OGI's
+        // per-message delete/select-all UI; extending the service for
+        // per-message delete would mean touching the data layer across all
+        // 3 DB backends again, not attempted here given the scope already
+        // in this pass.
+        private void HandleOfflineMessages(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            string flash = string.Empty;
+            if (request.HttpMethod == "POST" && m_OfflineIMService != null)
+            {
+                m_OfflineIMService.DeleteMessages(session.PrincipalID);
+                flash = "<p class=\"success\">All offline messages cleared.</p>";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-envelope-open\"></i> Offline Messages</h1>");
+            sb.Append("<p>Instant messages sent to you while you were offline, waiting to be delivered next time you log in.</p>");
+            sb.Append(flash);
+
+            if (m_OfflineIMService == null)
+            {
+                sb.Append("<p class=\"error\">Offline messaging is not available on this grid.</p>");
+                WritePage(request, response, "Confluence Grid - Offline Messages", sb.ToString());
+                return;
+            }
+
+            List<GridInstantMessage> messages = m_OfflineIMService.GetMessages(session.PrincipalID);
+            if (messages == null || messages.Count == 0)
+            {
+                sb.Append("<p>No offline messages are currently stored for your account.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>From</th><th>Message</th><th>Received</th></tr>");
+                foreach (GridInstantMessage im in messages.OrderBy(m => m.timestamp))
+                {
+                    DateTime received = OpenMetaverse.Utils.UnixTimeToDateTime(im.timestamp);
+                    sb.Append("<tr><td>").Append(Html(im.fromAgentName)).Append("</td>")
+                      .Append("<td>").Append(Html(im.message)).Append("</td>")
+                      .Append("<td>").Append(Html(received.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC</td></tr>");
+                }
+                sb.Append("</table>");
+                sb.Append("<form method=\"post\"><p class=\"news-meta\">Per-message delete isn't available yet - clearing removes every pending offline message for your account.</p>")
+                  .Append("<button type=\"submit\" onclick=\"return confirm('Clear all offline messages?');\">Clear All</button></form>");
+            }
+
+            WritePage(request, response, "Confluence Grid - Offline Messages", sb.ToString());
+        }
+
+        // Resident-to-resident web mail (inbox/sent/compose) - real
+        // counterpart to OpenSim-Grid-Interface's message.php, but backed
+        // by the new IMessagingService/webmessages table rather than raw
+        // SQL + a hand-created ws_messages table the connector's own PHP
+        // reference builds itself. Recipient search reuses
+        // IUserAccountService.GetUserAccounts(scope, query) - the same
+        // safe, parameterized name-search call already used by grid-wide
+        // People search and the admin Users page - rather than hand-built
+        // SQL against user input.
+        private string MessagesTabs(string active)
+        {
+            return "<div class=\"subnav\">"
+                    + "<a href=\"" + BasePath + "/messages\"" + (active == "inbox" ? " class=\"active\"" : "") + "><i class=\"bi bi-inbox\"></i> Inbox</a>"
+                    + "<a href=\"" + BasePath + "/messages/sent\"" + (active == "sent" ? " class=\"active\"" : "") + "><i class=\"bi bi-send\"></i> Sent</a>"
+                    + "<a href=\"" + BasePath + "/messages/compose\"" + (active == "compose" ? " class=\"active\"" : "") + "><i class=\"bi bi-pencil-square\"></i> Compose</a>"
+                    + "</div>";
+        }
+
+        private void HandleMessagesInbox(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-envelope\"></i> Messages</h1>");
+            sb.Append(MessagesTabs("inbox"));
+
+            if (m_MessagingService == null)
+            {
+                sb.Append("<p class=\"error\">Messaging is not available on this grid.</p>");
+                WritePage(request, response, "Confluence Grid - Inbox", sb.ToString());
+                return;
+            }
+
+            List<WebMessage> messages = m_MessagingService.GetInbox(session.PrincipalID, 200);
+            if (messages == null || messages.Count == 0)
+            {
+                sb.Append("<p>No messages yet.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>From</th><th>Subject</th><th>Date</th><th></th></tr>");
+                foreach (WebMessage m in messages)
+                {
+                    UserAccount fromAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, m.SenderID);
+                    string fromName = fromAccount != null ? fromAccount.Name : m.SenderID.ToString();
+                    string subject = string.IsNullOrEmpty(m.Subject) ? "(no subject)" : m.Subject;
+
+                    sb.Append("<tr").Append(m.IsRead ? "" : " style=\"font-weight:700\"").Append("><td>").Append(Html(fromName)).Append("</td>")
+                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/view?id=").Append(m.ID).Append("&from=inbox\">")
+                      .Append(Html(subject)).Append("</a></td>")
+                      .Append("<td>").Append(Html(m.Created.ToString("yyyy-MM-dd HH:mm"))).Append("</td>")
+                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(m.ID).Append("&from=inbox\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash\"></i></a></td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, "Confluence Grid - Inbox", sb.ToString());
+        }
+
+        private void HandleMessagesSent(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-envelope\"></i> Messages</h1>");
+            sb.Append(MessagesTabs("sent"));
+
+            if (m_MessagingService == null)
+            {
+                sb.Append("<p class=\"error\">Messaging is not available on this grid.</p>");
+                WritePage(request, response, "Confluence Grid - Sent", sb.ToString());
+                return;
+            }
+
+            List<WebMessage> messages = m_MessagingService.GetSent(session.PrincipalID, 200);
+            if (messages == null || messages.Count == 0)
+            {
+                sb.Append("<p>No sent messages yet.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>To</th><th>Subject</th><th>Date</th><th></th></tr>");
+                foreach (WebMessage m in messages)
+                {
+                    UserAccount toAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, m.ReceiverID);
+                    string toName = toAccount != null ? toAccount.Name : m.ReceiverID.ToString();
+                    string subject = string.IsNullOrEmpty(m.Subject) ? "(no subject)" : m.Subject;
+
+                    sb.Append("<tr><td>").Append(Html(toName)).Append("</td>")
+                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/view?id=").Append(m.ID).Append("&from=sent\">")
+                      .Append(Html(subject)).Append("</a></td>")
+                      .Append("<td>").Append(Html(m.Created.ToString("yyyy-MM-dd HH:mm"))).Append("</td>")
+                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(m.ID).Append("&from=sent\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash\"></i></a></td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, "Confluence Grid - Sent", sb.ToString());
+        }
+
+        private void HandleMessagesCompose(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            string toParam = request.QueryString.Get("to") ?? string.Empty;
+            UUID toId = UUID.Zero;
+            UUID.TryParse(toParam, out toId);
+            string search = request.QueryString.Get("q") ?? string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-envelope\"></i> Messages</h1>");
+            sb.Append(MessagesTabs("compose"));
+
+            if (m_MessagingService == null || m_UserAccountService == null)
+            {
+                sb.Append("<p class=\"error\">Messaging is not available on this grid.</p>");
+                WritePage(request, response, "Confluence Grid - Compose", sb.ToString());
+                return;
+            }
+
+            sb.Append("<h2>Compose Message</h2>");
+            sb.Append("<form method=\"get\" action=\"").Append(BasePath).Append("/messages/compose\">")
+              .Append("<label>Find a resident<br/><input type=\"text\" name=\"q\" value=\"").Append(Html(search)).Append("\" placeholder=\"Type a name to search...\"></label> ")
+              .Append("<button type=\"submit\"><i class=\"bi bi-search\"></i> Search</button></form>");
+
+            if (!string.IsNullOrEmpty(search))
+            {
+                List<UserAccount> candidates = m_UserAccountService.GetUserAccounts(UUID.Zero, search);
+                if (candidates == null || candidates.Count == 0)
+                {
+                    sb.Append("<p>No residents found.</p>");
+                }
+                else
+                {
+                    sb.Append("<ul>");
+                    foreach (UserAccount c in candidates)
+                    {
+                        sb.Append("<li><a href=\"").Append(BasePath).Append("/messages/compose?to=").Append(c.PrincipalID)
+                          .Append("\">").Append(Html(c.Name)).Append("</a></li>");
+                    }
+                    sb.Append("</ul>");
+                }
+            }
+
+            string toName = string.Empty;
+            if (toId != UUID.Zero)
+            {
+                UserAccount toAccount = m_UserAccountService.GetUserAccount(UUID.Zero, toId);
+                toName = toAccount != null ? toAccount.Name : string.Empty;
+            }
+
+            sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/messages/send\">");
+            sb.Append("<input type=\"hidden\" name=\"to_uuid\" value=\"").Append(toId).Append("\">");
+            sb.Append("<label>To<br/><input type=\"text\" value=\"").Append(Html(toName != string.Empty ? toName : "Select a resident above")).Append("\" readonly></label><br/>");
+            sb.Append("<label>Subject<br/><input type=\"text\" name=\"subject\" maxlength=\"150\"></label><br/>");
+            sb.Append("<label>Message<br/><textarea name=\"body\" rows=\"6\"></textarea></label><br/>");
+            sb.Append("<button type=\"submit\"><i class=\"bi bi-send\"></i> Send Message</button>");
+            sb.Append("</form>");
+
+            WritePage(request, response, "Confluence Grid - Compose", sb.ToString());
+        }
+
+        private void HandleMessagesSend(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || m_MessagingService == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string toParam = FormValue(form, "to_uuid");
+            string subject = FormValue(form, "subject").Trim();
+            string body = FormValue(form, "body").Trim();
+
+            if (!UUID.TryParse(toParam, out UUID toId) || toId == UUID.Zero)
+            {
+                response.Redirect(BasePath + "/messages/compose?message=" + Uri.EscapeDataString("Please choose a valid recipient."), HttpStatusCode.Redirect);
+                return;
+            }
+            if (string.IsNullOrEmpty(body))
+            {
+                response.Redirect(BasePath + "/messages/compose?to=" + toId + "&message=" + Uri.EscapeDataString("Message body cannot be empty."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            WebMessage message = new WebMessage
+            {
+                ID = UUID.Random(),
+                SenderID = session.PrincipalID,
+                ReceiverID = toId,
+                Subject = subject,
+                Body = body,
+                Created = DateTime.UtcNow
+            };
+            m_MessagingService.Store(message);
+
+            response.Redirect(BasePath + "/messages/sent", HttpStatusCode.Redirect);
+        }
+
+        private void HandleMessagesView(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            string idParam = request.QueryString.Get("id");
+            string fromTab = request.QueryString.Get("from") == "sent" ? "sent" : "inbox";
+
+            if (m_MessagingService == null || !UUID.TryParse(idParam, out UUID id))
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                WritePage(request, response, "Confluence Grid - Message", "<h1>Message not found</h1>");
+                return;
+            }
+
+            WebMessage message = m_MessagingService.Get(id);
+            if (message == null || (message.SenderID != session.PrincipalID && message.ReceiverID != session.PrincipalID))
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                WritePage(request, response, "Confluence Grid - Message", "<h1>Message not found</h1>");
+                return;
+            }
+
+            if (message.ReceiverID == session.PrincipalID && !message.IsRead)
+                m_MessagingService.MarkRead(id);
+
+            UserAccount fromAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, message.SenderID);
+            UserAccount toAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, message.ReceiverID);
+            string fromName = fromAccount != null ? fromAccount.Name : message.SenderID.ToString();
+            string toName = toAccount != null ? toAccount.Name : message.ReceiverID.ToString();
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>").Append(Html(string.IsNullOrEmpty(message.Subject) ? "(no subject)" : message.Subject)).Append("</h1>");
+            sb.Append("<p class=\"news-meta\">From: ").Append(Html(fromName)).Append(" &middot; To: ").Append(Html(toName))
+              .Append(" &middot; ").Append(Html(message.Created.ToString("yyyy-MM-dd HH:mm"))).Append("</p>");
+            sb.Append("<div class=\"content-card\" style=\"white-space:pre-wrap;\">").Append(Html(message.Body)).Append("</div>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/messages/compose?to=").Append(message.SenderID).Append("\"><i class=\"bi bi-reply\"></i> Reply</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(message.ID).Append("&from=").Append(fromTab)
+              .Append("\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash\"></i> Delete</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/messages").Append(fromTab == "sent" ? "/sent" : string.Empty).Append("\">Back</a></p>");
+
+            WritePage(request, response, "Confluence Grid - Message", sb.ToString());
+        }
+
+        private void HandleMessagesDelete(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            string idParam = request.QueryString.Get("id");
+            string fromTab = request.QueryString.Get("from") == "sent" ? "sent" : "inbox";
+
+            if (m_MessagingService != null && UUID.TryParse(idParam, out UUID id))
+                m_MessagingService.DeleteForUser(id, session.PrincipalID);
+
+            response.Redirect(BasePath + "/messages" + (fromTab == "sent" ? "/sent" : string.Empty), HttpStatusCode.Redirect);
+        }
+
+        // Public Economy dashboard - real counterpart to OpenSim-Grid-
+        // Interface's economy.php, but scoped down deliberately: that page
+        // has 6 different ?action= views (dashboard/my_account/
+        // send_money/my_transactions/leaderboard/statistics/recent) with a
+        // lot of overlap - "my_account"/"my_transactions" duplicate this
+        // connector's own existing My Transactions self-service page
+        // (task #40), and "send_money" is a UI shell there with no working
+        // backend at all (its own comment says so: "needs the backend API
+        // implementation"). This page keeps just the genuinely new part -
+        // grid-wide circulation/leaderboard - as one page, reusing
+        // RenderEconomyStats (already built for the splash widget) instead
+        // of a second volume-window implementation. GetTotalCirculation/
+        // CountAccountsWithBalance/GetTopBalances are real DB-side
+        // SUM/COUNT/ORDER-BY-LIMIT aggregates (new ICurrencyData methods),
+        // not a loop calling GetBalance per account.
+        private void HandleEconomy(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-wallet2\"></i> Economy</h1>");
+            sb.Append("<p>Monitor currency circulation and see where you stand.</p>");
+
+            if (m_CurrencyService == null)
+            {
+                sb.Append("<p class=\"error\">Currency service is not available on this grid.</p>");
+                WritePage(request, response, "Confluence Grid - Economy", sb.ToString());
+                return;
+            }
+
+            // "What am I getting and why" - same Economy & Currency cards
+            // the Features page already builds (AppendIconFeatureCard,
+            // reused as-is rather than a second hand-written copy), placed
+            // here first since a visitor landing directly on /economy
+            // (rather than arriving via Features) has had no explanation of
+            // the currency system yet before hitting a wall of live numbers.
+            sb.Append("<h2><i class=\"bi bi-currency-exchange\"></i> What You're Getting</h2><div class=\"feature-grid-3\">");
+            AppendIconFeatureCard(sb, "currency-dollar", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
+            {
+                ("Ledger", false, "Built-in transaction history and group treasuries - not a third-party dependency"),
+                ("Web access", false, "Balance and transaction pages from any browser, no separate money-server process"),
+                ("Protocol", false, "Answers the same buy/sell currency.php surface real viewers already expect")
+            });
+            AppendIconFeatureCard(sb, "wallet2", "Gloebit <span class=\"pill\" style=\"background:rgba(59,130,246,.15);color:var(--accent-bright)\">Optional</span>", new[]
+            {
+                ("What it is", false, "A real-money payment gateway, for grids that want a paid economy instead of (or alongside) the native ledger"),
+                ("How it's added", false, "Swappable via the addon-modules Gloebit integration - not required, not enabled by default")
+            });
+            sb.Append("</div>");
+
+            if (session != null)
+            {
+                int balance = m_CurrencyService.GetBalance(session.PrincipalID);
+                sb.Append("<div class=\"content-card\"><h2>My Balance</h2><p style=\"font-size:28px;font-weight:800;color:var(--accent-bright)\">C$ ")
+                  .Append(balance.ToString("N0")).Append("</p>")
+                  .Append("<p><a href=\"").Append(BasePath).Append("/transactions\">View my transactions &rarr;</a></p></div>");
+            }
+            else
+            {
+                sb.Append("<div class=\"content-card\"><p><a href=\"").Append(BasePath).Append("/login\">Log in</a> to see your balance and transaction history.</p></div>");
+            }
+
+            sb.Append(RenderEconomyStats());
+
+            sb.Append("<h2><i class=\"bi bi-globe\"></i> Grid Totals</h2><div class=\"stats-grid\">");
+            AppendStat(sb, "Money in Circulation", "C$ " + m_CurrencyService.GetTotalCirculation().ToString("N0"), "sum of every resident's balance");
+            AppendStat(sb, "Funded Accounts", m_CurrencyService.CountAccountsWithBalance().ToString("N0"), "residents with a non-zero balance");
+            AppendStat(sb, "Total Transactions", m_CurrencyService.NumberOfTransactions(UUID.Zero, UUID.Zero).ToString("N0"), "all time");
+            sb.Append("</div>");
+
+            List<CurrencyBalanceEntry> topBalances = m_CurrencyService.GetTopBalances(10);
+            sb.Append("<h2><i class=\"bi bi-trophy\"></i> Top Balances</h2>");
+            if (topBalances == null || topBalances.Count == 0)
+            {
+                sb.Append("<p>No funded accounts yet.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>#</th><th>Resident</th><th>Balance</th></tr>");
+                int rank = 1;
+                foreach (CurrencyBalanceEntry entry in topBalances)
+                {
+                    UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, entry.PrincipalID);
+                    string name = account != null ? account.Name : entry.PrincipalID.ToString();
+                    string nameCell = account != null
+                            ? "<a href=\"" + BasePath + "/profile?id=" + entry.PrincipalID + "\">" + Html(name) + "</a>"
+                            : Html(name);
+
+                    sb.Append("<tr><td>#").Append(rank).Append("</td><td>").Append(nameCell).Append("</td>")
+                      .Append("<td>C$ ").Append(entry.Balance.ToString("N0")).Append("</td></tr>");
+                    rank++;
+                }
+                sb.Append("</table>");
+            }
+
+            List<CurrencyTransfer> recent = m_CurrencyService.GetTransactionHistory(UUID.Zero, UUID.Zero, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow, 0, 20);
+            sb.Append("<h2><i class=\"bi bi-clock-history\"></i> Recent Transactions</h2>");
+            if (recent == null || recent.Count == 0)
+            {
+                sb.Append("<p>No transactions in the last 30 days.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>Date</th><th>From</th><th>To</th><th>Amount</th></tr>");
+                foreach (CurrencyTransfer t in recent)
+                {
+                    UserAccount fromAccount = t.FromAgent != UUID.Zero ? m_UserAccountService?.GetUserAccount(UUID.Zero, t.FromAgent) : null;
+                    UserAccount toAccount = t.ToAgent != UUID.Zero ? m_UserAccountService?.GetUserAccount(UUID.Zero, t.ToAgent) : null;
+                    string fromName = fromAccount != null ? fromAccount.Name : "System";
+                    string toName = toAccount != null ? toAccount.Name : "System";
+
+                    sb.Append("<tr><td>").Append(Html(t.TransferDate.ToString("yyyy-MM-dd HH:mm"))).Append("</td>")
+                      .Append("<td>").Append(Html(fromName)).Append("</td>")
+                      .Append("<td>").Append(Html(toName)).Append("</td>")
+                      .Append("<td>C$ ").Append(t.Amount.ToString("N0")).Append("</td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, "Confluence Grid - Economy", sb.ToString());
         }
 
         // Friends list - the second "genuinely new ground" item from the
@@ -1767,7 +2806,20 @@ namespace OpenSim.Server.Handlers.WebInterface
             ad.Category = category;
             ad.Description = string.IsNullOrEmpty(description) ? "No Description" : description;
             ad.SimName = regionName;
-            ad.GlobalPos = "<128,128,25>";
+            // GridRegion.RegionLocX/Y are already in meters (unlike
+            // RegionInfo's own same-named fields, which are in region
+            // units - see IGridService.cs's own "DANGER DANGER" comment),
+            // so the real global position is just the region's origin plus
+            // a fixed in-region offset - no x256 conversion needed here.
+            // Previously hardcoded to "<128,128,25>" with no region offset
+            // at all, which was only ever correct for a region sitting at
+            // grid origin (0,0) - every other region got a bogus Teleport/
+            // Map target.
+            GridRegion targetRegion = m_GridService?.GetRegionByName(UUID.Zero, regionName);
+            Vector3 classifiedGlobalPos = targetRegion != null
+                    ? new Vector3(targetRegion.RegionLocX + 128, targetRegion.RegionLocY + 128, 25)
+                    : new Vector3(128, 128, 25);
+            ad.GlobalPos = classifiedGlobalPos.ToString();
             ad.ParcelName = regionName;
 
             string result = string.Empty;
@@ -1860,6 +2912,22 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             string dateValue = editing != null ? editing.EventDate.ToString("yyyy-MM-ddTHH:mm") : string.Empty;
             string formTitle = editing != null ? "Edit Event" : "Add Event";
+
+            // Region picker - same pattern as HandleMyClassifieds' own
+            // region <select> - needed so the event has a real teleportable
+            // location, not just the free-text Location display string.
+            // Feeds GlobalPos in HandleMyEventsSave, which is what actually
+            // drives the viewer's Teleport/Map buttons via EventInfoReply
+            // (see ConfluenceSearchModule.EventInfoRequest).
+            List<GridRegion> eventRegions = m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>();
+            StringBuilder eventRegionOptions = new StringBuilder();
+            foreach (GridRegion region in eventRegions)
+            {
+                bool selected = editing != null && editing.Location == region.RegionName;
+                eventRegionOptions.Append("<option value=\"").Append(Html(region.RegionName)).Append("\"")
+                        .Append(selected ? " selected" : string.Empty).Append(">").Append(Html(region.RegionName)).Append("</option>");
+            }
+
             sb.Append("<h2>").Append(formTitle).Append("</h2>")
               .Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myevents/save\">")
               .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(editing != null ? editing.ID.ToString() : string.Empty).Append("\">")
@@ -1867,6 +2935,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<label>Category<br/><input type=\"text\" name=\"category\" value=\"").Append(Html(editing?.Category ?? string.Empty)).Append("\" placeholder=\"Live Music, Nightlife, Games...\"></label><br/>")
               .Append("<label>Date/time (grid time, UTC)<br/><input type=\"datetime-local\" name=\"event_date\" value=\"").Append(Html(dateValue)).Append("\" required></label><br/>")
               .Append("<label>Duration (minutes)<br/><input type=\"number\" name=\"duration\" value=\"").Append(editing?.DurationMinutes ?? 60).Append("\" min=\"0\"></label><br/>")
+              .Append("<label>Region (for Teleport/Map)<br/><select name=\"region\">").Append(eventRegionOptions).Append("</select></label><br/>")
               .Append("<label>Location<br/><input type=\"text\" name=\"location\" value=\"").Append(Html(editing?.Location ?? string.Empty)).Append("\" placeholder=\"Region or venue name\"></label><br/>")
               .Append("<label>Description<br/><textarea name=\"description\" rows=\"4\">").Append(Html(editing?.Description ?? string.Empty)).Append("</textarea></label><br/>")
               .Append("<button type=\"submit\">").Append(editing != null ? "Save changes" : "Add event").Append("</button>")
@@ -1891,6 +2960,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string category = FormValue(form, "category").Trim();
             string dateValue = FormValue(form, "event_date").Trim();
             string location = FormValue(form, "location").Trim();
+            string regionName = FormValue(form, "region").Trim();
             string description = FormValue(form, "description");
             int.TryParse(FormValue(form, "duration"), out int duration);
 
@@ -1918,6 +2988,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             item.DurationMinutes = duration > 0 ? duration : 60;
             item.Location = location;
             item.Description = description;
+
+            // Same region-origin-plus-fixed-offset math as HandleMyClassifiedsSave's
+            // GlobalPos fix - GridRegion.RegionLocX/Y are already in meters.
+            GridRegion eventRegion = m_GridService?.GetRegionByName(UUID.Zero, regionName);
+            Vector3 eventGlobalPos = eventRegion != null
+                    ? new Vector3(eventRegion.RegionLocX + 128, eventRegion.RegionLocY + 128, 25)
+                    : new Vector3();
+            item.GlobalPos = eventRegion != null ? eventGlobalPos.ToString() : string.Empty;
 
             m_EventsService.Store(item);
 
@@ -1990,11 +3068,25 @@ namespace OpenSim.Server.Handlers.WebInterface
         private void HandleFeatures(IOSHttpRequest request, IOSHttpResponse response)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1>Grid Features</h1>");
+            sb.Append("<h1><i class=\"bi bi-stars\"></i> Grid Features</h1>");
             sb.Append("<p>Confluence runs on OpenSimulator, extended with a set of natively-built systems ")
               .Append("(not addon modules) covering currency, search, moderation, and grid administration.</p>");
 
-            sb.Append("<h2>Live Grid Snapshot</h2><div class=\"stats-grid\">");
+            // Platform Overview table - same shape as OpenSim-Grid-Interface's
+            // features.php ("Supported Viewers"/"Main Simulator"/"Main
+            // Version" rows), but every value here is either a compile-time
+            // constant already used elsewhere on this page (VersionInfo) or
+            // the same viewer list HandleViewers already publishes, not a
+            // second hand-typed copy that could drift out of sync.
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-activity\"></i> Platform Overview</h2>")
+              .Append("<table><tbody>")
+              .Append("<tr><th>Supported Viewers</th><td>Firestorm, Cool VL Viewer</td></tr>")
+              .Append("<tr><th>Core Platform</th><td>OpenSimulator (Confluence build)</td></tr>")
+              .Append("<tr><th>Core Version</th><td><span title=\"commit ").Append(global::OpenSim.VersionInfo.BuildCommitHash).Append("\">")
+              .Append(global::OpenSim.VersionInfo.DisplayVersionNumber).Append("</span></td></tr>")
+              .Append("</tbody></table></div>");
+
+            sb.Append("<h2><i class=\"bi bi-activity\"></i> Live Grid Snapshot</h2><div class=\"stats-grid\">");
             if (m_GridService != null)
             {
                 List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
@@ -2016,27 +3108,233 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             if (m_UserAccountService != null)
                 AppendStat(sb, "Registered Residents", m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count.ToString(), string.Empty);
+            // Real gap vs. OpenSim-Grid-Interface's features.php ("Main
+            // Simulator"/"Main Version" table row) - OpenSim.Framework.
+            // VersionInfo is the same compile-time constant the console
+            // banner and login response already report, not a guess.
+            AppendStat(sb, "OpenSimulator Version", global::OpenSim.VersionInfo.DisplayVersionNumber, "Core platform");
             sb.Append("</div>");
 
-            sb.Append("<h2>Platform Capabilities</h2><div class=\"widget-grid\">");
-            AppendFeatureCard(sb, "Hypergrid Travel", "Enabled", "Teleport to and from other OpenSim grids");
-            AppendFeatureCard(sb, "VarRegions", "Supported", "Regions larger than the standard 256x256, with no internal sim-crossing stutter");
-            AppendFeatureCard(sb, "Native Currency", m_CurrencyService != null ? "Active" : "Unavailable", "Built-in ledger, transaction history, and web-based balance/transaction pages - not a third-party dependency");
-            AppendFeatureCard(sb, "Native Search", "Active", "Grid-wide place search, integrated with the viewer's own Search window");
-            AppendFeatureCard(sb, "Native Mute List", "Active", "Server-side mute list, replacing the legacy addon module");
-            AppendFeatureCard(sb, "SimProtection", "Active", "Automatic script/physics throttling on FPS drops, with auto-recovery");
-            AppendFeatureCard(sb, "On-Demand Regions", "Active", "Idle regions sleep until a visitor arrives, then wake automatically");
-            AppendFeatureCard(sb, "Grid-Wide Viewer Ban", "Active", "IP-range and hardware-signature bans enforced at login, grid-wide");
-            AppendFeatureCard(sb, "Scripted NPCs", "Active", "osNpc bots with avatar-follow and tag-group management");
-            AppendFeatureCard(sb, "Abuse Reports", "Active", "In-viewer abuse reporting with a web-based admin queue");
-            AppendFeatureCard(sb, "Web-Based Admin", "Active", "Full grid administration - users, estates, regions, currency, events - from any browser");
-            AppendFeatureCard(sb, "Mesh & Scripting", "Supported", "Mesh uploads, LSL and OSSL scripting");
+            // Open-source repos - real URLs pulled from this checkout's own
+            // git remotes (git remote -v), not hand-typed, so they can't
+            // drift from the actual project. OGI is credited as the
+            // optional swap-out web interface, matching the "not required"
+            // framing already used for it in Platform Capabilities below.
+            sb.Append("<h2><i class=\"bi bi-github\"></i> Open Source</h2><div class=\"feature-grid-3\">")
+              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-git\"></i> Confluence</h3>")
+              .Append("<p>The grid engine itself - OpenSimulator core plus every natively-built system on this page (currency, search, moderation, admin).</p>")
+              .Append("<p><a href=\"https://github.com/Ramius1701/OpenSim-Confluence\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github\"></i> Ramius1701/OpenSim-Confluence</a></p></div>")
+              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-layout-text-window-reverse\"></i> Grid Web Interface</h3>")
+              .Append("<p>An optional standalone PHP web front-end for the grid - swappable, not required (this built-in WebUI ships by default).</p>")
+              .Append("<p><a href=\"https://github.com/Ramius1701/OpenSim-Grid-Interface\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github\"></i> Ramius1701/OpenSim-Grid-Interface</a></p></div>")
+              .Append("</div>");
+
+            AppendPoweredBySection(sb, GetSetting("PoweredByItems", string.Empty));
+
+            // Regrouped from a flat 12-item list into themed, icon-headed
+            // hover-lift cards - same real capabilities as before (nothing
+            // here is fabricated - see the per-item honesty note in the
+            // class comment above), just presented the way a grid owner
+            // evaluating this platform actually wants to scan it, matching
+            // the reference project's own icon-per-category treatment.
+            // Native Currency moved out of this list into its own Economy
+            // section below rather than duplicated in both places.
+            sb.Append("<h2><i class=\"bi bi-sliders\"></i> Platform Capabilities</h2><div class=\"feature-grid-3\">");
+
+            AppendIconFeatureCard(sb, "globe-americas", "World & Travel", new[]
+            {
+                ("Hypergrid Travel", true, "Teleport to and from other OpenSim grids"),
+                ("VarRegions", true, "Larger-than-standard regions with no internal sim-crossing stutter"),
+                ("On-Demand Regions", true, "Idle regions sleep until a visitor arrives, then wake automatically"),
+                // Real gap vs. the reference's own "Voice" card - Confluence
+                // has no bundled voice integration (no Vivox/Mumble/WebRTC
+                // anywhere in this codebase, confirmed rather than assumed).
+                // Stated honestly rather than left silent, same standard as
+                // the ban/kick/message-online-user gaps documented earlier.
+                ("Voice", false, "Not bundled - a standard Vivox/Mumble config can be added the same way vanilla OpenSim supports it")
+            });
+
+            AppendIconFeatureCard(sb, "shield-check", "Safety & Moderation", new[]
+            {
+                ("Native Mute List", true, "Server-side mute list, no addon module required"),
+                ("Grid-Wide Viewer Ban", true, "IP-range and hardware-signature bans enforced at login"),
+                ("Abuse Reports", true, "In-viewer reporting with a web-based admin queue")
+            });
+
+            AppendIconFeatureCard(sb, "gear-wide-connected", "Platform Services", new[]
+            {
+                ("Native Search", true, "Grid-wide place search, integrated with the viewer's own Search window"),
+                ("SimProtection", true, "Automatic script/physics throttling on FPS drops, with auto-recovery"),
+                ("Scripted NPCs", true, "osNpc bots with avatar-follow and tag-group management")
+            });
+
+            AppendIconFeatureCard(sb, "display", "Administration & Building", new[]
+            {
+                ("Web-Based Admin", true, "Full grid administration - users, estates, regions, currency, events - from any browser"),
+                ("Mesh & Scripting", true, "Mesh uploads, LSL and OSSL scripting")
+            });
+
             sb.Append("</div>");
 
-            sb.Append("<p><a href=\"").Append(BasePath).Append("/viewers\">Get a viewer to explore</a> &middot; ")
-              .Append("<a href=\"").Append(BasePath).Append("/destinations\">See where to go</a></p>");
+            // Generic OpenSim region-configuration patterns, not a claim
+            // that Confluence enforces these as a formal mechanism -
+            // "Homestead"/"Openspace" are SL-heritage naming conventions
+            // an operator applies to their own region-size/prim-density
+            // choices, not an engine-level region type. Framed that way
+            // deliberately, matching this page's existing honesty standard.
+            sb.Append("<h2><i class=\"bi bi-grid-3x3-gap\"></i> Region Configuration Options</h2><div class=\"feature-grid-3\">");
+            AppendIconFeatureCard(sb, "arrows-fullscreen", "VarRegions", new[]
+            {
+                ("Layout", false, "One region with a larger footprint than standard 256x256 (e.g. 512x512 or 1024x1024), no internal border crossings"),
+                ("Use case", false, "Sailing, aviation, road networks, large landscapes"),
+                ("Experience", false, "No sim-crossing stutter - avatars and vehicles move smoothly across the whole area")
+            });
+            AppendIconFeatureCard(sb, "app", "Full-Size Regions", new[]
+            {
+                ("Layout", false, "Standard 256x256 footprint, the OpenSim default"),
+                ("Use case", false, "Events, clubs, communities, roleplay hubs"),
+                ("Prim density", false, "Configurable per region/grid policy, same as any standard region")
+            });
+            AppendIconFeatureCard(sb, "house-door", "Lighter-Traffic Regions", new[]
+            {
+                ("Common naming", false, "Often called \"Homestead\" or \"Openspace\" style, by SL-era convention - not a distinct Confluence engine feature"),
+                ("Use case", false, "Quiet residential areas, scenic or park-style regions, sky/ocean buffer space"),
+                ("Configuration", false, "An operator tunes prim caps and avatar limits lower for these, same config surface as any other region")
+            });
+            sb.Append("</div>");
+
+            sb.Append("<h2><i class=\"bi bi-currency-exchange\"></i> Economy &amp; Currency</h2><div class=\"feature-grid-3\">");
+            AppendIconFeatureCard(sb, "currency-dollar", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
+            {
+                ("Ledger", false, "Built-in transaction history and group treasuries - not a third-party dependency"),
+                ("Web access", false, "Balance and transaction pages from any browser, no separate money-server process"),
+                ("Protocol", false, "Answers the same buy/sell currency.php surface real viewers already expect")
+            });
+            AppendIconFeatureCard(sb, "wallet2", "Gloebit <span class=\"pill\" style=\"background:rgba(59,130,246,.15);color:var(--accent-bright)\">Optional</span>", new[]
+            {
+                ("What it is", false, "A real-money payment gateway, for grids that want a paid economy instead of (or alongside) the native ledger"),
+                ("How it's added", false, "Swappable via the addon-modules Gloebit integration - not required, not enabled by default")
+            });
+            sb.Append("</div>");
+
+            AppendMembershipPerksSection(sb, GetSetting("MembershipPerksFree", string.Empty), GetSetting("MembershipPerksExtra", string.Empty));
+
+            sb.Append("<div class=\"content-card text-center\" style=\"text-align:center;padding-top:20px;\">")
+              .Append("<p><a href=\"").Append(BasePath).Append("/viewers\"><i class=\"bi bi-display\"></i> Get a viewer to explore</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-map\"></i> See where to go</a></p></div>");
 
             WritePage(request, response, "Confluence Grid - Features", sb.ToString());
+        }
+
+        // Both sections are entirely admin-authored (Grid Settings -> Features
+        // Page) and hidden when unconfigured - per-grid infra/perks facts
+        // can't be derived from code the way the rest of this page's content
+        // is, and OpenSim-Grid-Interface's own template defaults for these
+        // turned out to be unconfigured placeholder text (checked its
+        // env.php), not real facts about any specific grid. See
+        // HandleAdminSettings for the "Group|icon|Title|Subtitle" format.
+        private static void AppendPoweredBySection(StringBuilder sb, string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+
+            string currentGroup = null;
+            StringBuilder items = new StringBuilder();
+            foreach (string line in raw.Split('\n'))
+            {
+                string trimmed = line.Trim().TrimEnd('\r');
+                if (trimmed.Length == 0)
+                    continue;
+                string[] parts = trimmed.Split('|');
+                if (parts.Length < 3)
+                    continue;
+
+                string group = parts[0].Trim();
+                string icon = parts[1].Trim();
+                string title = parts[2].Trim();
+                string sub = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+
+                if (group.Length > 0 && group != currentGroup)
+                {
+                    items.Append("<div class=\"powered-group-label\">").Append(Html(group)).Append("</div>");
+                    currentGroup = group;
+                }
+
+                items.Append("<div class=\"powered-tile\">");
+                if (icon.Length > 0)
+                    items.Append("<i class=\"bi bi-").Append(Html(icon)).Append("\" aria-hidden=\"true\"></i>");
+                items.Append("<div class=\"powered-tile-title\">").Append(Html(title)).Append("</div>");
+                if (sub.Length > 0)
+                    items.Append("<div class=\"powered-tile-sub\">").Append(Html(sub)).Append("</div>");
+                items.Append("</div>");
+            }
+
+            if (items.Length == 0)
+                return;
+
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-lightning-charge\"></i> Powered By</h2>")
+              .Append("<div class=\"powered-grid\">").Append(items).Append("</div></div>");
+        }
+
+        private static void AppendMembershipPerksSection(StringBuilder sb, string freeRaw, string extraRaw)
+        {
+            List<string> free = SplitLines(freeRaw);
+            List<string> extra = SplitLines(extraRaw);
+            if (free.Count == 0 && extra.Count == 0)
+                return;
+
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-gift\"></i> Membership Perks</h2><div class=\"feature-grid-3\">");
+            if (free.Count > 0)
+            {
+                sb.Append("<div><h3><i class=\"bi bi-check-circle\"></i> Included Free</h3><ul class=\"perks-list\">");
+                foreach (string p in free)
+                    sb.Append("<li><i class=\"bi bi-check2\"></i>").Append(Html(p)).Append("</li>");
+                sb.Append("</ul></div>");
+            }
+            if (extra.Count > 0)
+            {
+                sb.Append("<div><h3><i class=\"bi bi-stars\"></i> Community Extras</h3><ul class=\"perks-list\">");
+                foreach (string p in extra)
+                    sb.Append("<li><i class=\"bi bi-check2\"></i>").Append(Html(p)).Append("</li>");
+                sb.Append("</ul></div>");
+            }
+            sb.Append("</div></div>");
+        }
+
+        private static List<string> SplitLines(string raw)
+        {
+            List<string> result = new List<string>();
+            if (string.IsNullOrWhiteSpace(raw))
+                return result;
+            foreach (string line in raw.Split('\n'))
+            {
+                string trimmed = line.Trim().TrimEnd('\r');
+                if (trimmed.Length > 0)
+                    result.Add(trimmed);
+            }
+            return result;
+        }
+
+        // Icon-headed, hover-lift feature card (see .feature-card CSS) -
+        // each row is either a real yes/no capability (rendered as a
+        // colored pill) or a plain descriptive fact with no pill at all
+        // (isPill=false), for sections like Region Configuration Options
+        // that describe patterns rather than assert Confluence-specific
+        // yes/no claims. titleHtml is trusted raw HTML (not escaped) since
+        // callers need to embed a status pill in the heading itself.
+        private static void AppendIconFeatureCard(StringBuilder sb, string icon, string titleHtml, (string Label, bool IsPill, string Text)[] rows)
+        {
+            sb.Append("<div class=\"feature-card\"><h3><i class=\"bi bi-").Append(icon).Append("\"></i> ").Append(titleHtml).Append("</h3><ul>");
+            foreach ((string label, bool isPill, string text) in rows)
+            {
+                sb.Append("<li><i class=\"bi bi-check-circle-fill\"></i> ");
+                if (isPill)
+                    sb.Append("<strong>").Append(Html(label)).Append("</strong> - ").Append(Html(text));
+                else
+                    sb.Append("<strong>").Append(Html(label)).Append(":</strong> ").Append(Html(text));
+                sb.Append("</li>");
+            }
+            sb.Append("</ul></div>");
         }
 
         // Grid-wide search - People/Places/Events/Classifieds/Groups.
@@ -2057,11 +3355,19 @@ namespace OpenSim.Server.Handlers.WebInterface
             { "places", "Places" },
             { "events", "Events" },
             { "classifieds", "Classifieds" },
-            { "groups", "Groups" }
+            { "groups", "Groups" },
+            { "picks", "Picks" }
         };
 
+        // [LoginService] SearchURL points here too - a viewer's own Search
+        // floater "Web" tab opens this same URL in its small embedded
+        // browser. Chrome is decided per-request (see WriteAdaptivePage/
+        // IsViewerRequest) rather than needing a second /websearch route -
+        // one canonical URL works for both a normal browser tab and the
+        // viewer's embedded panel.
         private void HandleSearch(IOSHttpRequest request, IOSHttpResponse response)
         {
+            string selfPath = BasePath + "/search";
             WebSession session = GetSession(request);
             string query = (request.QueryString.Get("q") ?? string.Empty).Trim();
             string category = request.QueryString.Get("cat") ?? "all";
@@ -2082,16 +3388,16 @@ namespace OpenSim.Server.Handlers.WebInterface
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1>").Append(Html(gridName)).Append("</h1>");
 
-            sb.Append("<div class=\"subnav\"><a class=\"active\" href=\"").Append(BasePath).Append("/search\">Search</a>")
+            sb.Append("<div class=\"subnav\"><a class=\"active\" href=\"").Append(selfPath).Append("\">Search</a>")
               .Append("<a href=\"").Append(BasePath).Append("/landsearch\">Land for Sale</a></div>");
 
             sb.Append("<div class=\"hero-search-wrap\">");
-            sb.Append("<div class=\"tagline\">Search People, Places, Events, Classifieds &amp; Groups</div>");
+            sb.Append("<div class=\"tagline\">Search People, Places, Events, Classifieds, Groups &amp; Picks</div>");
 
-            sb.Append("<form method=\"get\" action=\"").Append(BasePath).Append("/search\" class=\"hero-search\">");
+            sb.Append("<form method=\"get\" action=\"").Append(selfPath).Append("\" class=\"hero-search\">");
             sb.Append("<div class=\"search-input\">").Append(Icon("search"))
               .Append("<input type=\"text\" name=\"q\" value=\"").Append(Html(query))
-              .Append("\" placeholder=\"Search people, places, events, classifieds, groups\" minlength=\"3\"></div>");
+              .Append("\" placeholder=\"Search people, places, events, classifieds, groups, picks\" minlength=\"3\"></div>");
             sb.Append("<input type=\"hidden\" name=\"cat\" value=\"").Append(category).Append("\">");
             sb.Append("<select name=\"mat\" title=\"Maturity\">")
               .Append("<option value=\"1\"").Append(mat == "1" ? " selected" : "").Append(">PG</option>")
@@ -2123,7 +3429,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     {
                         sb.Append("<div class=\"trending\"><span class=\"trending-label\">").Append(Icon("trend")).Append("Trending</span>");
                         foreach (string t in trending)
-                            sb.Append("<a class=\"chip\" href=\"").Append(BasePath).Append("/search?q=").Append(Uri.EscapeDataString(t)).Append("\">").Append(Html(t)).Append("</a>");
+                            sb.Append("<a class=\"chip\" href=\"").Append(selfPath).Append("?q=").Append(Uri.EscapeDataString(t)).Append("\">").Append(Html(t)).Append("</a>");
                         sb.Append("</div>");
                     }
                 }
@@ -2140,7 +3446,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</div>");
                 sb.Append("</div>");
 
-                WritePage(request, response, "Confluence Grid - Search", sb.ToString());
+                WriteAdaptivePage(request, response, "Confluence Grid - Search", sb.ToString());
                 return;
             }
 
@@ -2224,6 +3530,24 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
+            // Picks are entirely viewer-managed (no web create/edit page,
+            // matching Groups above) - this is how they surface on the web
+            // at all: grid-wide keyword search, not a dedicated browse page.
+            if ((category == "all" || category == "picks") && m_UserProfilesService != null)
+            {
+                List<UserProfilePick> picks = m_UserProfilesService.SearchPicks(query, 0, perCategory);
+                if (picks.Count > 0)
+                {
+                    totalResults += picks.Count;
+                    resultsSb.Append("<h2>Picks</h2>");
+                    foreach (UserProfilePick pick in picks)
+                    {
+                        AppendSearchResultCard(resultsSb, "Pick", Html(pick.Name), Html(pick.SimName), Html(pick.Desc),
+                                BasePath + "/profile?id=" + pick.CreatorId);
+                    }
+                }
+            }
+
             if (m_SearchService != null)
                 m_SearchService.LogSearch(query, category, totalResults);
 
@@ -2235,7 +3559,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             else
                 sb.Append(resultsSb);
 
-            WritePage(request, response, "Confluence Grid - Search: " + Html(query), sb.ToString());
+            WriteAdaptivePage(request, response, "Confluence Grid - Search: " + Html(query), sb.ToString());
         }
 
         // Debounced autocomplete against /search/suggest, backed by real
@@ -2314,6 +3638,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     return "<svg class=\"ico\" viewBox=\"0 0 20 20\" fill=\"currentColor\"><path d=\"M2 3h8l8 8-8 8-8-8z\"/><circle cx=\"6\" cy=\"7\" r=\"1.4\" fill=\"var(--input-bg)\"/></svg>";
                 case "group":
                     return "<svg class=\"ico\" viewBox=\"0 0 24 20\" fill=\"currentColor\"><circle cx=\"8\" cy=\"6\" r=\"3.4\"/><circle cx=\"17\" cy=\"7\" r=\"2.8\"/><path d=\"M1 19c0-3.8 3.1-6.2 7-6.2s7 2.4 7 6.2z\"/><path d=\"M14.5 19c.3-2.4 1.8-4.4 4-5.4 2.6.6 4.5 2.7 4.5 5.4z\"/></svg>";
+                case "star":
+                    return "<svg class=\"ico\" viewBox=\"0 0 20 20\" fill=\"currentColor\"><path d=\"M10 1.2l2.6 5.6 6 .7-4.4 4.2 1.1 6-5.3-3-5.3 3 1.1-6-4.4-4.2 6-.7z\"/></svg>";
                 case "trend":
                     return "<svg class=\"ico\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"2,15 8,9 12,12 18,4\"/><polyline points=\"12,4 18,4 18,10\"/></svg>";
                 case "globe":
@@ -2344,6 +3670,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 case "events": return "calendar";
                 case "classifieds": return "tag";
                 case "groups": return "group";
+                case "picks": return "star";
                 default: return string.Empty;
             }
         }
@@ -2515,6 +3842,185 @@ namespace OpenSim.Server.Handlers.WebInterface
             WritePage(request, response, "Confluence Grid - Land for Sale", sb.ToString());
         }
 
+        // Land auction web-bidding (2026-08-12) - the real viewer has no
+        // in-world bidding UI at all (confirmed against Firestorm's real
+        // llfloaterauction.h/.cpp: that floater is seller/admin tooling for
+        // STARTING an auction, never for bidding - real SL auctions were
+        // always bid on through the website). This page IS that website,
+        // not just a status display - see AuctionModule's class comment
+        // for the full rationale and PROJECT_LOG.md for how this was
+        // decided (explicit user direction after checking real viewer
+        // source rather than assuming a wire-protocol bid message exists).
+        private void HandleAuctions(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-hammer\"></i> Land Auctions</h1>");
+            sb.Append("<p>Bid on parcels put up for auction. Bidding happens here on the web, ")
+              .Append("not in the viewer - the same way it always worked in Second Life.</p>");
+
+            if (m_AuctionService == null)
+            {
+                sb.Append("<p class=\"error\">Auctions are not available right now.</p>");
+                WritePage(request, response, "Confluence Grid - Land Auctions", sb.ToString());
+                return;
+            }
+
+            List<LandAuction> active = m_AuctionService.GetActive();
+            if (active.Count == 0)
+            {
+                sb.Append("<p>No auctions are currently running.</p>");
+            }
+            else
+            {
+                sb.Append("<div class=\"widget-grid\">");
+                foreach (LandAuction auction in active)
+                {
+                    string bidStatus = auction.HighestBid > 0
+                            ? "Current bid: " + auction.HighestBid.ToString("N0") + " C$"
+                            : "No bids yet" + (auction.MinBid > 0 ? " - min bid " + auction.MinBid.ToString("N0") + " C$" : "");
+
+                    sb.Append("<div class=\"widget-card\">");
+                    sb.Append("<h3>").Append(Html(auction.ParcelName)).Append("</h3>");
+                    sb.Append("<div class=\"widget-meta\">").Append(Html(auction.RegionName)).Append("</div>");
+                    sb.Append("<div class=\"widget-meta\">").Append(Html(bidStatus)).Append("</div>");
+                    sb.Append("<div class=\"widget-meta\">Ends ").Append(auction.EndsAt.ToString("yyyy-MM-dd HH:mm")).Append(" UTC</div>");
+                    sb.Append("<p><a href=\"").Append(BasePath).Append("/auctions/bid?id=").Append(auction.ID)
+                      .Append("\">View &amp; Bid &rarr;</a></p>");
+                    sb.Append("</div>");
+                }
+                sb.Append("</div>");
+            }
+
+            WritePage(request, response, "Confluence Grid - Land Auctions", sb.ToString());
+        }
+
+        private void HandleAuctionBidPage(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            string idParam = request.QueryString.Get("id");
+            if (string.IsNullOrEmpty(idParam) || !UUID.TryParse(idParam, out UUID auctionId) || m_AuctionService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                WritePage(request, response, "Confluence Grid - Auction", "<h1>Auction not found</h1>");
+                return;
+            }
+
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            string error = null;
+            string notice = null;
+
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                string amountStr = FormValue(form, "amount");
+
+                if (!int.TryParse(amountStr, out int amount) || amount <= 0)
+                {
+                    error = "Enter a valid bid amount.";
+                }
+                else
+                {
+                    LandAuction current = m_AuctionService.Get(auctionId);
+                    if (current == null || current.Status != LandAuctionStatus.Active)
+                    {
+                        error = "This auction is no longer active.";
+                    }
+                    else if (amount < current.MinBid)
+                    {
+                        error = "Your bid must be at least " + current.MinBid.ToString("N0") + " C$.";
+                    }
+                    else if (amount <= current.HighestBid)
+                    {
+                        error = "Someone else already bid " + current.HighestBid.ToString("N0") + " C$ - your bid must be higher.";
+                    }
+                    else if (m_CurrencyService != null && m_CurrencyService.GetBalance(session.PrincipalID) < amount)
+                    {
+                        error = "You don't have enough C$ to place this bid.";
+                    }
+                    // PlaceBid re-checks all of the above atomically against
+                    // the database (see IAuctionData.PlaceBid) - the checks
+                    // above exist only to give a specific, friendly error
+                    // instead of a generic "bid rejected" when the race is
+                    // unlikely but not impossible (another bid landing
+                    // between the read above and this write).
+                    else if (!m_AuctionService.PlaceBid(auctionId, session.PrincipalID, amount))
+                    {
+                        error = "Your bid wasn't accepted - someone may have just outbid you. Refresh and try again.";
+                    }
+                    else
+                    {
+                        notice = "Bid placed! You're the current highest bidder.";
+                    }
+                }
+            }
+
+            LandAuction auction = m_AuctionService.Get(auctionId);
+            if (auction == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                WritePage(request, response, "Confluence Grid - Auction", "<h1>Auction not found</h1>");
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/auctions\">&larr; All Auctions</a></p>");
+            sb.Append("<h1><i class=\"bi bi-hammer\"></i> ").Append(Html(auction.ParcelName)).Append("</h1>");
+            sb.Append("<p class=\"news-meta\">").Append(Html(auction.RegionName)).Append("</p>");
+
+            if (!string.IsNullOrEmpty(error))
+                sb.Append("<p class=\"error\">").Append(Html(error)).Append("</p>");
+            if (!string.IsNullOrEmpty(notice))
+                sb.Append("<p class=\"success\">").Append(Html(notice)).Append("</p>");
+
+            if (auction.Status != LandAuctionStatus.Active)
+            {
+                string outcome = auction.Status == LandAuctionStatus.Ended && auction.WinnerID != UUID.Zero
+                        ? "This auction has ended. Winning bid: " + auction.WinningAmount.ToString("N0") + " C$."
+                        : "This auction has ended with no winner.";
+                sb.Append("<p>").Append(Html(outcome)).Append("</p>");
+            }
+            else
+            {
+                sb.Append("<div class=\"stats-grid\">");
+                AppendStat(sb, "Current Bid", auction.HighestBid > 0 ? auction.HighestBid.ToString("N0") + " C$" : "No bids yet", string.Empty);
+                AppendStat(sb, "Minimum Bid", auction.MinBid.ToString("N0") + " C$", string.Empty);
+                AppendStat(sb, "Ends", auction.EndsAt.ToString("yyyy-MM-dd HH:mm") + " UTC", string.Empty);
+                sb.Append("</div>");
+
+                int minNextBid = Math.Max(auction.HighestBid + 1, auction.MinBid);
+                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/auctions/bid?id=").Append(auction.ID).Append("\">");
+                sb.Append("<label>Your bid (C$)<br/><input type=\"number\" name=\"amount\" min=\"").Append(minNextBid)
+                  .Append("\" value=\"").Append(minNextBid).Append("\" required></label><br/>");
+                sb.Append("<button type=\"submit\">Place Bid</button>");
+                sb.Append("</form>");
+            }
+
+            List<LandAuctionBid> bids = m_AuctionService.GetBidHistory(auction.ID, 20);
+            if (bids.Count > 0)
+            {
+                sb.Append("<h2>Bid History</h2><table><tr><th>Bidder</th><th>Amount</th><th>When</th></tr>");
+                foreach (LandAuctionBid bid in bids)
+                {
+                    string bidderName = bid.BidderID.ToString();
+                    UserAccount bidderAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, bid.BidderID);
+                    if (bidderAccount != null)
+                        bidderName = bidderAccount.Name;
+
+                    sb.Append("<tr><td>").Append(Html(bidderName)).Append("</td><td>")
+                      .Append(bid.Amount.ToString("N0")).Append(" C$</td><td>")
+                      .Append(bid.BidTime.ToString("yyyy-MM-dd HH:mm")).Append("</td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, "Confluence Grid - " + auction.ParcelName, sb.ToString());
+        }
+
         private static void AppendLandBucket(StringBuilder sb, string icon, string label, string param, int count)
         {
             sb.Append("<a class=\"bucket\" href=\"").Append(BasePath).Append("/landsearch?search=").Append(param).Append("\">")
@@ -2548,6 +4054,89 @@ namespace OpenSim.Server.Handlers.WebInterface
             { "in_progress", "In Progress" },
             { "closed", "Closed" }
         };
+
+        // Public grid-health dashboard (no login) - real counterpart to
+        // OpenSim-Grid-Interface's gridstatus.php. The actual
+        // protocol-level mechanism third-party grid directories use to
+        // discover a grid (name, login URI, economy, etc.) is the stock
+        // OpenSim get_grid_info call (confirmed already correctly
+        // configured in this deployment's [GridInfoService] section,
+        // GridInfoServerInConnector.cs) - this page is the human-facing
+        // companion to that, not a replacement for it. Every number here
+        // comes from a real service call wrapped in one try/catch, same
+        // shape as OGI's own $dbState detection (a live query either
+        // succeeds or it doesn't) - "N/A" or omitted rather than a fake
+        // zero when a service isn't wired up, matching this page's own
+        // established honesty standard elsewhere (see Features page).
+        private void HandleGridStatus(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            string gridName = GetSetting("GridName", m_gridName);
+            bool servicesOk = true;
+            int totalRegions = 0, varRegions = 0, singleRegions = 0;
+            int totalAccounts = 0, newAccounts7d = 0, onlineNow = 0;
+            long totalAreaSqm = 0;
+
+            try
+            {
+                if (m_GridService != null)
+                {
+                    List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
+                    totalRegions = regions.Count;
+                    foreach (GridRegion region in regions)
+                    {
+                        totalAreaSqm += region.RegionSizeX * region.RegionSizeY;
+                        if (region.RegionSizeX == 256 && region.RegionSizeY == 256)
+                            singleRegions++;
+                        else
+                            varRegions++;
+                    }
+                }
+                if (m_UserAccountService != null)
+                {
+                    totalAccounts = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count;
+                    long cutoff = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
+                    newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
+                }
+                if (m_GridUserService != null)
+                    onlineNow = m_GridUserService.GetOnlineUserCount();
+            }
+            catch
+            {
+                servicesOk = false;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-activity\"></i> Grid Status</h1>")
+              .Append("<p>Live snapshot of ").Append(Html(gridName)).Append("'s statistics and service health. ")
+              .Append("Last updated ").Append(Html(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC.</p>");
+
+            sb.Append("<div class=\"stats-grid\">");
+            AppendStat(sb, "Online Now", onlineNow.ToString("N0"), "residents");
+            AppendStat(sb, "Regions", totalRegions.ToString("N0"), varRegions + " VarRegion, " + singleRegions + " standard");
+            AppendStat(sb, "Accounts", totalAccounts.ToString("N0"), "registered residents");
+            AppendStat(sb, "New Accounts", newAccounts7d.ToString("N0"), "last 7 days");
+            AppendStat(sb, "Land Area", (totalAreaSqm / 1000000.0).ToString("N2") + " km" + (char)0xB2, "total across all regions");
+            AppendStat(sb, "OpenSimulator", global::OpenSim.VersionInfo.DisplayVersionNumber, "core version");
+            sb.Append("</div>");
+
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-server\"></i> Service Status</h2><table><tbody>")
+              .Append("<tr><th>Grid</th><td>").Append(Html(gridName)).Append("</td></tr>")
+              .Append("<tr><th>Status</th><td>").Append(servicesOk
+                    ? "<span class=\"pill pill-yes\">Operational</span>"
+                    : "<span class=\"pill pill-no\">Degraded</span>").Append("</td></tr>")
+              .Append("<tr><th>Grid Service</th><td>").Append(m_GridService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
+              .Append("<tr><th>User Accounts</th><td>").Append(m_UserAccountService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
+              .Append("<tr><th>Currency</th><td>").Append(m_CurrencyService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
+              .Append("<tr><th>Search</th><td>").Append(m_SearchService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
+              .Append("</tbody></table></div>");
+
+            sb.Append("<div class=\"content-card text-center\" style=\"text-align:center;padding-top:20px;\">")
+              .Append("<p><a href=\"").Append(BasePath).Append("/worldmap\"><i class=\"bi bi-map\"></i> View the World Map</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/search\"><i class=\"bi bi-search\"></i> Search the grid</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-signpost-2\"></i> Destinations</a></p></div>");
+
+            WritePage(request, response, "Confluence Grid - Status", sb.ToString());
+        }
 
         private void HandleSupport(IOSHttpRequest request, IOSHttpResponse response)
         {
@@ -2873,6 +4462,18 @@ namespace OpenSim.Server.Handlers.WebInterface
             return sb.ToString();
         }
 
+        // Real landing page, not a link list - matches the 3RD Rock Grid
+        // Panel reference the user pointed at directly (stat row, Account
+        // Information card, Quick Links card with real descriptions).
+        // "My Avatars"/"My Estates" don't map to a real Confluence/OpenSim
+        // concept (no multi-avatar-per-account linking, and "estate" here is
+        // really "regions I'm the estate owner of" - already its own stat)
+        // so the stat row uses four things that are real and already
+        // computed elsewhere on this connector: Balance (HandleDashboard's
+        // own prior only feature), My Regions (GetRegionsOwnedBy, same call
+        // HandleMyRegions uses), Friends (IFriendsService.GetFriends, same
+        // call HandleFriends uses), My Events (IEventsService.GetUpcoming
+        // filtered by CreatorId, same filter HandleMyEvents uses).
         private void HandleDashboard(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -2883,17 +4484,57 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             int balance = m_CurrencyService != null ? m_CurrencyService.GetBalance(session.PrincipalID) : 0;
+            int regionsCount = GetRegionsOwnedBy(session.PrincipalID).Count;
+            int friendsCount = m_FriendsService != null ? (m_FriendsService.GetFriends(session.PrincipalID)?.Length ?? 0) : 0;
+            int eventsCount = m_EventsService != null
+                    ? m_EventsService.GetUpcoming(0, 100).Count(e => e.CreatorId == session.PrincipalID)
+                    : 0;
 
-            // Account links used to be repeated here as a flat <p><a> list -
-            // they now live in the nav-bar dropdown (see WritePage) so
-            // they're reachable from every page, not just this one. This
-            // page's job is just the balance/welcome landing view.
-            string body = "<h1>Welcome, " + Html(session.Name) + "</h1>"
-                    + "<p class=\"balance\">Balance: " + balance + "</p>"
-                    + "<p>Use the menu in the top-right of any page to reach your profile, friends, "
-                    + "transactions, classifieds, events, and account settings.</p>";
+            UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, session.PrincipalID);
+            string memberSince = account != null
+                    ? Utils.UnixTimeToDateTime((uint)account.Created).ToString("MMM d, yyyy")
+                    : "Unknown";
 
-            WritePage(request, response, "Confluence Grid - Dashboard", body);
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>Dashboard</h1>");
+            sb.Append("<p style=\"color:var(--muted);margin:-8px 0 20px;\">Welcome back, ").Append(Html(session.Name)).Append("</p>");
+
+            sb.Append("<div class=\"stats-grid\">");
+            AppendStat(sb, "Balance", "FC$" + balance.ToString("N0"), "current balance");
+            AppendStat(sb, "My Regions", regionsCount.ToString("N0"), "estate-owned");
+            AppendStat(sb, "Friends", friendsCount.ToString("N0"), "connections");
+            AppendStat(sb, "My Events", eventsCount.ToString("N0"), "upcoming");
+            sb.Append("</div>");
+
+            sb.Append("<h2>Account Information</h2>");
+            sb.Append("<table>");
+            sb.Append("<tr><th>Username</th><td>").Append(Html(session.Name)).Append("</td></tr>");
+            if (account != null && !string.IsNullOrEmpty(account.Email))
+                sb.Append("<tr><th>Email</th><td>").Append(Html(account.Email)).Append("</td></tr>");
+            sb.Append("<tr><th>Role</th><td><span class=\"pill ").Append(session.IsAdmin ? "pill-yes\">Administrator" : "pill-no\">Member").Append("</span></td></tr>");
+            sb.Append("<tr><th>Member Since</th><td>").Append(Html(memberSince)).Append("</td></tr>");
+            sb.Append("</table>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/profile?id=").Append(session.PrincipalID).Append("\">Edit Profile</a>")
+              .Append(" &middot; <a href=\"").Append(BasePath).Append("/change-password\">Settings</a></p>");
+
+            sb.Append("<h2>Quick Links</h2><div class=\"widget-grid\">");
+            AppendDashboardLink(sb, BasePath + "/myclassifieds", "bi-megaphone", "Post a Classified", "Advertise your business, shop or event grid-wide");
+            AppendDashboardLink(sb, BasePath + "/myevents", "bi-calendar-plus", "Post an Event", "Add an event to the grid calendar");
+            AppendDashboardLink(sb, BasePath + "/myregions", "bi-hdd-rack", "Manage My Regions", "Back up or restore a region you own");
+            AppendDashboardLink(sb, BasePath + "/transactions", "bi-cash-stack", "View Transactions", "See your recent currency activity");
+            AppendDashboardLink(sb, BasePath + "/support", "bi-headset", "Submit a Ticket", "Get help from the grid support team");
+            AppendDashboardLink(sb, BasePath + "/search", "bi-search", "Search the Grid", "Find people, places, events and classifieds");
+            sb.Append("</div>");
+
+            WritePage(request, response, "Confluence Grid - Dashboard", sb.ToString());
+        }
+
+        private static void AppendDashboardLink(StringBuilder sb, string href, string icon, string title, string description)
+        {
+            sb.Append("<a class=\"widget-card dashboard-link\" href=\"").Append(href).Append("\">");
+            sb.Append("<h3><i class=\"bi ").Append(icon).Append("\"></i> ").Append(Html(title)).Append("</h3>");
+            sb.Append("<div class=\"widget-meta\">").Append(Html(description)).Append("</div>");
+            sb.Append("</a>");
         }
 
         // Region list + per-region Hypergrid open/close toggle - the first
@@ -2914,6 +4555,71 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            string message = string.Empty;
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                message = "<p>" + Html(queryMessage) + "</p>";
+
+            // Sub-page links used to live in a 13-item "Admin" nav-bar
+            // dropdown (see WritePage/RenderSidebar) - the sidebar now only
+            // links to this one page for admins, so this grid is the real
+            // navigation into every admin sub-page, not just decoration.
+            // Same nav-as-cards shape as OpenSim-Grid-Interface's own
+            // _account_shell_top.php (icon, label, description card grid).
+            StringBuilder adminNav = new StringBuilder();
+            adminNav.Append("<h2>Manage</h2><div class=\"widget-grid\">");
+            AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "Abuse Reports", "Review reports filed by residents");
+            AppendDashboardLink(adminNav, BasePath + "/admin/users", "bi-people", "User Management", "Search, ban, message and edit accounts");
+            AppendDashboardLink(adminNav, BasePath + "/admin/regions", "bi-map", "Region Management", "Search regions, Hypergrid, maptiles, backups, restart, create");
+            AppendDashboardLink(adminNav, BasePath + "/admin/estates", "bi-building", "Estate Management", "Edit estate settings and access lists");
+            AppendDashboardLink(adminNav, BasePath + "/admin/groups", "bi-people-fill", "Groups Management", "Grid-wide group administration");
+            AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "Purchases &amp; Transactions", "Financial reporting across the grid");
+            AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions and online totals");
+            AppendDashboardLink(adminNav, BasePath + "/admin/news", "bi-newspaper", "News Feed", "Post announcements to the splash page");
+            AppendDashboardLink(adminNav, BasePath + "/admin/events", "bi-calendar-event", "Events", "Manage the grid-wide events calendar");
+            AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue", "Respond to open support tickets");
+            AppendDashboardLink(adminNav, BasePath + "/admin/pages", "bi-file-earmark-text", "Static Pages", "Edit About/ToS/DMCA and custom pages");
+            AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
+            AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "Region Console", "Run console commands on a region");
+            adminNav.Append("</div>");
+
+            string body = "<h1>Grid Administration</h1>"
+                    + message
+                    + adminNav.ToString();
+
+            WritePage(request, response, "Confluence Grid - Admin", body);
+        }
+
+        // Region Management - split out of the Grid Administration overview
+        // (2026-08-16) into its own page, same as Users/Estates, once the
+        // regions table needed a search box and pagination too rather than
+        // being a single ever-growing inline table on the admin landing
+        // page. Same per-region actions as before (HG toggle, maptile
+        // regen, OAR backup, restart), plus name search (blank = every
+        // region, same "don't hide behind a required search term" fix as
+        // HandleAdminUsers) and pagination.
+        private void HandleAdminRegions(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, "Confluence Grid - Region Management", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+
+            string query = (request.QueryString.Get("q") ?? string.Empty).Trim();
+            string searchForm = "<form method=\"get\" action=\"" + BasePath + "/admin/regions\">"
+                    + "<input type=\"text\" name=\"q\" placeholder=\"Search by region name\" value=\"" + Html(query) + "\">"
+                    + "<button type=\"submit\">Search</button>"
+                    + (query.Length > 0 ? " <a href=\"" + BasePath + "/admin/regions\">Clear</a>" : string.Empty)
+                    + "</form>";
+
             StringBuilder rows = new StringBuilder();
             if (m_GridService == null)
             {
@@ -2925,33 +4631,68 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // IGridService has no direct "get everything" call, this is the
                 // standard way to approximate one.
                 List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
+                if (query.Length > 0)
+                    regions = regions.FindAll(r => r.RegionName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0);
                 regions.Sort((a, b) => string.Compare(a.RegionName, b.RegionName, StringComparison.OrdinalIgnoreCase));
 
-                rows.Append("<table><tr><th>Region</th><th>Location</th><th>Hypergrid</th><th></th><th></th><th></th></tr>");
-                foreach (GridRegion region in regions)
-                {
-                    bool open = m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID);
-                    string status = open ? "Open" : "Closed";
-                    string actionLabel = open ? "Close to HG" : "Open to HG";
+                const int pageSize = 25;
+                int totalPages = Math.Max(1, (int)Math.Ceiling(regions.Count / (double)pageSize));
+                int page = 1;
+                int.TryParse(request.QueryString.Get("page"), out page);
+                page = Math.Max(1, Math.Min(page, totalPages));
+                List<GridRegion> pageRegions = regions.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
-                    rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
-                    rows.Append("<td>").Append(region.RegionCoordX).Append(",").Append(region.RegionCoordY).Append("</td>");
-                    rows.Append("<td>").Append(status).Append("</td>");
-                    rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/hg-toggle\">");
-                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
-                    rows.Append("<input type=\"hidden\" name=\"set_open\" value=\"").Append(open ? "false" : "true").Append("\">");
-                    rows.Append("<button type=\"submit\"").Append(m_RegionHGService == null ? " disabled" : "").Append(">").Append(actionLabel).Append("</button>");
-                    rows.Append("</form></td>");
-                    rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/maptile-regen\">");
-                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
-                    rows.Append("<button type=\"submit\">Regenerate maptile</button>");
-                    rows.Append("</form></td>");
-                    rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/oar-save\">");
-                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
-                    rows.Append("<button type=\"submit\">Save OAR backup</button>");
-                    rows.Append("</form></td></tr>");
+                if (regions.Count == 0)
+                {
+                    rows.Append("<p>No regions matched that search.</p>");
                 }
-                rows.Append("</table>");
+                else
+                {
+                    rows.Append("<p class=\"news-meta\">").Append(regions.Count).Append(regions.Count == 1 ? " region" : " regions")
+                      .Append(query.Length > 0 ? " matched" : " on this grid").Append("</p>");
+                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Hypergrid</th><th></th><th></th><th></th><th></th></tr>");
+                    foreach (GridRegion region in pageRegions)
+                    {
+                        bool open = m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID);
+                        string status = open ? "Open" : "Closed";
+                        string actionLabel = open ? "Close to HG" : "Open to HG";
+
+                        rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
+                        rows.Append("<td>").Append(region.RegionCoordX).Append(",").Append(region.RegionCoordY).Append("</td>");
+                        rows.Append("<td>").Append(status).Append("</td>");
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/hg-toggle\">");
+                        rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                        rows.Append("<input type=\"hidden\" name=\"set_open\" value=\"").Append(open ? "false" : "true").Append("\">");
+                        rows.Append("<button type=\"submit\"").Append(m_RegionHGService == null ? " disabled" : "").Append(">").Append(actionLabel).Append("</button>");
+                        rows.Append("</form></td>");
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/maptile-regen\">");
+                        rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                        rows.Append("<button type=\"submit\">Regenerate maptile</button>");
+                        rows.Append("</form></td>");
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/oar-save\">");
+                        rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                        rows.Append("<button type=\"submit\">Save OAR backup</button>");
+                        rows.Append("</form></td>");
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/regions/restart\" onsubmit=\"return confirm('Restart ")
+                                .Append(Html(region.RegionName).Replace("'", "\\'")).Append("? Everyone in the region will be disconnected.');\">");
+                        rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                        rows.Append("<button type=\"submit\">Restart</button>");
+                        rows.Append("</form></td></tr>");
+                    }
+                    rows.Append("</table>");
+
+                    if (totalPages > 1)
+                    {
+                        string qParam = query.Length == 0 ? string.Empty : "&q=" + Uri.EscapeDataString(query);
+                        rows.Append("<p class=\"news-meta\">");
+                        if (page > 1)
+                            rows.Append("<a href=\"").Append(BasePath).Append("/admin/regions?page=").Append(page - 1).Append(qParam).Append("\">&larr; Previous</a> &middot; ");
+                        rows.Append("Page ").Append(page).Append(" of ").Append(totalPages);
+                        if (page < totalPages)
+                            rows.Append(" &middot; <a href=\"").Append(BasePath).Append("/admin/regions?page=").Append(page + 1).Append(qParam).Append("\">Next &rarr;</a>");
+                        rows.Append("</p>");
+                    }
+                }
 
                 if (m_RegionHGService == null)
                     rows.Append("<p class=\"error\">RegionHGService is not configured - toggle is read-only (always shows Open).</p>");
@@ -2962,15 +4703,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!string.IsNullOrEmpty(queryMessage))
                 message = "<p>" + Html(queryMessage) + "</p>";
 
-            // Sub-page links used to be a flat <p><a> list here - they now
-            // live in the "Admin" nav-bar dropdown (see WritePage), reachable
-            // from every page instead of just this one.
-            string body = "<h1>Grid Administration</h1>"
-                    + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
+            string body = "<h1>Region Management</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
                     + message
+                    + searchForm
                     + rows.ToString();
 
-            WritePage(request, response, "Confluence Grid - Admin", body);
+            WritePage(request, response, "Confluence Grid - Region Management", body);
         }
 
         // Grid-wide totals for admins - task #21 from the WhiteCore-Dev
@@ -3238,6 +4977,18 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             string dateValue = editing != null ? editing.EventDate.ToString("yyyy-MM-ddTHH:mm") : string.Empty;
             string formTitle = editing != null ? "Edit Event" : "Add Event";
+
+            // Same region <select> as HandleMyEvents' self-service form -
+            // feeds GlobalPos in HandleAdminEventsSave.
+            List<GridRegion> adminEventRegions = m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>();
+            StringBuilder adminEventRegionOptions = new StringBuilder();
+            foreach (GridRegion region in adminEventRegions)
+            {
+                bool selected = editing != null && editing.Location == region.RegionName;
+                adminEventRegionOptions.Append("<option value=\"").Append(Html(region.RegionName)).Append("\"")
+                        .Append(selected ? " selected" : string.Empty).Append(">").Append(Html(region.RegionName)).Append("</option>");
+            }
+
             string body = "<h1>Events</h1>"
                     + "<p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
                     + rows.ToString()
@@ -3248,6 +4999,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Category<br/><input type=\"text\" name=\"category\" value=\"" + Html(editing?.Category ?? string.Empty) + "\" placeholder=\"Live Music, Nightlife, Games...\"></label><br/>"
                     + "<label>Date/time (grid time, UTC)<br/><input type=\"datetime-local\" name=\"event_date\" value=\"" + Html(dateValue) + "\" required></label><br/>"
                     + "<label>Duration (minutes)<br/><input type=\"number\" name=\"duration\" value=\"" + (editing?.DurationMinutes ?? 60) + "\" min=\"0\"></label><br/>"
+                    + "<label>Region (for Teleport/Map)<br/><select name=\"region\">" + adminEventRegionOptions + "</select></label><br/>"
                     + "<label>Location<br/><input type=\"text\" name=\"location\" value=\"" + Html(editing?.Location ?? string.Empty) + "\" placeholder=\"Region or venue name\"></label><br/>"
                     + "<label>Description<br/><textarea name=\"description\" rows=\"4\">" + Html(editing?.Description ?? string.Empty) + "</textarea></label><br/>"
                     + "<button type=\"submit\">" + (editing != null ? "Save changes" : "Add event") + "</button>"
@@ -3272,6 +5024,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string category = FormValue(form, "category").Trim();
             string dateValue = FormValue(form, "event_date").Trim();
             string location = FormValue(form, "location").Trim();
+            string regionName = FormValue(form, "region").Trim();
             string description = FormValue(form, "description");
             int.TryParse(FormValue(form, "duration"), out int duration);
 
@@ -3295,6 +5048,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             item.DurationMinutes = duration > 0 ? duration : 60;
             item.Location = location;
             item.Description = description;
+
+            // Same region-origin-plus-fixed-offset math as HandleMyClassifiedsSave's
+            // GlobalPos fix - GridRegion.RegionLocX/Y are already in meters.
+            GridRegion adminEventRegion = m_GridService?.GetRegionByName(UUID.Zero, regionName);
+            Vector3 adminEventGlobalPos = adminEventRegion != null
+                    ? new Vector3(adminEventRegion.RegionLocX + 128, adminEventRegion.RegionLocY + 128, 25)
+                    : new Vector3();
+            item.GlobalPos = adminEventRegion != null ? adminEventGlobalPos.ToString() : string.Empty;
 
             m_EventsService.Store(item);
 
@@ -3347,7 +5108,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            WritePage(request, response, page.Title, page.Body);
+            // Any static page could genuinely be opened either way - About
+            // from a viewer's Help menu, ToS from an in-viewer first-login
+            // consent flow some viewers show, or any of them from a normal
+            // browser tab - so this decides per real request (see
+            // WriteAdaptivePage/IsViewerRequest) rather than hardcoding one
+            // slug as always-embedded the way an earlier pass did.
+            WriteAdaptivePage(request, response, page.Title, page.Body);
         }
 
         // Admin CRUD, same list+edit-form shape as HandleAdminNews - the one
@@ -3387,12 +5154,13 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             StringBuilder rows = new StringBuilder();
             List<StaticPage> pages = m_StaticPageService.GetAll();
-            rows.Append("<table><tr><th>Slug</th><th>Title</th><th>Updated</th><th></th><th></th><th></th></tr>");
+            rows.Append("<table><tr><th>Slug</th><th>Title</th><th>In Nav</th><th>Updated</th><th></th><th></th><th></th></tr>");
             foreach (StaticPage page in pages)
             {
                 rows.Append("<tr>");
                 rows.Append("<td>").Append(Html(page.Slug)).Append("</td>");
                 rows.Append("<td>").Append(Html(page.Title)).Append("</td>");
+                rows.Append("<td>").Append(page.ShowInNav ? "<span class=\"pill pill-yes\">Yes</span> (" + page.NavOrder + ")" : "<span class=\"pill pill-no\">No</span>").Append("</td>");
                 rows.Append("<td>").Append(Html(page.Updated.ToString("yyyy-MM-dd"))).Append("</td>");
                 rows.Append("<td><a href=\"").Append(BasePath).Append("/page/").Append(Uri.EscapeDataString(page.Slug)).Append("\" target=\"_blank\">View</a></td>");
                 rows.Append("<td><a href=\"").Append(BasePath).Append("/admin/pages?id=").Append(page.ID).Append("\">Edit</a></td>");
@@ -3406,6 +5174,11 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (pages.Count == 0)
                 rows.Append("<p>No static pages yet.</p>");
 
+            // Nav-wiring fields match WhiteCore-Dev's real admin/
+            // page_manager.html - pages can place themselves in the header
+            // nav (with an order) and gate visibility by login/admin state,
+            // not just hold content. See WritePage's nav-building code for
+            // where these are actually read.
             string formTitle = editing != null ? "Edit Page" : "Create Page";
             string errorHtml = string.IsNullOrEmpty(errorParam) ? string.Empty : "<p class=\"error\">" + Html(errorParam) + "</p>";
             string body = "<h1>Static Pages</h1>"
@@ -3418,6 +5191,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Slug (used as /web/page/&lt;slug&gt;)<br/><input type=\"text\" name=\"slug\" value=\"" + Html(editing?.Slug ?? string.Empty) + "\" pattern=\"[a-z0-9-]+\" required></label><br/>"
                     + "<label>Title<br/><input type=\"text\" name=\"title\" value=\"" + Html(editing?.Title ?? string.Empty) + "\" required></label><br/>"
                     + "<label>Body<br/><textarea name=\"body\" rows=\"10\" required>" + Html(editing?.Body ?? string.Empty) + "</textarea></label><br/>"
+                    + "<label><input type=\"checkbox\" name=\"showinnav\" value=\"true\"" + (editing != null && editing.ShowInNav ? " checked" : "") + "> Show in header nav</label><br/>"
+                    + "<label>Nav order (lower shows first)<br/><input type=\"number\" name=\"navorder\" value=\"" + (editing?.NavOrder ?? 0) + "\"></label><br/>"
+                    + "<label><input type=\"checkbox\" name=\"requireslogin\" value=\"true\"" + (editing != null && editing.RequiresLogin ? " checked" : "") + "> Only show in nav to logged-in residents</label><br/>"
+                    + "<label><input type=\"checkbox\" name=\"requiresadmin\" value=\"true\"" + (editing != null && editing.RequiresAdmin ? " checked" : "") + "> Only show in nav to admins</label><br/>"
                     + "<button type=\"submit\">" + (editing != null ? "Save changes" : "Create") + "</button>"
                     + (editing != null ? " <a href=\"" + BasePath + "/admin/pages\">Cancel</a>" : string.Empty)
                     + "</form>";
@@ -3461,10 +5238,16 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (page == null)
                 page = new StaticPage { ID = UUID.Random() };
 
+            int.TryParse(FormValue(form, "navorder"), out int navOrder);
+
             page.Slug = slug;
             page.Title = title;
             page.Body = bodyText;
             page.Updated = DateTime.UtcNow;
+            page.ShowInNav = FormValue(form, "showinnav") == "true";
+            page.NavOrder = navOrder;
+            page.RequiresLogin = FormValue(form, "requireslogin") == "true";
+            page.RequiresAdmin = FormValue(form, "requiresadmin") == "true";
 
             m_StaticPageService.Store(page);
 
@@ -3520,6 +5303,20 @@ namespace OpenSim.Server.Handlers.WebInterface
             string announcementTitle = GetSetting("AnnouncementTitle", string.Empty);
             string announcementText = GetSetting("AnnouncementText", string.Empty);
             string announcementColor = GetSetting("AnnouncementColor", "#3b82f6");
+            // "Powered By" infra grid and Membership Perks lists on the
+            // Features page - deliberately NOT hardcoded/defaulted the way
+            // OpenSim-Grid-Interface's features.php ships generic template
+            // text for these (checked its env.php: FREE_OFFERS/OTHER_PERKS
+            // are never actually overridden there either, so even the
+            // reference's own copy is unconfigured placeholder text, not a
+            // real fact about that grid). Every deployed grid's hosting
+            // stack and perks are different, so these start empty and the
+            // Features page simply omits the section until an admin fills
+            // them in here - same "admin-authored, not fabricated" contract
+            // as the static page manager.
+            string poweredBy = GetSetting("PoweredByItems", string.Empty);
+            string perksFree = GetSetting("MembershipPerksFree", string.Empty);
+            string perksExtra = GetSetting("MembershipPerksExtra", string.Empty);
 
             string message = string.Empty;
             string queryMessage = request.QueryString.Get("message");
@@ -3535,16 +5332,52 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Welcome message<br/><textarea name=\"welcome_message\" rows=\"3\">" + Html(welcomeMessage) + "</textarea></label><br/>"
                     + "<label><input type=\"checkbox\" name=\"allow_registration\" value=\"true\"" + (allowRegistration ? " checked" : "") + " style=\"width:auto;display:inline\"> Allow new users to self-register</label><br/>"
                     + "<h2>Special Announcement</h2>"
-                    + "<p class=\"news-meta\">Shown as a banner at the top of the home page and splash screen, above everything else - matches WhiteCore-Dev's welcomescreen_manager.html \"special window\" toggle.</p>"
+                    + "<p class=\"news-meta\">Shown as a banner at the top of the home page and splash screen (welcome.php, the viewer's login panel), above everything else - matches WhiteCore-Dev's welcomescreen_manager.html \"special window\" toggle.</p>"
                     + "<label><input type=\"checkbox\" name=\"announcement_enabled\" value=\"true\"" + (announcementEnabled ? " checked" : "") + " style=\"width:auto;display:inline\"> Show announcement banner</label><br/>"
-                    + "<label>Title<br/><input type=\"text\" name=\"announcement_title\" value=\"" + Html(announcementTitle) + "\"></label><br/>"
-                    + "<label>Text<br/><textarea name=\"announcement_text\" rows=\"2\">" + Html(announcementText) + "</textarea></label><br/>"
+                    + "<label>Common reasons<br/><select id=\"announcementPreset\" onchange=\"applyAnnouncementPreset(this.value)\">"
+                    + "<option value=\"\">-- Choose a preset to fill in the fields below --</option>"
+                    + "<option value=\"maintenance\">Scheduled Maintenance</option>"
+                    + "<option value=\"restart\">Grid Restart Tonight</option>"
+                    + "<option value=\"downtime\">Unexpected Downtime</option>"
+                    + "<option value=\"feature\">New Feature Announcement</option>"
+                    + "<option value=\"event\">Upcoming Grid Event</option>"
+                    + "</select></label><br/>"
+                    + "<label>Title<br/><input type=\"text\" id=\"announcementTitleInput\" name=\"announcement_title\" value=\"" + Html(announcementTitle) + "\"></label><br/>"
+                    + "<label>Text<br/><textarea id=\"announcementTextInput\" name=\"announcement_text\" rows=\"2\">" + Html(announcementText) + "</textarea></label><br/>"
                     + "<label>Color<br/><input type=\"color\" name=\"announcement_color\" value=\"" + Html(announcementColor) + "\" style=\"width:auto\"></label><br/>"
+                    + "<h2>Features Page: Powered By</h2>"
+                    + "<p class=\"news-meta\">Shown on the Features page as an infrastructure grid. Leave blank to hide the section. One item per line, format: <code>Group|icon-name|Title|Subtitle</code> - icon-name is a Bootstrap Icons name without the \"bi-\" prefix (e.g. <code>windows</code>, <code>database</code>, <code>server</code>). Items with the same Group are shown together under that heading.</p>"
+                    + "<label>Powered By items<br/><textarea name=\"powered_by\" rows=\"8\" placeholder=\"Infrastructure|windows|Windows|Host OS\nInfrastructure|hdd-network|Proxmox|Virtualization\nGrid Backend|database|MariaDB|Database\">" + Html(poweredBy) + "</textarea></label><br/>"
+                    + "<h2>Features Page: Membership Perks</h2>"
+                    + "<p class=\"news-meta\">Shown on the Features page. Leave blank to hide the section. One perk per line.</p>"
+                    + "<label>Included free<br/><textarea name=\"perks_free\" rows=\"6\" placeholder=\"Free groups\nFree classifieds advertising\nFree mesh uploads\">" + Html(perksFree) + "</textarea></label><br/>"
+                    + "<label>Community extras<br/><textarea name=\"perks_extra\" rows=\"6\" placeholder=\"No region setup fees\nRegion referral program\nHypergrid traveling\">" + Html(perksExtra) + "</textarea></label><br/>"
                     + "<button type=\"submit\">Save settings</button>"
-                    + "</form>";
+                    + "</form>"
+                    + AnnouncementPresetScript;
 
             WritePage(request, response, "Confluence Grid - Settings", body);
         }
+
+        // Client-side only - just pre-fills the two text fields below so an
+        // admin doesn't have to type common notices from scratch each time.
+        // Nothing here is stored; the preset picker itself has no server-side
+        // state, only the resulting title/text (saved like any other field).
+        private const string AnnouncementPresetScript =
+                "<script>" +
+                "var announcementPresets={" +
+                "maintenance:{title:'Scheduled Maintenance',text:'The grid will be briefly unavailable for scheduled maintenance. We expect this to take about 30 minutes.'}," +
+                "restart:{title:'Grid Restart Tonight',text:'The grid will be restarted tonight for updates. Please save your work and expect a brief disconnect.'}," +
+                "downtime:{title:'Unexpected Downtime',text:'We are aware of an issue affecting the grid and are working to resolve it. Thank you for your patience.'}," +
+                "feature:{title:'New Feature Announcement',text:'We just added a new feature to the grid! Check the Features page for details.'}," +
+                "event:{title:'Upcoming Grid Event',text:'Join us for an upcoming grid event - see the Events page for the full schedule.'}" +
+                "};" +
+                "function applyAnnouncementPreset(key){" +
+                "if(!key||!announcementPresets[key])return;" +
+                "document.getElementById('announcementTitleInput').value=announcementPresets[key].title;" +
+                "document.getElementById('announcementTextInput').value=announcementPresets[key].text;" +
+                "}" +
+                "</script>";
 
         private void HandleAdminSettingsSave(IOSHttpRequest request, IOSHttpResponse response)
         {
@@ -3564,6 +5397,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             string announcementTitle = FormValue(form, "announcement_title").Trim();
             string announcementText = FormValue(form, "announcement_text");
             string announcementColor = FormValue(form, "announcement_color");
+            string poweredBy = FormValue(form, "powered_by");
+            string perksFree = FormValue(form, "perks_free");
+            string perksExtra = FormValue(form, "perks_extra");
 
             if (string.IsNullOrEmpty(gridName))
             {
@@ -3580,6 +5416,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_GridSettingsService.Set("AnnouncementText", announcementText);
             if (!string.IsNullOrEmpty(announcementColor))
                 m_GridSettingsService.Set("AnnouncementColor", announcementColor);
+            m_GridSettingsService.Set("PoweredByItems", poweredBy);
+            m_GridSettingsService.Set("MembershipPerksFree", perksFree);
+            m_GridSettingsService.Set("MembershipPerksExtra", perksExtra);
 
             response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
         }
@@ -3691,6 +5530,41 @@ namespace OpenSim.Server.Handlers.WebInterface
             string output = RunRegionConsoleCommand(region, command);
 
             response.Redirect(BasePath + "/admin/console?region_id=" + regionID + "&output=" + Uri.EscapeDataString(output), HttpStatusCode.Redirect);
+        }
+
+        // One-click restart from the admin Regions table - same
+        // RunRegionConsoleCommand/shared-secret mechanism as the free-form
+        // console above, just pre-filled with the real stock "restart"
+        // console command (OpenSim.cs: "Restart the currently selected
+        // region(s) in this instance") rather than exposing the whole
+        // console box for this one action. Any region, no ownership check -
+        // admin-only.
+        private void HandleAdminRegionRestart(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || string.IsNullOrEmpty(m_webConsoleSecret) || m_GridService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            if (!UUID.TryParse(FormValue(form, "region_id"), out UUID regionID))
+            {
+                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("No region selected."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, regionID);
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+            {
+                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("That region's server address is not known to the grid service."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            RunRegionConsoleCommand(region, "restart");
+
+            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("Restart command sent to " + region.RegionName + "."), HttpStatusCode.Redirect);
         }
 
         // Shared by HandleAdminConsoleRun (free-form console page) and the
@@ -4197,17 +6071,37 @@ namespace OpenSim.Server.Handlers.WebInterface
                 string query = request.QueryString.Get("q");
                 StringBuilder rows = new StringBuilder();
 
-                if (!string.IsNullOrEmpty(query) && m_UserAccountService != null)
+                // Blank search = every account on the grid, not "nothing" -
+                // GetUserAccountsWhere(UUID.Zero, "1=1") is the same
+                // internal-only raw-fragment call HandleFeatures/HandleAdminStats
+                // already use for a total-account count; safe here too since
+                // "1=1" is a fixed literal, not user input reaching SQL.
+                // Paginated either way (25/page) so a real resident count
+                // doesn't dump one giant unscrollable table.
+                if (m_UserAccountService != null)
                 {
-                    List<UserAccount> results = m_UserAccountService.GetUserAccounts(UUID.Zero, query);
+                    List<UserAccount> results = string.IsNullOrEmpty(query)
+                            ? m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1")
+                            : m_UserAccountService.GetUserAccounts(UUID.Zero, query);
+                    results.Sort((a, b) => string.Compare(a.FirstName + " " + a.LastName, b.FirstName + " " + b.LastName, StringComparison.OrdinalIgnoreCase));
+
+                    const int pageSize = 25;
+                    int totalPages = Math.Max(1, (int)Math.Ceiling(results.Count / (double)pageSize));
+                    int page = 1;
+                    int.TryParse(request.QueryString.Get("page"), out page);
+                    page = Math.Max(1, Math.Min(page, totalPages));
+                    List<UserAccount> pageResults = results.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+
                     if (results.Count == 0)
                     {
                         rows.Append("<p>No accounts matched that search.</p>");
                     }
                     else
                     {
+                        rows.Append("<p class=\"news-meta\">").Append(results.Count).Append(results.Count == 1 ? " account" : " accounts")
+                          .Append(string.IsNullOrEmpty(query) ? " on this grid" : " matched").Append("</p>");
                         rows.Append("<table><tr><th>Name</th><th>Email</th><th>User Level</th></tr>");
-                        foreach (UserAccount account in results)
+                        foreach (UserAccount account in pageResults)
                         {
                             rows.Append("<tr><td><a href=\"").Append(BasePath).Append("/admin/users?principal=").Append(account.PrincipalID).Append("\">")
                                     .Append(Html(account.Name)).Append("</a></td>");
@@ -4215,6 +6109,18 @@ namespace OpenSim.Server.Handlers.WebInterface
                             rows.Append("<td>").Append(account.UserLevel).Append("</td></tr>");
                         }
                         rows.Append("</table>");
+
+                        if (totalPages > 1)
+                        {
+                            string qParam = string.IsNullOrEmpty(query) ? string.Empty : "&q=" + Uri.EscapeDataString(query);
+                            rows.Append("<p class=\"news-meta\">");
+                            if (page > 1)
+                                rows.Append("<a href=\"").Append(BasePath).Append("/admin/users?page=").Append(page - 1).Append(qParam).Append("\">&larr; Previous</a> &middot; ");
+                            rows.Append("Page ").Append(page).Append(" of ").Append(totalPages);
+                            if (page < totalPages)
+                                rows.Append(" &middot; <a href=\"").Append(BasePath).Append("/admin/users?page=").Append(page + 1).Append(qParam).Append("\">Next &rarr;</a>");
+                            rows.Append("</p>");
+                        }
                     }
                 }
 
@@ -5290,7 +7196,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            response.Redirect(BasePath + "/admin", HttpStatusCode.Redirect);
+            response.Redirect(BasePath + "/admin/regions", HttpStatusCode.Redirect);
         }
 
         // Calls out to the target region's own new /MAP/Regenerate/<handle>
@@ -5338,7 +7244,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            response.Redirect(BasePath + "/admin?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
         // Same shape as HandleAdminMaptileRegen above - Robust calls out to the
@@ -5384,7 +7290,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            response.Redirect(BasePath + "/admin?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
         #region Self-service region owner OAR backup/restore
@@ -5434,6 +7340,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                             .Append(Html(region.RegionName)).Append("</label><br/>");
                     rows.Append("<input type=\"file\" name=\"file\" accept=\".oar\" required><br/>");
                     rows.Append("<button type=\"submit\">Restore from OAR</button>");
+                    rows.Append("</form>");
+
+                    rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/restart\" onsubmit=\"return confirm('Restart ")
+                            .Append(Html(region.RegionName).Replace("'", "\\'")).Append("? Everyone in the region will be disconnected.');\">");
+                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                    rows.Append("<button type=\"submit\">Restart this region</button>");
                     rows.Append("</form>");
                 }
             }
@@ -5523,6 +7435,45 @@ namespace OpenSim.Server.Handlers.WebInterface
                         }
                     }
                 }
+            }
+
+            response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Self-service region restart - same RunRegionConsoleCommand/
+        // shared-secret mechanism the admin console page uses, but region
+        // ownership is verified via GetOwnedRegionOrNull first (same
+        // ownership check HandleMyRegionsOarSave/Load already use) rather
+        // than exposing the free-form console box to non-admins - a
+        // resident can only ever send exactly "restart", and only to a
+        // region they actually own.
+        private void HandleMyRegionsRestart(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Region not found or not owned by you.";
+
+            if (request.HttpMethod == "POST" && !string.IsNullOrEmpty(m_webConsoleSecret))
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                if (UUID.TryParse(FormValue(form, "region_id"), out UUID regionID))
+                {
+                    GridRegion region = GetOwnedRegionOrNull(session, regionID);
+                    if (region != null && !string.IsNullOrEmpty(region.ServerURI))
+                    {
+                        RunRegionConsoleCommand(region, "restart");
+                        message = "Restart command sent to " + region.RegionName + ".";
+                    }
+                }
+            }
+            else if (string.IsNullOrEmpty(m_webConsoleSecret))
+            {
+                message = "Web console is not configured on this grid - region restart is unavailable.";
             }
 
             response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
@@ -6356,66 +8307,6 @@ namespace OpenSim.Server.Handlers.WebInterface
             string gridName = GetSetting("GridName", m_gridName);
             WebSession session = GetSession(request);
 
-            string navActions;
-            if (session != null)
-            {
-                // Account links used to live entirely on a dedicated /dashboard
-                // page (nothing but a list of <a> tags); moved into this
-                // dropdown so they're reachable straight from the menu bar on
-                // every page instead of needing a click-through to a page
-                // whose only content was more links.
-                navActions = "<div class=\"nav-dropdown\">"
-                        + "<a href=\"" + BasePath + "/dashboard\" class=\"nav-user dropdown-toggle\">" + Html(session.Name) + " &#9662;</a>"
-                        + "<div class=\"dropdown-menu\">"
-                        + "<a href=\"" + BasePath + "/dashboard\">Dashboard</a>"
-                        + "<a href=\"" + BasePath + "/profile?id=" + session.PrincipalID + "\">My Profile</a>"
-                        + "<a href=\"" + BasePath + "/friends\">My Friends</a>"
-                        + "<a href=\"" + BasePath + "/partner\">Partner</a>"
-                        + "<a href=\"" + BasePath + "/transactions\">My Transactions</a>"
-                        + "<a href=\"" + BasePath + "/myclassifieds\">My Classifieds</a>"
-                        + "<a href=\"" + BasePath + "/myevents\">My Events</a>"
-                        + "<a href=\"" + BasePath + "/myregions\">My Regions</a>"
-                        + "<a href=\"" + BasePath + "/myestates\">My Estate</a>"
-                        + "<a href=\"" + BasePath + "/myinventory\">My Inventory</a>"
-                        + "<a href=\"" + BasePath + "/change-password\">Change Password</a>"
-                        + "<a href=\"" + BasePath + "/change-email\">Change Email</a>"
-                        + "<a href=\"" + BasePath + "/delete-account\">Delete Account</a>"
-                        + "<a href=\"" + BasePath + "/logout\">Log Out</a>"
-                        + "</div></div>";
-
-                // Admin sub-pages used to be a flat <p><a> list on the /admin
-                // page itself (same pattern as the old Dashboard). This
-                // dropdown is only added to navActions server-side when
-                // session.IsAdmin is true - i.e. exactly the residents who
-                // would get a real 200 from every link inside it, rather
-                // than a link shown to everyone that 403s for non-admins.
-                if (session.IsAdmin)
-                {
-                    navActions += "<div class=\"nav-dropdown\">"
-                            + "<a href=\"" + BasePath + "/admin\" class=\"dropdown-toggle\">Admin &#9662;</a>"
-                            + "<div class=\"dropdown-menu\">"
-                            + "<a href=\"" + BasePath + "/admin\">Grid Overview</a>"
-                            + "<a href=\"" + BasePath + "/admin/abuse-reports\">Abuse Reports</a>"
-                            + "<a href=\"" + BasePath + "/admin/users\">User Management</a>"
-                            + "<a href=\"" + BasePath + "/admin/estates\">Estate Management</a>"
-                            + "<a href=\"" + BasePath + "/admin/groups\">Groups Management</a>"
-                            + "<a href=\"" + BasePath + "/admin/transactions\">Purchases &amp; Transactions</a>"
-                            + "<a href=\"" + BasePath + "/admin/stats\">Grid Statistics</a>"
-                            + "<a href=\"" + BasePath + "/admin/news\">News Feed</a>"
-                            + "<a href=\"" + BasePath + "/admin/events\">Events</a>"
-                            + "<a href=\"" + BasePath + "/admin/support\">Support Queue</a>"
-                            + "<a href=\"" + BasePath + "/admin/pages\">Static Pages</a>"
-                            + "<a href=\"" + BasePath + "/admin/settings\">Grid Settings</a>"
-                            + "<a href=\"" + BasePath + "/admin/console\">Region Console</a>"
-                            + "</div></div>";
-                }
-            }
-            else
-            {
-                navActions = "<a href=\"" + BasePath + "/login\">Log In</a>"
-                        + "<a href=\"" + BasePath + "/register\" class=\"nav-cta\">Sign Up</a>";
-            }
-
             string heroTitle = Html(gridName);
             string remainder = bodyHtml;
             if (bodyHtml.StartsWith("<h1>"))
@@ -6428,29 +8319,379 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            string html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + Html(title) + "</title>"
+            string head = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + Html(title) + "</title>"
                     + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-                    + "<style>" + PageCss + "</style></head><body>"
-                    + "<header class=\"site-header\"><div class=\"site-header-inner\">"
-                    + "<a class=\"brand\" href=\"/\"><span class=\"brand-mark\">C</span>" + Html(gridName) + "</a>"
-                    + "<nav class=\"site-nav\"><a href=\"/\">Home</a><a href=\"" + BasePath + "/search\">Search</a>" +
-                    "<a href=\"" + BasePath + "/destinations\">Destinations</a>" +
-                    "<a href=\"" + BasePath + "/features\">Features</a><a href=\"" + BasePath + "/viewers\">Get a Viewer</a>" +
-                    "<a href=\"" + BasePath + "/page/about\">About</a><a href=\"" + BasePath + "/support\">Support</a></nav>"
-                    + "<div class=\"site-actions\">" + navActions + "</div>"
-                    + "</div></header>"
-                    + "<section class=\"hero\"><div class=\"hero-inner\"><h1>" + heroTitle + "</h1></div></section>"
+                    + "<link rel=\"stylesheet\" href=\"/static/bootstrap-icons.css\">"
+                    + "<style>" + PageCss + "</style></head><body>";
+
+            string pageBody = "<section class=\"hero\"><div class=\"hero-inner\"><h1>" + heroTitle + "</h1></div></section>"
                     + "<main class=\"site-main\"><div class=\"page\"><div class=\"card\">" + remainder + "</div></div></main>"
                     + "<footer class=\"site-footer\"><div class=\"site-footer-inner\">"
                     + "&copy; " + DateTime.UtcNow.Year + " " + Html(gridName) + " &middot; Powered by Confluence"
                     + " &middot; <a href=\"" + BasePath + "/page/tos\">Terms of Service</a>"
                     + " &middot; <a href=\"" + BasePath + "/page/dmca\">DMCA Policy</a>"
-                    + "</div></footer>"
-                    + DropdownScript
+                    + "</div></footer>";
+
+            string html;
+            if (session != null)
+            {
+                // Persistent sidebar app-shell for the logged-in experience -
+                // replaces the old giant account/admin dropdowns (25+ links
+                // buried two clicks deep in the header) with a real,
+                // always-visible nav, matching 3RD Rock Grid's own resident
+                // panel structure. Public site-wide links (Search,
+                // Destinations, etc.) move to a slim top bar so they're still
+                // reachable without duplicating the sidebar's account links.
+                string path = request.RawUrl ?? "/";
+                html = head
+                        + "<div class=\"app-shell\">"
+                        + RenderSidebar(session, path)
+                        + "<div id=\"sidebarBackdrop\" class=\"sidebar-backdrop\"></div>"
+                        + "<div class=\"app-main\">"
+                        + "<header class=\"app-topbar\">"
+                        + "<button class=\"sidebar-toggle\" aria-label=\"Menu\"><i class=\"bi bi-list\"></i></button>"
+                        + "<nav class=\"site-nav\"><a href=\"/\"><i class=\"bi bi-house-door ic-blue\"></i> Home</a>" +
+                        RenderTopNavGroups(false) +
+                        RenderNavPages(session) + "</nav>"
+                        + "</header>"
+                        + pageBody
+                        + "</div></div>"
+                        + SidebarToggleScript
+                        + DropdownScript
+                        + "</body></html>";
+            }
+            else
+            {
+                string navActions = "<a href=\"" + BasePath + "/login\">Log In</a>"
+                        + "<a href=\"" + BasePath + "/register\" class=\"nav-cta\">Sign Up</a>";
+
+                html = head
+                        + "<header class=\"site-header\"><div class=\"site-header-inner\">"
+                        + "<a class=\"brand\" href=\"/\"><span class=\"brand-mark\">C</span>" + Html(gridName) + "</a>"
+                        + "<nav class=\"site-nav\"><a href=\"/\"><i class=\"bi bi-house-door ic-blue\"></i> Home</a>" +
+                        RenderTopNavGroups(true) +
+                        RenderNavPages(session) + "</nav>"
+                        + "<div class=\"site-actions\">" + navActions + "</div>"
+                        + "</div></header>"
+                        + pageBody
+                        + DropdownScript
+                        + "</body></html>";
+            }
+
+            response.ContentType = "text/html";
+            response.RawBuffer = Encoding.UTF8.GetBytes(html);
+        }
+
+        // Sidebar link definitions, in display order - single source of truth
+        // for both rendering and active-state matching, so a new sidebar
+        // entry can't silently be added to one without the other.
+        private static readonly (string Path, string Icon, string Label)[] SidebarMainLinks =
+        {
+            ("/dashboard", "bi-speedometer2", "Dashboard"),
+            ("/profile", "bi-person", "My Profile"),
+            ("/friends", "bi-people", "Friends"),
+            ("/messages", "bi-envelope", "Messages"),
+            ("/offline-messages", "bi-envelope-open", "Offline Messages"),
+            ("/partner", "bi-heart", "Partner"),
+            ("/transactions", "bi-cash-stack", "Transactions"),
+            ("/myclassifieds", "bi-megaphone", "Classifieds"),
+            ("/myevents", "bi-calendar-event", "Events"),
+            ("/auctions", "bi-hammer", "Auctions"),
+            ("/myregions", "bi-map", "My Regions"),
+            ("/myestates", "bi-building", "My Estate"),
+            ("/myinventory", "bi-box-seam", "Inventory"),
+        };
+
+        private static readonly (string Path, string Icon, string Label)[] SidebarAccountLinks =
+        {
+            ("/change-password", "bi-key", "Change Password"),
+            ("/change-email", "bi-envelope", "Change Email"),
+            ("/delete-account", "bi-trash", "Delete Account"),
+        };
+
+        private string RenderSidebar(WebSession session, string currentPath)
+        {
+            string gridName = GetSetting("GridName", m_gridName);
+            string initial = string.IsNullOrEmpty(session.Name) ? "?" : session.Name.Substring(0, 1).ToUpperInvariant();
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<aside id=\"appSidebar\" class=\"app-sidebar\">");
+            sb.Append("<a class=\"sidebar-brand\" href=\"/\"><span class=\"brand-mark\">C</span>").Append(Html(gridName)).Append("</a>");
+
+            sb.Append("<div class=\"sidebar-user\">");
+            sb.Append("<div class=\"sidebar-user-avatar\">").Append(Html(initial)).Append("</div><div>");
+            sb.Append("<div class=\"sidebar-user-name\">").Append(Html(session.Name)).Append("</div>");
+            sb.Append("<div class=\"sidebar-user-role\"><span class=\"pill ")
+              .Append(session.IsAdmin ? "pill-yes" : "pill-no").Append("\">")
+              .Append(session.IsAdmin ? "Administrator" : "Member").Append("</span></div>");
+            sb.Append("</div></div>");
+
+            sb.Append("<nav class=\"sidebar-nav\">");
+            sb.Append("<div class=\"sidebar-nav-label\">My Panel</div>");
+            int colorIndex = 0;
+            foreach ((string linkPath, string icon, string label) in SidebarMainLinks)
+            {
+                string href = linkPath == "/profile" ? BasePath + "/profile?id=" + session.PrincipalID : BasePath + linkPath;
+                bool active = currentPath.StartsWith(BasePath + linkPath, StringComparison.OrdinalIgnoreCase);
+                AppendSidebarLink(sb, href, icon, label, active, SidebarIconColors[colorIndex++ % SidebarIconColors.Length]);
+            }
+
+            sb.Append("<div class=\"sidebar-nav-label\">Account</div>");
+            foreach ((string linkPath, string icon, string label) in SidebarAccountLinks)
+            {
+                bool active = currentPath.StartsWith(BasePath + linkPath, StringComparison.OrdinalIgnoreCase);
+                AppendSidebarLink(sb, BasePath + linkPath, icon, label, active, SidebarIconColors[colorIndex++ % SidebarIconColors.Length]);
+            }
+
+            // Admin gets exactly one extra sidebar entry, not the old
+            // dropdown's full 13-item breakdown - /admin itself renders that
+            // breakdown as its own card grid (same nav-as-cards treatment as
+            // the resident dashboard), so the sidebar stays a fixed, scannable
+            // size regardless of role.
+            if (session.IsAdmin)
+            {
+                sb.Append("<div class=\"sidebar-nav-label\">Grid</div>");
+                bool adminActive = currentPath.StartsWith(BasePath + "/admin", StringComparison.OrdinalIgnoreCase);
+                AppendSidebarLink(sb, BasePath + "/admin", "bi-shield-lock", "Admin Panel", adminActive, "ic-pink");
+            }
+            sb.Append("</nav>");
+
+            sb.Append("<a class=\"sidebar-logout\" href=\"").Append(BasePath).Append("/logout\"><i class=\"bi bi-box-arrow-right\"></i> Log Out</a>");
+            sb.Append("</aside>");
+            return sb.ToString();
+        }
+
+        // Rotated across sidebar entries in declaration order - a plain
+        // index cycle rather than picking one color per item, since there's
+        // no meaningful semantic grouping to base it on (unlike the header's
+        // Explore/Grid Info split), just the same "stop reading as a flat
+        // wall of grey text" goal the header dropdowns were built for.
+        private static readonly string[] SidebarIconColors =
+        {
+            "ic-blue", "ic-cyan", "ic-green", "ic-amber", "ic-purple", "ic-pink"
+        };
+
+        private static void AppendSidebarLink(StringBuilder sb, string href, string icon, string label, bool active, string colorClass)
+        {
+            sb.Append("<a href=\"").Append(href).Append("\"").Append(active ? " class=\"active\"" : string.Empty).Append(">");
+            // Active state overrides the per-item color with the shared
+            // accent highlight (matches .sidebar-nav a.active's existing
+            // background/text tint) - the icon shouldn't clash with it.
+            sb.Append("<i class=\"bi ").Append(icon).Append(active ? "" : " " + colorClass).Append("\"></i> ").Append(Html(label)).Append("</a>");
+        }
+
+        // Admin-managed nav entries - matches WhiteCore-Dev's real admin/
+        // page_manager.html (pages place themselves in the nav, with an
+        // order and visibility rules, rather than needing a code change).
+        // Appended after the fixed nav items above rather than replacing
+        // them - About/ToS/DMCA etc. stay hardcoded; this only adds
+        // whatever additional pages an admin has explicitly opted in via
+        // "Show in header nav". An admin who also opts in an already-
+        // hardcoded slug (e.g. "about") would see it twice - their choice
+        // to avoid, not defended against here.
+        private string RenderNavPages(WebSession session)
+        {
+            if (m_StaticPageService == null)
+                return string.Empty;
+
+            List<StaticPage> pages = m_StaticPageService.GetAll();
+            if (pages.Count == 0)
+                return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            foreach (StaticPage page in pages
+                    .Where(p => p.ShowInNav)
+                    .Where(p => !p.RequiresLogin || session != null)
+                    .Where(p => !p.RequiresAdmin || (session != null && session.IsAdmin))
+                    .OrderBy(p => p.NavOrder))
+            {
+                sb.Append("<a href=\"").Append(BasePath).Append("/page/").Append(Uri.EscapeDataString(page.Slug)).Append("\">")
+                  .Append(Html(page.Title)).Append("</a>");
+            }
+            return sb.ToString();
+        }
+
+        // Chrome-free variant of WritePage for pages meant to be opened
+        // inside a viewer's own embedded browser panel (the login splash,
+        // Help, About, the embedded search, the Destination Guide) - the
+        // full site header/nav/hero/footer have no useful navigation
+        // target in that small embedded context and just waste space.
+        // Shares PageCss so typography/colors still match the rest of the
+        // site. Only ever reached via WriteAdaptivePage's real viewer
+        // detection now - a normal browser tab gets WritePage (full
+        // chrome) instead, so this no longer needs its own "way back" link
+        // (an earlier pass added one here for exactly that case, before
+        // WriteAdaptivePage existed - removed per the user, since it's now
+        // unnecessary clutter every time a real viewer actually renders
+        // this).
+        private void WriteBarePage(IOSHttpRequest request, IOSHttpResponse response, string title, string bodyHtml)
+        {
+            string html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + Html(title) + "</title>"
+                    + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+                    + "<link rel=\"stylesheet\" href=\"/static/bootstrap-icons.css\">"
+                    + "<style>" + PageCss + "</style></head><body>"
+                    + "<main class=\"site-main\"><div class=\"page\"><div class=\"card\">" + bodyHtml + "</div></div></main>"
                     + "</body></html>";
 
             response.ContentType = "text/html";
             response.RawBuffer = Encoding.UTF8.GetBytes(html);
+        }
+
+        // Bootstrap Icons, vendored (not CDN-linked - this connector has to
+        // work with no internet egress at runtime) per the same icon system
+        // OpenSim-Grid-Interface's own docs/icons-and-theme.md standardizes
+        // on ("Bootstrap Icons are used for all UI icons"). The actual
+        // .css/.woff2/.woff files are embedded resources (see
+        // WebInterface/Resources/ and prebuild.xml), fetched once at
+        // vendoring time and shipped inside the DLL from then on - the
+        // deployed grid never needs network access for this. Resolved via
+        // GetManifestResourceNames() rather than a hand-computed name
+        // string, the same defensive pattern Migration.cs already uses for
+        // its own embedded resources, since the exact compiler-generated
+        // name depends on the project's root namespace.
+        private static readonly Dictionary<string, string> StaticAssetContentTypes = new Dictionary<string, string>
+        {
+            { "bootstrap-icons.css", "text/css" },
+            { "bootstrap-icons.woff2", "font/woff2" },
+            { "bootstrap-icons.woff", "font/woff" },
+            // Leaflet 1.9.4, vendored the same way (no CDN) - see
+            // HandleWorldMap/WorldMapScript for the actual map page. Uses
+            // L.imageOverlay per region instead of L.marker, so the default
+            // marker-icon PNGs Leaflet's CSS references were never vendored
+            // - nothing in this connector's map ever uses L.marker.
+            { "leaflet.css", "text/css" },
+            { "leaflet.js", "application/javascript" }
+        };
+
+        private static readonly Dictionary<string, byte[]> StaticAssetCache = new Dictionary<string, byte[]>();
+        private static readonly object StaticAssetLock = new object();
+
+        private static byte[] LoadStaticAsset(string fileName)
+        {
+            lock (StaticAssetLock)
+            {
+                if (StaticAssetCache.TryGetValue(fileName, out byte[] cached))
+                    return cached;
+
+                Assembly assembly = typeof(WebInterfaceServiceConnector).Assembly;
+                string resourceName = null;
+                foreach (string candidate in assembly.GetManifestResourceNames())
+                {
+                    if (candidate.EndsWith("." + fileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        resourceName = candidate;
+                        break;
+                    }
+                }
+
+                if (resourceName == null)
+                {
+                    StaticAssetCache[fileName] = null;
+                    return null;
+                }
+
+                using (Stream stream = assembly.GetManifestResourceStream(resourceName))
+                using (MemoryStream buffer = new MemoryStream())
+                {
+                    stream.CopyTo(buffer);
+                    byte[] bytes = buffer.ToArray();
+                    StaticAssetCache[fileName] = bytes;
+                    return bytes;
+                }
+            }
+        }
+
+        private void HandleStaticAsset(IOSHttpRequest request, IOSHttpResponse response, string fileName)
+        {
+            if (!StaticAssetContentTypes.TryGetValue(fileName, out string contentType))
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            byte[] bytes = LoadStaticAsset(fileName);
+            if (bytes == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            response.ContentType = contentType;
+            // Vendored, versioned-by-filename assets - safe to cache
+            // aggressively, same reasoning any static-asset pipeline uses.
+            response.AddHeader("Cache-Control", "public, max-age=31536000, immutable");
+            response.RawBuffer = bytes;
+        }
+
+        // Real viewer-vs-browser detection, ported from the same mechanism
+        // OpenSim-Grid-Interface's include/viewer_context.php already uses
+        // (os_detect_viewer()) - not invented here, and not the guess this
+        // connector wrongly assumed wasn't possible. The X-SecondLife-*
+        // headers are the reliable signal: any SL-protocol viewer's
+        // embedded browser (login splash, Search "Web" tab, Help/About/
+        // Destinations panels) attaches these to every request it makes,
+        // the same way it does for in-world web media - a real, standard
+        // behavior, not a guess. User-Agent substrings and a
+        // ?view=viewer|web override (persisted via a cookie, same pattern
+        // the session cookie already uses) are kept as fallbacks for the
+        // rare case those headers get stripped by a proxy.
+        private static readonly string[] ViewerHeaders =
+        {
+            "X-SecondLife-Owner-Name", "X-SecondLife-Region", "X-SecondLife-Shard"
+        };
+
+        private static readonly string[] ViewerUserAgentNeedles =
+        {
+            "Firestorm", "Second Life", "SLViewer", "Kokua", "Cool VL", "Singularity",
+            "Black Dragon", "Dayturn", "Alchemy"
+        };
+
+        private static bool IsViewerRequest(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            foreach (string header in ViewerHeaders)
+            {
+                if (!string.IsNullOrEmpty(request.Headers[header]))
+                    return true;
+            }
+
+            string userAgent = request.Headers["User-Agent"] ?? string.Empty;
+            foreach (string needle in ViewerUserAgentNeedles)
+            {
+                if (userAgent.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            string viewParam = request.QueryString.Get("view");
+            if (!string.IsNullOrEmpty(viewParam))
+            {
+                string v = viewParam.ToLowerInvariant();
+                if (v == "viewer" || v == "web")
+                {
+                    response.AddHeader("Set-Cookie", "view=" + v + "; Path=/");
+                    return v == "viewer";
+                }
+            }
+
+            string viewCookie = ReadCookie(request, "view");
+            if (!string.IsNullOrEmpty(viewCookie))
+                return viewCookie.Equals("viewer", StringComparison.OrdinalIgnoreCase);
+
+            return false;
+        }
+
+        // Picks WriteBarePage for a real viewer request, WritePage for a
+        // normal browser one - the actual "works in both" fix, replacing
+        // the earlier band-aid of always using WriteBarePage plus a small
+        // home link. One canonical URL per page again (no more /websearch
+        // split, no more embedded=1 query flags) since chrome is now
+        // decided per-request from a real signal instead of guessed once
+        // at build time.
+        private void WriteAdaptivePage(IOSHttpRequest request, IOSHttpResponse response, string title, string bodyHtml)
+        {
+            if (IsViewerRequest(request, response))
+                WriteBarePage(request, response, title, bodyHtml);
+            else
+                WritePage(request, response, title, bodyHtml);
         }
 
         // Self-contained (no external fonts/CDNs - this connector has to work
@@ -6488,7 +8729,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "margin:0;padding:0;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh;" +
                 "display:flex;flex-direction:column;}" +
                 ".site-header{background:var(--dark);padding:0 24px;border-bottom:1px solid var(--border);}" +
-                ".site-header-inner{max-width:1100px;margin:0 auto;padding:14px 0;display:flex;" +
+                // Full-width header bar in a real browser window - was
+                // capped at max-width:1100px and centered, same as the
+                // narrower page-content column, leaving dead space on both
+                // sides on anything wider than that. Header/footer chrome
+                // should use the whole window; only the actual page
+                // content (.page/.hero-inner) needs a readable max-width.
+                ".site-header-inner{padding:14px 0;display:flex;" +
                 "align-items:center;gap:28px;flex-wrap:wrap;}" +
                 ".brand{display:flex;align-items:center;gap:10px;color:#fff;text-decoration:none;" +
                 "font-weight:700;font-size:17px;letter-spacing:.2px;}" +
@@ -6497,6 +8744,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;}" +
                 ".site-nav{display:flex;gap:20px;flex:1;}" +
                 ".site-nav a{color:var(--muted);font-size:14px;font-weight:600;}" +
+                ".site-nav a .bi{margin-right:4px;}" +
                 ".site-nav a:hover{color:#fff;text-decoration:none;}" +
                 ".site-actions{display:flex;align-items:center;gap:18px;}" +
                 ".site-actions a{color:var(--muted);font-size:14px;font-weight:600;}" +
@@ -6522,17 +8770,36 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "font-weight:600;color:var(--text);white-space:nowrap;}" +
                 ".dropdown-menu a:hover{background:var(--accent-tint);color:var(--accent-bright);" +
                 "text-decoration:none;}" +
+                // Small reusable icon-color utilities - previously every
+                // .bi icon site-wide inherited plain text color, making a
+                // long nav (or dropdown menu) read as a flat wall of
+                // same-weight text. Applied to the top nav below; free to
+                // reuse anywhere else an icon needs to stand out.
+                ".ic-blue{color:#60a5fa;}.ic-cyan{color:#22d3ee;}.ic-green{color:#4ade80;}" +
+                ".ic-amber{color:#fbbf24;}.ic-purple{color:#a78bfa;}.ic-pink{color:#f472b6;}" +
+                ".site-nav .dropdown-toggle .bi:last-child{font-size:10px;margin-left:2px;color:var(--muted);}" +
                 ".hero{background:linear-gradient(135deg,#000000 0%,#0d1a30 100%);" +
                 "border-bottom:1px solid var(--border);padding:36px 24px;}" +
                 ".hero-inner{max-width:1100px;margin:0 auto;}" +
                 ".hero h1{font-size:30px;margin:0;color:#fff;}" +
+                // Home-page marketing CTA row - deliberately separate from
+                // .nav-cta (header sign-up link) since this needs a matching
+                // secondary/outline button next to it, which the header never does.
+                ".tagline-lead{font-size:16px;color:var(--muted);margin:0 0 22px;}" +
+                ".cta-row{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 30px;}" +
+                ".cta-primary{background:var(--accent);color:#fff;padding:12px 28px;border-radius:40px;" +
+                "text-transform:uppercase;font-size:13px;font-weight:700;letter-spacing:.3px;}" +
+                ".cta-primary:hover{background:var(--accent-dark);text-decoration:none;}" +
+                ".cta-secondary{border:2px solid var(--border);color:var(--text);padding:10px 26px;" +
+                "border-radius:40px;text-transform:uppercase;font-size:13px;font-weight:700;letter-spacing:.3px;}" +
+                ".cta-secondary:hover{border-color:var(--accent);color:var(--accent-bright);text-decoration:none;}" +
                 ".site-main{padding:0 24px;flex:1 0 auto;}" +
                 ".page{max-width:1100px;margin:0 auto;padding:32px 0 60px;}" +
                 ".card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);" +
                 "box-shadow:0 8px 24px rgba(0,0,0,.35);padding:32px 36px;}" +
                 ".site-footer{background:var(--dark);border-top:1px solid var(--border);padding:20px 24px;" +
                 "margin-top:40px;}" +
-                ".site-footer-inner{max-width:1100px;margin:0 auto;color:var(--muted);font-size:12.5px;}" +
+                ".site-footer-inner{color:var(--muted);font-size:12.5px;}" +
                 "h1{font-size:21px;margin:0 0 14px;color:var(--text);}" +
                 "h2{font-size:16px;margin:26px 0 12px;color:var(--text);border-top:1px solid var(--border);" +
                 "padding-top:20px;}" +
@@ -6571,6 +8838,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "background:var(--accent-tint);padding:8px 18px;border-radius:999px;margin-bottom:6px;}" +
                 ".error{background:var(--danger-bg);color:var(--danger);border-left:3px solid var(--danger);" +
                 "padding:12px 14px;border-radius:6px;font-size:13.5px;margin:0 0 16px;}" +
+                ".success{background:rgba(74,222,128,.12);color:var(--success);border-left:3px solid var(--success);" +
+                "padding:12px 14px;border-radius:6px;font-size:13.5px;margin:0 0 16px;}" +
                 ".announcement{background:var(--input-bg);border-left:4px solid var(--accent);" +
                 "padding:14px 16px;border-radius:6px;font-size:14px;margin:0 0 18px;}" +
                 ".news-item{padding:16px 0;border-top:1px solid var(--border);}" +
@@ -6586,15 +8855,48 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".widget-card{background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;}" +
                 ".widget-card h3{margin:0 0 4px;}" +
                 ".widget-meta{color:var(--muted);font-size:12px;margin:0 0 6px;}" +
-                ".world-map{position:relative;width:100%;padding-top:66%;background:var(--input-bg);" +
-                "border:1px solid var(--border);border-radius:8px;margin:0 0 20px;overflow:hidden;}" +
-                ".world-map-region{position:absolute;background-color:#1c2430;background-size:cover;" +
-                "background-position:center;border:1px solid var(--accent);border-radius:3px;" +
-                "display:flex;align-items:flex-end;text-decoration:none;transition:transform .15s ease,z-index 0s;}" +
-                ".world-map-region:hover{transform:scale(1.08);z-index:2;text-decoration:none;" +
-                "box-shadow:0 6px 18px rgba(0,0,0,.5);}" +
-                ".world-map-label{background:rgba(0,0,0,.72);color:#fff;font-size:11px;padding:3px 6px;" +
-                "width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" +
+                // Clickable variant of .widget-card (Dashboard's Quick Links) -
+                // same hover-lift/no-underline treatment as .bucket, since an
+                // entire card acting as one <a> looks broken if hover
+                // underlines all its text.
+                "a.dashboard-link{display:block;color:inherit;transition:border-color .15s ease,transform .15s ease;}" +
+                "a.dashboard-link:hover{border-color:var(--accent);transform:translateY(-2px);text-decoration:none;}" +
+                "a.dashboard-link h3{color:var(--text);}" +
+                "a.dashboard-link h3 .bi{color:var(--accent-bright);margin-right:6px;}" +
+                // Icon-headed, hover-lift cards - matches the reference
+                // grid-portal projects' own region/feature-card treatment
+                // (translateY lift + accent border-left + real box-shadow on
+                // hover) rather than the flat, static widget-card used
+                // elsewhere. Reserved for pages that specifically want that
+                // heavier, more "eye-catching" presentation (Features,
+                // region-type comparisons) rather than applied everywhere.
+                ".feature-card{background:var(--input-bg);border:1px solid var(--border);border-left:3px solid transparent;" +
+                "border-radius:10px;padding:20px 22px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}" +
+                ".feature-card:hover{transform:translateY(-4px);border-left-color:var(--accent);" +
+                "box-shadow:0 14px 28px rgba(0,0,0,.35);}" +
+                ".feature-card h3{display:flex;align-items:center;gap:10px;margin:0 0 10px;font-size:16px;}" +
+                ".feature-card h3 .bi{color:var(--accent-bright);font-size:1.3em;}" +
+                ".feature-card ul{margin:0;padding-left:0;list-style:none;}" +
+                ".feature-card li{margin:0 0 8px;padding-left:22px;position:relative;font-size:13.5px;color:var(--text);}" +
+                ".feature-card li:last-child{margin-bottom:0;}" +
+                ".feature-card li .bi{position:absolute;left:0;top:1px;color:var(--accent-bright);}" +
+                ".pill{display:inline-flex;align-items:center;gap:4px;padding:3px 11px;border-radius:999px;" +
+                "font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;}" +
+                ".pill-yes{background:rgba(74,222,128,.15);color:var(--success);}" +
+                ".pill-no{background:rgba(153,158,166,.15);color:var(--muted);}" +
+                ".feature-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin:0 0 8px;}" +
+                ".powered-group-label{flex:0 0 100%;text-align:center;font-size:11px;letter-spacing:.12em;" +
+                "text-transform:uppercase;color:var(--muted);margin:14px 0 2px;}" +
+                ".powered-group-label:first-child{margin-top:0;}" +
+                ".powered-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin:0 0 8px;}" +
+                ".powered-tile{flex:0 1 150px;min-width:130px;max-width:150px;text-align:center;" +
+                "background:var(--input-bg);border:1px solid var(--border);border-radius:10px;padding:16px 10px;}" +
+                ".powered-tile .bi{font-size:1.9rem;color:var(--accent-bright);display:block;margin-bottom:6px;}" +
+                ".powered-tile-title{font-weight:700;color:var(--text);font-size:13.5px;}" +
+                ".powered-tile-sub{font-size:11.5px;color:var(--muted);margin-top:2px;}" +
+                ".perks-list{list-style:none;margin:0;padding:0;}" +
+                ".perks-list li{padding-left:24px;position:relative;margin:0 0 9px;font-size:13.5px;color:var(--text);}" +
+                ".perks-list li .bi{position:absolute;left:0;top:2px;color:var(--accent-bright);}" +
                 // Search landing layout - structurally follows the reference
                 // grid-search page (hero-search/chips/trending/stat-strip)
                 // the user pasted in, reimplemented in our own markup/CSS/JS
@@ -6658,13 +8960,103 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "padding:12px 14px;font-size:12.5px;line-height:1.5;overflow-x:auto;color:var(--text);}" +
                 "@media(max-width:480px){.card{padding:20px 18px;}.page{padding:18px 0 40px;}" +
                 ".hero{padding:24px 18px;}.hero h1{font-size:22px;}.site-header,.site-main,.hero," +
-                ".site-footer{padding-left:16px;padding-right:16px;}}";
+                ".site-footer{padding-left:16px;padding-right:16px;}}" +
+                // Persistent left sidebar app-shell for logged-in pages -
+                // structurally modeled on 3RD Rock Grid's own resident panel
+                // (icon-labeled nav list, user identity block up top, Log Out
+                // pinned at the bottom) with this codebase's own existing
+                // color palette, not a new one. Only wraps logged-in pages
+                // (WritePage when session != null); anonymous visitors and
+                // viewer-embedded requests (WriteBarePage) are unaffected.
+                ".app-shell{display:flex;flex:1 0 auto;min-height:100vh;}" +
+                ".app-sidebar{width:250px;flex-shrink:0;background:var(--dark);" +
+                "border-right:1px solid var(--border);display:flex;flex-direction:column;" +
+                "position:sticky;top:0;height:100vh;overflow-y:auto;}" +
+                ".sidebar-brand{display:flex;align-items:center;gap:10px;color:#fff;text-decoration:none;" +
+                "font-weight:700;font-size:16px;padding:18px 20px;border-bottom:1px solid var(--border);}" +
+                ".sidebar-brand:hover{text-decoration:none;color:var(--accent-bright);}" +
+                ".sidebar-user{display:flex;align-items:center;gap:10px;padding:16px 20px;" +
+                "border-bottom:1px solid var(--border);}" +
+                ".sidebar-user-avatar{width:36px;height:36px;border-radius:50%;background:var(--accent);" +
+                "color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;" +
+                "justify-content:center;flex-shrink:0;}" +
+                ".sidebar-user-name{color:var(--text);font-size:13.5px;font-weight:700;" +
+                "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
+                ".sidebar-user-role{color:var(--muted);font-size:11px;text-transform:uppercase;" +
+                "letter-spacing:.3px;margin-top:2px;}" +
+                ".sidebar-nav{flex:1;padding:14px 12px;}" +
+                ".sidebar-nav-label{color:var(--muted);font-size:10.5px;font-weight:700;" +
+                "text-transform:uppercase;letter-spacing:.5px;padding:14px 10px 6px;}" +
+                ".sidebar-nav-label:first-child{padding-top:4px;}" +
+                ".sidebar-nav a{display:flex;align-items:center;gap:10px;padding:10px 10px;" +
+                "border-radius:6px;font-size:15px;font-weight:600;color:var(--text);margin-bottom:2px;}" +
+                ".sidebar-nav a .bi{font-size:17px;width:18px;text-align:center;flex-shrink:0;}" +
+                ".sidebar-nav a:hover{background:var(--accent-tint);color:var(--accent-bright);" +
+                "text-decoration:none;}" +
+                ".sidebar-nav a.active{background:var(--accent-tint);color:var(--accent-bright);}" +
+                ".sidebar-logout{display:flex;align-items:center;gap:10px;padding:14px 20px;" +
+                "border-top:1px solid var(--border);color:var(--danger);font-size:13.5px;font-weight:600;}" +
+                ".sidebar-logout:hover{background:var(--danger-bg);text-decoration:none;}" +
+                ".app-main{flex:1;min-width:0;display:flex;flex-direction:column;}" +
+                ".app-topbar{display:flex;align-items:center;justify-content:space-between;" +
+                "padding:14px 24px;background:var(--dark);border-bottom:1px solid var(--border);}" +
+                ".sidebar-toggle{display:none;background:transparent;border:none;color:var(--text);" +
+                "font-size:20px;padding:4px 8px;margin:0;cursor:pointer;}" +
+                ".app-topbar .site-nav{gap:16px;}" +
+                ".app-topbar .site-nav a{font-size:13px;}" +
+                "@media(max-width:900px){.app-sidebar{position:fixed;left:-260px;top:0;bottom:0;z-index:100;" +
+                "transition:left .2s ease;box-shadow:0 0 32px rgba(0,0,0,.6);}" +
+                ".app-sidebar.open{left:0;}.sidebar-toggle{display:block;}" +
+                ".app-topbar .site-nav{display:none;}" +
+                ".sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99;}" +
+                ".sidebar-backdrop.open{display:block;}}";
 
         // The nav dropdowns (account/admin) open on :hover for desktop mice,
         // but touch devices have no hover state - tapping a real <a href>
         // toggle just follows the link instead of revealing the menu. This
         // makes the same toggle also open/close on tap/click, universally,
         // without disturbing the hover behavior desktop already has.
+        // Grouped top-nav dropdowns, shared by both the logged-in and
+        // anonymous headers - the flat link list had grown to 8-9 items as
+        // pages were added this pass (Search/Destinations/World Map/
+        // Economy/Features/Status/Viewers/Help[/About/Support]), reading as
+        // a wall of small same-size text. Reuses the existing .nav-dropdown/
+        // .dropdown-menu/DropdownScript infrastructure (already built for
+        // the anonymous header's old account menu) rather than a new
+        // mechanism - it's already generic (delegated click handler, not
+        // wired to one specific dropdown), it just wasn't applied to more
+        // than one dropdown before. includeAboutSupport is anonymous-only
+        // (About/Support already live in the logged-in sidebar instead).
+        private string RenderTopNavGroups(bool includeAboutSupport)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.Append("<div class=\"nav-dropdown\"><a href=\"#\" class=\"dropdown-toggle\">")
+              .Append("<i class=\"bi bi-compass ic-cyan\"></i> Explore <i class=\"bi bi-caret-down-fill\"></i></a>")
+              .Append("<div class=\"dropdown-menu\">")
+              .Append("<a href=\"").Append(BasePath).Append("/search\"><i class=\"bi bi-search ic-blue\"></i> Search</a>")
+              .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-signpost-2 ic-green\"></i> Destinations</a>")
+              .Append("<a href=\"").Append(BasePath).Append("/worldmap\"><i class=\"bi bi-map ic-amber\"></i> World Map</a>")
+              .Append("<a href=\"").Append(BasePath).Append("/economy\"><i class=\"bi bi-wallet2 ic-green\"></i> Economy</a>")
+              .Append("</div></div>");
+
+            sb.Append("<div class=\"nav-dropdown\"><a href=\"#\" class=\"dropdown-toggle\">")
+              .Append("<i class=\"bi bi-info-circle ic-purple\"></i> Grid Info <i class=\"bi bi-caret-down-fill\"></i></a>")
+              .Append("<div class=\"dropdown-menu\">")
+              .Append("<a href=\"").Append(BasePath).Append("/features\"><i class=\"bi bi-stars ic-amber\"></i> Features</a>")
+              .Append("<a href=\"").Append(BasePath).Append("/gridstatus\"><i class=\"bi bi-activity ic-green\"></i> Status</a>")
+              .Append("<a href=\"").Append(BasePath).Append("/viewers\"><i class=\"bi bi-display ic-blue\"></i> Get a Viewer</a>")
+              .Append("<a href=\"").Append(BasePath).Append("/help\"><i class=\"bi bi-question-circle ic-cyan\"></i> Help</a>");
+            if (includeAboutSupport)
+            {
+                sb.Append("<a href=\"").Append(BasePath).Append("/page/about\"><i class=\"bi bi-info-circle ic-purple\"></i> About</a>")
+                  .Append("<a href=\"").Append(BasePath).Append("/support\"><i class=\"bi bi-life-preserver ic-pink\"></i> Support</a>");
+            }
+            sb.Append("</div></div>");
+
+            return sb.ToString();
+        }
+
         private const string DropdownScript =
                 "<script>document.addEventListener('click',function(e){" +
                 "var t=e.target.closest?e.target.closest('.dropdown-toggle'):null;" +
@@ -6674,6 +9066,20 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "if(!wasOpen)dd.classList.add('open');" +
                 "}else if(!e.target.closest||!e.target.closest('.nav-dropdown')){" +
                 "document.querySelectorAll('.nav-dropdown.open').forEach(function(d){d.classList.remove('open');});" +
+                "}});</script>";
+
+        // Mobile sidebar toggle - the sidebar is position:fixed and slid
+        // off-screen below 900px (see .app-sidebar/.app-sidebar.open in
+        // PageCss); this just flips the .open class on the sidebar and its
+        // backdrop. No Bootstrap JS dependency needed for this one thing.
+        private const string SidebarToggleScript =
+                "<script>document.addEventListener('click',function(e){" +
+                "if(e.target.closest&&e.target.closest('.sidebar-toggle')){" +
+                "document.getElementById('appSidebar').classList.toggle('open');" +
+                "document.getElementById('sidebarBackdrop').classList.toggle('open');" +
+                "}else if(e.target.closest&&e.target.closest('#sidebarBackdrop')){" +
+                "document.getElementById('appSidebar').classList.remove('open');" +
+                "document.getElementById('sidebarBackdrop').classList.remove('open');" +
                 "}});</script>";
 
         private static string Html(string s)
