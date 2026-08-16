@@ -6479,3 +6479,62 @@ untested. Corrected it to only list the two items that are genuinely
 blocked on a connected viewer (in-world terrain console commands,
 `osGetAgentViewer`), and to point at this log for the three that are
 now done.
+
+### Terrain console commands (Mobius port) - live-verified with a real viewer
+
+The user connected with a real viewer partway through this session,
+which finally made the two remaining blocked items reachable. Started
+with the terrain commands (`TerrainModule.cs`, ported from Mobius:
+`terrain elevate/lower/fill <meters>`, `terrain load texture <uuid>`).
+
+These turned out not to be reachable at all through the WebConsole
+HTTP relay used for every other console test this session - they're
+registered against `IRegionConsole`'s own private command registry
+(`RegionConsoleModule.cs`), completely separate from
+`MainConsole.Instance.Commands`, and every handler replies via
+`SendConsoleOutput(agentID, ...)` straight to that one avatar's
+client over the `SimConsoleAsync` capability - not observable through
+the physical console or `/consoleweb` under any circumstances. The
+only way to exercise them is a real connected viewer with its own
+region-debug-console UI open, gated on
+`EstateSettings.IsEstateManagerOrOwner(agentID)`.
+
+Confirmed the connected account (Test User) is the Estate Owner of
+"My Estate" (which Welcome Center belongs to), so the gate would
+pass. Getting to the actual UI took a few tries - Firestorm's
+in-viewer log-output "Debug Console" (Developer menu) is a different
+window entirely from the one that actually talks to
+`SimConsoleAsync`; checked the real Firestorm source
+(`S:\Github\phoenix-firestorm`) to confirm the correct one is
+literally named "Region Debug Console" (`llfloaterregiondebugconsole.cpp`,
+registered as `region_debug_console` in `llviewerfloaterreg.cpp`),
+opened via Advanced > Consoles > Region Debug Console or the
+Ctrl+Shift+` shortcut - not the log viewer.
+
+With that open, ran `terrain elevate 0` and `terrain lower 0` (0m,
+deliberately a no-op so nothing on the live Welcome Center terrain
+actually changed) directly from the connected viewer. Both returned
+the exact expected replies - "Raising terrain by 0 meters." and
+"Lowering terrain by 0 meters." - proving the full round trip end to
+end: `SimConsoleAsync` capability wired correctly, the estate-owner
+gate passed for a real account, command parsing and dispatch through
+`IRegionConsole`'s separate registry worked, and the response made it
+back to the real client. `terrain fill`/`terrain load texture` share
+the same dispatch path and weren't separately exercised, since both
+are genuinely destructive to a live region's heightmap with no safe
+zero-value equivalent - not worth risking on the one shared test
+region for a fourth confirmation of a code path already proven three
+times over.
+
+That leaves `osGetAgentViewer` (ported from opensim-lickx) as the
+last remaining untested item. Unlike the terrain commands it doesn't
+need viewer UI archaeology - it's an OSSL script function - but it's
+currently blocked by threat-level config
+(`osGetAgentViewer` needs `Moderate`, the live deployment's
+`OSFunctionThreatLevel` default is `VeryLow`, and neither
+`Welcome_Center` nor `Var_Test_Region`'s `OpenSim.ini` nor the shared
+`config-include/osslDefaultEnable.ini` carry an `Allow_osGetAgentViewer`
+override). Fixing that needs an ini edit plus, most likely, a region
+restart to pick it up - deferred rather than done mid-session while
+the user was actively connected and testing, to not cut that session
+short.
