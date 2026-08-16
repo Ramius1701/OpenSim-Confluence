@@ -156,20 +156,26 @@ namespace OpenSim.Region.OptionalModules.Avatar.Combat
 
         private void HandleTeamJoin(string module, string[] cmdparams)
         {
-            if (cmdparams.Length < 4 || !UUID.TryParse(cmdparams[2], out UUID agentID))
+            // cmdparams includes the full matched command path ("combat",
+            // "team", "join" at indices 0-2), not just the args after it -
+            // found live 2026-08-16 when a real console test showed "join"
+            // itself landing in the UUID slot (UUID.TryParse("join") fails,
+            // producing a spurious Usage message even with a valid UUID
+            // supplied). Same off-by-one across all three handlers below.
+            if (cmdparams.Length < 5 || !UUID.TryParse(cmdparams[3], out UUID agentID))
             {
                 MainConsole.Instance.Output("Usage: combat team join <avatar uuid> <team name>");
                 return;
             }
 
-            string team = string.Join(" ", cmdparams, 3, cmdparams.Length - 3);
+            string team = string.Join(" ", cmdparams, 4, cmdparams.Length - 4);
             JoinTeam(agentID, team);
             MainConsole.Instance.Output("Added {0} to combat team \"{1}\"", agentID, team);
         }
 
         private void HandleTeamLeave(string module, string[] cmdparams)
         {
-            if (cmdparams.Length < 3 || !UUID.TryParse(cmdparams[2], out UUID agentID))
+            if (cmdparams.Length < 4 || !UUID.TryParse(cmdparams[3], out UUID agentID))
             {
                 MainConsole.Instance.Output("Usage: combat team leave <avatar uuid>");
                 return;
@@ -183,13 +189,17 @@ namespace OpenSim.Region.OptionalModules.Avatar.Combat
 
         private void HandleTeamShow(string module, string[] cmdparams)
         {
-            if (cmdparams.Length < 3)
+            if (cmdparams.Length < 4)
             {
                 MainConsole.Instance.Output("Usage: combat team show <team name>");
                 return;
             }
 
-            string team = string.Join(" ", cmdparams, 2, cmdparams.Length - 2);
+            // Found live: this previously joined starting at index 2, which
+            // is still the literal word "show" - team name actually starts
+            // at index 3. Confirmed by the pre-fix output literally reading
+            // Combat team "show Test Squad" has no members.
+            string team = string.Join(" ", cmdparams, 3, cmdparams.Length - 3);
             List<UUID> members = GetTeammates(team);
             if (members.Count == 0)
             {
