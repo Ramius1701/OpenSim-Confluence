@@ -514,16 +514,17 @@ work continues — don't let them go stale.
   `llSetLinkPrimitiveParamsFast`.
 - RegionCurrency vs. RegionWeb's currency portal duplication is
   unreconciled.
-- `osGetAgentViewer` (ported from opensim-lickx) hasn't been tested
-  in-world yet — it's currently blocked by the live deployment's OSSL
-  threat-level config (needs `Moderate`, default allowed is `VeryLow`,
-  no `Allow_osGetAgentViewer` override configured), so even a
-  connected avatar can't exercise it without an ini change and likely
-  a region restart first. The User Alias service, the Land Auction
-  module, the Team Combat module, and the in-world terrain console
-  commands (`terrain elevate/lower/fill`, `terrain load texture`,
-  ported from Tranquillity/WhiteCore-Dev/Mobius) have all since been
-  live-verified against the real grid — see PROJECT_LOG.md.
+- All previously-listed untested-in-world ports (the User Alias
+  service, the Land Auction module, the Team Combat module, the
+  in-world terrain console commands, and `osGetAgentViewer`) have now
+  been live-verified against the real grid — see PROJECT_LOG.md for
+  each writeup, including two real bugs the verification process
+  itself turned up: the admin/self-service region-restart buttons were
+  silently sending a no-op console command (fixed), and a direct SQL
+  edit to live land data got clobbered by a still-running region
+  process flushing its own stale in-memory copy back to the database
+  on shutdown (also fixed, and documented as a general gotcha for any
+  future direct DB edits to region-owned data).
 - The Bot/NPC management framework is infrastructure only — no script
   can reach it yet. Tranquillity's ~50 `bot*` OSSL functions exist only
   in their Phlox script engine; wiring an equivalent into Confluence's

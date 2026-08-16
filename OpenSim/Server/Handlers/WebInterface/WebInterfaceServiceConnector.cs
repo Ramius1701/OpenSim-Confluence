@@ -5534,11 +5534,15 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         // One-click restart from the admin Regions table - same
         // RunRegionConsoleCommand/shared-secret mechanism as the free-form
-        // console above, just pre-filled with the real stock "restart"
-        // console command (OpenSim.cs: "Restart the currently selected
-        // region(s) in this instance") rather than exposing the whole
-        // console box for this one action. Any region, no ownership check -
-        // admin-only.
+        // console above. Sends "region restart 30" (RestartModule.cs),
+        // NOT the bare "restart" its own name suggests - that shorter
+        // command is a real stock OpenSim.cs command but is hardcoded to
+        // a no-op ("Restart command disabled, because currently it is
+        // unreliable."), confirmed live while testing an unrelated OSSL
+        // change this session: it returned success with no actual restart.
+        // "region restart <seconds>" is the one that's actually wired up
+        // (gives connected residents a warning instead of an instant kill).
+        // Any region, no ownership check - admin-only.
         private void HandleAdminRegionRestart(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -5562,7 +5566,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            RunRegionConsoleCommand(region, "restart");
+            RunRegionConsoleCommand(region, "region restart 30");
 
             response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("Restart command sent to " + region.RegionName + "."), HttpStatusCode.Redirect);
         }
@@ -7445,8 +7449,10 @@ namespace OpenSim.Server.Handlers.WebInterface
         // ownership is verified via GetOwnedRegionOrNull first (same
         // ownership check HandleMyRegionsOarSave/Load already use) rather
         // than exposing the free-form console box to non-admins - a
-        // resident can only ever send exactly "restart", and only to a
-        // region they actually own.
+        // resident can only ever send exactly "region restart 30" (see the
+        // matching comment on HandleAdminRegionRestart above for why it's
+        // not the shorter "restart"), and only to a region they actually
+        // own.
         private void HandleMyRegionsRestart(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -7466,7 +7472,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     GridRegion region = GetOwnedRegionOrNull(session, regionID);
                     if (region != null && !string.IsNullOrEmpty(region.ServerURI))
                     {
-                        RunRegionConsoleCommand(region, "restart");
+                        RunRegionConsoleCommand(region, "region restart 30");
                         message = "Restart command sent to " + region.RegionName + ".";
                     }
                 }

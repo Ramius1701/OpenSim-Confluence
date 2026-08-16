@@ -6538,3 +6538,84 @@ override). Fixing that needs an ini edit plus, most likely, a region
 restart to pick it up - deferred rather than done mid-session while
 the user was actively connected and testing, to not cut that session
 short.
+
+### osGetAgentViewer - live-verified, plus two real bugs found along the way
+
+The user chose to take the disconnect and finish this one out rather
+than leave it for later. Added
+`Allow_osGetAgentViewer = ${OSSL|osslParcelO}ESTATE_MANAGER,ESTATE_OWNER`
+to the live `config-include/osslDefaultEnable.ini` (alongside the
+other Moderate-tier entries), had the user rez a cube in Welcome
+Center with a one-line test script
+(`llOwnerSay("Viewer: " + osGetAgentViewer((string)llDetectedKey(0)))`
+on `touch_start`), then restarted the region to pick up the OSSL
+config change - OSSL function-permission entries are read once at
+startup and cached, not re-read live.
+
+Found the region's own graceful restart command in the process:
+`region restart <seconds>` (`RestartModule.cs`), reachable through
+`/consoleweb` and unlike the bare `restart` OpenSim.cs command (see
+below) actually wired up - warns connected residents and gives them
+time before the region cycles, rather than an instant kill. Used
+`region restart 10` on Welcome Center; the user got the warning,
+logged back in once it was back, touched the cube, and got back
+exactly `Viewer: Firestorm-Nightlyx64 7.2.5.81383` - confirming the
+function correctly reads the real `AgentCircuitData` viewer string
+from a live client, not a placeholder. This closes out the last
+README-listed untested-in-world port - all of Team Combat, Land
+Auction, the User Alias service, the Mobius terrain console commands,
+and now `osGetAgentViewer` are live-verified.
+
+**Bug #1, found while choosing which restart command to send:**
+`OpenSim.cs`'s own bare `"restart"` console command
+(`m_console.Commands.AddCommand("Regions", ..., "restart", ...)`) is
+hardcoded to a no-op - `RunCommand`'s `case "restart":` just logs
+"Restart command disabled, because currently it is unreliable." and
+returns, the real restart call is commented out. That's exactly the
+command name `WebInterfaceServiceConnector.cs`'s admin
+(`HandleAdminRegionRestart`) and self-service
+(`HandleMyRegionsRestart`) restart buttons were sending - meaning the
+region-restart feature built and marked complete earlier this session
+(batch #86) has never actually restarted anything; both buttons would
+report success and do nothing. Fixed both call sites to send
+`"region restart 30"` instead (the same working command confirmed
+live above), with a comment on each explaining why - confirmed via
+`dotnet build` on `OpenSim.Server.Handlers.csproj` (0 errors), and
+deployed the rebuilt `OpenSim.Server.Handlers.dll` to the live
+Robust install once Robust was stopped for an unrelated reason (see
+below) rather than forcing an extra restart just for this.
+
+**Bug #2, found immediately after the next restart cycle:** partway
+through this work the grid went down and back up outside of anything
+this session did directly (both `Robust.exe` and both region
+`OpenSim.exe` processes exited and were relaunched by the user).
+Afterward, Var Test Region's sole parcel showed `OwnerUUID` back to
+Jeffery (the auction winner from the earlier Land Auction test)
+**with SalePrice/LandFlags at their post-auction values**, while the
+currency balances still showed the correctly-reverted amounts (Test
+User 5000, Jeffery 301990) - a real inconsistency, not just leftover
+test data: Jeffery ended up owning the parcel for free.
+
+Root cause: the earlier land-auction-test revert was a direct SQL
+`UPDATE` against the live database while Var Test Region's OpenSim.exe
+process kept running the whole time. That process never re-read the
+row - it just kept serving its own in-memory copy (still showing
+Jeffery as owner from when the auction closed) - and when it was
+later cleanly shut down as part of the unrelated grid-wide restart, it
+persisted *that* stale in-memory state back to the database on exit,
+silently clobbering the earlier SQL fix. General gotcha worth
+remembering: a direct SQL edit to live-region-owned data (land, and
+presumably prims/parcels generally) only sticks if the owning region
+process is stopped when the edit happens, or if it goes through an
+in-region command instead - editing the DB out from under a running
+region is temporary at best.
+
+Fixed properly this time: had the user stop just Var Test Region's
+process (confirmed via the `/consoleweb` port going unreachable while
+Welcome Center's stayed up), re-ran the same `UPDATE` while it was
+down, confirmed the row was correct, then had the user start it back
+up and confirmed via a live `land show 1` against the freshly-started
+process - `Owner: Test User`, `Sale Price: 500`, `Flags: ...ForSale...`
+- that it loaded the corrected state fresh rather than clobbering it
+again. This time it's actually persistent, since nothing holds a
+stale in-memory copy anymore.
