@@ -6283,3 +6283,54 @@ confirmed from reading `HandleTeamJoin`/`HandleTeamLeave`/
 `HandleTeamShow` - they operate on any UUID regardless of online
 status), and UserAlias's read endpoints (`getuserforalias`/
 `getuseraliases`) should at least be reachable for the first time.
+
+### Live-tested both after the restart - real findings (2026-08-16)
+
+**UserAliasService: confirmed working end-to-end.** `curl -d
+"METHOD=getuseraliases&UserID=<jeffery's uuid>"
+http://localhost:9002/useralias` against real Robust returned
+`<result>null</result>` - correct for a user with no aliases created
+yet, not an error. Read path verified for real. Write path
+(`create alias`/`delete alias`) is console-only on Robust's own
+console, which has no WebConsole-relay equivalent (that module is
+region-side only) - still unverified, would need either direct Robust
+console access or building an equivalent relay for Robust.
+
+**TeamCombatModule: loaded successfully, but found and fixed a real,
+previously-undiscovered bug on first-ever live test.** `combat team
+show Test Squad` returned `Combat team "show Test Squad" has no
+members` - the word "show" leaking into the team name. Traced it: all
+three handlers (`HandleTeamJoin`/`HandleTeamLeave`/`HandleTeamShow`)
+assumed `cmdparams` starts after the matched command prefix, but this
+codebase's console framework actually includes the full prefix
+("combat"/"team"/"join" etc. at indices 0-2) - so `cmdparams[2]` was
+always the subcommand word itself, not the first real argument, and
+the team-name-join offset was off by one throughout. Confirmed via a
+second empirical test: `combat team join <uuid> Test Squad` failed
+with a spurious usage message because `UUID.TryParse("join")` failed
+at the wrong index. Fixed all three handlers (index 2->3, length
+guards adjusted to match). Built clean, 0 errors - but the dll was
+locked (region still running) so **not yet deployed**; needs the next
+restart to actually take effect and get re-verified. Exactly the kind
+of bug "verify with a real build" (this project's own standing rule)
+exists to catch - it would never have surfaced from a clean compile
+alone.
+
+**Weather auto-cycle interval mystery, from the earlier investigation:
+also resolved, root cause was a config conflict, not a code bug.** The
+temporary diagnostic logging gave the proof needed: `m_autoCycleChangeOnStartup=True`
+at runtime, despite the region's own `OpenSim.ini` correctly setting it
+to `false`. Found the real cause: `addon-modules/OpenSimWeather/config/
+OpenSimWeather.ini` merges in AFTER the region ini and wins on
+overlapping keys (documented in the region ini's own comment) - and
+that file had `AutoCycleChangeOnStartup = true`/
+`AutoCycleStartupDelaySeconds = 20`, clearly leftover fast dev/test
+values never reset to production ones. Fixed by resetting both to match
+the region ini's intended values (`false`/`30`) directly in the live
+deployment's copy of that file. Confirmed this doesn't affect fresh
+clones of the repo - the repo's own `.ini.example` never set these two
+keys at all, relying on the correct code defaults; the stale values only
+existed in this grid's own deployed copy. Needs one more natural restart
+to confirm the fix holds (no more sub-minute weather changes), but the
+diagnosis itself is solid - this was never an interval-math bug in
+`WeatherModule.cs`.
