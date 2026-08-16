@@ -181,6 +181,11 @@ features not yet ported. See "Progress and roadmap."
 
 ### Abuse Reports
 
+Treated as **core, not an optional add-on** — the same standing as
+Search above. A working abuse-report pipeline is baseline functionality
+every grid needs and should have shipped in stock OpenSimulator from
+the start; it never did.
+
 - Viewer Abuse Reports CAPS.
 - Local and remote service connectors.
 - Robust handlers.

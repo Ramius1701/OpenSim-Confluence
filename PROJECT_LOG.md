@@ -67,6 +67,12 @@ from renaming the source repo and wasn't part of this pass.
   the other custom services get one - the only real choice is *which*
   backend answers search (native vs. the OpenSimSearch addon pointing
   at an external server), not whether search exists at all.
+- Abuse Reports gets the same standing as Search, per the user
+  (2026-08-16): core, not an optional/toggleable feature. A working
+  abuse-report pipeline is baseline functionality every grid needs and
+  should have shipped in stock OpenSimulator from the start - it never
+  did. No `Enabled=false` path for `AbuseReportsService`/
+  `AbuseReportsModule`.
 
 ---
 
