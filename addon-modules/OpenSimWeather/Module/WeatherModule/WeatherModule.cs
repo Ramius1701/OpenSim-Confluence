@@ -628,15 +628,30 @@ namespace OpenSim.Region.OptionalModules.World.Weather
 
             if (weather == WeatherKind.Clear)
             {
+                // Explicit "weather clear"/"weather stop" from a person means
+                // hands off, not "clear is this cycle's pick" - stop the auto
+                // cycle timer entirely rather than letting it silently
+                // override this a few minutes/hours later (previously it
+                // called ScheduleNextAutoCycle() unconditionally in its
+                // finally block regardless of how Clear was reached, so an
+                // explicit clear never actually stayed clear). Any other
+                // explicit weather command below restarts the timer, since
+                // issuing one means the person is actively back in control.
                 ClearWeather(true, true);
                 UpdateTemperatureForWeather(WeatherKind.Clear);
                 AnnounceWeatherChange(WeatherKind.Clear);
-                SendReply(client, "Clear.");
+                StopAutoCycle();
+                SendReply(client, m_autoCycleEnabled
+                        ? "Clear. Auto cycle stopped - use any weather command (e.g. \"weather storm\") to resume it."
+                        : "Clear.");
                 return;
             }
 
             if (ApplyWeather(weather, client.AgentId))
+            {
+                StartAutoCycle();
                 SendReply(client, string.Format("{0} started.", WeatherName(weather)));
+            }
             else
                 SendReply(client, "Could not create emitters.");
         }
@@ -1122,6 +1137,18 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             int dueTime = m_autoCycleChangeOnStartup
                 ? m_autoCycleStartupDelaySeconds * 1000
                 : AutoCycleIntervalMS();
+
+            // TEMP DIAGNOSTIC (2026-08-16): auto-cycle has been observed
+            // firing within ~3-5 minutes of region start across multiple
+            // restarts tonight, despite AutoCycleHours=6.0 and
+            // AutoCycleChangeOnStartup=false in the live ini - which should
+            // make dueTime the full 6-hour interval (21,600,000ms), not a
+            // few minutes. Logging the actual runtime values to catch this
+            // with proof on the next restart rather than guessing further.
+            // Remove once root cause is confirmed and fixed.
+            m_log.WarnFormat(
+                "[WEATHER]: DIAGNOSTIC StartAutoCycle: m_autoCycleHours={0}, m_autoCycleChangeOnStartup={1}, m_autoCycleStartupDelaySeconds={2}, computed dueTime={3}ms ({4:0.###} hours)",
+                m_autoCycleHours, m_autoCycleChangeOnStartup, m_autoCycleStartupDelaySeconds, dueTime, dueTime / 3600000.0);
 
             m_autoCycleTimer = new Timer(AutoCycleTimerElapsed, null, Timeout.Infinite, Timeout.Infinite);
             m_autoCycleWarningTimer = new Timer(AutoCycleForecastWarningElapsed, null, Timeout.Infinite, Timeout.Infinite);
