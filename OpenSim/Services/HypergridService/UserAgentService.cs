@@ -71,6 +71,7 @@ namespace OpenSim.Services.HypergridService
         protected static FriendsSimConnector m_FriendsSimConnector; // grid
 
         protected static string m_GridName;
+        protected static string m_HomeURI;
         protected static string m_MyExternalIP = "";
 
         protected static int m_LevelOutsideContacts;
@@ -159,6 +160,19 @@ namespace OpenSim.Services.HypergridService
                         throw new Exception(String.Format("[UserAgentService] failed to resolve gatekeeper host"));
                     m_MyExternalIP = ip.ToString();
                 }
+
+                m_HomeURI = Util.GetConfigVarFromSections<string>(config, "HomeURI",
+                    new string[] { "Startup", "Hypergrid", "UserAgentService" }, String.Empty);
+                if (!string.IsNullOrEmpty(m_HomeURI))
+                {
+                    m_HomeURI = m_HomeURI.ToLowerInvariant();
+                    if (!m_HomeURI.EndsWith("/"))
+                        m_HomeURI += "/";
+                }
+                else
+                {
+                    m_HomeURI = m_GridName;
+                }
                 // Finally some cleanup
                 m_Database.DeleteOld();
 
@@ -242,6 +256,9 @@ namespace OpenSim.Services.HypergridService
                 reason = "Forbidden to launch your agents from here";
                 return false;
             }
+
+            if (ApplyCanonicalHomeURI(agentCircuit, account))
+                m_UserAccountService.StoreUserAccount(account);
 
             // Is this user allowed to go there?
             if (m_GridName != gridName)
@@ -714,6 +731,90 @@ namespace OpenSim.Services.HypergridService
             };
 
             m_Database.Store(hgt);
+        }
+
+        // Ported from Gunthar's fork (commit 4c0d5e1e58, see LLLoginService.cs's
+        // SetServiceURLs for the fuller writeup). Rewrites the OUTBOUND agent
+        // circuit's HomeURI/GatekeeperURI to the canonical configured value on
+        // every Hypergrid launch, not just when it's completely missing - a
+        // resident whose stored ServiceURLs still point at a stale @IP:port
+        // (e.g. from before this grid's dynamic-DNS hostname last changed)
+        // would otherwise keep exporting that stale identity to every foreign
+        // grid they visit, indefinitely, with no way to self-correct short of
+        // an admin manually editing the database.
+        private static bool ApplyCanonicalHomeURI(AgentCircuitData agentCircuit, UserAccount account)
+        {
+            string canonicalHomeURI = NormalizeServiceURL(m_HomeURI);
+            string canonicalGatekeeperURI = NormalizeServiceURL(m_GridName);
+            if (string.IsNullOrEmpty(canonicalHomeURI))
+                return false;
+
+            if (agentCircuit.ServiceURLs is null)
+                agentCircuit.ServiceURLs = new Dictionary<string, object>();
+
+            string currentCircuitHome = agentCircuit.ServiceURLs.TryGetValue("HomeURI", out object circuitHome)
+                ? NormalizeServiceURL(circuitHome as string)
+                : string.Empty;
+
+            if (!canonicalHomeURI.Equals(currentCircuitHome, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrEmpty(currentCircuitHome))
+                {
+                    m_log.InfoFormat("[USER AGENT SERVICE]: Rewriting outbound HomeURI for {0} {1} from {2} to {3}",
+                        agentCircuit.firstname, agentCircuit.lastname, currentCircuitHome, canonicalHomeURI);
+                }
+
+                agentCircuit.ServiceURLs["HomeURI"] = canonicalHomeURI;
+            }
+
+            string currentCircuitGatekeeper = agentCircuit.ServiceURLs.TryGetValue("GatekeeperURI", out object circuitGatekeeper)
+                ? NormalizeServiceURL(circuitGatekeeper as string)
+                : string.Empty;
+
+            if (!string.IsNullOrEmpty(canonicalGatekeeperURI) &&
+                !canonicalGatekeeperURI.Equals(currentCircuitGatekeeper, StringComparison.OrdinalIgnoreCase))
+            {
+                agentCircuit.ServiceURLs["GatekeeperURI"] = canonicalGatekeeperURI;
+            }
+
+            if (account.ServiceURLs is null)
+                account.ServiceURLs = new Dictionary<string, object>();
+
+            bool changed = false;
+            string currentAccountHome = account.ServiceURLs.TryGetValue("HomeURI", out object accountHome)
+                ? NormalizeServiceURL(accountHome as string)
+                : string.Empty;
+
+            if (!canonicalHomeURI.Equals(currentAccountHome, StringComparison.OrdinalIgnoreCase))
+            {
+                account.ServiceURLs["HomeURI"] = canonicalHomeURI;
+                changed = true;
+            }
+
+            string currentAccountGatekeeper = account.ServiceURLs.TryGetValue("GatekeeperURI", out object accountGatekeeper)
+                ? NormalizeServiceURL(accountGatekeeper as string)
+                : string.Empty;
+
+            if (!string.IsNullOrEmpty(canonicalGatekeeperURI) &&
+                !canonicalGatekeeperURI.Equals(currentAccountGatekeeper, StringComparison.OrdinalIgnoreCase))
+            {
+                account.ServiceURLs["GatekeeperURI"] = canonicalGatekeeperURI;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static string NormalizeServiceURL(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            value = value.Trim();
+            if (!value.EndsWith("/"))
+                value += "/";
+
+            return value;
         }
         #endregion
 
