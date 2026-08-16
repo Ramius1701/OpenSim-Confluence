@@ -181,6 +181,16 @@ data layers, replacing what would otherwise be external dependencies:
 - Hypergrid Display Name lookup and federation.
 - Single-name and `username` login handling.
 - Terms-of-service acceptance during login.
+- Stale Hypergrid identity self-repair: local login and outbound
+  Hypergrid launches correct a *stale* (not just missing)
+  HomeURI/GatekeeperURI against the canonical configured value, live-
+  verified with a real before/after test — a resident whose stored
+  identity still pointed at an old IP correctly self-corrected to the
+  real hostname on their next login. Directly relevant since this kind
+  of deployment's hostname is often dynamic DNS, which can otherwise
+  leave a resident's identity stale indefinitely after the IP changes.
+  Plus a `repair user service urls <first> <last> [<home-uri>]` admin
+  console command for accounts that haven't logged in since.
 
 **Not yet implemented** (referenced in older project docs, verified absent
 by direct code search): RSA-key login authentication, and
@@ -516,14 +526,6 @@ work continues — don't let them go stale.
   own `OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs` so YEngine scripts can
   actually call it is deferred as its own effort, comparable in size to
   the module port itself.
-- ~~Two Gunthar HG-identity commits~~ ported 2026-08-16: local login and
-  outbound Hypergrid launches now repair a stale (not just missing)
-  HomeURI/GatekeeperURI against the canonical configured value —
-  directly relevant since this deployment's own hostname is dynamic
-  DNS, so a resident's stored identity could otherwise go stale
-  indefinitely after an IP change. Plus a `repair user service urls`
-  admin console command. Built clean, not yet deployed (Robust was
-  running) — see PROJECT_LOG.md.
 - **Real PBR terrain support** — genuinely unclaimed territory, verified
   rather than assumed. Object-level PBR materials (per-face `gltf_json`
   overrides via the `RenderMaterials` capability) already work — that

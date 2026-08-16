@@ -6385,3 +6385,20 @@ urls` console command is Robust-hosted, same limitation as UserAlias's
 write commands - no WebConsole-relay equivalent for Robust's own
 console, so that specific piece stays unverified until there's a way
 to reach it directly.
+
+**Live-verified with a real before/after, not just a startup check
+(2026-08-16).** Deployed after the next restart, then set up a genuine
+test rather than passively waiting for a login that might not
+demonstrate anything (both real accounts already had correct
+ServiceURLs, so an ordinary login wouldn't visibly change anything).
+Artificially staled Test User's stored `HomeURI`/`GatekeeperURI` to a
+fake old IP (`203.0.113.55`, a safe RFC 5737 test address) via direct
+SQL - simulating exactly the "before a DNS change" scenario this fix
+targets. Had the user log in as Test User once. Checked the database
+immediately after: both fields were back to the real hostname,
+unprompted. That's the new case-insensitive equality check in
+`SetServiceURLs` working for real - the old code only ever fixed a
+completely *missing* value and would have left this stale-but-present
+one untouched forever. `ApplyCanonicalHomeURI` (the Hypergrid-travel
+half) remains unverified - would need an actual HG teleport, not just
+a local login, to exercise.
