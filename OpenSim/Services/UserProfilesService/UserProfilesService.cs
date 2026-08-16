@@ -132,6 +132,11 @@ namespace OpenSim.Services.ProfilesService
         {
             return ProfilesData.DeletePicksRecord(pickId);
         }
+
+        public System.Collections.Generic.List<UserProfilePick> SearchPicks(string queryText, int start, int count)
+        {
+            return ProfilesData.SearchPicks(queryText, start, count);
+        }
         #endregion Picks
 
         #region Notes

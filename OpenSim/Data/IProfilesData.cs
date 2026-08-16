@@ -55,6 +55,9 @@ namespace OpenSim.Data
         UserProfilePick GetPickInfo(UUID avatarId, UUID pickId);
         bool UpdatePicksRecord(UserProfilePick pick);
         bool DeletePicksRecord(UUID pickId);
+
+        // Grid-wide keyword search, same shape as SearchClassifieds above.
+        List<UserProfilePick> SearchPicks(string queryText, int start, int count);
         bool GetAvatarNotes(ref UserProfileNotes note);
         bool UpdateAvatarNotes(ref UserProfileNotes note, ref string result);
         bool GetAvatarProperties(ref UserProfileProperties props, ref string result);

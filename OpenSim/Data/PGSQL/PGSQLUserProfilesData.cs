@@ -579,6 +579,54 @@ namespace OpenSim.Data.PGSQL
             return true;
         }
 
+        // Grid-wide keyword search for /web/search - same ILIKE shape as
+        // SearchClassifieds above, restricted to enabled picks only
+        // (enabled is a real boolean column here, unlike MySQL's text enum -
+        // confirmed against GetPickInfo's Convert.ToBoolean usage).
+        public System.Collections.Generic.List<UserProfilePick> SearchPicks(string queryText, int start, int count)
+        {
+            System.Collections.Generic.List<UserProfilePick> results = new System.Collections.Generic.List<UserProfilePick>();
+
+            using (NpgsqlConnection dbcon = new NpgsqlConnection(ConnectionString))
+            {
+                string query = "SELECT * FROM userpicks WHERE enabled = true " +
+                        "AND (name ILIKE :query OR description ILIKE :query) " +
+                        "ORDER BY name ASC LIMIT :Count OFFSET :Start";
+                dbcon.Open();
+                using (NpgsqlCommand cmd = new NpgsqlCommand(query, dbcon))
+                {
+                    cmd.Parameters.Add(m_database.CreateParameter("query", "%" + (queryText ?? string.Empty) + "%"));
+                    cmd.Parameters.Add(m_database.CreateParameter("Start", start < 0 ? 0 : start));
+                    cmd.Parameters.Add(m_database.CreateParameter("Count", count <= 0 ? 100 : count));
+
+                    using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            UserProfilePick pick = new UserProfilePick();
+                            pick.PickId = DBGuid.FromDB(reader["pickuuid"]);
+                            pick.CreatorId = DBGuid.FromDB(reader["creatoruuid"]);
+                            pick.ParcelId = DBGuid.FromDB(reader["parceluuid"]);
+                            pick.SnapshotId = DBGuid.FromDB(reader["snapshotuuid"]);
+                            pick.GlobalPos = reader["posglobal"].ToString();
+                            pick.TopPick = Convert.ToBoolean(reader["toppick"]);
+                            pick.Enabled = Convert.ToBoolean(reader["enabled"]);
+                            pick.Name = reader["name"].ToString();
+                            string description = reader["description"].ToString();
+                            pick.Desc = string.IsNullOrEmpty(description) ? "No description given." : description;
+                            pick.ParcelName = reader["user"].ToString();
+                            pick.OriginalName = reader["originalname"].ToString();
+                            pick.SimName = reader["simname"].ToString();
+                            pick.SortOrder = (int)reader["sortorder"];
+                            results.Add(pick);
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
         #endregion Picks Queries
 
         #region Avatar Notes Queries

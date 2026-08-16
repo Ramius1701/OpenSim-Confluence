@@ -593,6 +593,55 @@ namespace OpenSim.Data.MySQL
             }
             return true;
         }
+
+        // Grid-wide keyword search for /web/search - same LIKE-on-name-or-
+        // description shape as SearchClassifieds above, restricted to
+        // enabled picks only (enabled is stored as the text 'true'/'false'
+        // enum this table has always used, confirmed against GetPickInfo).
+        public List<UserProfilePick> SearchPicks(string queryText, int start, int count)
+        {
+            List<UserProfilePick> results = new List<UserProfilePick>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(ConnectionString))
+            {
+                dbcon.Open();
+                const string query = "SELECT * FROM userpicks WHERE enabled = 'true' " +
+                        "AND (name LIKE ?query OR description LIKE ?query) " +
+                        "ORDER BY name ASC LIMIT ?start, ?count";
+                using (MySqlCommand cmd = new MySqlCommand(query, dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?query", "%" + (queryText ?? string.Empty) + "%");
+                    cmd.Parameters.AddWithValue("?start", start < 0 ? 0 : start);
+                    cmd.Parameters.AddWithValue("?count", count <= 0 ? 100 : count);
+
+                    using (MySqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            UserProfilePick pick = new UserProfilePick();
+                            UUID.TryParse((string)reader["pickuuid"], out pick.PickId);
+                            UUID.TryParse((string)reader["creatoruuid"], out pick.CreatorId);
+                            UUID.TryParse((string)reader["parceluuid"], out pick.ParcelId);
+                            UUID.TryParse((string)reader["snapshotuuid"], out pick.SnapshotId);
+                            pick.GlobalPos = (string)reader["posglobal"];
+                            pick.Gatekeeper = reader["gatekeeper"] as string ?? string.Empty;
+                            bool.TryParse((string)reader["toppick"], out pick.TopPick);
+                            bool.TryParse((string)reader["enabled"], out pick.Enabled);
+                            pick.Name = (string)reader["name"];
+                            string description = (string)reader["description"];
+                            pick.Desc = string.IsNullOrEmpty(description) ? "No description given." : description;
+                            pick.ParcelName = (string)reader["user"];
+                            pick.OriginalName = (string)reader["originalname"];
+                            pick.SimName = (string)reader["simname"];
+                            pick.SortOrder = (int)reader["sortorder"];
+                            results.Add(pick);
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
         #endregion Picks Queries
 
         #region Avatar Notes Queries

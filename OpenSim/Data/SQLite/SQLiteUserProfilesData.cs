@@ -559,6 +559,51 @@ namespace OpenSim.Data.SQLite
             return true;
         }
 
+        // Grid-wide keyword search for /web/search - same LIKE shape as
+        // SearchClassifieds above, restricted to enabled picks only
+        // (enabled is stored as an INTEGER 0/1 here, confirmed against
+        // UpdatePicksRecord's own int binding just above).
+        public List<UserProfilePick> SearchPicks(string queryText, int start, int count)
+        {
+            List<UserProfilePick> results = new List<UserProfilePick>();
+            string query = "SELECT * FROM userpicks WHERE enabled = 1 " +
+                    "AND (name LIKE :query OR description LIKE :query) " +
+                    "ORDER BY name ASC LIMIT :Count OFFSET :Start";
+
+            using (SQLiteCommand cmd = (SQLiteCommand)m_connection.CreateCommand())
+            {
+                cmd.CommandText = query;
+                cmd.Parameters.AddWithValue(":query", "%" + (queryText ?? string.Empty) + "%");
+                cmd.Parameters.AddWithValue(":Start", start < 0 ? 0 : start);
+                cmd.Parameters.AddWithValue(":Count", count <= 0 ? 100 : count);
+
+                using (IDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        UserProfilePick pick = new UserProfilePick();
+                        pick.PickId = new UUID(reader["pickuuid"].ToString());
+                        pick.CreatorId = new UUID(reader["creatoruuid"].ToString());
+                        pick.ParcelId = new UUID(reader["parceluuid"].ToString());
+                        pick.SnapshotId = new UUID(reader["snapshotuuid"].ToString());
+                        pick.GlobalPos = reader["posglobal"].ToString();
+                        pick.TopPick = Convert.ToInt32(reader["toppick"]) != 0;
+                        pick.Enabled = Convert.ToInt32(reader["enabled"]) != 0;
+                        pick.Name = reader["name"].ToString();
+                        string description = reader["description"].ToString();
+                        pick.Desc = string.IsNullOrEmpty(description) ? "No description given." : description;
+                        pick.ParcelName = reader["user"].ToString();
+                        pick.OriginalName = reader["originalname"].ToString();
+                        pick.SimName = reader["simname"].ToString();
+                        pick.SortOrder = Convert.ToInt32(reader["sortorder"]);
+                        results.Add(pick);
+                    }
+                }
+            }
+
+            return results;
+        }
+
         public bool GetAvatarNotes(ref UserProfileNotes notes)
         {
             IDataReader reader = null;

@@ -54,6 +54,12 @@ namespace OpenSim.Services.Interfaces
         bool PickInfoRequest(ref UserProfilePick pick, ref string result);
         bool PicksUpdate(ref UserProfilePick pick, ref string result);
         bool PicksDelete(UUID pickId);
+
+        // Grid-wide keyword search, same shape as SearchClassifieds above -
+        // Picks are managed entirely in-world (viewer Profile floater), so
+        // this is how residents discover other people's Picks from the web
+        // without a dedicated browse/management page for them.
+        List<UserProfilePick> SearchPicks(string queryText, int start, int count);
         #endregion Picks
 
         #region Notes
