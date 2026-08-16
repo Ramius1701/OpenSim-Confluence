@@ -1138,18 +1138,6 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 ? m_autoCycleStartupDelaySeconds * 1000
                 : AutoCycleIntervalMS();
 
-            // TEMP DIAGNOSTIC (2026-08-16): auto-cycle has been observed
-            // firing within ~3-5 minutes of region start across multiple
-            // restarts tonight, despite AutoCycleHours=6.0 and
-            // AutoCycleChangeOnStartup=false in the live ini - which should
-            // make dueTime the full 6-hour interval (21,600,000ms), not a
-            // few minutes. Logging the actual runtime values to catch this
-            // with proof on the next restart rather than guessing further.
-            // Remove once root cause is confirmed and fixed.
-            m_log.WarnFormat(
-                "[WEATHER]: DIAGNOSTIC StartAutoCycle: m_autoCycleHours={0}, m_autoCycleChangeOnStartup={1}, m_autoCycleStartupDelaySeconds={2}, computed dueTime={3}ms ({4:0.###} hours)",
-                m_autoCycleHours, m_autoCycleChangeOnStartup, m_autoCycleStartupDelaySeconds, dueTime, dueTime / 3600000.0);
-
             m_autoCycleTimer = new Timer(AutoCycleTimerElapsed, null, Timeout.Infinite, Timeout.Infinite);
             m_autoCycleWarningTimer = new Timer(AutoCycleForecastWarningElapsed, null, Timeout.Infinite, Timeout.Infinite);
             ScheduleAutoCycle(dueTime);
