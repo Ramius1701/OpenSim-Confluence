@@ -12,7 +12,13 @@ namespace OpenSim.Services.Interfaces
         // maxAccess: real per-region maturity ceiling (13/21/42 =
         // PG/Mature/Adult) - see ISearchData for the rationale.
         List<LandSearchRecord> SearchPlaces(string queryText, int start, int count, int maxAccess);
-        List<LandSearchRecord> SearchLandForSale(int minPrice, int minArea, int start, int count);
+        // maxPrice = ceiling, minArea = floor, either skipped when <= 0 -
+        // see ISearchData.SearchLandForSale for the full rationale.
+        List<LandSearchRecord> SearchLandForSale(int maxPrice, int minArea, int start, int count);
+
+        // Destination Guide "Featured" tab - see ISearchData for the
+        // rationale (real category set, random order).
+        List<LandSearchRecord> GetFeaturedPlaces(int count, int maxAccess);
 
         // Search logging - backs real Trending chips and autocomplete
         // suggestions on /web/search (see ISearchData for the rationale).

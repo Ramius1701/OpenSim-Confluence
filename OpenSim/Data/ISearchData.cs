@@ -26,9 +26,21 @@ namespace OpenSim.Data
         List<LandSearchRecord> SearchPlaces(string queryText, int start, int count, int maxAccess);
 
         // Land-for-sale search (viewer's "Land Sales" tab) - restricted to
-        // parcels flagged ForSale (and ShowDirectory), optionally filtered by
-        // minimum price/area.
-        List<LandSearchRecord> SearchLandForSale(int minPrice, int minArea, int start, int count);
+        // parcels flagged ForSale (and ShowDirectory). maxPrice is a CEILING
+        // ("no more than"), minArea is a FLOOR ("at least") - matches
+        // OpenSim-Grid-Interface's real helper/query.php (dir_land_query),
+        // the actual proven backend behind this tab before this native
+        // module existed. Either filter is skipped entirely when <= 0
+        // (caller doesn't want it applied), same convention query.php uses
+        // via its LimitByPrice/LimitByArea flag gating.
+        List<LandSearchRecord> SearchLandForSale(int maxPrice, int minArea, int start, int count);
+
+        // Destination Guide "Featured" tab - parcels the owner has given a
+        // real category (land.Category > 0, ParcelCategory.None excluded),
+        // random order each call rather than a fixed top-N so the same
+        // handful of parcels don't dominate every page load. Same
+        // maxAccess/ShowDirectory rules as SearchPlaces.
+        List<LandSearchRecord> GetFeaturedPlaces(int count, int maxAccess);
 
         // Search logging - backs real (not fabricated) Trending chips and
         // autocomplete suggestions on /web/search. Only successful

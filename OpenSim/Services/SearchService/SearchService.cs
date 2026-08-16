@@ -27,9 +27,14 @@ namespace OpenSim.Services.SearchService
             return m_Database.SearchPlaces(queryText, start, count, maxAccess);
         }
 
-        public List<LandSearchRecord> SearchLandForSale(int minPrice, int minArea, int start, int count)
+        public List<LandSearchRecord> SearchLandForSale(int maxPrice, int minArea, int start, int count)
         {
-            return m_Database.SearchLandForSale(minPrice, minArea, start, count);
+            return m_Database.SearchLandForSale(maxPrice, minArea, start, count);
+        }
+
+        public List<LandSearchRecord> GetFeaturedPlaces(int count, int maxAccess)
+        {
+            return m_Database.GetFeaturedPlaces(count, maxAccess);
         }
 
         public void LogSearch(string query, string category, int resultCount)

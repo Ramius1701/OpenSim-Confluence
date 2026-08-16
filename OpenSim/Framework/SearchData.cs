@@ -17,5 +17,19 @@ namespace OpenSim.Framework
         public int SalePrice;
         public int Area;
         public float Dwell;
+
+        // Populated only by the enriched queries (SearchPlaces,
+        // GetFeaturedPlaces) that a Destination Guide-style caller needs to
+        // build a teleport SLURL and show real context - left at their
+        // default (empty/zero) by SearchLandForSale, which never needed
+        // them. Category is the raw stored `land.Category` int
+        // (OpenMetaverse.ParcelCategory) rather than a parsed enum, since
+        // every caller so far only wants a display label, not the enum type.
+        public string RegionName;
+        public string Description;
+        public int Category;
+        public float LandingX;
+        public float LandingY;
+        public float LandingZ;
     }
 }

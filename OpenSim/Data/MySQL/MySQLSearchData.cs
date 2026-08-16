@@ -17,11 +17,12 @@ namespace OpenSim.Data.MySQL
     {
         private readonly string m_connectionString;
 
-        // ParcelFlags.ForSale = 0x1000, ParcelFlags.ShowDirectory = 0x100000
-        // (OpenMetaverse.ParcelFlags, same values LandManagementModule.cs
-        // already uses elsewhere in this codebase).
-        private const uint ForSaleFlag = 0x1000;
-        private const uint ShowDirectoryFlag = 0x100000;
+        // ParcelFlags.ForSale = 0x4, ParcelFlags.ShowDirectory = 0x1000
+        // (confirmed by enumerating the real, compiled OpenMetaverse.ParcelFlags
+        // enum directly against OpenMetaverseTypes.dll/OpenMetaverse.dll - the
+        // previous 0x1000/0x100000 values here were wrong).
+        private const uint ForSaleFlag = 0x4;
+        private const uint ShowDirectoryFlag = 0x1000;
 
         protected virtual Assembly Assembly
         {
@@ -58,7 +59,9 @@ namespace OpenSim.Data.MySQL
                 // (Adult/unrestricted) rather than silently vanishing from
                 // results due to a join miss.
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell FROM land " +
+                        "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell, " +
+                        "land.RegionUUID, regions.regionName, land.Description, land.Category, " +
+                        "land.UserLocationX, land.UserLocationY, land.UserLocationZ FROM land " +
                         "LEFT JOIN regions ON land.RegionUUID = regions.uuid " +
                         "WHERE (land.LandFlags & ?ShowDirectory) <> 0 AND (land.Name LIKE ?query OR land.Description LIKE ?query) " +
                         "AND COALESCE(regions.access, 42) <= ?maxAccess " +
@@ -73,7 +76,7 @@ namespace OpenSim.Data.MySQL
                     using (IDataReader reader = cmd.ExecuteReader())
                     {
                         while (reader.Read())
-                            results.Add(ReadRecord(reader));
+                            results.Add(ReadEnrichedRecord(reader));
                     }
                 }
             }
@@ -81,7 +84,11 @@ namespace OpenSim.Data.MySQL
             return results;
         }
 
-        public List<LandSearchRecord> SearchLandForSale(int minPrice, int minArea, int start, int count)
+        // Destination Guide "Featured" tab - see ISearchData for the
+        // rationale. Same enriched column set as SearchPlaces (needed for
+        // the same teleport-link/region/description use), but filtered by
+        // a real category instead of free text, and randomly ordered.
+        public List<LandSearchRecord> GetFeaturedPlaces(int count, int maxAccess)
         {
             List<LandSearchRecord> results = new List<LandSearchRecord>();
 
@@ -90,22 +97,83 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT UUID, Name, LandFlags, SalePrice, AuctionID, Area, Dwell FROM land " +
-                        "WHERE (LandFlags & ?ForSale) <> 0 AND (LandFlags & ?ShowDirectory) <> 0 " +
-                        "AND SalePrice >= ?minPrice AND Area >= ?minArea " +
-                        "ORDER BY SalePrice ASC LIMIT ?start, ?count", dbcon))
+                        "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell, " +
+                        "land.RegionUUID, regions.regionName, land.Description, land.Category, " +
+                        "land.UserLocationX, land.UserLocationY, land.UserLocationZ FROM land " +
+                        "LEFT JOIN regions ON land.RegionUUID = regions.uuid " +
+                        "WHERE (land.LandFlags & ?ShowDirectory) <> 0 AND land.Category > 0 " +
+                        "AND COALESCE(regions.access, 42) <= ?maxAccess " +
+                        "ORDER BY RAND() LIMIT ?count", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?ShowDirectory", ShowDirectoryFlag);
+                    cmd.Parameters.AddWithValue("?maxAccess", maxAccess);
+                    cmd.Parameters.AddWithValue("?count", count <= 0 ? 30 : count);
+
+                    using (IDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                            results.Add(ReadEnrichedRecord(reader));
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // maxPrice/minArea semantics match OpenSim-Grid-Interface's real
+        // helper/query.php (dir_land_query) exactly - that PHP script was
+        // the actual, proven backend behind the viewer's Land Sales tab
+        // before this native module existed, so its filter semantics are
+        // the reference, not a guess: price is a CEILING ("no more than"),
+        // area is a FLOOR ("at least"), and either filter only applies when
+        // the caller actually wants it (0/negative = "don't filter on
+        // this") - matching query.php's own LimitByPrice/LimitByArea flag
+        // gating, and also matching how /web/landsearch already calls this
+        // method with (0, 0, ...) expecting "show everything".
+        // Enriched (RegionName/LandingX-Y-Z) same as SearchPlaces now, not
+        // just the base 7 columns - ConfluenceSearchModule.DirLandQuery
+        // needs RegionName+Landing position to build the viewer's "fake
+        // parcel ID" (region handle + local x/y baked into a UUID, see
+        // Util.BuildFakeParcelID) for each result. Without a real fake ID,
+        // clicking a Land Sales result sends a ParcelInfoRequest the stock
+        // LandManagementModule.ClientOnParcelInfoRequest can never resolve
+        // (Util.ParseFakeParcelID fails on a plain database UUID and it
+        // silently drops the request) - the viewer's detail pane and
+        // Teleport/Map buttons then hang on "Loading..." forever.
+        public List<LandSearchRecord> SearchLandForSale(int maxPrice, int minArea, int start, int count)
+        {
+            List<LandSearchRecord> results = new List<LandSearchRecord>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                string sql = "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell, " +
+                        "land.RegionUUID, regions.regionName, land.Description, land.Category, " +
+                        "land.UserLocationX, land.UserLocationY, land.UserLocationZ FROM land " +
+                        "LEFT JOIN regions ON land.RegionUUID = regions.uuid " +
+                        "WHERE (land.LandFlags & ?ForSale) <> 0 AND (land.LandFlags & ?ShowDirectory) <> 0 ";
+                if (maxPrice > 0)
+                    sql += "AND land.SalePrice <= ?maxPrice ";
+                if (minArea > 0)
+                    sql += "AND land.Area >= ?minArea ";
+                sql += "ORDER BY land.SalePrice ASC LIMIT ?start, ?count";
+
+                using (MySqlCommand cmd = new MySqlCommand(sql, dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ForSale", ForSaleFlag);
                     cmd.Parameters.AddWithValue("?ShowDirectory", ShowDirectoryFlag);
-                    cmd.Parameters.AddWithValue("?minPrice", minPrice < 0 ? 0 : minPrice);
-                    cmd.Parameters.AddWithValue("?minArea", minArea < 0 ? 0 : minArea);
+                    if (maxPrice > 0)
+                        cmd.Parameters.AddWithValue("?maxPrice", maxPrice);
+                    if (minArea > 0)
+                        cmd.Parameters.AddWithValue("?minArea", minArea);
                     cmd.Parameters.AddWithValue("?start", start < 0 ? 0 : start);
                     cmd.Parameters.AddWithValue("?count", count <= 0 ? 100 : count);
 
                     using (IDataReader reader = cmd.ExecuteReader())
                     {
                         while (reader.Read())
-                            results.Add(ReadRecord(reader));
+                            results.Add(ReadEnrichedRecord(reader));
                     }
                 }
             }
@@ -211,6 +279,23 @@ namespace OpenSim.Data.MySQL
                 Area = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
                 Dwell = reader.IsDBNull(6) ? 0f : reader.GetInt32(6)
             };
+        }
+
+        // Same base columns as ReadRecord (ordinals 0-6) plus RegionName/
+        // Description/Category/Landing position at ordinals 7-13 - shared
+        // by SearchPlaces, GetFeaturedPlaces and SearchLandForSale, all of
+        // which now need RegionName+Landing to build a real viewer-facing
+        // parcel ID (see SearchLandForSale's own comment).
+        private static LandSearchRecord ReadEnrichedRecord(IDataReader reader)
+        {
+            LandSearchRecord record = ReadRecord(reader);
+            record.RegionName = reader.IsDBNull(8) ? string.Empty : reader.GetString(8);
+            record.Description = reader.IsDBNull(9) ? string.Empty : reader.GetString(9);
+            record.Category = reader.IsDBNull(10) ? 0 : reader.GetInt32(10);
+            record.LandingX = reader.IsDBNull(11) ? 0f : (float)reader.GetDouble(11);
+            record.LandingY = reader.IsDBNull(12) ? 0f : (float)reader.GetDouble(12);
+            record.LandingZ = reader.IsDBNull(13) ? 0f : (float)reader.GetDouble(13);
+            return record;
         }
     }
 }

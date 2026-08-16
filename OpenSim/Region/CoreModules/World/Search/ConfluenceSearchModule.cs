@@ -210,6 +210,8 @@ namespace OpenSim.Region.CoreModules.World.Search
                 int queryStart)
         {
             List<LandSearchRecord> results = m_searchService.SearchPlaces(queryText, queryStart, 100, UnrestrictedAccess);
+            m_log.InfoFormat("[CONFLUENCE SEARCH]: DirPlacesQuery text='{0}' flags={1} category={2} sim='{3}' -> {4} results",
+                    queryText, queryFlags, category, simName, results.Count);
 
             DirPlacesReplyData[] data = new DirPlacesReplyData[results.Count];
             for (int i = 0; i < results.Count; i++)
@@ -228,19 +230,78 @@ namespace OpenSim.Region.CoreModules.World.Search
             remoteClient.SendDirPlacesReply(queryID, data);
         }
 
+        // LimitByPrice/LimitByArea flag bits match OpenSim-Grid-Interface's
+        // real helper/query.php (dir_land_query) exactly - the price/area
+        // spinners in the viewer's Land Sales tab are only meant to apply
+        // when their checkbox is actually ticked; the raw price/area values
+        // are sent regardless of checkbox state, so passing them through
+        // unconditionally (as this used to) silently over-filters results
+        // whenever the checkboxes are unticked but the fields hold a
+        // leftover/default value.
+        private const uint LimitByPriceFlag = 0x100000;
+        private const uint LimitByAreaFlag = 0x200000;
+
         private void DirLandQuery(IClientAPI remoteClient, UUID queryID,
                 uint queryFlags, uint searchType, int price, int area,
                 int queryStart)
         {
-            List<LandSearchRecord> results = m_searchService.SearchLandForSale(price, area, queryStart, 100);
+            int maxPrice = (queryFlags & LimitByPriceFlag) != 0 ? price : 0;
+            int minArea = (queryFlags & LimitByAreaFlag) != 0 ? area : 0;
 
+            List<LandSearchRecord> results = m_searchService.SearchLandForSale(maxPrice, minArea, queryStart, 100);
+            m_log.InfoFormat("[CONFLUENCE SEARCH]: DirLandQuery flags={0} searchType={1} price={2} area={3} (effective maxPrice={4} minArea={5}) -> {6} results",
+                    queryFlags, searchType, price, area, maxPrice, minArea, results.Count);
+
+            // Stock viewer/server protocol, not our own invention: clicking
+            // a Land Sales result sends a UDP ParcelInfoRequest carrying
+            // whatever UUID we hand back as parcelID here. Stock
+            // LandManagementModule.ClientOnParcelInfoRequest decodes that
+            // UUID via Util.ParseFakeParcelID (region handle + local x/y
+            // baked into the UUID bytes) - a real database parcel UUID
+            // fails that decode and the server just drops the request
+            // (logs "got no parcelinfo; not sending"), which is why the
+            // viewer's detail pane and Teleport/Map buttons used to hang on
+            // "Loading..." forever. Building the same fake ID
+            // LandObject.cs's own LandData.FakeID uses (see
+            // Util.BuildFakeParcelID's call sites) is the fix, not a guess.
+            IGridService gridService = remoteClient.Scene is Scene scene ? scene.GridService : null;
             DirLandReplyData[] data = new DirLandReplyData[results.Count];
             for (int i = 0; i < results.Count; i++)
             {
                 LandSearchRecord r = results[i];
+                UUID replyParcelId = r.ParcelID;
+                if (gridService != null && !string.IsNullOrEmpty(r.RegionName))
+                {
+                    OpenSim.Services.Interfaces.GridRegion region = gridService.GetRegionByName(remoteClient.ScopeId, r.RegionName);
+                    if (region != null)
+                    {
+                        // LandingX/Y (the About Land "landing point") is only
+                        // ever set if the owner actually clicked Set - most
+                        // parcels never do. A landing point of exactly (0,0)
+                        // is indistinguishable from "never set" here, and
+                        // (0,0) is the region's own corner, not "the
+                        // parcel" - using it made results look like they
+                        // pointed at the wrong place. The parcel's real
+                        // shape (its Bitmap blob) isn't fetched by this
+                        // query, so a true guaranteed-inside-the-parcel
+                        // point isn't available without decoding that - the
+                        // region's center is a real, honest fallback (nowhere
+                        // near as wrong as the corner) rather than a
+                        // disguised guess at the parcel's actual shape.
+                        uint localX = (uint)r.LandingX;
+                        uint localY = (uint)r.LandingY;
+                        if (localX == 0 && localY == 0)
+                        {
+                            localX = (uint)(region.RegionSizeX / 2);
+                            localY = (uint)(region.RegionSizeY / 2);
+                        }
+                        replyParcelId = Util.BuildFakeParcelID(region.RegionHandle, localX, localY);
+                    }
+                }
+
                 data[i] = new DirLandReplyData
                 {
-                    parcelID = r.ParcelID,
+                    parcelID = replyParcelId,
                     name = r.Name,
                     auction = r.Auction,
                     forSale = r.ForSale,
@@ -305,11 +366,56 @@ namespace OpenSim.Region.CoreModules.World.Search
         {
             if (m_eventsService == null)
             {
+                m_log.Warn("[CONFLUENCE SEARCH]: DirEventsQuery received but m_eventsService is null - EventsService section missing/failed to load");
                 remoteClient.SendDirEventsReply(queryID, new DirEventsReplyData[0]);
                 return;
             }
 
-            List<EventItem> results = m_eventsService.SearchEvents(queryText, queryStart, 100);
+            // The viewer's Events tab sends a compound queryText like
+            // "u|0|test" - dayToken|category|searchText, pipe-separated -
+            // not plain text. This exact format and field order is ported
+            // directly from OpenSim-Grid-Interface's real helper/query.php
+            // (dir_events_query), the actual proven backend behind this tab
+            // before this native module existed: `explode("|", $text)`,
+            // pieces[0]=day token, pieces[1]=category, pieces[2]=search
+            // text (empty when fewer than 3 pieces). Neither WhiteCore-
+            // Dev's own DirEventsQuery nor the OpenSimSearch addon parse
+            // this in C# - query.php did it server-side, in PHP, which is
+            // why porting its exact logic here (not inventing new logic)
+            // is the fix, not a guess.
+            string[] pieces = (queryText ?? string.Empty).Split('|');
+            string dayToken = pieces.Length > 0 ? pieces[0].Trim().ToLowerInvariant() : string.Empty;
+            string eventsSearchText = pieces.Length >= 3 ? pieces[2] : string.Empty;
+
+            // Real day-token semantics, taken directly from Firestorm's own
+            // FSPanelSearchEvents::find()/setDay() (fsfloatersearch.cpp):
+            // "u" means the "In-Progress & Upcoming" radio mode, sent as a
+            // literal "u|category|text". The "Date" radio mode instead sends
+            // mDay - a plain signed day offset from today (0=today,
+            // 1=tomorrow, -1=yesterday, ...) - as the same field, and
+            // setDay() computes that day's boundary in Pacific time
+            // (utc_to_pacific_time), not UTC. This is not query.php's
+            // format (that was PHP-side day math for a different, dead
+            // backend) - it's what the real client on the wire actually
+            // sends, read straight from source rather than guessed.
+            List<EventItem> results;
+            if (dayToken == "u" || dayToken == string.Empty)
+            {
+                results = m_eventsService.SearchEvents(eventsSearchText, queryStart, 100);
+            }
+            else if (int.TryParse(dayToken, out int dayOffset))
+            {
+                GetPacificDayBoundaryUnix(dayOffset, out int dayStartUnix, out int dayEndUnix);
+                results = m_eventsService.SearchEventsByDay(eventsSearchText, dayStartUnix, dayEndUnix, queryStart, 100);
+            }
+            else
+            {
+                m_log.WarnFormat("[CONFLUENCE SEARCH]: DirEventsQuery day token '{0}' is neither 'u' nor a parseable day offset - falling back to upcoming-only", dayToken);
+                results = m_eventsService.SearchEvents(eventsSearchText, queryStart, 100);
+            }
+
+            m_log.InfoFormat("[CONFLUENCE SEARCH]: DirEventsQuery text='{0}' (day='{1}' text='{2}') -> {3} results",
+                    queryText, dayToken, eventsSearchText, results.Count);
 
             DirEventsReplyData[] data = new DirEventsReplyData[results.Count];
             for (int i = 0; i < results.Count; i++)
@@ -329,6 +435,42 @@ namespace OpenSim.Region.CoreModules.World.Search
             }
 
             remoteClient.SendDirEventsReply(queryID, data);
+        }
+
+        // Cached lookup, not re-resolved per query - TimeZoneInfo.FindSystemTimeZoneById
+        // is the slow part. Tries the IANA ID first (Linux/cross-platform),
+        // then the Windows-only ID, matching how this codebase is actually
+        // deployed (dev on Windows, same binaries can run on Linux).
+        private static readonly TimeZoneInfo PacificTimeZone = ResolvePacificTimeZone();
+
+        private static TimeZoneInfo ResolvePacificTimeZone()
+        {
+            try { return TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles"); }
+            catch (TimeZoneNotFoundException) { }
+
+            try { return TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time"); }
+            catch (TimeZoneNotFoundException) { }
+
+            return TimeZoneInfo.Utc;
+        }
+
+        // Mirrors Firestorm's FSPanelSearchEvents::setDay exactly: take
+        // "now" converted to Pacific time, add dayOffset whole days, and use
+        // that Pacific-time day's midnight-to-midnight boundary - not a UTC
+        // day boundary, since the viewer's Today/Yesterday/Tomorrow arrows
+        // are all relative to Pacific "server time" the same way SL's real
+        // event search always has been.
+        private static void GetPacificDayBoundaryUnix(int dayOffset, out int dayStartUnix, out int dayEndUnix)
+        {
+            DateTime nowPacific = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, PacificTimeZone);
+            DateTime targetDayStartPacific = nowPacific.Date.AddDays(dayOffset);
+            DateTime targetDayEndPacific = targetDayStartPacific.AddDays(1);
+
+            DateTime dayStartUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(targetDayStartPacific, DateTimeKind.Unspecified), PacificTimeZone);
+            DateTime dayEndUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(targetDayEndPacific, DateTimeKind.Unspecified), PacificTimeZone);
+
+            dayStartUnix = (int)Utils.DateTimeToUnixTime(dayStartUtc);
+            dayEndUnix = (int)Utils.DateTimeToUnixTime(dayEndUtc);
         }
 
         private uint EventUuidToUint(UUID id)
@@ -371,11 +513,13 @@ namespace OpenSim.Region.CoreModules.World.Search
         {
             if (m_userProfilesService == null)
             {
+                m_log.Warn("[CONFLUENCE SEARCH]: DirClassifiedQuery received but m_userProfilesService is null - UserProfilesService failed to load");
                 remoteClient.SendDirClassifiedReply(queryID, new DirClassifiedReplyData[0]);
                 return;
             }
 
             List<UserClassifiedAdd> results = m_userProfilesService.SearchClassifieds(queryText, queryStart, 100);
+            m_log.InfoFormat("[CONFLUENCE SEARCH]: DirClassifiedQuery text='{0}' -> {1} results", queryText, results.Count);
 
             DirClassifiedReplyData[] data = new DirClassifiedReplyData[results.Count];
             for (int i = 0; i < results.Count; i++)
@@ -425,6 +569,16 @@ namespace OpenSim.Region.CoreModules.World.Search
                 simName = ev.Location,
                 eventFlags = 0
             };
+
+            // Same pattern as ClassifiedInfoRequest below (Vector3.TryParse
+            // on a stored "x,y,z" global-position string) - and the exact
+            // same field the real, proven OpenSimSearch addon's own
+            // EventInfoRequest already used ("globalposition"), just under
+            // this codebase's own EventItem.GlobalPos name. Leaves
+            // data.globalPos at its zero default when no location was
+            // captured, rather than guessing one - onClickTeleport/onClickMap
+            // in the viewer are both no-ops on an exactly-zero global pos.
+            Vector3.TryParse(ev.GlobalPos, out data.globalPos);
 
             remoteClient.SendEventInfoReply(data);
         }

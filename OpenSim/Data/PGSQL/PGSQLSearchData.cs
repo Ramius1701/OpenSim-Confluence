@@ -10,8 +10,12 @@ namespace OpenSim.Data.PGSQL
     {
         private readonly string m_connectionString;
 
-        private const uint ForSaleFlag = 0x1000;
-        private const uint ShowDirectoryFlag = 0x100000;
+        // ParcelFlags.ForSale = 0x4, ParcelFlags.ShowDirectory = 0x1000
+        // (confirmed by enumerating the real, compiled OpenMetaverse.ParcelFlags
+        // enum directly against OpenMetaverseTypes.dll/OpenMetaverse.dll - the
+        // previous 0x1000/0x100000 values here were wrong).
+        private const uint ForSaleFlag = 0x4;
+        private const uint ShowDirectoryFlag = 0x1000;
 
         protected virtual Assembly Assembly
         {
@@ -39,7 +43,9 @@ namespace OpenSim.Data.PGSQL
             // defaults to Adult/unrestricted rather than hiding the parcel.
             using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand(
-                    "SELECT land.\"UUID\", land.\"Name\", land.\"LandFlags\", land.\"SalePrice\", land.\"AuctionID\", land.\"Area\", land.\"Dwell\" FROM land " +
+                    "SELECT land.\"UUID\", land.\"Name\", land.\"LandFlags\", land.\"SalePrice\", land.\"AuctionID\", land.\"Area\", land.\"Dwell\", " +
+                    "land.\"RegionUUID\", regions.\"regionName\", land.\"Description\", land.\"Category\", " +
+                    "land.\"UserLocationX\", land.\"UserLocationY\", land.\"UserLocationZ\" FROM land " +
                     "LEFT JOIN regions ON land.\"RegionUUID\" = regions.uuid " +
                     "WHERE (land.\"LandFlags\" & :showdir) <> 0 AND (land.\"Name\" ILIKE :query OR land.\"Description\" ILIKE :query) " +
                     "AND COALESCE(regions.access, 42) <= :maxaccess " +
@@ -55,28 +61,74 @@ namespace OpenSim.Data.PGSQL
                 using (NpgsqlDataReader reader = cmd.ExecuteReader())
                 {
                     while (reader.Read())
-                        results.Add(ReadRecord(reader));
+                        results.Add(ReadEnrichedRecord(reader));
                 }
             }
 
             return results;
         }
 
-        public List<LandSearchRecord> SearchLandForSale(int minPrice, int minArea, int start, int count)
+        // Destination Guide "Featured" tab - see ISearchData for the
+        // rationale. Same enriched column set as SearchPlaces.
+        public List<LandSearchRecord> GetFeaturedPlaces(int count, int maxAccess)
         {
             List<LandSearchRecord> results = new List<LandSearchRecord>();
 
             using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand(
-                    "SELECT \"UUID\", \"Name\", \"LandFlags\", \"SalePrice\", \"AuctionID\", \"Area\", \"Dwell\" FROM land " +
-                    "WHERE (\"LandFlags\" & :forsale) <> 0 AND (\"LandFlags\" & :showdir) <> 0 " +
-                    "AND \"SalePrice\" >= :minprice AND \"Area\" >= :minarea " +
-                    "ORDER BY \"SalePrice\" ASC LIMIT :count OFFSET :start", conn))
+                    "SELECT land.\"UUID\", land.\"Name\", land.\"LandFlags\", land.\"SalePrice\", land.\"AuctionID\", land.\"Area\", land.\"Dwell\", " +
+                    "land.\"RegionUUID\", regions.\"regionName\", land.\"Description\", land.\"Category\", " +
+                    "land.\"UserLocationX\", land.\"UserLocationY\", land.\"UserLocationZ\" FROM land " +
+                    "LEFT JOIN regions ON land.\"RegionUUID\" = regions.uuid " +
+                    "WHERE (land.\"LandFlags\" & :showdir) <> 0 AND land.\"Category\" > 0 " +
+                    "AND COALESCE(regions.access, 42) <= :maxaccess " +
+                    "ORDER BY RANDOM() LIMIT :count", conn))
+            {
+                cmd.Parameters.AddWithValue(":showdir", (int)ShowDirectoryFlag);
+                cmd.Parameters.AddWithValue(":maxaccess", maxAccess);
+                cmd.Parameters.AddWithValue(":count", count <= 0 ? 30 : count);
+                conn.Open();
+
+                using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                        results.Add(ReadEnrichedRecord(reader));
+                }
+            }
+
+            return results;
+        }
+
+        // maxPrice/minArea semantics match OpenSim-Grid-Interface's real
+        // helper/query.php (dir_land_query) - see MySqlSearchData's copy of
+        // this method for the full rationale. Enriched (RegionName/Landing
+        // position) same as SearchPlaces now - ConfluenceSearchModule.
+        // DirLandQuery needs those to build the viewer's "fake parcel ID"
+        // for each result (see MySqlSearchData's fuller comment on this).
+        public List<LandSearchRecord> SearchLandForSale(int maxPrice, int minArea, int start, int count)
+        {
+            List<LandSearchRecord> results = new List<LandSearchRecord>();
+
+            string sql = "SELECT land.\"UUID\", land.\"Name\", land.\"LandFlags\", land.\"SalePrice\", land.\"AuctionID\", land.\"Area\", land.\"Dwell\", " +
+                    "land.\"RegionUUID\", regions.\"regionName\", land.\"Description\", land.\"Category\", " +
+                    "land.\"UserLocationX\", land.\"UserLocationY\", land.\"UserLocationZ\" FROM land " +
+                    "LEFT JOIN regions ON land.\"RegionUUID\" = regions.uuid " +
+                    "WHERE (land.\"LandFlags\" & :forsale) <> 0 AND (land.\"LandFlags\" & :showdir) <> 0 ";
+            if (maxPrice > 0)
+                sql += "AND land.\"SalePrice\" <= :maxprice ";
+            if (minArea > 0)
+                sql += "AND land.\"Area\" >= :minarea ";
+            sql += "ORDER BY land.\"SalePrice\" ASC LIMIT :count OFFSET :start";
+
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(sql, conn))
             {
                 cmd.Parameters.AddWithValue(":forsale", (int)ForSaleFlag);
                 cmd.Parameters.AddWithValue(":showdir", (int)ShowDirectoryFlag);
-                cmd.Parameters.AddWithValue(":minprice", minPrice < 0 ? 0 : minPrice);
-                cmd.Parameters.AddWithValue(":minarea", minArea < 0 ? 0 : minArea);
+                if (maxPrice > 0)
+                    cmd.Parameters.AddWithValue(":maxprice", maxPrice);
+                if (minArea > 0)
+                    cmd.Parameters.AddWithValue(":minarea", minArea);
                 cmd.Parameters.AddWithValue(":start", start < 0 ? 0 : start);
                 cmd.Parameters.AddWithValue(":count", count <= 0 ? 100 : count);
                 conn.Open();
@@ -84,7 +136,7 @@ namespace OpenSim.Data.PGSQL
                 using (NpgsqlDataReader reader = cmd.ExecuteReader())
                 {
                     while (reader.Read())
-                        results.Add(ReadRecord(reader));
+                        results.Add(ReadEnrichedRecord(reader));
                 }
             }
 
@@ -173,6 +225,21 @@ namespace OpenSim.Data.PGSQL
                 Area = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
                 Dwell = reader.IsDBNull(6) ? 0f : reader.GetInt32(6)
             };
+        }
+
+        // See MySqlSearchData's ReadEnrichedRecord for the rationale -
+        // same base columns (0-6) plus the Destination-Guide-only columns
+        // at 7-13.
+        private static LandSearchRecord ReadEnrichedRecord(NpgsqlDataReader reader)
+        {
+            LandSearchRecord record = ReadRecord(reader);
+            record.RegionName = reader.IsDBNull(8) ? string.Empty : reader.GetString(8);
+            record.Description = reader.IsDBNull(9) ? string.Empty : reader.GetString(9);
+            record.Category = reader.IsDBNull(10) ? 0 : reader.GetInt32(10);
+            record.LandingX = reader.IsDBNull(11) ? 0f : (float)reader.GetDouble(11);
+            record.LandingY = reader.IsDBNull(12) ? 0f : (float)reader.GetDouble(12);
+            record.LandingZ = reader.IsDBNull(13) ? 0f : (float)reader.GetDouble(13);
+            return record;
         }
     }
 }
