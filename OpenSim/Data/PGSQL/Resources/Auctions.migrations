@@ -1,0 +1,37 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS land_auctions (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"RegionID" varchar(36) NOT NULL,
+	"RegionName" varchar(255) NOT NULL,
+	"LocalID" int NOT NULL,
+	"ParcelName" varchar(255) NOT NULL,
+	"SnapshotID" varchar(36) NOT NULL,
+	"OwnerID" varchar(36) NOT NULL,
+	"MinBid" int NOT NULL DEFAULT 0,
+	"StartedAt" int NOT NULL,
+	"EndsAt" int NOT NULL,
+	"Status" int NOT NULL DEFAULT 0,
+	"HighestBid" int NOT NULL DEFAULT 0,
+	"HighestBidderID" varchar(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+	"WinnerID" varchar(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+	"WinningAmount" int NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS land_auctions_status ON land_auctions ("Status");
+CREATE INDEX IF NOT EXISTS land_auctions_endsat ON land_auctions ("EndsAt");
+CREATE INDEX IF NOT EXISTS land_auctions_regionparcel ON land_auctions ("RegionID", "LocalID");
+
+CREATE TABLE IF NOT EXISTS land_auction_bids (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"AuctionID" varchar(36) NOT NULL,
+	"BidderID" varchar(36) NOT NULL,
+	"Amount" int NOT NULL,
+	"BidTime" int NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS land_auction_bids_auctionid ON land_auction_bids ("AuctionID");
+
+COMMIT;
