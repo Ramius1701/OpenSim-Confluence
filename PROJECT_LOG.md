@@ -6044,8 +6044,8 @@ leads chased and both ruled out rather than assumed:
   comment there explains why: a multi-region grid needs one stable
   grid-wide URL, not a per-region one). Replayed the exact
   `preflightBuyLandPrep` XML-RPC request Firestorm sends against both
-  `localhost:9002` and the real external
-  `holodeckgrid.ddns.net:9002/currency.php` - both returned a complete,
+  `localhost:9002` and the test deployment's real external hostname
+  on `:9002/currency.php` - both returned a complete,
   correctly-shaped response (`success`/`currency.estimatedCost`/
   `membership.*`/`landUse.*`/`confirm`) in milliseconds. Server side is
   healthy; this was not a hang or a missing/wrong-port handler.
