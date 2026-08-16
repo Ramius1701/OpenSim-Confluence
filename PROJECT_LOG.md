@@ -6757,3 +6757,70 @@ state as before and ran the same real XML-RPC login test:
 - confirming the fix restores the *recorded* level, not a hardcoded
 one. Restored Regular Tester to its real `UserLevel 0` immediately
 after, and re-confirmed Test User was still correctly at `200`.
+
+### Grid-wide admin Groups page - live-verified, found a real cascade-delete bug
+
+Back to the original goal: the admin Groups page had never been
+checked against real group data (zero groups existed on the test
+grid). No console command creates a group, and doing it by hand
+across the 7-table `os_groups_*` schema would be fragile (the service
+layer indexes columns directly out of a dictionary and throws on
+anything missing), so instead: `curl`ed a form-encoded
+`METHOD=PUTGROUP&OP=ADD&...` POST straight at
+`GroupsServiceRobustConnector`'s `/groups` endpoint on Robust's
+private port (9003, no auth configured), landing on the exact same
+`GroupsService.CreateGroup` real group-creation code path the
+in-world Group Profile floater's "Create" button uses. Founded
+"Casperia Test Group" on Test User's account - auto-created all 3
+standard roles (Everyone/Officers/Owners) with real power bitmasks
+and the founder's Owner+Officer membership row, confirmed via direct
+DB query (`os_groups_groups`, `os_groups_roles`,
+`os_groups_membership` all populated correctly, `ShowInList=1` -
+the exact flag the admin page's own query filters on).
+
+Then a real incident interrupted this: the user reported losing admin
+access (see the entry above) from the ban-expiry test that immediately
+preceded this, on the very account (Test User) this new group's
+founder happened to be. Fixed that first, then came back to finish
+this verification once Test User's `UserLevel` was confirmed restored
+to 200.
+
+With admin access back, had the user check `/admin/groups` directly
+in a browser (not the in-world viewer, which they tried first and
+which is a different page/floater entirely). Toggled the group's
+flags from the admin page and confirmed the change took effect
+in-world - full round trip through the real update path. Then tried
+delete: the group disappeared from the admin list immediately, but
+stayed in the resident's in-world Groups list until they relogged -
+expected viewer behavior (group membership is fetched at login and
+not live-pushed, same as real Second Life), not a bug.
+
+Checked the DB after the delete anyway, out of habit rather than
+suspicion, and found a real one: `os_groups_groups` correctly hit
+zero rows, but `os_groups_membership` (1), `os_groups_roles` (3), and
+`os_groups_rolemembership` (2) all still had rows referencing the
+deleted `GroupID`, and the founder's `os_groups_principals.ActiveGroupID`
+still pointed at the now-nonexistent group. Root cause:
+`GroupsService.DeleteGroup` → `MySQLGroupsData.DeleteGroup` /
+`PGSQLGroupsData.DeleteGroup` only ever called
+`m_Groups.Delete("GroupID", ...)` - the single `os_groups_groups` row
+- with no cascade to any of the other six `os_groups_*` tables at
+all. Not something the admin page introduced; it just exercised a
+pre-existing gap in the underlying service that nothing had deleted a
+group through before.
+
+Fixed both real backends (MySQL and PGSQL - this schema was never
+ported to SQLite, upstream OpenSim doesn't have one either, so
+nothing to fix there) to cascade: delete matching rows from
+membership/roles/rolemembership/invites/notices (invites/notices
+weren't populated for this test group, but they're keyed by `GroupID`
+the same way and would leak the same way), and clear the
+`ActiveGroupID` reference in principals. Full solution build clean (0
+errors/warnings). Manually cleaned up this test group's orphaned rows
+from before the fix existed, then deployed `OpenSim.Data.MySQL.dll` -
+this one turned out to be loaded by both region processes as well as
+Robust (no per-region copy exists, they load it from the shared
+location), so unlike the Robust-only DLLs deployed earlier this
+session, this deploy needed the whole grid stopped, not just Robust.
+Confirmed via DB query after redeploy and restart that the orphaned
+rows are gone and the schema is clean.

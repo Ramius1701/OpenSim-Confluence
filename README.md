@@ -174,6 +174,14 @@ data layers, replacing what would otherwise be external dependencies:
   elevation back on unban rather than being silently downgraded to an
   ordinary account. Fixed after a real incident during this feature's
   own testing; see PROJECT_LOG.md for the full account.
+- Deleting a group now actually cleans up after itself — membership,
+  role, and role-membership rows, plus any resident's dangling
+  `ActiveGroupID` reference, all get removed along with the group
+  record. Previously only the group's own row was deleted, silently
+  orphaning everything else in the other six `os_groups_*` tables.
+  Found and fixed while live-verifying the grid-wide admin Groups
+  page against a real test group (MySQL and PGSQL both fixed; no
+  SQLite groups backend exists, in this repo or upstream).
 - Grid-wide viewer ban, by IP range and client signature.
 - Sim protection: opt-in FPS auto-mitigation under load.
 - On-demand/soft-start regions.
@@ -507,10 +515,6 @@ work continues — don't let them go stale.
   though, so this isn't a confirmed fix - just an update on current
   observed behavior. Watch for recurrence rather than assuming it's
   gone for good.
-- The grid-wide Groups admin page's populated list/toggle/delete paths
-  are code-reviewed and build clean but unverified against real group
-  data — no groups existed on the test grid used for this round's
-  verification.
 - True hard account deletion isn't implemented (`IUserAccountService`
   has no `Delete` method, and removing the row directly would orphan
   Inventory/Groups/Grid/Presence/Currency/Estate references) —

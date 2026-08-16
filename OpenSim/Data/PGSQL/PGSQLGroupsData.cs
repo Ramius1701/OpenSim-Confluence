@@ -98,9 +98,22 @@ namespace OpenSim.Data.PGSQL
             }
         }
 
+        // See the matching comment in MySQLGroupsData.cs - DeleteGroup used
+        // to only remove the os_groups_groups row, leaving orphaned
+        // membership/role/rolemembership rows and a dangling
+        // ActiveGroupID in os_groups_principals. Same cascade fix here to
+        // keep the two real backends consistent.
         public bool DeleteGroup(UUID groupID)
         {
-            return m_Groups.Delete("GroupID", groupID.ToString());
+            string groupIdStr = groupID.ToString();
+            bool result = m_Groups.Delete("GroupID", groupIdStr);
+            m_Membership.Delete("GroupID", groupIdStr);
+            m_Roles.Delete("GroupID", groupIdStr);
+            m_RoleMembership.Delete("GroupID", groupIdStr);
+            m_Invites.Delete("GroupID", groupIdStr);
+            m_Notices.Delete("GroupID", groupIdStr);
+            m_Principals.Delete("ActiveGroupID", groupIdStr);
+            return result;
         }
 
         public int GroupsCount()

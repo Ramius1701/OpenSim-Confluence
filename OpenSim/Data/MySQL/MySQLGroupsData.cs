@@ -93,9 +93,25 @@ namespace OpenSim.Data.MySQL
             return m_Groups.Get(string.Format("ShowInList=1 AND ({0})", pattern));
         }
 
+        // Deleting a group used to only remove its os_groups_groups row -
+        // confirmed live (see PROJECT_LOG.md) that this left orphaned rows
+        // in every other groups table (membership, roles, rolemembership),
+        // plus a dangling ActiveGroupID in os_groups_principals for anyone
+        // who had the deleted group active. Cascade the delete properly
+        // instead - invites/notices are keyed by GroupID too, cleaned up
+        // for the same reason even though the live test group that exposed
+        // this had none.
         public bool DeleteGroup(UUID groupID)
         {
-            return m_Groups.Delete("GroupID", groupID.ToString());
+            string groupIdStr = groupID.ToString();
+            bool result = m_Groups.Delete("GroupID", groupIdStr);
+            m_Membership.Delete("GroupID", groupIdStr);
+            m_Roles.Delete("GroupID", groupIdStr);
+            m_RoleMembership.Delete("GroupID", groupIdStr);
+            m_Invites.Delete("GroupID", groupIdStr);
+            m_Notices.Delete("GroupID", groupIdStr);
+            m_Principals.Delete("ActiveGroupID", groupIdStr);
+            return result;
         }
 
         public int GroupsCount()
