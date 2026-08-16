@@ -875,8 +875,20 @@ namespace OpenSim.Region.ClientStack.LindenUDP
                 flags |= RegionFlags.RestrictPushObject;
             if (Scene.RegionInfo.EstateSettings.DenyAnonymous)
                 flags |= RegionFlags.DenyAnonymous;
-            //DenyIdentified  unused
-            //DenyTransacted  unused
+            // SECURITY FIX: these two bits were never computed here - commented
+            // out as "unused" - so GetRegionFlags() could never set them
+            // regardless of estate configuration, even though EstateSettings.
+            // DenyIdentified/DenyTransacted are correctly stored. This was the
+            // root cause of a fully dead enforcement chain (see the matching
+            // fix below at the RegionDenyIdentified/RegionDenyTransacted
+            // capability fields - both hardcoded false). Confirmed identical
+            // dead code in upstream OpenSim-Tranquillity before their own
+            // fix (PR #188, 2026-08-13); ported the same fix here rather than
+            // re-deriving it. Follows the same pattern as DenyAnonymous above.
+            if (Scene.RegionInfo.EstateSettings.DenyIdentified)
+                flags |= RegionFlags.DenyIdentified;
+            if (Scene.RegionInfo.EstateSettings.DenyTransacted)
+                flags |= RegionFlags.DenyTransacted;
             if (Scene.RegionInfo.RegionSettings.AllowLandJoinDivide)
                 flags |= RegionFlags.AllowParcelChanges;
             //AbuseEmailToEstateOwner -> block flyover
@@ -6728,8 +6740,15 @@ namespace OpenSim.Region.ClientStack.LindenUDP
             LLSDxmlEncode2.AddElem("PassPrice", landData.PassPrice, sb);
             LLSDxmlEncode2.AddElem("PublicCount", (int)0, sb); //TODO
             LLSDxmlEncode2.AddElem("RegionDenyAnonymous", (regionFlags & (uint)RegionFlags.DenyAnonymous) != 0, sb);
-            LLSDxmlEncode2.AddElem("RegionDenyIdentified", false, sb);
-            LLSDxmlEncode2.AddElem("RegionDenyTransacted", false, sb);
+            // SECURITY FIX: these were hardcoded false regardless of actual
+            // estate configuration - this capability packet is what the
+            // viewer actually enforces client-side access restrictions
+            // against, so any estate with "Deny access to unidentified/
+            // unverified residents" or "...without payment info on file"
+            // enabled got zero real enforcement. See the matching fix above
+            // in GetRegionFlags() for the full explanation.
+            LLSDxmlEncode2.AddElem("RegionDenyIdentified", (regionFlags & (uint)RegionFlags.DenyIdentified) != 0, sb);
+            LLSDxmlEncode2.AddElem("RegionDenyTransacted", (regionFlags & (uint)RegionFlags.DenyTransacted) != 0, sb);
             LLSDxmlEncode2.AddElem("RegionPushOverride", (regionFlags & (uint)RegionFlags.RestrictPushObject) != 0, sb);
             LLSDxmlEncode2.AddElem("RentPrice", (int) 0, sb);
             LLSDxmlEncode2.AddElem("RequestResult", request_result, sb);

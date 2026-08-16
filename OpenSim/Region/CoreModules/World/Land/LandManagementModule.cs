@@ -1434,7 +1434,18 @@ namespace OpenSim.Region.CoreModules.World.Land
                     {
                         curByte = LandChannel.LAND_TYPE_OWNED_BY_GROUP;
                     }
-                    else if (currentParcelLandData.SalePrice > 0 &&
+                    // FIX: previously checked SalePrice > 0 as a proxy for
+                    // "is this parcel for sale". Every parcel defaults to
+                    // SalePrice = 0, so this made it impossible to
+                    // distinguish "not for sale" from "for sale at no cost"
+                    // - a genuinely free parcel with the ForSale flag
+                    // actively set would never render as purchasable on the
+                    // map. Checks the actual ForSale flag bit instead,
+                    // matching the pattern already used elsewhere in this
+                    // file (e.g. UsePassList/ShowDirectory above). Same real
+                    // bug found and fixed upstream in OpenSim-Tranquillity
+                    // (PR #189, 2026-08-13); ported the same fix here.
+                    else if ((currentParcelLandData.Flags & (uint)ParcelFlags.ForSale) != 0 &&
                                 (currentParcelLandData.AuthBuyerID.IsZero() ||
                                 currentParcelLandData.AuthBuyerID.Equals(remote_client.AgentId)))
                     {
