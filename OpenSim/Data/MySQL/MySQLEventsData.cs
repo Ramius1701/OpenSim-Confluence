@@ -38,7 +38,7 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId FROM events WHERE ID = ?ID", dbcon))
+                        "SELECT ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId, GlobalPos FROM events WHERE ID = ?ID", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", id.ToString());
 
@@ -62,7 +62,7 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId FROM events " +
+                        "SELECT ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId, GlobalPos FROM events " +
                         "WHERE EventDate >= ?Now ORDER BY EventDate ASC LIMIT ?start, ?count", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?Now", Util.UnixTimeSinceEpoch());
@@ -92,11 +92,47 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "SELECT ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId FROM events " +
+                        "SELECT ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId, GlobalPos FROM events " +
                         "WHERE EventDate >= ?Now AND (Title LIKE ?query OR Description LIKE ?query OR Location LIKE ?query) " +
                         "ORDER BY EventDate ASC LIMIT ?start, ?count", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?Now", Util.UnixTimeSinceEpoch());
+                    cmd.Parameters.AddWithValue("?query", "%" + (queryText ?? string.Empty) + "%");
+                    cmd.Parameters.AddWithValue("?start", start < 0 ? 0 : start);
+                    cmd.Parameters.AddWithValue("?count", count <= 0 ? 20 : count);
+
+                    using (IDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                            results.Add(ReadItem(reader));
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // Single-day version of SearchEvents, for the viewer Events tab's
+        // Date mode (Today/Yesterday/Tomorrow arrows) - dayStartUnix/
+        // dayEndUnix are a Pacific-time day boundary computed by the caller
+        // (ConfluenceSearchModule), matching Firestorm's own
+        // FSPanelSearchEvents::setDay day-offset math exactly rather than
+        // guessing a UTC-day boundary instead.
+        public List<EventItem> SearchEventsByDay(string queryText, int dayStartUnix, int dayEndUnix, int start, int count)
+        {
+            List<EventItem> results = new List<EventItem>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "SELECT ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId, GlobalPos FROM events " +
+                        "WHERE EventDate >= ?DayStart AND EventDate < ?DayEnd AND (Title LIKE ?query OR Description LIKE ?query OR Location LIKE ?query) " +
+                        "ORDER BY EventDate ASC LIMIT ?start, ?count", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?DayStart", dayStartUnix);
+                    cmd.Parameters.AddWithValue("?DayEnd", dayEndUnix);
                     cmd.Parameters.AddWithValue("?query", "%" + (queryText ?? string.Empty) + "%");
                     cmd.Parameters.AddWithValue("?start", start < 0 ? 0 : start);
                     cmd.Parameters.AddWithValue("?count", count <= 0 ? 20 : count);
@@ -119,8 +155,8 @@ namespace OpenSim.Data.MySQL
                 dbcon.Open();
 
                 using (MySqlCommand cmd = new MySqlCommand(
-                        "REPLACE INTO events (ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId) " +
-                        "VALUES (?ID, ?Title, ?Category, ?Description, ?EventDate, ?DurationMinutes, ?Location, ?CreatorId)", dbcon))
+                        "REPLACE INTO events (ID, Title, Category, Description, EventDate, DurationMinutes, Location, CreatorId, GlobalPos) " +
+                        "VALUES (?ID, ?Title, ?Category, ?Description, ?EventDate, ?DurationMinutes, ?Location, ?CreatorId, ?GlobalPos)", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", item.ID.ToString());
                     cmd.Parameters.AddWithValue("?Title", item.Title);
@@ -130,6 +166,7 @@ namespace OpenSim.Data.MySQL
                     cmd.Parameters.AddWithValue("?DurationMinutes", item.DurationMinutes);
                     cmd.Parameters.AddWithValue("?Location", item.Location);
                     cmd.Parameters.AddWithValue("?CreatorId", item.CreatorId.ToString());
+                    cmd.Parameters.AddWithValue("?GlobalPos", item.GlobalPos ?? string.Empty);
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -150,6 +187,23 @@ namespace OpenSim.Data.MySQL
             }
         }
 
+        // Real end time (start + duration), not just start time - an event
+        // still in progress must never be swept away mid-event.
+        public int DeleteExpired(int nowUnix)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "DELETE FROM events WHERE (EventDate + DurationMinutes * 60) < ?Now", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?Now", nowUnix);
+                    return cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
         private static EventItem ReadItem(IDataReader reader)
         {
             return new EventItem
@@ -161,7 +215,8 @@ namespace OpenSim.Data.MySQL
                 EventDate = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(4))),
                 DurationMinutes = reader.GetInt32(5),
                 Location = reader.GetString(6),
-                CreatorId = UUID.Parse(reader.GetString(7))
+                CreatorId = UUID.Parse(reader.GetString(7)),
+                GlobalPos = reader.GetString(8)
             };
         }
     }

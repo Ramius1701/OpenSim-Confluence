@@ -34,7 +34,7 @@ namespace OpenSim.Data.PGSQL
         {
             using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand(
-                    "SELECT \"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\" FROM events WHERE \"ID\" = :id", conn))
+                    "SELECT \"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\", \"GlobalPos\" FROM events WHERE \"ID\" = :id", conn))
             {
                 cmd.Parameters.AddWithValue(":id", id.ToString());
                 conn.Open();
@@ -55,7 +55,7 @@ namespace OpenSim.Data.PGSQL
 
             using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand(
-                    "SELECT \"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\" FROM events " +
+                    "SELECT \"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\", \"GlobalPos\" FROM events " +
                     "WHERE \"EventDate\" >= :now ORDER BY \"EventDate\" ASC LIMIT :count OFFSET :start", conn))
             {
                 cmd.Parameters.AddWithValue(":now", (int)Utils.DateTimeToUnixTime(DateTime.UtcNow));
@@ -82,7 +82,7 @@ namespace OpenSim.Data.PGSQL
 
             using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand(
-                    "SELECT \"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\" FROM events " +
+                    "SELECT \"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\", \"GlobalPos\" FROM events " +
                     "WHERE \"EventDate\" >= :now AND (\"Title\" ILIKE :query OR \"Description\" ILIKE :query OR \"Location\" ILIKE :query) " +
                     "ORDER BY \"EventDate\" ASC LIMIT :count OFFSET :start", conn))
             {
@@ -102,14 +102,47 @@ namespace OpenSim.Data.PGSQL
             return results;
         }
 
+        // Single-day version of SearchEvents, for the viewer Events tab's
+        // Date mode (Today/Yesterday/Tomorrow arrows) - dayStartUnix/
+        // dayEndUnix are a Pacific-time day boundary computed by the caller
+        // (ConfluenceSearchModule), matching Firestorm's own
+        // FSPanelSearchEvents::setDay day-offset math exactly rather than
+        // guessing a UTC-day boundary instead.
+        public List<EventItem> SearchEventsByDay(string queryText, int dayStartUnix, int dayEndUnix, int start, int count)
+        {
+            List<EventItem> results = new List<EventItem>();
+
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                    "SELECT \"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\", \"GlobalPos\" FROM events " +
+                    "WHERE \"EventDate\" >= :dayStart AND \"EventDate\" < :dayEnd AND (\"Title\" ILIKE :query OR \"Description\" ILIKE :query OR \"Location\" ILIKE :query) " +
+                    "ORDER BY \"EventDate\" ASC LIMIT :count OFFSET :start", conn))
+            {
+                cmd.Parameters.AddWithValue(":dayStart", dayStartUnix);
+                cmd.Parameters.AddWithValue(":dayEnd", dayEndUnix);
+                cmd.Parameters.AddWithValue(":query", "%" + (queryText ?? string.Empty) + "%");
+                cmd.Parameters.AddWithValue(":start", start < 0 ? 0 : start);
+                cmd.Parameters.AddWithValue(":count", count <= 0 ? 20 : count);
+                conn.Open();
+
+                using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                        results.Add(ReadItem(reader));
+                }
+            }
+
+            return results;
+        }
+
         public bool Store(EventItem item)
         {
             using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand(
-                    "INSERT INTO events (\"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\") " +
-                    "VALUES (:id, :title, :category, :description, :eventdate, :duration, :location, :creatorid) " +
+                    "INSERT INTO events (\"ID\", \"Title\", \"Category\", \"Description\", \"EventDate\", \"DurationMinutes\", \"Location\", \"CreatorId\", \"GlobalPos\") " +
+                    "VALUES (:id, :title, :category, :description, :eventdate, :duration, :location, :creatorid, :globalpos) " +
                     "ON CONFLICT (\"ID\") DO UPDATE SET \"Title\" = :title, \"Category\" = :category, \"Description\" = :description, " +
-                    "\"EventDate\" = :eventdate, \"DurationMinutes\" = :duration, \"Location\" = :location, \"CreatorId\" = :creatorid", conn))
+                    "\"EventDate\" = :eventdate, \"DurationMinutes\" = :duration, \"Location\" = :location, \"CreatorId\" = :creatorid, \"GlobalPos\" = :globalpos", conn))
             {
                 cmd.Parameters.AddWithValue(":id", item.ID.ToString());
                 cmd.Parameters.AddWithValue(":title", item.Title);
@@ -119,6 +152,7 @@ namespace OpenSim.Data.PGSQL
                 cmd.Parameters.AddWithValue(":duration", item.DurationMinutes);
                 cmd.Parameters.AddWithValue(":location", item.Location);
                 cmd.Parameters.AddWithValue(":creatorid", item.CreatorId.ToString());
+                cmd.Parameters.AddWithValue(":globalpos", item.GlobalPos ?? string.Empty);
                 conn.Open();
 
                 return cmd.ExecuteNonQuery() > 0;
@@ -137,6 +171,21 @@ namespace OpenSim.Data.PGSQL
             }
         }
 
+        // Real end time (start + duration), not just start time - an event
+        // still in progress must never be swept away mid-event.
+        public int DeleteExpired(int nowUnix)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                    "DELETE FROM events WHERE (\"EventDate\" + \"DurationMinutes\" * 60) < :now", conn))
+            {
+                cmd.Parameters.AddWithValue(":now", nowUnix);
+                conn.Open();
+
+                return cmd.ExecuteNonQuery();
+            }
+        }
+
         private static EventItem ReadItem(NpgsqlDataReader reader)
         {
             return new EventItem
@@ -148,7 +197,8 @@ namespace OpenSim.Data.PGSQL
                 EventDate = Utils.UnixTimeToDateTime((uint)reader.GetInt32(4)),
                 DurationMinutes = reader.GetInt32(5),
                 Location = reader.GetString(6),
-                CreatorId = UUID.Parse(reader.GetString(7))
+                CreatorId = UUID.Parse(reader.GetString(7)),
+                GlobalPos = reader.GetString(8)
             };
         }
     }
