@@ -514,12 +514,15 @@ work continues — don't let them go stale.
   `llSetLinkPrimitiveParamsFast`.
 - RegionCurrency vs. RegionWeb's currency portal duplication is
   unreconciled.
-- The User Alias service (ported from Tranquillity), the Land Auction
-  and Team Combat modules (ported from WhiteCore-Dev), the in-world
-  terrain console commands (ported from Mobius), and `osGetAgentViewer`
-  (ported from opensim-lickx) haven't been tested in-world yet —
-  console commands and connector wiring are unexercised against a live
-  grid.
+- The in-world terrain console commands (ported from Mobius) and
+  `osGetAgentViewer` (ported from opensim-lickx) haven't been tested
+  in-world yet — both need a real avatar connected via an actual
+  viewer to exercise (`IRegionConsole` output and the viewer-identity
+  query only reach a live client session), which isn't available on
+  demand. The User Alias service, the Land Auction module, and the
+  Team Combat module (ported from Tranquillity/WhiteCore-Dev) have all
+  since been live-verified against the real grid — see
+  PROJECT_LOG.md.
 - The Bot/NPC management framework is infrastructure only — no script
   can reach it yet. Tranquillity's ~50 `bot*` OSSL functions exist only
   in their Phlox script engine; wiring an equivalent into Confluence's

@@ -6406,7 +6406,7 @@ a local login, to exercise.
 **`ApplyCanonicalHomeURI` also live-verified - the user did a real HG
 round trip.** Logged: `UserAgentService` request to launch Test User to
 a genuine foreign grid (`alternatemetaverse.com:8002`), then back home
-to `holodeckgrid.ddns.net`. Zero errors or exceptions the entire way -
+to the test deployment's real hostname. Zero errors or exceptions the entire way -
 `ApplyCanonicalHomeURI` executed on a real outbound launch without
 breaking anything. The account was already correct going in (from the
 local-login test above), so this didn't produce a fresh "stale value
@@ -6416,3 +6416,66 @@ runs clean on genuine Hypergrid travel - same proven comparison logic
 as the local-login half, just applied to `AgentCircuitData` instead of
 the account record. Both halves of this port are now live-verified,
 not just build-verified.
+
+### Land Auction module - live-verified end to end
+
+With Jeffery still away, picked the last README-listed "untested in
+world" item that didn't actually require a connected viewer: the Land
+Auction module (`OpenSim/Region/CoreModules/World/Land/AuctionModule.cs`,
+ported from WhiteCore-Dev, DB-backed via `IAuctionService`/
+`IAuctionData` rather than in-memory - see its own header comment for
+why: real viewers have no in-world bidding UI, SL auctions were always
+bid on through a website, so this was built to be driven by console
+commands or a web POST hitting the same code path). Investigated first
+whether it needed a live avatar at all: it doesn't - no `IClientAPI`
+hooks, no parcel-selection UI, just four console commands
+(`land auction start/bid/end/show`) plus a 120s expiry-sweep timer.
+Also checked it for the same class of "cmdparams includes the matched
+command-prefix tokens" indexing bug found in `TeamCombatModule.cs`
+earlier - it doesn't have it; `HandleAuctionBid` etc. correctly index
+from `cmdparams[3]` onward.
+
+Confirmed `[AuctionModule]` is enabled by default (no override needed
+in `OpenSim.ini` since the field defaults to `true`), and its
+`IAuctionService` dependency is properly wired
+(`AuctionService = LocalAuctionServiceConnector` under `[Modules]`,
+backed by `MySqlAuctionData` against the live database) - and the
+`land_auctions`/`land_auction_bids` tables already exist there.
+
+Found an already-active test auction on Var Test Region's sole parcel
+(local id 1, "Your Parcel", owned by Test User) left over from earlier
+testing - min bid 50, one self-bid from Test User, not yet expired.
+Used the WebConsole HTTP relay (same approach as the TeamCombat
+testing) to place a second, higher bid from Jeffery's account
+(`land auction bid 1 <Jeffery's UUID> 100`), confirmed via
+`land auction show 1` that he was now highest bidder, then forced early
+closure with `land auction end 1` rather than waiting out the clock.
+
+Result, confirmed via direct DB inspection: parcel ownership
+transferred from Test User to Jeffery; Jeffery's currency balance
+dropped by exactly 100 (301990 -> 301890); Test User's balance rose by
+exactly 100 (5000 -> 5100); a proper audit-trail row landed in
+`currency_transactions` (`Land auction for parcel "Your Parcel"`,
+TransferType 1102, correct `ToBalance`/`FromBalance` snapshots); and
+the `land_auctions` row's `Status`/`WinnerID`/`WinningAmount` fields
+were all populated correctly. This is the same charge-on-close path
+fixed earlier this project (winners weren't being charged at all
+before that fix) - confirmed still working, on a real close, not just
+build-verified.
+
+Reverted afterward the same way the land-sale test was reverted
+earlier: parcel ownership and `SalePrice`/`LandFlags` restored to
+their pre-test values, both balances restored, and a
+"Land Auction Reversal (test cleanup)" audit-trail transaction
+inserted so the currency ledger stays consistent rather than just
+silently editing balances. Left the closed test-auction DB rows in
+place as history, matching how the earlier land-purchase-test
+reversal was handled.
+
+Updated the README's "untested in-world ports" bullet: it had gone
+stale - Team Combat and the User Alias service were already
+live-verified earlier this session but the bullet still listed them as
+untested. Corrected it to only list the two items that are genuinely
+blocked on a connected viewer (in-world terrain console commands,
+`osGetAgentViewer`), and to point at this log for the three that are
+now done.
