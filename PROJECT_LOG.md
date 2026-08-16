@@ -4611,3 +4611,1513 @@ The user added a new remote for the repo's first real GitHub home,
 points at the real `opensim/opensim` upstream for pulling future
 updates, matching a fork's usual upstream/origin split just with the
 remote names flipped from convention. Not yet pushed as of this entry.
+
+---
+
+### WebUI polish, round one: index/splash split + chrome-free viewer pages (2026-08-12)
+
+With the WhiteCore-Dev feature-parity comparison closed out (three
+separate audit passes, see "Addon-modules -> core consolidation" and
+the two "WhiteCore-Dev parity" entries above), the next phase is
+polish rather than new feature coverage. First request: the home page
+looked plain, and the splash screen was functionally the same content
+as home, just missing the login/register links - not a deliberate
+design, just an artifact of both having originally shared one
+`HandleHome`-style implementation.
+
+**Real architecture gap found first:** `WritePage`, the single shared
+page-shell function every page in this file goes through, applies the
+full site header/nav/hero/footer to every page unconditionally,
+including `HandleWelcome` (the in-viewer login splash) and
+`HandleStaticPage` (About/ToS/DMCA). That's fine for a normal browser
+tab, but wrong for a handful of pages meant to be opened inside a
+viewer's own small embedded browser panel (the login splash, and
+whatever a viewer's Help menu points at) - there's no useful
+navigation target inside that panel, so the chrome just wastes space.
+
+**Fix:** added `WriteBarePage`, sharing the same `PageCss` (so
+typography/colors stay consistent) but skipping the header/nav/hero/
+footer entirely - just the page/card container and body content.
+Applied to three pages specifically, per explicit direction (not
+applied file-wide): the login splash (`HandleWelcome`), the new Help
+page below, and the "about" static-page slug only - `HandleStaticPage`
+now branches on `slug == "about"` to pick bare vs. full chrome, so
+ToS/DMCA (normal full-browser pages) are unaffected.
+
+**Content split, not just a chrome split:** the user's framing was
+explicit - home is the marketing/sign-up page for a prospective
+visitor, the splash is "current grid information, events, etc." for
+someone who's mostly already a resident. `HandleHome` was rewritten
+with a real pitch (tagline, a "Why <grid>" feature-card row, prominent
+Create Account/Log In buttons) and kept Featured Classifieds (a "look
+what you could have" hook, appropriate for a sales pitch). `HandleWelcome`
+was trimmed to grid status only - announcement, welcome message,
+economy stats, upcoming events, recent news - and dropped Featured
+Classifieds and the register/login links, since neither fits "what's
+happening right now."
+
+**New page: Help (`/help`, bare chrome).** No equivalent exists in
+either WhiteCore-Dev or OpenSim-Grid-Interface to build from, so this
+is first-draft original content, not a port: login URI + link to Get a
+Viewer, account creation pointer, and a short FAQ (forgot password,
+Hypergrid travel, contact Support). An operator can point
+`[GridInfoService] help` at this URL the same way `welcome` already
+points a viewer at `/welcome.php`.
+
+**Build/deploy/verify:** full solution rebuild, 0 errors (same
+transient `NETSDK1127` stale-restore issue as the upstream-merge entry
+above, same fix - plain `dotnet build` without `--no-restore`). Only
+`OpenSim.Server.Handlers.dll` changed, but it turned out to be loaded
+by all three test-deployment processes, not just Robust alone - the
+first copy attempt hit a file-lock error, resolved by stopping all
+three, copying, and restarting all three in order (Robust, then both
+regions). Robust log confirmed a clean reload
+(`WebInterfaceServiceConnector loaded successfully`, no errors) and
+both regions re-registered normally. Verified every touched route live
+via curl: `/` and `/welcome.php` both return distinct content under
+the same `<h1>` grid-name title (marketing cards + CTA buttons on `/`,
+economy/events/news only on `/welcome.php`); `/help` and `/page/about`
+both return HTTP 200 with no `<header>`/`<footer>`/`<nav>` markup in
+the actual DOM (a first grep pass falsely flagged them as still having
+chrome - that was matching the CSS *selector text* `.site-header{...}`
+inside the shared `<style>` block, not real markup; rechecking for the
+literal `<header`/`<footer` tags confirmed they're genuinely absent);
+`/page/tos` and `/page/dmca` were confirmed to still carry full chrome,
+proving the `slug == "about"` branch didn't affect them.
+
+**Real gap caught by the user, not this session's own testing:** the
+pages themselves were rebuilt and verified, but the
+`[GridInfoService]` config keys that actually tell a viewer *where to
+find them* were never updated - `about`/`register`/`help`/`password`
+all still pointed at the old PHP site's filenames (`about.php`,
+`register.php`, `help.php`, `reset_password.php`), none of which exist
+behind the native backend the reverse proxy now serves (only
+`welcome.php` was ever specifically registered as a literal legacy
+path - see the `RootHomeHandler`/`AddSimpleStreamHandler` comments
+above). A viewer's Help/About menu items would have 404'd silently.
+Fixed directly in the test deployment's `Robust.HG.ini`: `about` ->
+`/page/about`, `register` -> `/register`, `help` -> `/help`,
+`password` -> `/forgot-password`. Only Robust reads this file, so only
+Robust needed restarting, not the region processes. Verified via a
+real `get_grid_info` call after the restart - all four keys now
+resolve to the correct native paths. Two adjacent keys, `search`
+(`/helper/query.php`) and `message` (`/helper/messages.php`), are
+still pointed at the old PHP helper endpoints - a separate, already-
+documented gap (the search-directory-registration pings noted in the
+Batch 13 hostname-migration entry above), not touched by this fix and
+not something today's page changes introduced.
+
+### Native Destination Guide (2026-08-12)
+
+The user correctly pushed back on an assumption made while triaging a
+Firestorm screenshot: a viewer's Destinations floater showing a stock
+"page not found" placeholder was initially assumed to be Firestorm's
+own hardcoded default guide, unconfigurable from this side. It isn't -
+`[GridInfoService] DestinationGuide` is a real, working config key
+(already present, commented out, alongside `AvatarPicker`/`GridSearch`
+in the `oswebinterface` block), the exact mechanism a viewer's
+Destinations floater actually reads, the same shape as `welcome`
+already driving the login splash. The user pointed directly at the
+reference implementation to build from - `guide.php`, a
+Popular/Featured/Discover tabbed places browser with teleport-on-click
+cards - rather than leaving the floater unconfigured.
+
+**Real data-layer gap, not just a missing route:** `ISearchService`/
+`ISearchData`'s existing `SearchPlaces` only ever needed to answer the
+in-viewer Places search panel, so `LandSearchRecord` never carried
+region name, landing point, description, or category - nothing a
+Destination Guide needs to build a teleport link or show real context
+was actually missing from the `land` table, just never projected into
+the query. Extended `LandSearchRecord` (`OpenSim/Framework/
+SearchData.cs`) with `RegionName`/`Description`/`Category`/`LandingX/Y/Z`,
+enriched `SearchPlaces`'s own SELECT to project them (via a new
+`ReadEnrichedRecord`, kept separate from the original `ReadRecord` so
+`SearchLandForSale` - which never needed these columns - is untouched),
+and added a new `GetFeaturedPlaces(count, maxAccess)` method (real
+`Category > 0` filter, random order per call) to answer the "Featured"
+tab - a query shape neither existing method could produce. All three
+`ISearchData` backends (MySQL/PGSQL/SQLite) updated in parallel, plus
+the thin `SearchService` passthrough. One real per-backend quirk
+caught by reading each implementation rather than assuming they're
+identical: SQLite's `land` table names its description column `Desc`,
+not `Description` like MySQL/PGSQL - already true of the *existing*
+`SearchPlaces` query before this change, just confirmed rather than
+copied blindly into the new enriched version.
+
+**`HandleGuide`** (`/guide`, bare chrome via `WriteBarePage`, same
+reasoning as Help/About/the login splash): Popular (`SearchPlaces("",
+0, 30, 13)`, already dwell-sorted), Featured (the new
+`GetFeaturedPlaces`), Discover (`m_GridService.GetRegionRange`, the
+same call `HandleDestinations` already uses, sorted alphabetically) -
+three tabs, client-side switch via a small page-scoped script (no
+reload, matching the small-panel feel of an embedded viewer browser).
+Built with Confluence's own `widget-card`/`subnav` styling rather than
+porting `guide.php`'s separate CSS, and a small `ParcelCategories`
+label lookup (same real `OpenMetaverse.ParcelCategory` values
+`guide.php`'s own category map uses) alongside the existing
+`ClassifiedCategories` array for the same purpose elsewhere in this
+file. maxAccess defaults to 13 (PG) - the same safe default
+`HandleSearch` uses when there's no explicit maturity preference to
+read, since the Destination Guide floater exposes no query-string
+control for it.
+
+**Build/deploy/verify:** full solution rebuild, 0 errors. This one
+crosses more assembly boundaries than a typical WebInterface-only
+change - `OpenSim.Framework.dll` (the record type), `OpenSim.Data.dll`
++ its three backend DLLs, `OpenSim.Services.Interfaces.dll`,
+`OpenSim.Services.SearchService.dll`, and `OpenSim.Server.Handlers.dll`
+all changed - copied all of them together this time rather than
+discovering a missing one via a reflection-loading failure the way an
+earlier batch did. Stopped and restarted all three test-deployment
+processes (same file-lock reason as the previous WebUI polish entry).
+Robust log confirmed a clean reload with the new
+`[SEARCH SERVICE]: Starting search service` line and no errors.
+Verified `/guide` live via curl: HTTP 200, no `<header>`/`<footer>` in
+the DOM, Popular/Featured correctly show real empty-state messages
+(no parcels currently opted into the directory with a category set -
+not fabricated placeholder data), Discover correctly lists both real
+online regions with working `secondlife:///app/teleport/...` links.
+Uncommented and repointed `[GridInfoService] DestinationGuide` at
+`/guide` (was the old PHP site's `guide.php`), restarted Robust, and
+confirmed via a real `get_grid_info` call that it now resolves
+correctly. `AvatarPicker`/`GridSearch`, the two adjacent still-commented
+keys in the same config block, remain out of scope for this pass - not
+touched, not verified.
+
+### DestinationGuide fix was incomplete: a second, separate ini key (2026-08-12)
+
+The Destination Guide fix above only touched `[GridInfoService]
+DestinationGuide`, which feeds `get_grid_info` - verified correct, but
+the wrong verification. A viewer's Destinations floater actually reads
+`destination_guide_url` from the LLSD login response, populated at
+Robust startup from a **completely separate** `[LoginService]
+DestinationGuide` key (`LLLoginService.cs` reads
+`m_LoginServerConfig.GetString("DestinationGuide", ...)` from a
+different config section than `GridInfoHandlers` does). That second
+key still said `/guide.php` and was never touched by the earlier fix -
+confirmed live in Firestorm by the user, still showing the old
+placeholder "obsconded with by knomes" page after the first fix.
+Corrected `[LoginService] DestinationGuide` to `/guide`, restarted
+Robust. Since this value is baked into the LLSD response only at
+login time (read once into a field in `LLLoginService`'s constructor,
+not re-read per-request), a client needs to log out and back in to
+pick up the corrected value - the user's existing session was still
+holding the old one. Lesson: `get_grid_info` and the real LLSD login
+response are two independent delivery paths for several of these
+URLs, not one - verifying the REST endpoint doesn't verify what a
+viewer's floater actually receives at login.
+
+### WhiteCore-Dev's real WebUI static assets, re-audited after being missed twice (2026-08-12)
+
+The user pointed out, correctly, that this session's splash/help page
+work had once again not consulted WhiteCore-Dev's real `bin/html/`
+templates before writing new content - the same gap already flagged
+once in this file's "First-landing pages" entry and in memory
+(`casperia-audit-must-include-static-assets`), recurring on the exact
+same page. Read all 84 real files under
+`WhiteCoreSim/bin/html/` this time (via a dedicated research pass,
+not a skim) to find genuine, concrete gaps rather than a vague
+impression:
+
+- **`welcomescreen/gridstatus.html`** - a real widget (total
+  users/regions, online-now count, voice/currency active flags) the
+  splash never had. **`welcomescreen/region_box.html`** - a real
+  region thumbnail/name/position/teleport-link list, also never on
+  the splash. Both added to `HandleWelcome` this pass (see below).
+- **`help.html`** - turned out to be a smaller gap than first
+  suspected once actually read: its viewer-logo grid is the *same*
+  content already mined into `/viewers` (confirmed - this exact file
+  is cited in the Get a Viewer batch's own PROJECT_LOG entry), and
+  `/help` already links to `/viewers` rather than duplicating it. The
+  one genuinely distinct piece is an IRC support button/modal - not
+  built, since it requires knowing whether this grid actually has an
+  IRC channel to link to, not something to invent silently.
+- Everything else audited (admin pages, user self-service pages,
+  classifieds/events, the world map, webprofile/regionprofile modals)
+  already has a real Confluence equivalent built across earlier
+  batches, confirmed against the full file-by-file inventory rather
+  than assumed. Two small, real, previously-unflagged gaps surfaced
+  and are **not yet built**: a region-profile detail view
+  (`regionprofile/modal_profile.html` - owner/parcel-count/maturity/
+  who's-currently-in-region) and a "Picks" favorite-places list on
+  `webprofile/modal_picks.html`'s pattern, neither of which Confluence
+  has any equivalent of anywhere.
+
+**`RenderGridStatusWidget`/`RenderRegionListWidget` added to
+`HandleWelcome`** (both bare-chrome, same as the rest of the splash):
+grid-status reuses the exact same `GetOnlineUserCount`/
+`GetUserAccountsWhere` calls `HandleAdminStats` already established as
+the real data source for these numbers, rather than a second,
+divergent counting method - "Unique Visitors" and "Voice Active" from
+the real WhiteCore widget were deliberately left out rather than
+faked, since Robust has no live presence tracking beyond the same
+recent-login-timestamp proxy `GetOnlineUserCount` already is, and no
+way to tell if voice is actually configured. Region list reuses the
+same `GetRegionRange` call and map-tile URL convention
+`HandleDestinations`/`HandleGuide`'s Discover tab already use, rather
+than a third way of listing regions. Build 0 errors, redeployed (all
+three test-deployment processes, same file-lock reason as before),
+Robust log confirmed clean reload. Verified live via curl: `/welcome.php`
+now shows real numbers - 2 regions, 8 registered accounts, 1 online
+now, currency active, both regions listed with working teleport links -
+not placeholder data.
+
+Also updated the `casperia-audit-must-include-static-assets` memory
+(internal, not tracked in this repo) to tighten the rule: check
+WhiteCore-Dev's real `bin/html/` before writing or rewriting *any*
+WebUI page's content going forward, not just at the start of a
+large-scope "port features" audit.
+
+### Separate browser vs. viewer-embedded search page (2026-08-12)
+
+`HandleSearch` already carried a comment acknowledging it's the page
+pointed to by `[LoginService] SearchURL` - a viewer's own Search
+floater has a "Web" tab that opens this URL in its own small embedded
+browser, the same mechanism `welcome`/`help`/`DestinationGuide` all
+use - and that it "needs to render sensibly both in a normal browser
+and inside" that panel. It never actually did anything about that:
+`WritePage` (full header/nav/footer) unconditionally, regardless of
+which context opened it. Same underlying issue as the splash/help/
+about/guide work above, just not caught at the time.
+
+Split into `HandleSearch` (existing `/search`, full chrome) and a new
+`HandleSearchEmbedded` (`/websearch`, bare chrome via `WriteBarePage`),
+both thin wrappers around a shared `DoSearch(request, response,
+embedded)` - same design/content either way, per explicit direction,
+not two diverging implementations. The subnav "Search" self-link, the
+search form's `action`, and the trending-query chip links all build
+off a `selfPath` variable (`/search` or `/websearch`) instead of a
+hardcoded path, so submitting a new query or clicking a trending term
+from inside the embedded view stays on the embedded route rather than
+silently dropping back to full chrome after the first click - the
+`/landsearch` cross-link deliberately still points at the full-chrome
+browser page, since Land for Sale is a browsing/shopping feature, not
+something the viewer's Search floater's Web tab needs. Repointed
+`[LoginService] SearchURL` at `/websearch`.
+
+Build 0 errors, redeployed (`OpenSim.Server.Handlers.dll` only).
+Verified live via curl: `/search` still has `<header>`/`<footer>` with
+`action="/search"`; `/websearch` has neither, with `action="/websearch"`;
+`/websearch?q=welcome` (simulating a follow-up search from inside the
+embedded view) still has no chrome and its self-links still point at
+`/websearch`, not `/search`. Since `[LoginService] SearchURL` only
+reaches a viewer via the LLSD login response (the same
+`DestinationGuide` lesson from earlier this session), this can't be
+verified via `get_grid_info` - only the ini value and a clean
+`LLLoginServiceInConnector loaded successfully` reload were confirmed;
+genuine verification needs a real client login.
+
+**Found while verifying, not touched:** a third, unrelated
+`SearchURL`-shaped key turned up in a `[Search]` block further down
+`Robust.HG.ini` - this belongs to the old addon-modules `OpenSimSearch`
+module's own config shape (`OpenSearch.cs` reads a `[Search]
+SearchURL` key), not `LLLoginService` or `GridInfoHandlers`. Confirmed
+it's not dead: Welcome Center's own region-side `OpenSim.ini` still has
+`[Search] Module = "OpenSimSearch"` (the legacy addon, still active
+there) with a matching `SearchURL` pointing at the same
+`/helper/query.php` path already documented as a known, accepted gap
+(no native backend exists for that classic search-directory-
+registration endpoint). Not a new problem, not touched.
+
+Also added a `Help` link to the site header nav (`WritePage`'s
+`<nav class="site-nav">`), which had never been wired in despite the
+page existing.
+
+### Viewer download list had gone stale (2026-08-12)
+
+Per the user (not independently re-verified against each project's own
+site, same as the earlier weather-port precedent): Alchemy and Kokua no
+longer support OpenSim at all, Singularity hasn't been updated in
+years, and Lumiya/Pocket Metaverse are gone entirely - five of the
+seven entries on `/viewers`, all originally sourced from WhiteCore-Dev's
+own `help.html` list (real at the time that page was built, not
+fabricated, just since gone stale). Trimmed `DesktopViewers`/
+`MobileViewers` down to what's actually still real: Firestorm (all
+three platforms) and Cool VL Viewer as the two remaining graphical
+desktop viewers, Radegast as the still-active text-based client, and
+Mobile Grid Client kept with an "older, not actively updated" note
+rather than removed outright. Build 0 errors, redeployed, verified
+live via curl - `/viewers` now lists exactly those six entries, nothing
+else.
+
+### About page rewrite: competitive positioning + real content preserved (2026-08-12)
+
+The user pointed at two references directly: a competing grid's real
+public About Us page (3rd Rock Grid - purpose statement, "why join a
+virtual world"/"why choose us" framing, platform highlights) and the
+original `OpenSim-Grid-Interface/about.php` this page was first seeded
+from (task #44). Rewrote the About page (a DB-backed `static_pages`
+row, not a repo file - updated directly via the live database, no
+code change or redeploy needed since `HandleStaticPage` already reads
+it live) to add real "why join/why choose" sections modeled on 3RG's
+structure, filled with things actually true of this software (native
+economy, Hypergrid, the real web/admin control panel, real search,
+real moderation) rather than any of 3RG's own business-specific claims
+(LLC registration, DMCA agent, money-back guarantee) that have no
+basis here.
+
+**Caught after an incomplete first pass:** the initial rewrite trimmed
+out real content from the original `about.php` - the Disclaimer/Legal
+Disclaimer section, the user-generated-content liability paragraph,
+and the "read the ToS/DMCA, be aware of age-appropriate content"
+paragraph - in favor of the new competitive-positioning sections,
+rather than keeping both. Corrected: all of that original disclaimer/
+liability language is back verbatim (still real, still needed), with
+the new sections added alongside it, not in place of it. One
+deliberate, positive change kept from the first pass: the original's
+"visit using Firestorm, Singularity, and others" line and its flat
+support-email address were replaced with a link to `/viewers` (so the
+page doesn't repeat the now-stale Singularity claim from the viewer-
+list fix above) and links to the real `/support`/`/help` pages
+(features that didn't exist when `about.php` was written) - an
+upgrade to real, currently-working functionality, not a content
+drop.
+
+Verified live via curl: `/page/about` returns HTTP 200, bare chrome
+still intact, and all eight headings present (Disclaimer, Legal
+Disclaimer, Why Join a Virtual World?, Why Choose Casperia?, Virtual
+Worlds with OpenSimulator, Community & Content, Questions?).
+
+### Bare-chrome pages needed a way back for a normal browser too (2026-08-12)
+
+The user's real ask, tested against the actual public hostname: `/page/about`
+(and `/help`) needs to work when opened directly in a normal browser,
+not just inside a viewer's embedded panel. Fully bare chrome (no
+header, no nav, no footer) is right for the embedded case, but leaves
+a real browser tab with zero way back to the rest of the site - a
+dead end, not "works in both."
+
+Rather than build a second full-chrome route the way `/search`/
+`/websearch` were split (these pages have no internal sub-navigation
+to preserve across clicks the way search's category tabs do, so the
+extra route wouldn't earn its complexity), added a single small
+"&larr; &lt;grid name&gt;" link to `WriteBarePage` itself, linking home -
+negligible space inside an embedded viewer panel, but a real way back
+in a normal tab. Fixed once, in the shared function, rather than
+patched into `HandleHelp`/`HandleStaticPage` individually - applies
+automatically to every current bare-chrome page (the login splash,
+Help, About, the Destination Guide, the embedded search), not just
+the two the user named.
+
+Build 0 errors, redeployed, verified live via curl on all five bare
+pages - each now starts with `<div class="bare-topbar"><a href="/">&larr;
+Casperia Prime Dev</a></div>` before its own content, still no full
+header/nav/footer.
+
+### Real viewer-vs-browser detection, replacing the band-aid above (2026-08-12)
+
+The previous entry claimed a single URL "can't reliably tell" whether
+it's being opened by a viewer or a normal browser, and worked around
+that with a small home link on an always-bare page. The user correctly
+called this out and pointed at the actual mechanism:
+`OpenSim-Grid-Interface/include/viewer_context.php`
+(`os_detect_viewer()`), already `include`d by its own `about.php`/
+`help.php`. It works, and is real: any SL-protocol viewer's embedded
+browser attaches `X-SecondLife-Owner-Name`/`X-SecondLife-Region`/
+`X-SecondLife-Shard` HTTP headers to every request it makes (the same
+behavior it uses for in-world web media, not something specific to
+these pages), with a User-Agent substring check and a `?view=viewer|web`
++ cookie override as fallbacks. Ported directly rather than reinvented
+- `IsViewerRequest`/`ViewerHeaders`/`ViewerUserAgentNeedles` mirror the
+PHP version's header list, UA needle list, and query/cookie override
+exactly.
+
+**Real architecture simplification, not just a bugfix:** with per-request
+detection working, the earlier `/search` vs `/websearch` route split
+(added specifically to solve this same problem, before the real
+mechanism was found) is no longer needed - collapsed back to one
+`/search` route, `HandleSearchEmbedded`/`DoSearch`'s `embedded` bool
+removed, `SearchURL` repointed at plain `/search`. `HandleStaticPage`'s
+`slug == "about"` special case (bare-chrome for About only) is gone too
+- every static page now decides per real request, since ToS/DMCA could
+just as validly be opened by a viewer as About could. Added
+`WriteAdaptivePage` (picks `WriteBarePage` for a detected viewer
+request, `WritePage` otherwise) and switched `HandleWelcome`,
+`HandleHelp`, `HandleStaticPage`, `HandleGuide`, and `HandleSearch` all
+onto it - five pages now genuinely work correctly in both contexts
+from one URL each, not four different one-off workarounds.
+
+Build 0 errors, redeployed. Verified live via curl with real header/
+UA simulation, not just a plain request: `/page/about`, `/help`, and
+`/search` each confirmed full chrome (real `<header>`) with no viewer
+signal present, and bare chrome (`bare-topbar` div, no `<header>`) with
+a simulated `X-SecondLife-Region` header on one request and a
+Firestorm-branded User-Agent on another - the actual per-request
+switch, not just "the page loads." `/welcome.php` and `/guide` also
+confirmed still bare under a simulated viewer request (no regression),
+`/page/tos` and `/page/dmca` confirmed still HTTP 200 as plain browser
+pages.
+
+### Vendored Bootstrap Icons + real icon/hover-effect pass (2026-08-12)
+
+The user pushed back hard on a pattern across this whole WebUI thread:
+pages were being rewritten based on a skim of reference material
+rather than genuinely absorbing it, and the result read as "plain
+text with a few highlighted boxes" - not the bar a page meant to
+attract other grid owners to adopt this platform needs to clear. Two
+reference points made the gap concrete: `OpenSim-Grid-Interface/
+features.php` (icon-per-row via Bootstrap Icons, colored pill badges,
+hover-lift region cards, a full "Powered By" infrastructure grid) and
+that same project's own `docs/icons-and-theme.md`, which documents
+Bootstrap Icons as the standardized icon system across its ~90-file
+site. A full listing of that project (`account/`, `admin/` including
+a real analytics dashboard, `api/`, `maps/`, dual Gloebit/Podex
+currency-addon support, a curated holiday/announcements system)
+confirmed it's a genuinely mature project Confluence's native WebUI
+doesn't match yet - not something to close in one pass, but the icon
+system specifically was addressable now.
+
+**Real architectural decision, not a guess:** asked the user directly
+whether to vendor Bootstrap Icons locally, keep hand-building inline
+SVGs, or vendor a different icon set - vendoring Bootstrap Icons won.
+Downloaded the real MIT-licensed distribution (v1.11.3, from the
+project's own jsdelivr-hosted release - `bootstrap-icons.css` +
+`.woff2` + `.woff`, ~400KB total) once, at development time; the
+deployed grid never needs network access for this since the files are
+embedded resources compiled directly into `OpenSim.Server.Handlers.dll`
+(`WebInterface/Resources/`, declared in `prebuild.xml` the same way
+`.sql`/`.migrations`/`.addin.xml` resources already are elsewhere),
+not loose files to lose track of on redeploy. Rewrote the vendored
+CSS's `@font-face` `url()`s from `./fonts/...` to `/static/...` to
+match the new serving path. Added `HandleStaticAsset` + a `/static/*`
+route (same varPath-prefix pattern `/page/*` already uses) that
+resolves the embedded resource via `GetManifestResourceNames()` +
+suffix match - the same defensive lookup `Migration.cs` already uses
+for its own embedded resources, not a hand-guessed resource name -
+and serves it with a real `Cache-Control: immutable` header, caching
+the resolved bytes in a static dictionary after first load.
+
+**Real regression caught and fixed, unrelated to the icons themselves:**
+regenerating `OpenSim.Server.Handlers.csproj` via `runprebuild.bat`
+(needed to pick up the new `EmbeddedResource` entries) wiped
+`MailKit`/`MimeKit` references that existed in the old `.csproj` but
+were never declared in `prebuild.xml` in the first place - a real,
+pre-existing gap in the tracked build config that only surfaced
+because this was the first time in this project's history that file
+got regenerated from scratch. Added `<Reference name="MailKit"/>`/
+`<Reference name="MimeKit"/>` to `OpenSim.Server.Handlers`'s project
+block in `prebuild.xml` (resolves via the project's existing
+`ReferencePath`, same as every other simple reference there) and
+regenerated again - confirmed fixed via a clean build.
+
+**Icons and hover effects actually applied, not just plumbed in:**
+added `<i class="bi bi-*">` to every header nav link (site-wide, every
+page). Rebuilt `/features` completely: regrouped the existing 12
+platform capabilities from a flat list into four icon-headed,
+hover-lift `.feature-card`s (`transform:translateY(-4px)` + accent
+left-border + real box-shadow on hover, matching the reference
+project's own region-card treatment) with colored `pill`/`pill-yes`/
+`pill-no` status badges instead of plain text; added two genuinely new
+sections with the same treatment - "Region Configuration Options"
+(VarRegions/Full/lighter-traffic patterns, framed as common OpenSim
+naming conventions an operator can apply, not a fabricated Confluence
+engine feature) and "Economy & Currency" (native currency, real
+ledger/web-access facts, plus Gloebit correctly marked "Optional" as
+the addon-module swap-in it actually is, not a fabricated "Active"
+claim). Every icon name used was checked against the real vendored
+CSS before shipping (`grep`'d each `.bi-X::before` rule) rather than
+guessed.
+
+Build 0 errors, redeployed, verified live via curl: `/static/
+bootstrap-icons.css`/`.woff2`/`.woff` all return HTTP 200 with correct
+Content-Type and byte-for-byte matching sizes; `/features` returns 9
+real `.feature-card` divs (4+3+2, matching the three new/regrouped
+sections), 25 list rows, both pill classes present, the stylesheet
+link present, full site chrome intact. Actual rendered visual
+appearance was **not** confirmed - the sandboxed browser pane in this
+session can't composite frames for a screenshot, so this is markup-
+level verification only; a real browser check is still needed. Header
+nav icons and the Features rebuild are the first pages to get this
+treatment - the rest of the ~40-page WebUI have not been touched yet
+and are a real follow-up, not assumed done by extension.
+
+### Welcome Center's in-world search was still on the dead legacy path (2026-08-12)
+
+The user hit "Unable to search at this time" in-viewer (both the
+Directory floater and, separately, several more failures opening the
+World Map - both fire Dir*Query-shaped requests). Ruled out a
+regression in today's `SearchPlaces` enrichment first, concretely: ran
+the actual enriched SQL directly against the live database - clean,
+zero rows, no error - matching what `/guide`'s Popular tab already
+exercised successfully earlier today. Asked which region the failure
+happened on rather than guess, since Welcome Center and Var Test
+Region run on genuinely different search backends. Confirmed: Welcome
+Center specifically, which was still on `[Search] Module =
+"OpenSimSearch"` - the legacy addon, dependent on `SearchURL` pointing
+at `/helper/query.php`, a dead endpoint flagged multiple times earlier
+this session as an accepted, out-of-scope gap. Var Test Region has run
+the native `ConfluenceSearchModule` since Batch 14 without this
+problem.
+
+**Fix:** switched Welcome Center's `[Search] Module` to
+`ConfluenceSearchModule` and added the three service sections it needs
+that Welcome Center never had at all - `[SearchService]`,
+`[EventsService]`, `[UserProfilesService]`, `[GroupsSearchService]` -
+copied verbatim from Var Test Region's own already-working config
+(same `casperia_dev` connection string, same providers), not
+reinvented. No code change needed, config-only. Restarted only the
+Welcome Center process (Robust, Var Test Region, and the DLLs
+themselves were untouched). Confirmed via `Get-CimInstance` that the
+right process came back up and via Robust's own log that Welcome
+Center re-registered with the grid cleanly immediately after the
+restart - the region-side log file itself lagged/buffered past the
+startup banner (a log-flush quirk observed before, not a hang).
+**Not independently verified end-to-end**: confirming the Directory
+floater and World Map actually work now needs a real viewer test from
+inside Welcome Center, the same boundary as the DestinationGuide/
+SearchURL fixes earlier - config correctness and clean process
+startup were confirmed, the actual in-world protocol exchange was
+not.
+
+### Removed the bare-page "way back" topbar - obsolete since real viewer detection landed (2026-08-12)
+
+The small "&larr; grid name" link added to `WriteBarePage` earlier
+today (before real viewer-vs-browser detection existed) was meant to
+give a normal-browser visitor a way back to the site when they opened
+a bare-chrome URL directly. Per the user, it's clutter every time a
+real viewer actually renders one of these pages - and checking the
+call sites confirmed `WriteBarePage` is now reached *only* through
+`WriteAdaptivePage` when a genuine viewer is detected (a plain browser
+tab already gets full `WritePage` chrome instead via that same
+dispatcher), so the link's original justification no longer applies
+to any real code path. Removed the topbar div and its now-dead
+`.bare-topbar` CSS rules entirely, rather than leaving unused styling
+behind. Build 0 errors, redeployed, verified live via curl with a
+simulated viewer header across all four bare-chrome pages
+(`/welcome.php`, `/help`, `/page/about`, `/guide`) - no `bare-topbar`
+in any of them, all still return HTTP 200.
+
+### Header/footer bar capped at 1100px in a real browser, wasting the rest of the window (2026-08-12)
+
+A real screenshot from the user (`/viewers` in an actual desktop
+browser, full icon set already confirmed rendering correctly) showed
+the black header/footer bars spanning the full window as intended, but
+their actual content - logo, nav, Log In/Sign Up - stuck inside a
+centered `max-width:1100px` column, leaving large dead black margins
+on both sides on anything wider than that. `.site-header-inner`/
+`.site-footer-inner` had inherited the same `max-width:1100px;margin:0
+auto` constraint used for the actual page-content column
+(`.page`/`.hero-inner`, which should stay narrower for readability),
+never separated out as its own decision. Removed the `max-width`/
+`margin:auto` from both - header and footer chrome now uses the full
+window width, only the actual body content keeps the readable column
+width. Build 0 errors, redeployed, verified live via curl - both rules
+confirmed to no longer carry the `max-width` constraint.
+
+### Static pages can now be wired into the site nav (WhiteCore-Dev precedent) (2026-08-12)
+
+The user asked whether admin-created static pages could also control
+their own nav placement, pointing at WhiteCore-Dev's real
+`admin/page_manager.html` as precedent (an earlier answer had relied on
+a stale paraphrase of that file from several turns prior instead of
+reading it directly - corrected after the user flagged "Seems we are
+still skipping over code!"). The actual file's fields (PageTitle,
+PageTooltip, PagePosition, PageID, PageLocation, DisplayInMenu,
+RequiresLogin, RequiresLogout, RequiresAdmin, RequiredAdminLevel,
+ParentMenuItem) were deliberately trimmed down for Confluence: no
+`ParentMenuItem` dropdown nesting (no submenu concept in the nav yet),
+no `RequiresLogout`/`PageTooltip`, and a plain `RequiresAdmin` bool
+instead of a graduated `RequiredAdminLevel`, since Confluence's session
+model is a simple `IsAdmin` flag.
+
+Added `ShowInNav`/`NavOrder`/`RequiresLogin`/`RequiresAdmin` to
+`StaticPage` (`OpenSim/Framework/StaticPageData.cs`), migrated across
+all three DB backends (`:VERSION 2` in each `StaticPage.migrations`,
+MySQL/PGSQL/SQLite `Get`/`GetBySlug`/`GetAll`/`Store` all extended),
+added the four fields to the admin static-page edit form following the
+existing checkbox convention, and added `RenderNavPages(session)` to
+`WebInterfaceServiceConnector.cs` - LINQ-filters `GetAll()` by
+`ShowInNav`/`RequiresLogin`/`RequiresAdmin` against the current
+session, sorts by `NavOrder`, and appends the results into
+`WritePage`'s `<nav class="site-nav">` after the fixed hardcoded nav
+items (additive, doesn't replace them).
+
+Build 0 errors. Deployed `OpenSim.Framework.dll`, `OpenSim.Data.dll`
+plus all three DB-backend DLLs, and `OpenSim.Server.Handlers.dll` to
+the test grid; confirmed the migration applied via `DESCRIBE
+static_pages` (new columns present with correct types/defaults).
+Live-verified end-to-end by inserting a real `nav-test` page directly
+via SQL with `ShowInNav=1` and confirming it appeared in the rendered
+nav via curl; then setting `RequiresAdmin=1` on the same row and
+confirming it correctly disappeared from an anonymous request. The
+test row has since been deleted from the live database.
+
+### Profile page enrichment (2026-08-12)
+
+The user called the profile page "really super basic right now" and
+pointed at `OpenSim-Grid-Interface/profile.php` again. Reading that
+file directly turned up real, working infrastructure Confluence's
+`HandleProfile` wasn't using at all: `UserProfileProperties` already
+carries `WebUrl`, `Language`, `SkillsMask`/`SkillsText`,
+`WantToMask`/`WantToText` (populated by the same `AvatarPropertiesRequest`
+call already in use, just never rendered), and `IUserProfilesService`
+already exposes `PickInfoRequest`/`AvatarClassifiedsRequest`/
+`ClassifiedInfoRequest` - none of it wired up before. Reused OGI's own
+skills/want-to bitmask label sets (`ProfileSkillLabels`/
+`ProfileWantToLabels`) verbatim rather than inventing new ones, since
+these are free-text-labelled bitmasks with no single canonical meaning
+and the reference site is the thing residents may already be used to.
+
+Added: friend count (`IFriendsService.GetFriends`, already wired for
+the Friends list page, just never surfaced here); Website/Language/
+Skills/Wants-To rendered as `.pill` badges (same pill styling as
+`/features`); Picks enriched from name-only to description + region
+name via a real `PickInfoRequest` call per pick (previously only
+`AvatarPicksRequest`'s bare name list); and a new Classifieds section
+(`AvatarClassifiedsRequest` + `ClassifiedInfoRequest` per ad, same
+category-label array `/features`'s Featured Classifieds widget
+already uses) - classifieds weren't shown on a resident's own profile
+page at all before this. Deliberately NOT attempted: profile/first-life
+snapshot images - same "would need the asset server's HTTP
+texture-fetch endpoint, and SL texture assets are JPEG2000, which
+browsers can't render natively without a server-side conversion step"
+gap already flagged and deferred when Featured Classifieds skipped
+images earlier this session; a real fix is a separate task, not a
+quick add-on to this one.
+
+Build 0 errors (`OpenSim.Server.Handlers` project only - no
+Framework/Data/interface changes this time, unlike the nav-wiring
+batch). **Deployment hit an unrelated, pre-existing problem**: after
+stopping Robust to swap in the new DLL, every fresh restart hung
+indefinitely partway through connector startup (right after
+`AbuseReportsServiceConnector`, before the HTTP listener ever came up)
+- confirmed NOT caused by this change, or by the earlier nav-wiring
+batch, by disabling `WebInterfaceServiceConnector`,
+`OfflineIMServiceConnector`, `CurrencyServiceConnector`, and
+`UserProfilesServiceConnector` one at a time in `Robust.HG.ini` and
+restarting each time: the hang reproduced identically every time, with
+all four disabled and with all four restored. Likely one of the
+remaining Hypergrid connectors (`GatekeeperServiceInConnector`,
+`UserAgentServerConnector`, `HeloServiceInConnector`,
+`HGFriendsServerConnector`, `HGInventoryServiceConnector`,
+`HGAssetServiceConnector`, `HGGroupsServiceConnector`) or something
+after connector loading entirely - not narrowed further given the time
+already spent. The two region simulator processes (Welcome Center, Var
+Test Region) were also stopped to release the file lock on the old DLL
+and have not been successfully restarted either (`OpenSim.exe` exits
+within ~1 second on every attempt, exit code 1, zero stdout/stderr,
+nothing reaching its own log file even before log4net would normally
+write a line - a different, equally unexplained failure from Robust's
+hang). **Not resolved**: the profile code itself is believed correct
+(compiles clean, logic mirrors already-proven patterns elsewhere in
+the same file) but has not been live-verified against a running
+server, unlike every other feature this session.
+
+### Root-caused the "no search results" report: a stale region-side DLL (2026-08-12)
+
+After seeding real land-for-sale/event/classified rows didn't fix the
+in-world Search floater (still no Land Sales/Events/Classifieds
+results, though People worked), the region's own log gave it away:
+`[CASPERIA SEARCH]: Native search module is active` - the OLD,
+pre-rename branding, while the current source says `[CONFLUENCE
+SEARCH]`. `OpenSim.Region.CoreModules.dll` (region-side, contains
+`ConfluenceSearchModule.cs`) had never been rebuilt or redeployed this
+entire session - every fix this session went into Robust-side DLLs
+(`OpenSim.Server.Handlers.dll`, `OpenSim.Data.dll`) or was never
+touched at all, while the region-side module quietly kept running
+whatever build predated even the Casperia-to-Confluence rename.
+
+Rebuilding hit its own real problem first: `SmartThreadPool.csproj`
+(an SDK-style, `net8.0`-targeted project) failed with `NETSDK1127:
+targeting pack not installed` on a full/dependency-graph build,
+despite an earlier narrow `/t:OpenSim_Server_Handlers` build having
+succeeded minutes before - only the .NET 10 ref pack was present on
+this machine (`C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref`
+had only `10.0.10`), and the narrow build had simply never forced a
+fresh evaluation of that project. `dotnet restore` against
+`SmartThreadPool.csproj` pulled the missing `net8.0` ref pack from
+NuGet and resolved it - an environment gap, not a code bug.
+
+Rebuilt and redeployed `OpenSim.Region.CoreModules.dll`; confirmed via
+the log that `[CONFLUENCE SEARCH]` now appears instead of `[CASPERIA
+SEARCH]`. Added `m_log.InfoFormat` calls to `DirPlacesQuery`/
+`DirLandQuery`/`DirEventsQuery`/`DirClassifiedQuery` (query params +
+result count) plus `m_log.Warn` for the two null-service early-outs,
+so the next real-world test is a live trace instead of another guess -
+not yet exercised against a live search from a viewer.
+
+Also discovered mid-investigation: this sandboxed session cannot
+reliably restart `OpenSim.exe` (region processes) itself -
+`Start-Process` launches it but it exits within ~1 second, zero
+output, matching the earlier unresolved region-restart failure. The
+user's own restarts (via their own launch method, not this session's
+automation) work fine every time. Established going forward: hand off
+restarts to the user rather than repeatedly failing to relaunch
+region/Robust processes from this session and risking extended
+downtime on their live test grid.
+
+### WebUI content-parity audit, round 1 (2026-08-12)
+
+Per the user's explicit decision (keep the current C#-generated
+WebInterface architecture, but redo real parity checks against named
+reference files - see memory `casperia-webui-content-parity-decision`)
+and explicit instruction to check WhiteCore-Dev first ("that's where
+this all came from"), read real reference files directly and fixed
+concrete gaps found - not paraphrased from earlier summaries:
+
+- **Help** (`/help`): rewrote against both WhiteCore-Dev's `help.html`
+  (kept the login-URI framing; the viewer-download gallery there is
+  already covered by Confluence's separate `/viewers` page, so not
+  duplicated) and OpenSim-Grid-Interface's `help.php` (added the
+  missing "Using Search From the Viewer" tab-by-tab explanation and a
+  "Troubleshooting" section, including that a search category can
+  legitimately show nothing until a resident lists something in it -
+  directly relevant to the same-day search investigation above).
+- **Profile** (`/profile`): checked against WhiteCore-Dev's real
+  `webprofile/modal_profile.html`/`modal_regions.html`/
+  `modal_groups.html` (not the paraphrase from several turns prior)
+  and fixed 3 real gaps: online status now names the resident's
+  current region (`GetRegionByUUID` on `GridUserInfo.LastRegionID`)
+  instead of just "Online now"; Regions Owned now shows a map
+  thumbnail + coordinates per region instead of a bare name list,
+  reusing the exact tile-URL convention `RenderRegionListWidget`
+  already established; Groups now shows a membership count in the
+  heading.
+- **Features** (`/features`): checked against OpenSim-Grid-Interface's
+  `features.php` (573 lines, read in full). Explicitly did NOT port
+  its Source Repositories/Powered-By sections - those describe that
+  site owner's own personal GitHub repos and hosting stack, not a
+  generic Confluence capability, and would violate this session's own
+  established privacy-scrub rule if copied. Did add two real, honest
+  gaps: OpenSimulator core version now shown in the Live Grid Snapshot
+  (`OpenSim.VersionInfo.VersionNumber`, the same compile-time constant
+  the console banner already reports - not a guess), and a "Voice" row
+  stating plainly that Confluence has no bundled voice integration
+  (confirmed by checking, not assumed) rather than leaving the topic
+  unmentioned. Region Configuration Options and Economy & Currency
+  sections were already at real parity from earlier work.
+- **Guide** (`/guide`): checked WhiteCore-Dev for a Destination-Guide
+  equivalent - none exists (`world.html`/`region_list.html` are a
+  Leaflet-based region map and a table explicitly marked "no longer
+  used" in WhiteCore's own source). OpenSim-Grid-Interface's
+  `guide.php` remains the correct sole reference, already used.
+- **Splash/Welcome**: re-confirmed already at real parity against
+  WhiteCore-Dev's `welcomescreen/*` from earlier work this session.
+
+Build 0 errors each pass, redeployed to Robust (stopped for the
+search-module deploy above, so no file-lock conflicts). **Not yet
+live-verified** - pending the user bringing the grid back up.
+
+Still queued: Viewers page re-check (already built from both
+references per an earlier task - spot-check only, not redone from
+scratch), and the static-page nav-wiring field trim
+(`ParentMenuItem`/`RequiresLogout`/`PageTooltip`/graduated admin
+levels) - waiting on the user's explicit answer on whether to restore
+WhiteCore-Dev's full field set there.
+
+### Land Sales/Events search bugs actually root-caused via the real PHP backend the viewer used to talk to (2026-08-12)
+
+The Events "0 results" investigation moved from an educated guess to a
+confirmed fix once the user supplied OpenSim-Grid-Interface's real
+`helper/query.php`, `parser.php`, and `register.php` - the actual,
+proven XML-RPC backend the classic `OpenSimSearch` addon called out to
+before this grid had a native search module at all. Reading
+`dir_land_query`/`dir_events_query` directly (not guessed) turned up
+two real, separate bugs in `ConfluenceSearchModule`/the `ISearchData`
+land-search backend:
+
+- **Price direction was backwards.** `SearchLandForSale` compared
+  `SalePrice >= minPrice` (a floor); the real reference does
+  `saleprice <= :price` (a ceiling - "no more than this"), and only
+  applies it at all when the viewer's `LimitByPrice` flag (`0x100000`)
+  is actually set, same for `LimitByArea` (`0x200000`)/area. Fixed
+  across all 3 DB backends (`maxPrice`/`minArea`, either skipped when
+  <= 0, matching how `/web/landsearch` already calls this expecting
+  "0 means no filter") plus `ISearchData`/`ISearchService`/
+  `SearchService`, and `ConfluenceSearchModule.DirLandQuery` now only
+  passes the real price/area through when the matching flag bit is
+  set, instead of always applying both unconditionally.
+- **Events query text was never being parsed.** The viewer's Events
+  tab sends `"u|0|test"` - `explode("|", $text)` in the real
+  `dir_events_query`, pieces[0]=day token, pieces[1]=category,
+  pieces[2]=search text (empty if fewer than 3 pieces) - not plain
+  text. Neither WhiteCore-Dev's own `DirEventsQuery` nor the
+  `OpenSimSearch` addon parse this in C# (checked both directly); it
+  only ever happened server-side in this now-dead PHP script.
+  `ConfluenceSearchModule.DirEventsQuery` now splits on `|` and uses
+  `pieces[2]` exactly like the reference. Day-specific filtering
+  (vs. "upcoming") is explicitly logged as unimplemented rather than
+  silently faked - `IEventsService.SearchEvents` has no day-range
+  query yet, only "upcoming" (`EventDate >= now`).
+
+Also confirmed (not assumed): the seeded test land parcel's For-Sale
+flags reverted on their own between test attempts. Root cause is
+*not* a code bug - editing `land` table rows directly via SQL while
+the owning region process is live gets silently overwritten by the
+region's own next save cycle, since the region's in-memory `LandData`
+object (loaded once at startup, never touched by a raw SQL UPDATE) is
+authoritative, not the database row. Confirmed the parcel really is
+owned (not an unowned-parcel-reset theory) before reaching this
+conclusion. Real fix going forward: seed test land state through the
+actual in-world "About Land" dialog, not direct SQL, when the owning
+region is live.
+
+Build 0 errors, deployed `OpenSim.Data.dll`,
+`OpenSim.Region.CoreModules.dll`, `OpenSim.Server.Handlers.dll`, and
+`OpenSim.Services.Connectors.dll` together (all four touched by the
+`SearchLandForSale` signature/semantics change). **Not yet
+live-verified** - pending the user's next grid restart and test.
+
+### Currency module checked against real Firestorm viewer source (2026-08-12)
+
+Per explicit user direction to stop guessing/improvising against the
+OpenSim protocol and check native modules against real viewer source
+before they ship, rather than after - the user added Firestorm
+(`S:\Github\phoenix-firestorm`, already cloned, 288MB sparse
+checkout) and Cool VL Viewer (`S:\Github\CoolVLViewer-1.32.5.11`,
+already extracted from its source tarball) as standing local
+references for exactly this. Scoped the audit to `ConfluenceCurrencyModule`
+specifically - real money changes hands here, and unlike Land/Estate/
+Groups/Friends/Terrain (stock, unmodified OpenSim core code with 15+
+years of real-world viewer interop already proven), this is native
+code this project wrote with no such track record. Read
+`llcurrencyuimanager.cpp` and `llfloaterbuyland.cpp` directly (not a
+summary) and found two real, concrete bugs:
+
+- `HandleBuyCurrency`'s failure path only set `result["success"] =
+  false` - the real viewer (`LLCurrencyUIManager::Impl::
+  finishCurrencyBuy`) unconditionally reads `result["errorMessage"]`/
+  `result["errorURI"]` on failure. LLSD's undefined-value defaults
+  meant this never crashed, but a resident whose purchase failed saw
+  a blank error dialog instead of a real reason. Fixed with real,
+  specific error messages per failure case.
+- `HandlePreflightBuyLandPrep` sent `"landuse"` (lowercase); the real
+  viewer (`LLFloaterBuyLandUI::finishWebSiteInfo`) reads
+  `result["landUse"]` (capital U) - LLSD map keys are case-sensitive,
+  so this field was silently always undefined client-side. Also sent
+  `"membership"` as a bare `{id, description}` pair; the real shape
+  is `{upgrade: bool, action: string, levels: [{id, description}, ...]}`.
+  Both happened to land on the same safe "no upgrade needed" default
+  via LLSD's forgiving undefined-value fallback (fine outcome for
+  Confluence, which has no SL-style paid membership tiers to offer),
+  but only by accident. Fixed to the real shape, explicit rather than
+  incidental.
+
+Confirmed (not assumed) as correct rather than fixed: the `[Economy]
+economy` GridInfo URL already ends in a trailing slash, which matters
+because `LLCurrencyUIManager::Impl::startTransaction` builds the
+request URL as a raw string concatenation - `getHelperURI() +
+"currency.php"`, no slash inserted - so a missing trailing slash
+would silently break every currency-buy request grid-wide.
+
+Build 0 errors. **Not yet deployed/live-verified** - pending the next
+grid restart.
+
+### Completed the native-module viewer-protocol audit (2026-08-12)
+
+Finished the full sweep the user asked for: check every module this
+project actually wrote against real viewer expectations before it
+ships, rather than after. Built the definitive inventory by grepping
+for "Confluence"/"CONFLUENCE" branding across `Region/CoreModules` and
+`Region/ClientStack` (not a guess or a partial list) - exactly 7 files
+are genuinely native code, everything else in those trees is stock,
+unmodified OpenSim already proven across 15+ years of real grids:
+
+- `ConfluenceCurrencyModule.cs` - 3 real bugs found and fixed (see
+  above).
+- `ConfluenceSearchModule.cs` - 2 real bugs found and fixed (see
+  above).
+- `ViewerSignatureBanModule.cs` (WhiteCore grid-wide viewer ban port) -
+  no viewer wire-contract to mismatch; it only reads standard
+  baked-appearance texture data the viewer already sends via the
+  ordinary protocol, one-directional detection, nothing it promises
+  back to the client. Clean.
+- `AuctionModule.cs` - no `client.On*` handlers at all; bidding is
+  entirely admin-console-driven (`land auction bid <id> <bidder>
+  <amount>`), not something a resident can do from their viewer.
+  Not a protocol bug - a real, disclosed scope gap worth knowing
+  before calling land auctions production-ready. Left as-is pending a
+  product decision, not silently patched.
+- `OnDemandRegionModule.cs`, `SimProtectionModule.cs` - confirmed
+  (grepped, not assumed) zero client-facing handlers; pure server-side
+  infrastructure, no viewer contract exists to check.
+- `WebConsoleModule.cs` - HTTP-only admin endpoint consumed by
+  Confluence's own WebInterface, no viewer protocol surface either.
+
+Also spot-checked Experience Tools (`ExperienceModule.cs`, native, CAP-
+based) even though not flagged broken: all 12 capability names
+(`GetExperiences`, `AgentExperiences`, `UpdateExperience`, etc.) match
+Firestorm's real `llviewerregion.cpp` registration list exactly, and
+the core experience-record fields (`public_id`, `group_id`, `name`,
+`description`, `maturity`, `properties`) match `llexperiencecache.h`'s
+real constants exactly in both directions. No bugs found - this one
+was already built with genuine SL-conformance care, consistent with
+its own task history (Batch 11).
+
+This closes out the viewer-protocol audit for now: every native
+module with an actual client-facing contract has been checked against
+real reference source (Firestorm, `S:\Github\phoenix-firestorm`; Cool
+VL Viewer, `S:\Github\CoolVLViewer-1.32.5.11`, both supplied by the
+user specifically for this purpose) rather than left to guesswork.
+
+### Land auction web-bidding, end to end (2026-08-12)
+
+`AuctionModule` was flagged during the audit above as having no
+viewer-facing protocol handlers at all - bidding was entirely
+admin-console-driven. Checked the real viewer source before building
+anything: Firestorm's `llfloaterauction.h`/`.cpp` is seller/admin
+tooling for STARTING an auction (Reset Parcel, Sell to Anyone, Start
+Auction) - there is no bidding UI in the viewer at all, and never was;
+real Second Life land auctions were always bid on through the SL
+website, not the viewer client. Given that, the user chose web-page
+bidding (matching how it actually worked) over inventing a
+non-standard in-world mechanism.
+
+Built as a full DB-backed feature, same shape as Currency/Events/
+Search this session, since Robust (serving the bid pages) and the
+region hosting the auctioned parcel are separate processes with no
+live RPC between them:
+
+- `OpenSim.Framework.LandAuctionData.cs` - new `LandAuction`/
+  `LandAuctionBid`/`LandAuctionStatus` shapes.
+- `IAuctionData` + MySQL/PGSQL/SQLite backends (`land_auctions`/
+  `land_auction_bids` tables) - `PlaceBid` is atomic: a single
+  `UPDATE ... WHERE Status=Active AND HighestBid < :amount AND
+  MinBid <= :amount` only commits (and only then inserts the bid-
+  history row) if this bid actually beats the current highest, so two
+  near-simultaneous bids resolve safely via the DB's own row lock
+  rather than a read-then-write race in application code.
+- `IAuctionService`/`AuctionService` + `LocalAuctionServiceConnector`
+  (region-side service loader, registers `IAuctionService` on the
+  scene) - exact same dual-load pattern `ICurrencyService`/
+  `IEventsService` already established.
+- `AuctionModule` rewritten to read/write through the DB instead of
+  an in-memory dictionary, and given an automatic 2-minute expiry
+  sweep (`GetExpiredActive` + close out any auction past its `EndsAt`
+  still `Active`) - without this, an auction only ever ended if an
+  admin remembered to run `land auction end`, which defeats the point
+  of letting residents bid unattended over several days. The existing
+  bug-fixed currency-charge-then-land-transfer logic (winners
+  previously never got charged - see the June auction fix elsewhere in
+  this log) is unchanged, just shared between the manual console path
+  and the automatic sweep via one `CloseAuction` helper instead of two
+  copies.
+- `WebInterfaceServiceConnector`: new `/auctions` (list active,
+  real-time highest bid) and `/auctions/bid?id=` (detail + bid form +
+  bid history) pages - this page IS the bidding mechanism, not a
+  status display. Bid submission checks amount vs. current
+  highest/minimum and the bidder's real `ICurrencyService` balance
+  before calling `PlaceBid`, for a specific error message rather than
+  a generic rejection - `PlaceBid`'s own atomic DB check is the real
+  enforcement either way.
+- Console commands extended (`land auction start <id> [min bid]
+  [days]`) rather than replaced, so admin/testing use still works
+  through the same code path a resident's web bid uses.
+
+Real gotcha caught before deploying: `OpenSim.Data.PGSQL.dll` and
+`OpenSim.Data.SQLite.dll` in the test deployment were still dated
+Aug 12 13:15 - two days stale, because neither project is part of
+`OpenSim.Region.CoreModules`'s normal build dependency chain (only
+`OpenSim.Data.MySQL` is pulled in automatically) and neither had been
+built directly since the `SearchLandForSale` price-semantics fix
+earlier this session. That fix was live in source and in the deployed
+MySQL backend, but silently never reached the PGSQL/SQLite backends
+despite the docs claiming otherwise. Built both directly this time and
+will treat "did the actual DLL get rebuilt" as its own explicit check
+going forward, not an assumption from a shared-dependency build
+succeeding.
+
+Also discovered while wiring this up: several project files
+(`OpenSim.Framework.csproj`, `OpenSim.Data*.csproj`,
+`OpenSim.Region.CoreModules.csproj`) have `EnableDefaultItems=false`,
+so new `.cs` files silently don't compile in until explicitly added as
+`<Compile Include=...>` entries - confirmed by a real
+`CS0246: LandAuction could not be found` error, not assumed. Added the
+entries rather than guessing implicit globbing would pick new files
+up.
+
+Build 0 errors across all projects (`OpenSim.Framework`, `OpenSim.Data`
++ 3 backends, `OpenSim.Services.Interfaces`, new
+`OpenSim.Services.AuctionService` project, `OpenSim.Region.CoreModules`,
+`OpenSim.Server.Handlers`). Deployed all ten changed/new DLLs to the
+stopped test grid; wired real `[AuctionService]` config into
+`Robust.HG.ini` and both regions' `OpenSim.ini` (`[Modules]
+AuctionService = LocalAuctionServiceConnector` region-side,
+`LocalServiceModule`/`StorageProvider`/`ConnectionString` on both
+sides, matching the exact `[CurrencyService]`/`[EventsService`] block
+shape already established). **Not yet live-verified** - pending the
+user's next grid restart and a real test auction.
+
+### Found the Currency audit's real bugs were still live - a second, undetected copy of the same handlers (2026-08-12)
+
+Widening the native-code inventory search beyond `Region/CoreModules`
+and `Region/ClientStack` (the earlier audit's scope) to
+`Server/Handlers` and `Services` turned up `OpenSim/Server/Handlers/
+Currency/CurrencyServerConnector.cs` - a SEPARATE, Robust-hosted
+implementation of the exact same `getCurrencyQuote`/`buyCurrency`/
+`preflightBuyLandPrep`/`buyLandPrep` XML-RPC surface already fixed
+earlier today in `ConfluenceCurrencyModule` (region-side). Its own
+class comment explains why both exist: the viewer only ever learns
+one grid-wide `[GridInfo] economy` URL at login, fixed to Robust's
+port regardless of which region the avatar is on, so a per-region-only
+registration (`ConfluenceCurrencyModule` alone) breaks the instant a
+grid has more than one region - `CurrencyServerConnector` is what
+actually answers a real viewer's currency-buy request on this
+(multi-region) grid; `ConfluenceCurrencyModule`'s copy mainly serves a
+single-process standalone deployment.
+
+This file had the identical bugs, independently:
+`HandleBuyCurrency`'s failure path never set `errorMessage`/
+`errorURI` (blank error dialogs), and `HandlePreflightBuyLandPrep`
+sent `"landuse"` instead of `"landUse"` plus the wrong `membership`
+shape - same root causes, same fixes, ported directly from the
+already-verified region-side version rather than re-deriving them.
+
+This means the original Currency audit's fixes, while correct, were
+applied to the code path a real viewer on this grid likely does NOT
+exercise - a real, concrete instance of exactly the "keep revisiting
+things already called done" pattern flagged earlier this session,
+caught by broadening the inventory search rather than assuming the
+first audit pass was complete. Build 0 errors, deployed
+`OpenSim.Server.Handlers.dll` to the stopped test grid. **Not yet
+live-verified.**
+
+### Land Sales/Events search root-cause: wrong ParcelFlags bitmask constants (2026-08-16)
+
+A real, manually-flagged-for-sale parcel (confirmed via the owner's own
+About Land screenshot) still didn't appear in Land Sales search.
+Refused to guess a fix from the observed `LandFlags` diff alone (a diff
+can contain multiple simultaneously-changed bits) - instead wrote and
+ran a standalone C# program against the real, compiled
+`OpenMetaverseTypes.dll`/`OpenMetaverse.dll` to enumerate the
+authoritative `ParcelFlags` enum values directly. Result: `ForSale =
+0x4`, `ShowDirectory = 0x1000` - `MySqlSearchData.cs`/
+`PGSQLSearchData.cs`/`SQLiteSearchData.cs` had these hardcoded as
+`0x1000`/`0x100000` respectively, wrong since before this session
+(Batch 14, the original build), not a regression from anything done
+today. Fixed all three backends, rebuilt, deployed, live-verified via
+the real parcel now appearing correctly in search.
+
+### Events search day-arrow (Today/Yesterday/Tomorrow) never filtered by day (2026-08-16)
+
+`ConfluenceSearchModule.DirEventsQuery` already parsed the viewer's
+compound `"dayToken|category|text"` query string but only ever handled
+`dayToken == "u"` (upcoming); any other token silently fell back to
+upcoming-only, so the Events tab's Date-mode arrows always returned the
+same results regardless of which day was selected. Read Firestorm's
+real `FSPanelSearchEvents::setDay()`/`find()` (`fsfloatersearch.cpp`)
+directly rather than reusing the old dead-PHP `query.php` day-token
+format assumed earlier: the real client sends a plain signed day offset
+from today (0/1/-1/...) computed in **Pacific time**, not UTC and not
+the PHP format. Added `SearchEventsByDay(text, dayStartUnix, dayEndUnix,
+start, count)` to `IEventsData`/`IEventsService`/all 3 DB backends, and
+a `GetPacificDayBoundaryUnix` helper in `ConfluenceSearchModule` that
+resolves the IANA/Windows Pacific timezone and computes the correct
+day boundary, mirroring the real client's own math.
+
+### Land Sales "Type" column - confirmed genuinely unfixable (2026-08-16)
+
+Investigated whether the search results list's "Type" column (always
+showing "(unkno...)") could be populated. Confirmed via two independent
+real sources it cannot: Firestorm's own `fsfloatersearch.cpp` only
+populates it from a `ProductSKU` wire field (a Linden-only
+billing-catalog concept), and direct reflection against this
+codebase's own compiled `DirLandReplyPacket.QueryRepliesBlock` shows
+only `ParcelID/Name/Auction/ForSale/SalePrice/ActualArea` - no
+`ProductSKU` field exists in the packet at all. Pulled LibreMetaverse's
+real, current `data/message_template.msg` (the upstream libopenmetaverse
+fork tracking Linden's actual protocol) to check whether a newer
+library would help: the `ProductSKU` field is commented out in the
+canonical spec itself (`//{ ProductSKU  Variable 1  }`) - dead at the
+protocol level even in real Second Life, not an OpenSim/library
+limitation. Every OpenSim/WhiteCore-Dev grid shows the same
+"(unkno...)" here; not a gap in this codebase.
+
+### Viewer quick-search box opened a blank "Web" search tab (2026-08-16)
+
+Traced Firestorm's navbar quick-search (`LLNavigationBar::invokeSearch`)
+and confirmed the default preference (`FSUseFSLegacySearch=false`)
+routes it to `LLFloaterDirectory` (the browser-embedded "Web" search),
+which navigates to the grid's advertised `SearchURL` with `[QUERY]`
+substituted in. `[LoginService] SearchURL` in `Robust.HG.ini` already
+pointed at the right route (`/search`) but had no `?q=[QUERY]`
+appended, so it always opened a blank search page regardless of what
+was typed - confirmed `/search`'s own handler already auto-executes a
+real search from a `q` query-string param, so this was a one-line
+config fix (`SearchURL = "...:${Const|PublicPort}/search?q=[QUERY]"`).
+
+### Land Sales Teleport/Map hung on "Loading..." forever - wrong parcel ID format (2026-08-16)
+
+Real bug, found by reading the actual client/server request flow, not
+guessed: clicking a Land Sales result sends a UDP `ParcelInfoRequest`
+carrying whatever UUID `DirLandReply` returned as `parcelID`.
+`ConfluenceSearchModule.DirLandQuery` was returning the real database
+parcel UUID, but stock `LandManagementModule.ClientOnParcelInfoRequest`
+decodes that UUID via `Util.ParseFakeParcelID` - a region-handle+local-
+x/y encoding baked into the UUID bytes, not a raw database key. Parsing
+a real UUID fails validation, and the server silently drops the request
+(`"got no parcelinfo; not sending"`) with no reply at all - exactly why
+the detail pane and Teleport/Map hung indefinitely. Fixed by enriching
+`SearchLandForSale` (all 3 DB backends) with the same `RegionName`/
+`LandingX/Y/Z` columns `SearchPlaces` already selects, and building a
+real `Util.BuildFakeParcelID(regionHandle, localX, localY)` in
+`DirLandQuery` - the same encoding `LandObject.cs`'s own `LandData.FakeID`
+already uses. First live test showed a parcel resolving to its
+region's raw corner `(0,0,0)` instead of somewhere sensible - root
+cause: `UserLocationX/Y` (the About Land landing point) defaults to 0
+when never explicitly set, and 0,0 is the region's own corner, not "the
+parcel." The parcel's real shape (its `Bitmap` blob) isn't fetched by
+this query, so a guaranteed-inside-the-parcel point isn't cheaply
+available - falls back to the region's center when landing is unset,
+an honest improvement over the corner rather than a disguised guess at
+the parcel's true shape.
+
+### Events/Classifieds Teleport/Map - EventItem and web-created classifieds had no real position (2026-08-16)
+
+`EventInfoRequest` already existed but never set `EventData.globalPos`
+at all (`EventItem` had no position field), so Teleport/Map would have
+sent residents to the grid origin. Checked the old, proven OpenSimSearch
+addon's own `EventInfoRequest` first per established practice - it
+already solved this exact problem via a `"globalposition"` field parsed
+with `Vector3.TryParse`, the same pattern this codebase's own
+`UserClassifiedAdd.GlobalPos`/`ClassifiedInfoRequest` already uses.
+Added `EventItem.GlobalPos` (DB migration on all 3 backends), a Region
+`<select>` on both the admin and self-service "create event" forms
+(computing a real global position from the chosen region's actual grid
+coordinates), and fixed `EventInfoRequest` to parse it the same way
+`ClassifiedInfoRequest` already does.
+
+While in there, found a second, separate, real bug: the self-service
+"post a classified" form (`HandleMyClassifiedsSave`) hardcoded every
+listing's position to `ad.GlobalPos = "<128,128,25>"` regardless of
+which region was actually picked - only ever correct for a region
+sitting at the grid's own origin (0,0); every other region's classifieds
+had Teleport/Map pointing at the wrong place, confirmed live via a real
+"Invalid Location" map result and `Teleport failed` error. Fixed the
+same way - compute the real global position from the chosen region's
+`RegionLocX/Y` (already in meters, confirmed via `IGridService`'s own
+"DANGER DANGER" doc comment that this differs from `RegionInfo`'s
+same-named fields). Both fixes only apply going forward - pre-existing
+events/classifieds keep their old broken position until edited and
+re-saved through the fixed form (or fixed directly via SQL, done once
+for the live test data to unblock testing).
+
+### MoneyServer had the same currency bugs already fixed in ConfluenceCurrencyModule (2026-08-16)
+
+Per explicit instruction to check independent/addon modules for the
+same class of bug even though this grid doesn't use them: `OpenSim-Grid-
+MoneyServer`'s `preflightBuyLandPrep` was missing `currency`/
+`membership`/`landUse` entirely (worse than Confluence's own earlier
+mis-cased version), and `buyCurrency` only ever set a `message` field
+the real viewer never reads for failures - confirmed via
+`llcurrencyuimanager.cpp`/`llfloaterbuyland.cpp` that Firestorm reads
+`errorMessage`/`errorURI` and `result["membership"]`/`result["landUse"]`
+directly, so both bugs produced the same class of user-facing failure
+(blank error dialog; Buy Land dialog silently missing upgrade info) as
+the already-fixed Confluence code. Fixed both to the same validated
+shape. Separately checked whether the addon-modules `OpenSimSearch`
+carries the Land-Sales fake-parcel-ID bug above - it doesn't, because
+its `DirLandQuery` passes through whatever `parcel_id` the external
+`helper/query.php` PHP backend returns rather than constructing one
+itself; that PHP script isn't part of this repository, so its
+correctness (or lack of it) is out of reach from here.
+
+### Automatic cleanup for ended events (2026-08-16)
+
+Per explicit request (DB bloat concern - nothing previously deleted an
+event once it ended, only filtered it out of "upcoming" queries). Added
+`IEventsData.DeleteExpired(int nowUnix)` (all 3 backends, deletes by
+real end time = `EventDate + DurationMinutes*60`, never mid-event) and
+a `System.Timers.Timer` sweep in `EventsService`'s constructor - same
+shape as `AuctionModule`'s own `m_expirySweepTimer`, 10-minute interval
+(pure housekeeping, no user-facing deadline to honor promptly unlike an
+auction actually needing to close on time).
+
+### Real gotcha: incremental solution build silently skipped a changed project (2026-08-16)
+
+After adding `DeleteExpired`, `dotnet build OpenSim.sln -c Release`
+reported "Build succeeded, 0 errors" but `bin/OpenSim.Services.
+EventsService.dll` was never actually rebuilt - confirmed by its file
+timestamp/size being unchanged and, at region startup, a real
+`System.TypeLoadException: Method 'DeleteExpired' ... does not have an
+implementation` (the interface assembly had the new method, the
+implementation assembly didn't - a version-skew MSBuild incremental
+bug, not a code error). This produced a confusing "works, doesn't work,
+works, doesn't work" cycle across several deploys before being caught.
+Fixed by forcing `dotnet build OpenSim.sln -c Release --no-incremental`
+and independently confirming via C# reflection against both the built
+`bin/` copy and the actual deployed file that `DeleteExpired` was
+really present, rather than trusting the build log alone. Going
+forward: for any fix where a repeat of this exact failure mode would be
+costly to re-diagnose, verify the compiled output by reflection, not
+just a successful build message.
+
+### Deploy process fix: full `bin/` sync instead of cherry-picked files (2026-08-16)
+
+Several rounds of deploying only the specific DLLs believed to have
+changed let the live grid and the local build silently drift apart -
+one instance caused a real `MissingMethodException` at runtime for a
+DLL (`OpenSim.Services.Interfaces.dll`) that was never copied because
+it wasn't recognized as "one of the changed files." A full sweep
+comparing every DLL in `bin/` against the deployed grid found 87 (later
+144-file) mismatches at once. Adopted a standing rule for the rest of
+this session and going forward: whenever deploying to the test grid,
+copy every `.dll`/`.exe` in `bin/` to the deployed directory and verify
+byte-for-byte (md5) afterward, rather than reasoning about which
+specific files "should" have changed.
+
+All of the above: build 0 errors, full `bin/` sync deployed to the
+stopped test grid, byte-for-byte verified, and live-confirmed working
+by the user - Land Sales search/Teleport/Map, Events search (keyword +
+Date-mode day arrows)/Teleport/Map, Classifieds Teleport/Map, and the
+viewer's quick-search box are all now real, tested, working features,
+not just "should work" fixes.
+
+### Upstream audit: opensim/opensim + OpenSim-Tranquillity - three real security/correctness bugs found and ported (2026-08-16)
+
+Per the user's advisory that both upstream repos had updated, pulled
+both local clones (`S:\Github\opensim-master`, `S:\Github\OpenSim-
+Tranquillity`) and diffed recent commits rather than assuming relevance.
+`opensim/opensim` master was unchanged (identical commit hash to the
+existing local checkout). `OpenSim-Tranquillity`'s `develop` and
+`release/v1.0` both had real recent activity (24 and 14 commits in the
+last 30 days respectively). Checked each commit for applicability to
+this codebase rather than porting wholesale; most were infrastructure
+(dotnet10 SDK bump, ASP.NET-hosted-services refactor, NBGV versioning,
+log4net newline formatting) or Phlox-specific (a new LSL/SLua engine
+Confluence never integrated - confirmed via a repo-wide filename search
+turning up zero `Phlox*` files anywhere in this tree, so those fixes
+don't apply here). Three did apply, confirmed present in this codebase
+before porting the exact same fix rather than re-deriving it:
+
+- **SQLite CVE - checked, not applicable.** Tranquillity migrated off
+  `Microsoft.Data.Sqlite` after a "critical vulnerability... fixed
+  upstream in System.Data.SQLite." Confirmed via grep that this
+  codebase never referenced `Microsoft.Data.Sqlite` anywhere - already
+  exclusively on `System.Data.SQLite`. Not exposed; no change needed.
+- **Dead estate `DenyIdentified`/`DenyTransacted` access enforcement**
+  (Tranquillity PR #188). Both bits were commented out as "unused" in
+  `GetRegionFlags()` - so `EstateSettings.DenyIdentified`/
+  `DenyTransacted` were correctly stored but never actually folded into
+  the region-flags bitmask - and the `RegionDenyIdentified`/
+  `RegionDenyTransacted` capability fields the viewer actually enforces
+  client-side access restrictions against were hardcoded `false`
+  regardless of estate configuration. Confirmed byte-for-byte identical
+  dead code in `LLClientView.cs`. Any estate admin who believed they'd
+  enabled "deny access to unidentified/unverified residents" or "...
+  without payment info on file" was getting zero real enforcement.
+  Fixed both halves the same way Tranquillity did.
+- **Land-for-sale map overlay checked `SalePrice > 0` instead of the
+  `ForSale` flag** (Tranquillity PR #189), in `LandManagementModule.cs`'s
+  `LAND_TYPE_IS_FOR_SALE` classification (the world-map "for sale"
+  parcel color, a different code path from this session's own
+  `SearchLandForSale`/`ForSaleFlag` fix). Since every parcel defaults to
+  `SalePrice = 0`, a genuinely free parcel with `ForSale` actively set
+  would never render as purchasable. Confirmed the identical bug present
+  here; fixed the same way.
+- **Hypergrid asset-export permission gap** (Tranquillity PR #187), in
+  `HGInventoryAccessModule.cs`. Two parts: `OutboundPermission` defaulted
+  to `true` (default-allow HG export unless an admin explicitly opted
+  out), and the per-item `PermissionMask.Export` bit was never checked
+  at all on outbound transfers - meaning a creator's explicit "do not
+  allow export" setting was silently ignored on every Hypergrid
+  transfer. Confirmed via `grep` that Casperia-Dev's actual deployed
+  config has `OutboundPermission` commented out everywhere (relying on
+  the default), so this is a real behavior change on this specific
+  grid, not just a latent code fix - flagged to the user for that
+  reason. Fixed both halves: default flipped to `false` (deny-by-default,
+  matching Tranquillity), and outbound transfers now also require
+  `item.CurrentPermissions & PermissionMask.Export`.
+
+One build hiccup: `PermissionMask` is ambiguous between
+`OpenSim.Framework.PermissionMask` and `OpenMetaverse.PermissionMask`
+(same class of ambiguity as `GridRegion` hit earlier this session) -
+resolved by fully qualifying `OpenSim.Framework.PermissionMask.Export`.
+Full solution build with `--no-incremental` (0 errors, per the gotcha
+documented above), full `bin/` sync deploy, 144/144 byte-verified.
+**Not yet live-tested** - these are security-posture fixes, not
+something with an obvious in-viewer test; recommend confirming after
+deploy that Hypergrid export and estate deny-access settings behave as
+expected on a real test case before relying on them.
+
+### WebUI content-parity rebuild + live tester round (2026-08-16)
+
+Continued the page-by-page WebUI rebuild against the real OGI reference
+site (per the earlier content-parity decision - keep the C#-generated
+architecture, but audit each page against real reference content rather
+than inventing copy). Real user-confirmed facts about this grid's own
+stack (Powered By / Membership Perks / Community Extras) were made
+admin-configurable via Grid Settings rather than hardcoded, hidden
+entirely when unset. Destinations (browse/teleport) and World Map
+(Leaflet) were wrongly merged in an earlier pass - split into separate
+pages/routes. Added: public `/gridstatus` (online now, regions,
+accounts, new-accounts-7d, land area, service status - matters for
+Hypergrid Business discovery, per the real `get_grid_info` spec field
+names, also fixed this session: lowercase `search`/`message`, not the
+previously-wrong key names); resident-to-resident web messaging
+(inbox/sent/compose, distinct from the existing offline-IM viewer);
+public `/economy` dashboard (grid totals, top-balances leaderboard,
+recent transactions). Ported `ICurrencyData` to PGSQL and SQLite (was
+MySQL-only since Batch 12 - "isn't cross-DB support the whole point?").
+Region restart wired for both residents (own regions, via My Regions)
+and admins (any region, via the new dedicated Admin > Region Management
+page) through the existing `[WebConsole]` shared-secret relay - the same
+mechanism already live-proven for Kick/Message. User Management and the
+new Region Management page both fixed to show all results on a blank
+search (previously showed nothing) with pagination. Header/sidebar
+polish: dropdown Explore/Grid Info nav groups, colorized sidebar icons
+(rotating `ic-*` utility classes), grey-to-white body text, larger base
+font size. `welcome.php` trimmed to fit the viewer's small embedded
+window without scrolling.
+
+Build-number versioning restored (grid operator's prior convention:
+build # = commits ahead of real `opensim/opensim` upstream) via a new
+`GenerateGitVersionInfo` MSBuild target baked in at build time (works in
+a deployed `bin/` with no `.git` present) - added as a separate
+`DisplayVersionNumber`/`BuildCommitHash` const rather than touching
+`VersionInfo.VersionNumber` itself, which
+`[assembly:AddinRoot("Robust", ...)]` depends on for every addon
+module's Mono.Addins compatibility check (the display-only hash was
+later dropped from the default string per feedback - an all-digit short
+hash reads as a confusing number, not a recognizable commit id - kept
+available separately for a hover tooltip).
+
+Added real dollar-based purchase caps to the native currency ledger
+(`CurrencyService.RecordPurchase`, daily $500 / weekly $2000 / monthly
+$5000, rolling windows not calendar boundaries, each cap individually
+disable-by-0) after a live tester purchase went through ungated - a real
+parity gap versus the old DTLNSLMoneyModule/MoneyServer, which had
+configurable purchase limits Confluence's ledger never got an equivalent
+for when Batch 12 made it the default. Pure internal change to
+`CurrencyService.cs`, no interface touched - scoped single-project
+deploy, confirmed effective via a direct `currency_purchases` table
+query (not just "the code looks right").
+
+**Live incident: land-buy hang.** Mid-session, the live tester (told to
+"break it, both the website and inworld") got stuck: Buy Land in
+Firestorm hung forever on "(waiting for data)" with a blocking modal he
+couldn't close, reproducible even after a fresh relog. Immediate
+workaround given (force-kill the viewer process). Root-cause hunt, two
+leads chased and both ruled out rather than assumed:
+
+- **Gloebit handler collision (ruled out).** `GloebitMoneyModule.cs`
+  registers the identical `preflightBuyLandPrep`/`getCurrencyQuote`/
+  `buyCurrency`/`buyLandPrep` XML-RPC method names as
+  `ConfluenceCurrencyModule`, in the same region process, gated only by
+  `if (m_scenel.Count == 0)` in `AddRegion` - looked like a real
+  collision risk. But `m_enabled` requires *both*
+  `economymodule = Gloebit` *and* `[Gloebit] Enabled = true`; this grid
+  has neither (`economymodule = ConfluenceCurrencyModule`,
+  `Gloebit.ini Enabled = false`). Confirmed via the region log, every
+  startup: `[GLOEBITMONEYMODULE] region not loaded as not enabled`. Dead
+  end - the earlier `Plugin Loaded: Gloebit` log line only meant
+  Mono.Addins loaded the DLL, not that it activated.
+- **Server-side hang (ruled out).** Traced the viewer's actual request
+  target: the login response's `economy` field
+  (`${Const|BaseURL}:${Const|PublicPort}/` = port 9002, Robust's
+  `CurrencyServiceConnector`, not any region's own port - the class
+  comment there explains why: a multi-region grid needs one stable
+  grid-wide URL, not a per-region one). Replayed the exact
+  `preflightBuyLandPrep` XML-RPC request Firestorm sends against both
+  `localhost:9002` and the real external
+  `holodeckgrid.ddns.net:9002/currency.php` - both returned a complete,
+  correctly-shaped response (`success`/`currency.estimatedCost`/
+  `membership.*`/`landUse.*`/`confirm`) in milliseconds. Server side is
+  healthy; this was not a hang or a missing/wrong-port handler.
+- **`estimatedCost` always 0 - not a bug.** Initially flagged as a real
+  bug (hardcoded regardless of actual price); on closer look, upstream
+  OpenSim's own reference `SampleMoneyModule.preflightBuyLandPrep_func`
+  hardcodes it to 0 too. That field is for a "buy more L$ to cover this"
+  upsell prompt Confluence doesn't offer, not the land price itself -
+  the real price/debit is a separate path
+  (`OnValidateLandBuy`/`OnLandBuy` -> `ProcessLandBuy`, using
+  `e.parcelPrice` directly) that already works correctly. No change
+  made.
+
+While the grid was shut down for the tester to retry, took the
+opportunity to fully re-verify the deploy rather than trust incremental
+state: fresh `git fetch origin master` reconfirmed 221 commits ahead / 3
+behind (unchanged from the last check - nothing new merged either
+direction), full solution rebuild (0 warnings, 0 errors), full `bin/`
+sync, 145/145 files byte-verified via md5 against the live grid
+directory.
+
+**Land-buy hang recurred anyway - real root cause found.** Despite a
+clean rebuild/redeploy and a fresh account (also tried with the
+tester's account dropped from UserLevel 200/god back to 0, to rule out
+god-mode taking a different client-side path - it didn't help), the
+exact same hang happened again. Pulled the complete unfiltered log for
+the exact window of a real attempt (not keyword-filtered this time)
+from both Robust and the region - genuinely zero trace of the request
+anywhere, confirming it wasn't reaching either server at all, which the
+earlier ruled-out leads didn't explain.
+
+Root cause found by checking the actual Firestorm viewer source
+(`S:\Github\phoenix-firestorm`, a local checkout) instead of continuing
+to infer behavior from an old code comment. `llcurrencyuimanager.cpp`
+(`getCurrencyQuote`/`buyCurrency`) posts to
+`<helper_uri>currency.php`, exactly as assumed and already verified
+working. But `llfloaterbuyland.cpp`'s `startTransaction` - a *different*
+source file, used for `preflightBuyLandPrep`/`buyLandPrep` specifically
+- posts to `<helper_uri>` + **`landtool.php`**, under a
+`<COLOSI opensim multi-currency support>` marker: a Firestorm-side
+OpenSim-compatibility patch that splits land-buy onto its own endpoint.
+Neither `ConfluenceCurrencyModule` nor Robust's `CurrencyServerConnector`
+ever registered anything at `/landtool.php` - only `/currency.php` -
+so every land-buy request was hitting a path with no handler at all.
+That explains everything at once: zero log trace (never dispatched to
+any handler that logs), `getCurrencyQuote`/`buyCurrency` working fine
+throughout (different path), and the direct `/currency.php` tests
+looking perfectly healthy while real land-buy attempts still hung -
+they were never testing the actual path in use.
+
+Confirming evidence this is a known real split, not a one-off: the
+legacy `OpenSim-Grid-MoneyServer` addon already registers *both*
+`/currency.php` and `/landtool.php` (`MoneyXmlRpcModule.cs`) - whoever
+built that addon already knew about this; `ConfluenceCurrencyModule`
+and the Robust connector, modeled more directly on
+`SampleMoneyModule` (which only has the bare-root/`/currency.php`
+path), simply never carried it over.
+
+Fixed by registering the same four-method handler dictionary at
+`/landtool.php` too, identically to the existing `/currency.php`
+registration, in both `ConfluenceCurrencyModule.cs` (region-local copy)
+and `CurrencyServerConnector.cs` (Robust, the one the viewer actually
+reaches per its `helper_uri`). No interface touched - scoped build of
+just `OpenSim.Server.Handlers` and `OpenSim.Region.CoreModules` (0
+errors each), both DLLs deployed and byte-verified while the grid was
+down for this exact purpose.
+
+**Live-confirmed fixed.** Tester retried (as a plain UserLevel-0
+resident, not god-moded) and completed the land purchase successfully.
+Root cause and fix both hold up under a real transaction, not just a
+synthetic XML-RPC test.
+
+### prebuild.xml missing 10 custom service projects (2026-08-16)
+
+Found while trying to organize this session's uncommitted work into
+logical commits: `EventsService`, `SearchService`, `CurrencyService`,
+`StaticPageService`, `NewsService`, `GridSettingsService`,
+`SupportTicketService`, `RegionHGService`, `AuctionService`, and
+`MessagingService` all had real, working, deployed `.dll`s - but no
+`<Project>` stanza in `prebuild.xml` at all. Since `*.csproj` and
+`OpenSim.sln` are both gitignored by design (`prebuild.xml` +
+`runprebuild.bat` is meant to be the actual source of truth,
+regenerating them), everything only worked because the already-generated
+files on disk happened to already reference these ten - a fresh clone or
+routine regeneration would have silently dropped every one of them from
+the solution, with no error, just missing DLLs at deploy time. Not new
+to this session; been accumulating since whichever batch first added
+each one.
+
+Fixed by adding proper `<Project>` stanzas for all ten (reference set
+modeled on `OpenSim.Services.UserProfilesService`, the closest existing
+analog, trimmed to what each actually needs per its own `using`
+statements). Backed up the current `.csproj`/`.sln` set first since
+regenerating would overwrite them with no git history to fall back
+on if something went wrong.
+
+Regenerating exposed a second, related fragility: it silently wiped
+`OpenSim.Framework.csproj`'s hand-added `GenerateGitVersionInfo` target
+(this session's build-number versioning work) - Prebuild's schema has
+no way to express a custom MSBuild `<Target>`, so that block can never
+survive a regeneration by design, not by accident. Re-added it by hand
+and left warning comments in both `prebuild.xml` and the `.csproj`
+itself pointing at each other, so this doesn't have to be
+re-discovered the same way next time. Full solution rebuild afterward:
+0 errors across all 95 projects (85 pre-existing + the 10 newly wired
+in), version target confirmed still generating the real
+`221`/`5059134619` values, not falling back to defaults. Not deployed
+to the live grid - this is a build-infrastructure correctness fix with
+no runtime behavior change, so it can just sit in source until the next
+real deploy.

@@ -1,9 +1,10 @@
 # OpenSim-Confluence vs. upstream OpenSim master
 
 Generated from `git log origin/master..merge-experiment --oneline --no-merges`
-(215 commits ahead of `opensim/opensim@master` as of 2026-08-08). Regenerate
-with that command if this drifts — git is the source of truth, this is just
-a categorized read of it.
+(221 commits ahead of `opensim/opensim@master`, re-verified via a fresh
+`git fetch` as of 2026-08-16; also 3 commits behind, unrelated to this
+fork's own work and not yet merged). Regenerate with that command if this
+drifts — git is the source of truth, this is just a categorized read of it.
 
 **Naming note (2026-08-11):** this project's repo, code, and branding
 were renamed to "OpenSim-Confluence" — the original name was only ever
@@ -144,7 +145,16 @@ verdict on WebInterface as retracted.
 - **Land Auction** — a real bid-based parcel auction flow. Confluence had
   `AuctionID`/`SnapshotID` fields on `LandData` but no working mechanism
   behind them. Ported as a self-contained module with console-driven
-  start/bid/end/show commands.
+  start/bid/end/show commands. Extended 2026-08-12 to real web-bidding
+  (`/auctions`, `/auctions/bid`) after checking Firestorm's actual
+  `llfloaterauction.cpp` source confirmed the viewer has no in-world
+  bidding UI at all (only admin tooling to start an auction) - real SL
+  auctions were always bid on through the website, so this page now
+  IS the bidding mechanism, not a status display. Fully DB-backed
+  (`land_auctions`/`land_auction_bids`, 3 backends, atomic highest-bid
+  check) with an automatic 2-minute expiry sweep so auctions close
+  themselves rather than needing an admin to remember `land auction
+  end`. See PROJECT_LOG.md for the full build.
 - **Team Combat** — team membership, a shared combat respawn point,
   teleport-block while in combat, and configurable health regen for team
   members. Reduced in scope from WhiteCore's original specifically to
@@ -614,7 +624,13 @@ live-verified:
   `default:`-branch prefix routing since slugs aren't a fixed route
   list. Live-verified including the slug-collision guard actually
   rejecting a real duplicate and a live slug rename - see
-  PROJECT_LOG.md.
+  PROJECT_LOG.md. Extended 2026-08-12 with WhiteCore-Dev-precedented
+  nav-wiring (`ShowInNav`/`NavOrder`/`RequiresLogin`/`RequiresAdmin`,
+  scope-trimmed from WhiteCore's fuller `page_manager.html` field set -
+  no submenu nesting, no graduated admin levels) so admin-created pages
+  can place themselves directly into the site nav instead of only being
+  reachable by direct URL. Live-verified end-to-end including the
+  `RequiresAdmin` visibility gate - see PROJECT_LOG.md.
 - **Grid settings editor (`/admin/settings`, 2026-08-10)**:
   live-editable grid name/nickname/welcome message plus a genuinely new
   toggle - whether self-registration is open at all (didn't exist
@@ -695,7 +711,19 @@ PHP grid portal) where WhiteCore had nothing:
   verbatim. Required adding a `CreatorId` field to `EventItem`
   (`GridEventData.cs`) to distinguish resident-owned from admin-owned
   events — live-verified via a full create → list → splash-widget →
-  ownership-boundary-403 → owner-delete curl round trip.
+  ownership-boundary-403 → owner-delete curl round trip. Enriched
+  2026-08-12 after the profile page was called out as "really super
+  basic" against OpenSim-Grid-Interface's own `profile.php`: friend
+  count, website/language/skills/wants-to (real `UserProfileProperties`
+  fields that already existed server-side but were never rendered),
+  Picks upgraded from bare names to full descriptions via
+  `PickInfoRequest`, and a new Classifieds section via
+  `AvatarClassifiedsRequest`/`ClassifiedInfoRequest`. Profile/first-life
+  snapshot images deliberately still skipped (same JPEG2000/asset-server
+  texture-fetch gap as Featured Classifieds). Built clean but **not
+  live-verified** — an unrelated pre-existing Robust startup hang
+  blocked deployment; see PROJECT_LOG.md for the isolation trail
+  (confirmed not caused by this change).
 - **Announcement banner** (Grid Settings toggle, rendered on
   Home/Welcome) and **admin login-as-user**: both live-verified via
   real settings saves and a real session-cookie mechanism check.
@@ -765,6 +793,72 @@ limitation: the temp ban's auto-expiry only takes effect via the web
 login/admin-page paths, not the actual grid/viewer login
 (`LLLoginService`) on its own timer. Full detail in PROJECT_LOG.md's
 "Admin features, round two" entry.
+
+**Polish, round one (2026-08-12):** with feature coverage against
+WhiteCore-Dev settled, split the home page (marketing/sign-up pitch,
+full site chrome) from the in-viewer login splash (live grid status -
+announcement, economy, events, news - no site chrome, since a viewer's
+embedded browser panel has nowhere useful to navigate to). Added a new
+first-draft Help page (`/help`) and made it and the About static page
+chrome-free the same way. Also fixed `[GridInfoService]`'s
+`about`/`register`/`help`/`password` keys, which still pointed at the
+old PHP site's filenames and would have 404'd from a viewer's menus.
+Full detail in PROJECT_LOG.md's "WebUI polish, round one" entry.
+
+**Native Destination Guide (2026-08-12):** built `/guide` - a real,
+search-backed Popular/Featured/Discover places browser for a viewer's
+Destinations floater, wired via `[GridInfoService] DestinationGuide`
+(previously commented out, pointing at the old PHP site's `guide.php`
+when it was enabled). Required extending `ISearchService`/
+`ISearchData` (all three DB backends) with region/landing-point/
+description/category fields on `LandSearchRecord` plus a new
+`GetFeaturedPlaces` method - real data that existed in the `land`
+table but was never projected into a query result before. Full detail
+in PROJECT_LOG.md's "Native Destination Guide" entry. Also fixed a
+second `DestinationGuide` key in `[LoginService]` (the one that
+actually matters - it's what a viewer's login response carries, not
+the `[GridInfoService]` one, which only feeds `get_grid_info`) that
+the first pass missed entirely.
+
+**WhiteCore-Dev static-asset re-audit (2026-08-12):** a full read of
+all 84 real files under WhiteCore-Dev's `bin/html/` (prompted by the
+splash/help work above not having consulted them first) found two
+real, previously-missing splash-screen widgets - grid status
+(regions/accounts/online-now/currency) and a region thumbnail/
+teleport list - now added to `HandleWelcome`. Also surfaced two small,
+real, not-yet-built gaps with no Confluence equivalent anywhere: a
+region-profile detail view and a "Picks" favorite-places list on
+resident profiles. Full detail in PROJECT_LOG.md's "WhiteCore-Dev's
+real WebUI static assets, re-audited" entry.
+
+**Browser vs. viewer-embedded search, superseded same day:** initially
+split into `/search` (full chrome) and a separate `/websearch` (bare
+chrome) since a single URL was wrongly assumed unable to tell the two
+contexts apart. Corrected once a real detection mechanism was found
+(see below) - `/websearch` retired, one `/search` URL again.
+
+**Real viewer-vs-browser detection (2026-08-12):** ported
+`OpenSim-Grid-Interface/include/viewer_context.php`'s
+`os_detect_viewer()` - the `X-SecondLife-*` headers a viewer's embedded
+browser genuinely attaches to every request, not a guess - into a
+`WriteAdaptivePage` helper. `/page/about`, `/help`, `/search`,
+`/welcome.php`, and `/guide` all now pick full or bare chrome per real
+request instead of needing a separate route or always defaulting to
+one. Full detail in PROJECT_LOG.md's "Real viewer-vs-browser
+detection" entry.
+
+**Vendored Bootstrap Icons + real icon/hover-effect pass (2026-08-12):**
+the WebUI's plain-text presentation was a real gap against both
+competing grids and the user's own much more mature
+`OpenSim-Grid-Interface` project, which standardizes on Bootstrap
+Icons across its whole site. Vendored the real MIT-licensed Bootstrap
+Icons distribution as embedded resources (no CDN, no runtime network
+dependency) with a new `/static/*` asset route, added icons to every
+header nav link, and rebuilt `/features` with icon-headed hover-lift
+cards, colored status pills, and two new sections (Region
+Configuration Options, Economy & Currency) - the rest of the ~40-page
+WebUI has not been touched yet. Full detail in PROJECT_LOG.md's
+"Vendored Bootstrap Icons" entry.
 
 ## Experience Tools
 - `IExperienceService` wired into prebuild (`d6ff664893`), StolenRuby
