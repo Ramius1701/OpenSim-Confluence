@@ -5996,7 +5996,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "A timed ban auto-clears back to Active the next time the account tries to log in - including the real grid/viewer login, not just this page or the web login form.</p>"
                             + "<form method=\"post\" action=\"" + BasePath + "/admin/users/set-level\">"
                             + "<input type=\"hidden\" name=\"principal_id\" value=\"" + account.PrincipalID + "\">"
-                            + "<input type=\"hidden\" name=\"user_level\" value=\"" + (account.UserLevel == AccountBanHelper.BannedUserLevel ? "0" : AccountBanHelper.BannedUserLevel.ToString()) + "\">"
+                            + "<input type=\"hidden\" name=\"user_level\" value=\"" + (account.UserLevel == AccountBanHelper.BannedUserLevel ? "UNBAN" : AccountBanHelper.BannedUserLevel.ToString()) + "\">"
                             + (account.UserLevel == AccountBanHelper.BannedUserLevel
                                 ? string.Empty
                                 : "<label>Ban duration (hours, blank = permanent): <input type=\"number\" name=\"ban_hours\" min=\"1\"></label> ")
@@ -6114,13 +6114,40 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 Dictionary<string, string> form = ReadForm(request);
                 principalId = FormValue(form, "principal_id");
+                string userLevelRaw = FormValue(form, "user_level");
 
-                if (UUID.TryParse(principalId, out UUID principalID) && int.TryParse(FormValue(form, "user_level"), out int userLevel))
+                if (UUID.TryParse(principalId, out UUID principalID))
                 {
-                    userLevel = Math.Clamp(userLevel, DeletedUserLevel, 250);
                     UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, principalID);
-                    if (account != null)
+
+                    // The "Unban this user" button sends this sentinel
+                    // instead of a literal level, so the level it restores
+                    // to is computed here from whatever was recorded right
+                    // before the ban, rather than being baked into the HTML
+                    // form as a hardcoded 0 - a banned admin (UserLevel 200+)
+                    // would otherwise get silently downgraded to an ordinary
+                    // account on unban, same bug ClearExpiredBan used to have.
+                    if (account != null && userLevelRaw == "UNBAN")
                     {
+                        account.UserLevel = AccountBanHelper.GetPreBanLevel(m_UserProfilesService, principalID) ?? 0;
+                        message = m_UserAccountService.StoreUserAccount(account)
+                                ? "User unbanned."
+                                : "Failed to unban user.";
+                        AccountBanHelper.SetBanExpiry(m_UserProfilesService, principalID, null);
+                        AccountBanHelper.SetPreBanLevel(m_UserProfilesService, principalID, null);
+                    }
+                    else if (account != null && int.TryParse(userLevelRaw, out int userLevel))
+                    {
+                        userLevel = Math.Clamp(userLevel, DeletedUserLevel, 250);
+
+                        // Record the level this account is about to lose,
+                        // but only on the transition INTO a ban - re-banning
+                        // an already-banned account (or a manual edit that
+                        // happens to land on -1 again) must not clobber the
+                        // real pre-ban level with -1.
+                        if (userLevel == AccountBanHelper.BannedUserLevel && account.UserLevel != AccountBanHelper.BannedUserLevel)
+                            AccountBanHelper.SetPreBanLevel(m_UserProfilesService, principalID, account.UserLevel);
+
                         account.UserLevel = userLevel;
                         message = m_UserAccountService.StoreUserAccount(account)
                                 ? "User level updated."
@@ -6133,10 +6160,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                         }
                         else
                         {
-                            // Any other level change (unban, permanent ban,
-                            // manual level edit) clears a stale expiry so it
-                            // can't resurrect a ban that was already lifted.
+                            // Any other level change (permanent ban, manual
+                            // level edit) clears a stale expiry/pre-ban
+                            // level so they can't resurrect or misapply
+                            // themselves against a later, unrelated ban.
                             AccountBanHelper.SetBanExpiry(m_UserProfilesService, principalID, null);
+                            AccountBanHelper.SetPreBanLevel(m_UserProfilesService, principalID, null);
                         }
                     }
                 }

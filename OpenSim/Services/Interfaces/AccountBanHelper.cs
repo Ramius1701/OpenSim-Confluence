@@ -78,12 +78,48 @@ namespace OpenSim.Services.Interfaces
             profilesService.SetUserAppData(data, ref result);
         }
 
+        // What UserLevel the account had right before it was banned, so
+        // unbanning (whether by the admin button or by expiry) can restore
+        // it instead of dropping every unbanned account to a flat 0 - this
+        // matters for anyone above the ordinary resident level (an estate
+        // manager, a grid admin) who gets banned. Same storage pattern as
+        // BanExpiryTag. Absent means "unknown/never recorded" - callers
+        // should fall back to 0 only in that case, e.g. for accounts banned
+        // before this existed.
+        public static readonly UUID PreBanLevelTag = new UUID("9b1f9b1a-0000-4a00-8000-000000000004");
+
+        public static int? GetPreBanLevel(IUserProfilesService profilesService, UUID userId)
+        {
+            if (profilesService == null)
+                return null;
+
+            UserAppData data = new UserAppData { UserId = userId.ToString(), TagId = PreBanLevelTag.ToString() };
+            string result = string.Empty;
+            profilesService.RequestUserAppData(ref data, ref result);
+
+            return int.TryParse(data.DataVal, out int level) ? level : (int?)null;
+        }
+
+        public static void SetPreBanLevel(IUserProfilesService profilesService, UUID userId, int? level)
+        {
+            if (profilesService == null)
+                return;
+
+            UserAppData data = new UserAppData { UserId = userId.ToString(), TagId = PreBanLevelTag.ToString() };
+            string result = string.Empty;
+            profilesService.RequestUserAppData(ref data, ref result);
+            data.DataKey = "PreBanLevel";
+            data.DataVal = level.HasValue ? level.Value.ToString() : string.Empty;
+            profilesService.SetUserAppData(data, ref result);
+        }
+
         // Called wherever an account's UserLevel is read for a login/admin
         // decision - a temp-banned account whose timer has run out reverts
-        // to Active on this check rather than needing an admin to manually
-        // unban it. Returns true if it just cleared an expired ban (callers
-        // that already loaded the account's old UserLevel into a local
-        // should re-check after calling this).
+        // to whatever level it had before the ban (or 0 if that was never
+        // recorded) rather than needing an admin to manually unban it.
+        // Returns true if it just cleared an expired ban (callers that
+        // already loaded the account's old UserLevel into a local should
+        // re-check after calling this).
         public static bool ClearExpiredBan(UserAccount account, IUserAccountService accountService, IUserProfilesService profilesService)
         {
             if (account == null || account.UserLevel != BannedUserLevel || accountService == null)
@@ -93,9 +129,10 @@ namespace OpenSim.Services.Interfaces
             if (expiry == null || expiry.Value > DateTime.UtcNow)
                 return false;
 
-            account.UserLevel = 0;
+            account.UserLevel = GetPreBanLevel(profilesService, account.PrincipalID) ?? 0;
             accountService.StoreUserAccount(account);
             SetBanExpiry(profilesService, account.PrincipalID, null);
+            SetPreBanLevel(profilesService, account.PrincipalID, null);
             return true;
         }
     }

@@ -168,6 +168,12 @@ data layers, replacing what would otherwise be external dependencies:
   stayed blocked past their ban's expiry until an admin manually
   unbanned them. Live-verified via a real login attempt through the
   actual `LLLoginService` XML-RPC path.
+- Unbanning an account (whether by the admin button or by expiry)
+  restores whatever level it actually had before the ban, not a flat
+  0 — an estate manager or grid admin who gets banned keeps their
+  elevation back on unban rather than being silently downgraded to an
+  ordinary account. Fixed after a real incident during this feature's
+  own testing; see PROJECT_LOG.md for the full account.
 - Grid-wide viewer ban, by IP range and client signature.
 - Sim protection: opt-in FPS auto-mitigation under load.
 - On-demand/soft-start regions.

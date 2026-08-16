@@ -6691,3 +6691,69 @@ was fully stopped - turned out to be leftover `dotnet build`
 server/compiler processes (MSBuild node reuse, VBCSCompiler) from this
 session's own builds still holding the files open; `dotnet
 build-server shutdown` plus a short wait cleared it.
+
+### Real incident: unban/expiry hardcoded UserLevel to 0, downgrading a live admin account
+
+Moved on to verifying the grid-wide admin Groups page against real
+group data (the next README gap - no groups existed on the test
+grid). Before that, though, a genuine mistake surfaced from the
+ban-expiry work just above: it used Test User's account for the live
+XML-RPC self-clear test without first checking what `UserLevel` that
+account actually had going in. Test User turned out to be the user's
+real admin account (`UserLevel 200`) - after the test, the user
+reported "I no longer have admin access."
+
+Root cause: both `AccountBanHelper.ClearExpiredBan` (the new
+auto-expiry path) *and* the pre-existing admin "Unban this user"
+button hardcoded the restored level to a flat `0` - neither one ever
+recorded what level an account had before it was banned. This is a
+real bug in the shipped Ban/Unban feature itself, not just a test
+artifact: any elevated account (estate manager, grid admin) that gets
+banned - by the timer or by an admin's own button - permanently loses
+that elevation on unban. My test only exposed it because it happened
+to land on a real admin account without checking first.
+
+Fixed the actual account immediately (`UserLevel` set back to 200 per
+the user's confirmation), then fixed the underlying bug properly
+rather than treating it as a one-off:
+- `AccountBanHelper.cs` gained `PreBanLevelTag`/`GetPreBanLevel`/
+  `SetPreBanLevel` (same `UserAppData`-tag pattern as `BanExpiryTag`).
+  `ClearExpiredBan` now restores `GetPreBanLevel() ?? 0` instead of a
+  hardcoded `0`, clearing the tag once restored.
+- `HandleAdminUsersSetLevel` (`WebInterfaceServiceConnector.cs`) now
+  captures the account's current level into `PreBanLevel` at the
+  moment it transitions *into* a ban (not on every save, so re-banning
+  an already-banned account can't clobber the real recorded value with
+  `-1`).
+- The "Unban this user" button no longer submits a hardcoded
+  `user_level=0` in its HTML form - it now submits a `"UNBAN"`
+  sentinel, and the handler computes the actual restore value
+  server-side from `GetPreBanLevel`, matching what the auto-expiry
+  path does. The manual "Change user level" form is unaffected - an
+  admin can still explicitly set any numeric level, including banning
+  or overriding a banned account to a specific value on purpose.
+
+Full solution build clean (0 errors/warnings) both times - once after
+the initial fix, again after this one, since it's the same
+widely-referenced `OpenSim.Services.Interfaces` project. Deployed
+`OpenSim.Services.Interfaces.dll` and `OpenSim.Server.Handlers.dll` to
+Robust (same DLLs as the ban-expiry fix, Robust-only). One deploy
+attempt landed before the user had actually stopped Robust yet
+("robust re-launched" turned out to mean it had restarted on its own
+schedule, not that the new DLLs were in place) - caught by checking
+file timestamps against the fresh build output before declaring it
+done, and redone correctly on the next stop/start cycle.
+
+Live-verified the fix itself without touching either real tester
+account again: used the grid's other, genuinely-inconsequential test
+account (Regular Tester, real `UserLevel 0`) and injected a `PreBanLevel`
+of `77` - a value with no relationship to that account's real level,
+chosen specifically so the test could distinguish "restored to the
+recorded prior value" from "coincidentally already 0" (its old,
+buggy fallback would have looked identical to the fixed behavior on
+an already-0 account). Simulated the same banned-with-expired-timer
+state as before and ran the same real XML-RPC login test:
+`UserLevel` came back `77`, not `0`, and the `PreBanLevel` tag cleared
+- confirming the fix restores the *recorded* level, not a hardcoded
+one. Restored Regular Tester to its real `UserLevel 0` immediately
+after, and re-confirmed Test User was still correctly at `200`.
