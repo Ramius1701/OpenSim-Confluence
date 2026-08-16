@@ -32,6 +32,30 @@ namespace OpenSim
         public const string VersionNumber = "0.9.3.1";
         public const string AssemblyVersionNumber = "0.9.3.1";
 
+        // Build number = commits ahead of the real upstream opensim/opensim
+        // master (the "origin" remote in this checkout), same convention
+        // the grid operator used before - computed at build time by
+        // OpenSim.Framework.csproj's GenerateGitVersionInfo target (see
+        // GitVersionInfo.g.cs, generated into obj/, not checked in) rather
+        // than at runtime, so this still works in a deployed bin/ folder
+        // that has no .git directory at all. Deliberately a SEPARATE
+        // constant from VersionNumber above, not a change to it -
+        // VersionNumber is wired into
+        // [assembly:AddinRoot("Robust", OpenSim.VersionInfo.VersionNumber)]
+        // in ServerUtils.cs, which every addon module's Mono.Addins
+        // compatibility check depends on; decorating that string would risk
+        // breaking addon loading the same way the LocalCurrencyServiceConnector
+        // TypeLoadException did. This is for display only (Features/Grid
+        // Status pages, etc).
+        // Hash deliberately left out of the default display string - an
+        // all-digit short hash (this repo's has landed on one, e.g.
+        // "5059134619") reads as a confusing giant number rather than a
+        // recognizable commit id in a UI stat card. Kept available
+        // separately via BuildCommitHash for anywhere that wants it (e.g.
+        // a hover tooltip) without cluttering the primary display.
+        public const string DisplayVersionNumber = VersionNumber + " (Build " + GitVersionInfo.CommitsAheadOfMaster + ")";
+        public const string BuildCommitHash = GitVersionInfo.ShortHash;
+
         public const Flavour VERSION_FLAVOUR = Flavour.Dev;
 
         public enum Flavour
