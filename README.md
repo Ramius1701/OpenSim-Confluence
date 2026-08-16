@@ -56,6 +56,28 @@ codebase.
 - When porting from another fork, verify with a real build rather than
   trusting a commit message or a docs page.
 
+## Including features from other projects
+
+Confluence's goal is a full, immersive grid platform with everything a
+grid owner might reasonably need built in, not scattered across
+addon-modules and third-party services grid owners have to discover and
+assemble themselves. If another repository — a fork, an addon, a
+standalone tool — has a fix, enhancement, or feature that looks like it
+belongs here, open an issue or discussion on this repository first for
+assessment rather than assuming it fits. Every feature already ported in
+from Gunthar/Tranquillity/Mobius/WhiteCore-Dev/Halcyon/Homeworldz/
+opensim-lickx (see "Attribution and support" below) went through that
+same real review, not a rubber stamp — confirmed present in this
+codebase, verified against a real build, and checked against how actual
+Second Life/Tranquillity/Mobius/WhiteCore-Dev do it before being ported,
+not invented from a description.
+
+Every feature that can reasonably be made optional is: grid owners
+choose what to enable through their own `.ini` configuration rather than
+taking on the runtime cost or behavior of something they don't want
+running. Giving grid owners that choice is a design requirement here,
+not an afterthought bolted on later.
+
 ## Web & Admin UI
 
 A native, Robust-hosted grid portal (`WebInterfaceServiceConnector.cs`) —

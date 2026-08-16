@@ -38,6 +38,18 @@ from renaming the source repo and wasn't part of this pass.
 - When building new features, check how real Second Life / Tranquillity /
   Mobius / WhiteCore-Dev do it first and model after that rather than
   inventing new behavior.
+- The mission is a full, immersive grid with everything a grid owner
+  might need built in, not scattered across addons/third-party services
+  (see README.md's "Including features from other projects"). If a
+  fix/enhancement/feature from another repo (fork, addon, standalone
+  tool) looks like it belongs here, that's the user's call to make, not
+  a default-yes to port wholesale - flag it and wait rather than
+  assuming it fits, the same standard already applied to every existing
+  port from Gunthar/Tranquillity/Mobius/WhiteCore-Dev/Halcyon/
+  Homeworldz/opensim-lickx. And whatever gets added, make it toggleable
+  via `.ini` config wherever that's reasonable - grid owners choosing
+  what runs on their own grid is a design requirement, not optional
+  polish.
 
 ---
 
