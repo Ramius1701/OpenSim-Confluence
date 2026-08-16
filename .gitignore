@@ -98,6 +98,7 @@ TAGS
 Makefile.local
 bin/.version
 compile.bat
+compile.sh
 OpenSim/Data/Tests/test-results/
 OpenSim/Framework/Serialization/Tests/test-results/
 OpenSim/Framework/Servers/Tests/test-results/

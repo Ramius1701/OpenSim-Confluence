@@ -161,8 +161,13 @@ data layers, replacing what would otherwise be external dependencies:
 - On-demand/soft-start regions.
 - A secured web-based region console channel (shared-secret gated),
   used by the admin UI's Kick/Message and free-form console features.
-- A native mute-list service, replacing the `OpenSimMutelist` addon's
-  external dependency.
+- A native mute-list service (`MuteListModule`/`IMuteListService`),
+  answering the same viewer protocol (`MuteListRequest`/
+  `MuteListUpdate`) real Second Life uses. This has been genuine stock
+  OpenSimulator code since 2009, just historically left incomplete — the
+  `OpenSimMutelist` addon (an external-service workaround from that
+  earlier era) was removed from this repo once confirmed redundant with
+  the native path, rather than kept as unnecessary dead weight.
 
 ## Display Names and identity
 
@@ -349,9 +354,6 @@ solution but are not necessarily enabled by default.
 - **GroupAutoInvite** — configurable automatic group invitations.
 - **HoloPhysicsGuard** — reduces idle physics load when regions are empty.
 - **OpenSimMarketplace** — portable Direct Delivery marketplace system.
-- **OpenSimMutelist** — external mute-list service integration (the
-  native mute-list service above is the default; this remains for
-  anyone who wants the external-service version instead).
 - **OpenSimSearch** — external viewer search client (the native Search
   Service above is the default; this remains for anyone who wants to
   point at a separately-deployed compatible search server instead).
