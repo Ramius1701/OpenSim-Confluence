@@ -117,5 +117,8 @@ test-results/
 doc/html
 doc/doxygen.error.log
 bin/OpenSim.ini
+bin/*.runtimeconfig.json
+bin/MAP-*.png
+bin/stipend_lastcycle.txt
 
 *.patch
