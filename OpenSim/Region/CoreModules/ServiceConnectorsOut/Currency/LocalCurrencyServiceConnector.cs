@@ -189,6 +189,21 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Currency
             return m_service.PayGroupDividend(groupID, memberIDs, description);
         }
 
+        public int GetTotalCirculation()
+        {
+            return m_service.GetTotalCirculation();
+        }
+
+        public int CountAccountsWithBalance()
+        {
+            return m_service.CountAccountsWithBalance();
+        }
+
+        public List<CurrencyBalanceEntry> GetTopBalances(int count)
+        {
+            return m_service.GetTopBalances(count);
+        }
+
         #endregion ICurrencyService
     }
 }

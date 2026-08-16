@@ -133,6 +133,28 @@ namespace OpenSim.Server.Handlers.Currency
                         baseServer.HandleXmlRpcRequests(osRequest, osResponse, currencyPhpHandlers);
                     }
                 }));
+
+            // Firestorm's OpenSim compatibility patch ("COLOSI opensim multi-
+            // currency support" in llfloaterbuyland.cpp) posts
+            // preflightBuyLandPrep/buyLandPrep to <helper_uri>landtool.php,
+            // not currency.php - only getCurrencyQuote/buyCurrency use
+            // currency.php (see LLCurrencyUIManager::Impl::startTransaction,
+            // a different source file). Confirmed live: plain L$ purchases
+            // always worked while every Buy Land attempt hung forever on
+            // "(waiting for data)" with zero trace in any server log,
+            // because landtool.php had no handler at all - the request was
+            // hitting a dead path, not failing inside our code. Same handler
+            // set as currency.php; only the path differs.
+            server.AddSimpleStreamHandler(new SimpleStreamHandler("/landtool.php",
+                (httpRequest, httpResponse) =>
+                {
+                    if (server is BaseHttpServer baseServer
+                            && httpRequest is OSHttpRequest osRequest
+                            && httpResponse is OSHttpResponse osResponse)
+                    {
+                        baseServer.HandleXmlRpcRequests(osRequest, osResponse, currencyPhpHandlers);
+                    }
+                }));
         }
 
         private int EstimatedCostHundredths(int amount)
@@ -174,6 +196,14 @@ namespace OpenSim.Server.Handlers.Currency
             return response;
         }
 
+        // Failure path must set errorMessage/errorURI, not just success=false -
+        // confirmed against the real viewer source (LLCurrencyUIManager::Impl::
+        // finishCurrencyBuy, llcurrencyuimanager.cpp): on failure it reads
+        // result["errorMessage"]/result["errorURI"] unconditionally. Same fix
+        // already applied to ConfluenceCurrencyModule's region-local copy of
+        // this handler - this is the Robust-hosted copy a real viewer actually
+        // reaches on a multi-region grid (see class comment), so it had the
+        // identical bug independently.
         private XmlRpcResponse HandleBuyCurrency(XmlRpcRequest request, IPEndPoint remoteClient)
         {
             Hashtable requestData = (Hashtable)request.Params[0];
@@ -182,13 +212,26 @@ namespace OpenSim.Server.Handlers.Currency
 
             UUID agentId;
             int amount = 0;
-            if (requestData.ContainsKey("agentId") && UUID.TryParse(requestData["agentId"].ToString(), out agentId)
-                    && requestData.ContainsKey("currencyBuy"))
+            string errorMessage = "Unable to process this purchase.";
+
+            if (!requestData.ContainsKey("agentId") || !UUID.TryParse(requestData["agentId"].ToString(), out agentId))
+            {
+                errorMessage = "Invalid parameters passed to the purchase.";
+            }
+            else if (!requestData.ContainsKey("currencyBuy"))
+            {
+                errorMessage = "Invalid parameters passed to the purchase.";
+            }
+            else
             {
                 try { amount = Convert.ToInt32(requestData["currencyBuy"]); }
                 catch (Exception) { }
 
-                if (amount > 0 && m_CurrencyService.RecordPurchase(agentId, amount, EstimatedCostHundredths(amount),
+                if (amount <= 0)
+                {
+                    errorMessage = "Invalid purchase amount.";
+                }
+                else if (m_CurrencyService.RecordPurchase(agentId, amount, EstimatedCostHundredths(amount),
                         remoteClient != null ? remoteClient.Address.ToString() : string.Empty))
                 {
                     NotifyRegionOfBalanceChange(agentId);
@@ -196,9 +239,15 @@ namespace OpenSim.Server.Handlers.Currency
                     response.Value = result;
                     return response;
                 }
+                else
+                {
+                    errorMessage = "Could not record this purchase. Please try again.";
+                }
             }
 
             result["success"] = false;
+            result["errorMessage"] = errorMessage;
+            result["errorURI"] = string.Empty;
             response.Value = result;
             return response;
         }
@@ -239,6 +288,14 @@ namespace OpenSim.Server.Handlers.Currency
             }
         }
 
+        // Response shape confirmed against the real viewer source
+        // (LLFloaterBuyLandUI::finishWebSiteInfo, llfloaterbuyland.cpp), not
+        // guessed: it reads result["landUse"] (capital U - the previous
+        // "landuse" here was a silent no-op, LLSD map keys are
+        // case-sensitive) and result["membership"]["upgrade"]/["action"]/
+        // ["levels"] (an array), not a bare id/description pair. Same fix
+        // already applied to ConfluenceCurrencyModule's region-local copy -
+        // this Robust-hosted copy had the identical bug independently.
         private XmlRpcResponse HandlePreflightBuyLandPrep(XmlRpcRequest request, IPEndPoint remoteClient)
         {
             XmlRpcResponse response = new XmlRpcResponse();
@@ -246,8 +303,14 @@ namespace OpenSim.Server.Handlers.Currency
             {
                 { "success", true },
                 { "currency", new Hashtable { { "estimatedCost", 0 } } },
-                { "membership", new Hashtable { { "id", UUID.Zero.ToString() }, { "description", "Membership" } } },
-                { "landuse", new Hashtable() },
+                { "membership", new Hashtable
+                    {
+                        { "upgrade", false },
+                        { "action", string.Empty },
+                        { "levels", new ArrayList() }
+                    }
+                },
+                { "landUse", new Hashtable { { "upgrade", false }, { "action", string.Empty } } },
                 { "confirm", UUID.Random().ToString() }
             };
             response.Value = result;

@@ -1,0 +1,36 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS currency_balances (
+	PrincipalID varchar(36) NOT NULL PRIMARY KEY,
+	Balance int NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS currency_transactions (
+	TransactionID varchar(36) NOT NULL PRIMARY KEY,
+	ToAgent varchar(36) NOT NULL,
+	FromAgent varchar(36) NOT NULL,
+	Amount int NOT NULL,
+	TransferType int NOT NULL,
+	Description varchar(255) NOT NULL,
+	Created int NOT NULL,
+	ToBalance int NOT NULL,
+	FromBalance int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS currency_transactions_toagent ON currency_transactions (ToAgent);
+CREATE INDEX IF NOT EXISTS currency_transactions_fromagent ON currency_transactions (FromAgent);
+CREATE INDEX IF NOT EXISTS currency_transactions_created ON currency_transactions (Created);
+
+CREATE TABLE IF NOT EXISTS currency_purchases (
+	PurchaseID varchar(36) NOT NULL PRIMARY KEY,
+	PrincipalID varchar(36) NOT NULL,
+	IP varchar(64) NOT NULL,
+	Amount int NOT NULL,
+	RealAmount int NOT NULL,
+	Created int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS currency_purchases_principalid ON currency_purchases (PrincipalID);
+CREATE INDEX IF NOT EXISTS currency_purchases_created ON currency_purchases (Created);
+
+COMMIT;

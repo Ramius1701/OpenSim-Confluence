@@ -75,5 +75,13 @@ namespace OpenSim.Services.Interfaces
         // interface), so the caller - wherever group membership/role data is
         // actually available - is responsible for deciding who's accountable.
         int PayGroupDividend(UUID groupID, List<UUID> memberIDs, string description);
+
+        // Grid-wide economy summary for the public Economy dashboard - see
+        // ICurrencyData for the design rationale.
+        int GetTotalCirculation();
+
+        int CountAccountsWithBalance();
+
+        List<CurrencyBalanceEntry> GetTopBalances(int count);
     }
 }

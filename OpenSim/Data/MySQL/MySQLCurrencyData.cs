@@ -266,6 +266,61 @@ namespace OpenSim.Data.MySQL
             return purchases;
         }
 
+        public int GetTotalCirculation()
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand("select coalesce(sum(`Balance`), 0) from `currency_balances`", dbcon))
+                {
+                    return Convert.ToInt32(cmd.ExecuteScalar());
+                }
+            }
+        }
+
+        public int CountAccountsWithBalance()
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand("select count(*) from `currency_balances` where `Balance` > 0", dbcon))
+                {
+                    return Convert.ToInt32(cmd.ExecuteScalar());
+                }
+            }
+        }
+
+        public List<CurrencyBalanceEntry> GetTopBalances(int count)
+        {
+            List<CurrencyBalanceEntry> results = new List<CurrencyBalanceEntry>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "select `PrincipalID`, `Balance` from `currency_balances` where `Balance` > 0 order by `Balance` desc limit ?Count", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?Count", count <= 0 ? 10 : count);
+
+                    using (IDataReader result = cmd.ExecuteReader())
+                    {
+                        while (result.Read())
+                        {
+                            CurrencyBalanceEntry entry = new CurrencyBalanceEntry();
+                            UUID.TryParse(result.GetString(0), out entry.PrincipalID);
+                            entry.Balance = result.GetInt32(1);
+                            results.Add(entry);
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
         // Builds "where ..."/"and ..." clauses for optional to/from agent filters -
         // UUID.Zero means "don't filter on this side", matching how the region-edge
         // IMoneyModule already treats a zero agent as "system", not a real principal.

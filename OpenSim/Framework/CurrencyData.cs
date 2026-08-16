@@ -32,4 +32,11 @@ namespace OpenSim.Framework
         public int RealAmount = 0;
         public DateTime PurchaseDate = DateTime.UtcNow;
     }
+
+    // One row of a balance leaderboard - see ICurrencyData.GetTopBalances.
+    public class CurrencyBalanceEntry
+    {
+        public UUID PrincipalID = UUID.Zero;
+        public int Balance = 0;
+    }
 }

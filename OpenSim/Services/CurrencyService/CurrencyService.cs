@@ -19,10 +19,31 @@ namespace OpenSim.Services.CurrencyService
                 LogManager.GetLogger(
                 MethodBase.GetCurrentMethod().DeclaringType);
 
+        // Real-money purchase caps (hundredths of a dollar, same unit as
+        // CurrencyPurchase.RealAmount/EstimatedCostHundredths - a "$500 cap"
+        // limits actual dollars spent, not virtual currency units received,
+        // since the whole point is bounding real financial exposure from a
+        // compromised account or a payment-flow bug, not limiting how much
+        // in-world currency someone can hold). MoneyServer/DTLNSLMoneyModule
+        // had this ("Configurable daily, weekly, and monthly purchase
+        // limits" - see README.md); the native ledger never got an
+        // equivalent when Batch 12 made ConfluenceCurrencyModule the active
+        // EconomyModule instead - a real gap, found live (a 300,000-unit
+        // test purchase went through with nothing to stop it). Configurable
+        // via [CurrencyService] in Robust.HG.ini; 0 disables that one cap.
+        private readonly int m_dailyCapHundredths;
+        private readonly int m_weeklyCapHundredths;
+        private readonly int m_monthlyCapHundredths;
+
         public CurrencyService(IConfigSource config)
             : base(config)
         {
             m_log.Debug("[CURRENCY SERVICE]: Starting currency service");
+
+            IConfig currencyConfig = config.Configs["CurrencyService"];
+            m_dailyCapHundredths = (currencyConfig?.GetInt("DailyPurchaseCapUSD", 500) ?? 500) * 100;
+            m_weeklyCapHundredths = (currencyConfig?.GetInt("WeeklyPurchaseCapUSD", 2000) ?? 2000) * 100;
+            m_monthlyCapHundredths = (currencyConfig?.GetInt("MonthlyPurchaseCapUSD", 5000) ?? 5000) * 100;
 
             if (MainConsole.Instance != null)
             {
@@ -133,6 +154,9 @@ namespace OpenSim.Services.CurrencyService
 
         public bool RecordPurchase(UUID agentID, int amount, int realAmountHundredths, string ip)
         {
+            if (!CheckPurchaseCaps(agentID, realAmountHundredths))
+                return false;
+
             m_Database.AddPurchase(new CurrencyPurchase
             {
                 ID = UUID.Random(),
@@ -144,6 +168,44 @@ namespace OpenSim.Services.CurrencyService
             });
 
             return Transfer(agentID, UUID.Zero, amount, "Currency purchase", 0 /* BuyMoney */, UUID.Zero);
+        }
+
+        // Rolling windows ending now, not calendar day/week/month boundaries -
+        // "$500 in the last 24 hours" rather than "$500 since midnight",
+        // which can't be reset early by timing a purchase just after a
+        // boundary. A cap of 0 disables that particular check.
+        private bool CheckPurchaseCaps(UUID agentID, int newAmountHundredths)
+        {
+            DateTime now = DateTime.UtcNow;
+
+            if (!CheckOneCap(agentID, newAmountHundredths, now.AddDays(-1), now, m_dailyCapHundredths, "daily"))
+                return false;
+            if (!CheckOneCap(agentID, newAmountHundredths, now.AddDays(-7), now, m_weeklyCapHundredths, "weekly"))
+                return false;
+            if (!CheckOneCap(agentID, newAmountHundredths, now.AddDays(-30), now, m_monthlyCapHundredths, "monthly"))
+                return false;
+
+            return true;
+        }
+
+        private bool CheckOneCap(UUID agentID, int newAmountHundredths, DateTime windowStart, DateTime windowEnd, int capHundredths, string label)
+        {
+            if (capHundredths <= 0)
+                return true;
+
+            List<CurrencyPurchase> history = m_Database.GetPurchaseHistory(agentID, windowStart, windowEnd, null, null);
+            int spentHundredths = 0;
+            foreach (CurrencyPurchase p in history)
+                spentHundredths += p.RealAmount;
+
+            if (spentHundredths + newAmountHundredths > capHundredths)
+            {
+                m_log.WarnFormat("[CURRENCY SERVICE]: Purchase of ${0:0.00} by {1} rejected - would exceed {2} cap of ${3:0.00} (already spent ${4:0.00} in that window)",
+                        newAmountHundredths / 100.0, agentID, label, capHundredths / 100.0, spentHundredths / 100.0);
+                return false;
+            }
+
+            return true;
         }
 
         public int GetGroupBalance(UUID groupID)
@@ -194,6 +256,21 @@ namespace OpenSim.Services.CurrencyService
                 GroupCurrencyTransfer(groupID, memberID, perMember, description ?? "Group dividend", 0, UUID.Zero, false);
 
             return perMember;
+        }
+
+        public int GetTotalCirculation()
+        {
+            return m_Database.GetTotalCirculation();
+        }
+
+        public int CountAccountsWithBalance()
+        {
+            return m_Database.CountAccountsWithBalance();
+        }
+
+        public List<CurrencyBalanceEntry> GetTopBalances(int count)
+        {
+            return m_Database.GetTopBalances(count);
         }
 
         #region Console commands

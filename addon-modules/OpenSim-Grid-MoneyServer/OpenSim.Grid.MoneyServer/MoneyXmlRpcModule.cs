@@ -572,13 +572,32 @@ namespace OpenSim.Grid.MoneyServer
                     return new XmlRpcResponse { Value = new Hashtable { { "success", false } } };
                 }
 
-                // Simulate sending response
+                // Real Firestorm consumer (llfloaterbuyland.cpp) reads
+                // result["membership"]["upgrade"/"action"/"levels"],
+                // result["landUse"]["upgrade"/"action"] and
+                // result["currency"]["estimatedCost"] directly off this
+                // response - without them the Buy Land confirmation dialog
+                // silently can't tell whether a membership/land-use upgrade
+                // is needed (LLSD reads of a missing map return safe
+                // defaults rather than erroring, masking the gap rather
+                // than surfacing it). Same shape as the already-verified
+                // ConfluenceCurrencyModule.HandlePreflightBuyLandPrep.
                 XmlRpcResponse response = new XmlRpcResponse();
                 Hashtable responseValue = new Hashtable
                 {
                     { "success", true },
                     { "billableArea", billableArea },
-                    { "currencyBuy", currencyBuy }
+                    { "currencyBuy", currencyBuy },
+                    { "currency", new Hashtable { { "estimatedCost", 0 } } },
+                    { "membership", new Hashtable
+                        {
+                            { "upgrade", false },
+                            { "action", string.Empty },
+                            { "levels", new ArrayList() }
+                        }
+                    },
+                    { "landUse", new Hashtable { { "upgrade", false }, { "action", string.Empty } } },
+                    { "confirm", UUID.Random().ToString() }
                 };
                 response.Value = responseValue;
                 return response;
@@ -1083,10 +1102,21 @@ namespace OpenSim.Grid.MoneyServer
         }
         public XmlRpcResponse buyCurrency(XmlRpcRequest request, IPEndPoint remoteClient)
         {
+            // Real Firestorm consumer (llcurrencyuimanager.cpp) reads
+            // result["errorMessage"]/result["errorURI"] on failure, not
+            // "message" - LLSD::asString() on a missing key returns an
+            // empty string rather than erroring, so every failure path
+            // that only set "message" silently showed a BLANK error
+            // dialog instead of the real reason. Same bug already found
+            // and fixed in ConfluenceCurrencyModule.HandleBuyCurrency this
+            // session - "message" is kept alongside for anything else that
+            // may already depend on it, not removed.
             Hashtable responseData = new Hashtable
             {
                 { "success", false },
-                { "message", "Currency purchase failed." }
+                { "message", "Currency purchase failed." },
+                { "errorMessage", "Currency purchase failed." },
+                { "errorURI", string.Empty }
             };
 
             try
@@ -1094,6 +1124,7 @@ namespace OpenSim.Grid.MoneyServer
                 if (request == null || request.Params == null || request.Params.Count == 0)
                 {
                     responseData["message"] = "Invalid currency purchase request.";
+                    responseData["errorMessage"] = "Invalid currency purchase request.";
                     return new XmlRpcResponse { Value = responseData };
                 }
 
@@ -1101,6 +1132,7 @@ namespace OpenSim.Grid.MoneyServer
                 if (requestData == null)
                 {
                     responseData["message"] = "Invalid currency purchase request.";
+                    responseData["errorMessage"] = "Invalid currency purchase request.";
                     return new XmlRpcResponse { Value = responseData };
                 }
 
@@ -1114,6 +1146,7 @@ namespace OpenSim.Grid.MoneyServer
                 if (!ValidateCurrencyPurchaseAccess(agentId, amount, out accessMessage))
                 {
                     responseData["message"] = accessMessage;
+                    responseData["errorMessage"] = accessMessage;
                     return new XmlRpcResponse { Value = responseData };
                 }
 
@@ -1123,6 +1156,7 @@ namespace OpenSim.Grid.MoneyServer
                 if (!ValidateCurrencySession(agentId, secureSessionId, out sessionMessage))
                 {
                     responseData["message"] = sessionMessage;
+                    responseData["errorMessage"] = sessionMessage;
                     return new XmlRpcResponse { Value = responseData };
                 }
 
@@ -1144,6 +1178,8 @@ namespace OpenSim.Grid.MoneyServer
                 responseData["success"] = purchaseSucceeded;
                 responseData["message"] = purchaseMessage;
                 responseData["transactionID"] = transactionID.ToString();
+                if (!purchaseSucceeded)
+                    responseData["errorMessage"] = purchaseMessage;
 
                 if (purchaseSucceeded)
                     UpdateBalance(agentId, purchaseMessage);
@@ -1155,6 +1191,7 @@ namespace OpenSim.Grid.MoneyServer
                 m_log.ErrorFormat("[BUY CURRENCY]: Error processing currency purchase: {0}", ex);
                 responseData["success"] = false;
                 responseData["message"] = "The currency purchase could not be completed.";
+                responseData["errorMessage"] = "The currency purchase could not be completed.";
             }
 
             return new XmlRpcResponse { Value = responseData };

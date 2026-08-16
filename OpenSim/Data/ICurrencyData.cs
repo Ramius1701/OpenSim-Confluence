@@ -24,5 +24,17 @@ namespace OpenSim.Data
         uint NumberOfPurchases(UUID agentID);
 
         List<CurrencyPurchase> GetPurchaseHistory(UUID agentID, DateTime dateStart, DateTime dateEnd, uint? start, uint? count);
+
+        // Grid-wide economy summary for the public Economy dashboard - real
+        // DB-side aggregates (SUM/COUNT), not a loop over every account
+        // calling GetBalance individually.
+        int GetTotalCirculation();
+
+        int CountAccountsWithBalance();
+
+        // Highest balances first, excluding zero balances (system/never-
+        // funded accounts) - same filter OpenSim-Grid-Interface's own
+        // economy.php leaderboard query uses.
+        List<CurrencyBalanceEntry> GetTopBalances(int count);
     }
 }

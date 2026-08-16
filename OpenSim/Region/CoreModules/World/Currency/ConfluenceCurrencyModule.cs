@@ -211,6 +211,25 @@ namespace OpenSim.Region.CoreModules.World.Currency
                         baseServer.HandleXmlRpcRequests(osRequest, osResponse, currencyPhpHandlers);
                     }
                 }));
+
+            // Firestorm's OpenSim compatibility patch ("COLOSI opensim
+            // multi-currency support" in llfloaterbuyland.cpp) posts
+            // preflightBuyLandPrep/buyLandPrep to <helper_uri>landtool.php,
+            // not currency.php - only getCurrencyQuote/buyCurrency use
+            // currency.php. Without this, Buy Land hangs forever on
+            // "(waiting for data)" with zero trace in any server log, since
+            // the request hits a dead path rather than failing in our code.
+            // Same handler set as currency.php; only the path differs.
+            MainServer.Instance.AddSimpleStreamHandler(new SimpleStreamHandler("/landtool.php",
+                (httpRequest, httpResponse) =>
+                {
+                    if (MainServer.Instance is BaseHttpServer baseServer
+                            && httpRequest is OSHttpRequest osRequest
+                            && httpResponse is OSHttpResponse osResponse)
+                    {
+                        baseServer.HandleXmlRpcRequests(osRequest, osResponse, currencyPhpHandlers);
+                    }
+                }));
         }
 
         #endregion ISharedRegionModule
@@ -432,6 +451,14 @@ namespace OpenSim.Region.CoreModules.World.Currency
             return response;
         }
 
+        // Failure path must set errorMessage/errorURI, not just success=false -
+        // confirmed against the real viewer source (LLCurrencyUIManager::Impl::
+        // finishCurrencyBuy, llcurrencyuimanager.cpp): on failure it reads
+        // result["errorMessage"]/result["errorURI"] unconditionally. LLSD
+        // tolerates the missing keys (empty string, no crash), but the resident
+        // saw a blank failure dialog instead of a real reason - same
+        // errorMessage/errorURI shape HandleGetCurrencyQuote's failure path
+        // already uses below.
         private XmlRpcResponse HandleBuyCurrency(XmlRpcRequest request, IPEndPoint remoteClient)
         {
             Hashtable requestData = (Hashtable)request.Params[0];
@@ -440,13 +467,26 @@ namespace OpenSim.Region.CoreModules.World.Currency
 
             UUID agentId;
             int amount = 0;
-            if (requestData.ContainsKey("agentId") && UUID.TryParse(requestData["agentId"].ToString(), out agentId)
-                    && requestData.ContainsKey("currencyBuy"))
+            string errorMessage = "Unable to process this purchase.";
+
+            if (!requestData.ContainsKey("agentId") || !UUID.TryParse(requestData["agentId"].ToString(), out agentId))
+            {
+                errorMessage = "Invalid parameters passed to the purchase.";
+            }
+            else if (!requestData.ContainsKey("currencyBuy"))
+            {
+                errorMessage = "Invalid parameters passed to the purchase.";
+            }
+            else
             {
                 try { amount = Convert.ToInt32(requestData["currencyBuy"]); }
                 catch (Exception) { }
 
-                if (amount > 0 && m_currency.RecordPurchase(agentId, amount, EstimatedCostHundredths(amount),
+                if (amount <= 0)
+                {
+                    errorMessage = "Invalid purchase amount.";
+                }
+                else if (m_currency.RecordPurchase(agentId, amount, EstimatedCostHundredths(amount),
                         remoteClient != null ? remoteClient.Address.ToString() : string.Empty))
                 {
                     PushBalanceUpdate(agentId);
@@ -454,9 +494,15 @@ namespace OpenSim.Region.CoreModules.World.Currency
                     response.Value = result;
                     return response;
                 }
+                else
+                {
+                    errorMessage = "Could not record this purchase. Please try again.";
+                }
             }
 
             result["success"] = false;
+            result["errorMessage"] = errorMessage;
+            result["errorURI"] = string.Empty;
             response.Value = result;
             return response;
         }
@@ -489,6 +535,17 @@ namespace OpenSim.Region.CoreModules.World.Currency
             return (int)Math.Round((amount / (float)m_currencyRate) * 100.0);
         }
 
+        // Response shape confirmed against the real viewer source
+        // (LLFloaterBuyLandUI::finishWebSiteInfo, llfloaterbuyland.cpp), not
+        // guessed: it reads result["landUse"] (capital U - our previous
+        // "landuse" was a silent no-op, LLSD map keys are case-sensitive)
+        // and result["membership"]["upgrade"]/["action"]/["levels"] (an
+        // array of {id, description} objects), not a bare id/description
+        // pair directly under "membership". Both explicitly say "no
+        // upgrade needed" here since Confluence's currency has no SL-style
+        // paid membership tiers or land-use-fee upsell to offer - the
+        // previous shape happened to reach the same safe default via LLSD's
+        // undefined-value fallbacks, but only by accident, not by design.
         private XmlRpcResponse HandlePreflightBuyLandPrep(XmlRpcRequest request, IPEndPoint remoteClient)
         {
             XmlRpcResponse response = new XmlRpcResponse();
@@ -496,8 +553,14 @@ namespace OpenSim.Region.CoreModules.World.Currency
             {
                 { "success", true },
                 { "currency", new Hashtable { { "estimatedCost", 0 } } },
-                { "membership", new Hashtable { { "id", UUID.Zero.ToString() }, { "description", "Membership" } } },
-                { "landuse", new Hashtable() },
+                { "membership", new Hashtable
+                    {
+                        { "upgrade", false },
+                        { "action", string.Empty },
+                        { "levels", new ArrayList() }
+                    }
+                },
+                { "landUse", new Hashtable { { "upgrade", false }, { "action", string.Empty } } },
                 { "confirm", UUID.Random().ToString() }
             };
             response.Value = result;
