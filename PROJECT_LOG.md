@@ -7075,6 +7075,42 @@ without the external proxy read-timeout in the way, there's no longer
 a strong reason to cut off what could be a genuinely large file
 transfer between two region processes.
 
-Build-verified. Same `OpenSim.Server.Handlers.dll` (Robust-only)
-already queued for redeploy from the ban-fix/restart-fix work earlier
-this session - batched together, not yet deployed.
+Build-verified. Batched into the full deploy below rather than a
+one-off Robust-only redeploy - `OpenSim.Addons.RegionWeb.dll` (from
+the currency reconciliation work) turned out to be a region-side
+module after all, not Robust-only as earlier entries this session
+assumed, so a real fix batch touching both needed the whole grid
+stopped regardless.
+
+### Full rebuild + full deploy sync, live grid back up
+
+With the whole grid stopped for the currency-reconciliation +
+OAR-relay fixes, did a proper full sync rather than hand-picking
+individual DLLs one more time: full solution rebuild, then compared
+every `.dll`/`.pdb` in the build output against the live deployment
+by MD5 and copied every one that differed - 94 of each. That's a much
+larger number than this session's actual code changes account for on
+its own; .NET builds aren't guaranteed byte-reproducible run to run
+(embedded metadata/GUIDs can differ even with `<Deterministic>true</Deterministic>`
+and no source changes), so a large share of that 94 is almost
+certainly no-op rebuild noise from the many scoped/full builds done
+throughout this session, not 94 files' worth of real behavior change.
+Re-verified by hashing every file again after the copy - zero
+mismatches, zero missing (the only "missing" hits were unmanaged
+native libraries - BulletSim/sqlite/openjpeg - that live under the
+deployment's own `lib64/` folder, a different location by design, not
+part of this sync).
+
+Also found and cleaned up while in there: the live deployment still
+had `OpenSim.Addons.RegionCurrency.dll`/`.pdb` and the entire
+`addon-modules/RegionCurrency/` directory (including a still-`Enabled
+= true` `RegionCurrency.ini`) sitting untouched from before this
+session's removal - only the repo's own copies had been deleted
+earlier, not the live deployment's separate ones. Harmless in
+practice (Mono.Addins had nothing left to load once the DLL was
+gone), but removed properly now rather than left as confusing
+leftover state. A stale Mono.Addins registry cache entry
+(`addin-db-004/addin-data/.../OpenSim.Addons.RegionCurrency,1.0.maddin`)
+was left alone - Mono.Addins is expected to self-heal that on next
+scan now that the DLL is actually gone, and hand-editing its internal
+cache format wasn't worth the risk for what's already a no-op.
