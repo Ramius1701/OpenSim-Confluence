@@ -5,10 +5,70 @@
        OpenSim.Framework.csproj's hand-added GenerateGitVersionInfo
        MSBuild <Target> (build-number versioning) - this schema has no way
        to express a custom Target, so that block does not survive
-       regeneration and must be manually re-added afterward (see the
-       comment block at the top of that .csproj for the full text to
-       restore). Learned this the hard way on 2026-08-16 when fixing a
-       missing-projects gap here silently broke the build. -->
+       regeneration and must be manually re-added afterward. Learned this
+       the hard way twice now: 2026-08-16 (fixing a missing-projects gap
+       here silently broke the build) and again 2026-08-18 (regenerating
+       just to check whether Tests projects would materialize - see the
+       Test-project note further down - broke it a second time, and the
+       restore text wasn't saved anywhere git-tracked, since .csproj is
+       gitignored, so it had to be reconstructed from scratch by reading
+       the already-generated obj/Release/GitVersionInfo.g.cs on disk).
+       The exact block to paste back into OpenSim.Framework.csproj,
+       directly under its opening <Project Sdk="Microsoft.NET.Sdk"> line,
+       is embedded here now (in this git-tracked file) specifically so it
+       never has to be reconstructed a third time:
+
+  <Target Name="GenerateGitVersionInfo" BeforeTargets="BeforeCompile;CoreCompile">
+    <Exec Command="git rev-list --count origin/master..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitsAhead" />
+    </Exec>
+    <Exec Command="git rev-parse --short=10 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitShortHash" />
+    </Exec>
+    <PropertyGroup>
+      <GitCommitsAhead Condition="'$(GitCommitsAhead)' == ''">0</GitCommitsAhead>
+      <GitShortHash Condition="'$(GitShortHash)' == ''">unknown</GitShortHash>
+    </PropertyGroup>
+    <ItemGroup>
+      <GitVersionInfoLines Include="namespace OpenSim" />
+      <GitVersionInfoLines Include="{" />
+      <GitVersionInfoLines Include="public static class GitVersionInfo" />
+      <GitVersionInfoLines Include="{" />
+      <GitVersionInfoLines Include="public const string CommitsAheadOfMaster = &quot;$(GitCommitsAhead)&quot;%3B" />
+      <GitVersionInfoLines Include="public const string ShortHash = &quot;$(GitShortHash)&quot;%3B" />
+      <GitVersionInfoLines Include="}" />
+      <GitVersionInfoLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)GitVersionInfo.g.cs" Lines="@(GitVersionInfoLines)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)GitVersionInfo.g.cs" />
+    </ItemGroup>
+  </Target>
+
+       (note the %3B escapes: WriteLinesToFile's Lines attribute splits
+       item values on a literal ";" as an MSBuild list separator, so a
+       real semicolon in the generated C# has to be escaped this way or
+       it gets silently dropped - cost an extra build-fail-and-fix cycle
+       to discover on 2026-08-18.)
+
+       Separately: this file defines 20 real Test project stanzas
+       (OpenSim.Framework.Tests, OpenSim.Region.CoreModules.Tests, etc.)
+       that a fresh prebuild run silently produces ZERO of - confirmed on
+       2026-08-18 by running runprebuild for real and diffing "Creating
+       project:" output against every <Project name> in this file. Not
+       caused by anything in this repo's own edits - upstream's own
+       prebuild.xml has the identical same-path pattern for most of these
+       (e.g. OpenSim.Region.CoreModules.Tests uses path="OpenSim/Region/
+       CoreModules", the same path as the non-test OpenSim.Region.
+       CoreModules project right above it), so this looks like a
+       limitation of this specific prebuild.dll build (the tool's own
+       banner credits "OpenSimulator build 2017 Ubit Umarov") rather than
+       something Confluence broke. Net effect: nobody who runs
+       runprebuild.bat/.sh on this codebase today gets any test project
+       in their solution, silently, with no error - not investigated
+       further than confirming the symptom; left for whoever wants to
+       pursue real test-running support as its own effort. See
+       TESTING.txt and PROJECT_LOG.md for the fuller writeup. -->
   <!-- <Solution activeConfig="Debug" name="OpenSim" path="./" version="0.5.0-$Rev$" forceFrameworkVersion="v4_6"> -->
   <Solution activeConfig="Release" name="OpenSim" path="./" version="0.5.0-$Rev$" frameworkVersion="net8_0">
   <Configuration name="Debug" >

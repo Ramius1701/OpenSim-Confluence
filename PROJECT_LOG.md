@@ -7727,3 +7727,120 @@ branch). Nothing to port. Temporary remote removed after the check.
 landed (sim height + dead-code cleanup); everything else checked out
 already-covered, out-of-scope-by-design, or a mirror with nothing
 unique. Build verified clean, pushed.
+
+### Stale-file pass: LICENSE.txt, CONTRIBUTORS.txt, TESTING.txt, Makefile, runprebuild
+
+User spotted several files on GitHub's file browser showing very old
+last-commit dates (CONTRIBUTORS.txt 2019, TESTING.txt 2014, Makefile
+2015) and asked whether they needed updating - with the explicit
+standard "accuracy is key, only include up-to-date files and
+information."
+
+Checked all five files (LICENSE.txt, CONTRIBUTORS.txt, TESTING.txt,
+Makefile, runprebuild.sh/.bat) against `origin/master` first: every one
+is byte-identical to upstream's own current copy. None of this is
+Confluence uniquely falling behind - it's upstream's own state. That
+distinction mattered for what "fix" meant per file:
+
+- **LICENSE.txt** - timeless BSD-style boilerplate, no dates or names.
+  Nothing to update.
+- **CONTRIBUTORS.txt** - genuinely stale relative to reality, but not
+  fixable by backfilling 7 years of individual upstream contributor
+  names (unverifiable, and that file has always been self-curated, not
+  auto-generated). What *was* fixable and true: Confluence itself has
+  absorbed real code from forks (Tranquillity, Gunthar's fork,
+  WhiteCore-Dev, Halcyon, Homeworldz, opensim-lickx) with zero record
+  in the traditional contributors file, despite already being
+  documented in README's Attribution section. Added a
+  "Confluence-Specific Attribution" section listing those projects.
+- **runprebuild.sh/.bat** - not actually stale. Deliberately targets
+  `net8_0`, matching upstream's own current, live choice (see the
+  separate .NET 8 vs .NET 10 discussion below). Left alone.
+- **TESTING.txt** - genuinely wrong, not just old: told readers to run
+  `nant test`, use NUnit for **.NET 2.0**, and VS2005/2008 - none of
+  which apply to this repo's real build process (`dotnet build`/MSBuild
+  via prebuild-generated project files). Rewritten from scratch to
+  describe the real process.
+- **Makefile** - every target shells out to `${NANT}`, a build system
+  with zero presence anywhere else in this repo's actual toolchain.
+  Removed outright per the user's explicit "remove irrelevant items" -
+  rewriting it as a thin dotnet wrapper was considered and rejected: it
+  would just be a second place for the real build process to drift out
+  of sync from, for something `dotnet build OpenSim.sln` already does
+  directly with no wrapper needed.
+
+**Verifying TESTING.txt's accuracy caused a real incident.** To write
+an honest TESTING.txt, actually ran `runprebuild` for real (via
+`dotnet bin/prebuild.dll ...`, matching the exact invocation
+`runprebuild.bat`/`.sh` use) to check whether the 20 real `<Project>`
+Test stanzas already in `prebuild.xml` (`OpenSim.Framework.Tests`,
+`OpenSim.Region.CoreModules.Tests`, etc.) actually produce working test
+projects. They don't - confirmed by diffing the run's own
+"Creating project:" output against every Test project name defined in
+`prebuild.xml`: zero of the 20 got created, silently, no error. Checked
+whether this is a Confluence-specific regression: it isn't - upstream's
+own `prebuild.xml` has the identical pattern (most Test projects share
+the exact same `path` as their non-test counterpart, e.g.
+`OpenSim.Region.CoreModules.Tests` uses `path="OpenSim/Region/
+CoreModules"`, matching `OpenSim.Region.CoreModules` itself, relying on
+file-match rules alone to separate them). This particular `prebuild.dll`
+build (banner credits "OpenSimulator build 2017 Ubit Umarov") appears
+unable to handle that pattern. Not fixed - left as a documented, real
+limitation in both `TESTING.txt` and `prebuild.xml` for whoever wants
+to pursue real test-running support later.
+
+Regenerating to check this **broke the main build** - the second time
+this exact failure mode has happened (first was 2026-08-16, logged
+above). `prebuild.xml` regeneration always wipes
+`OpenSim.Framework.csproj`'s hand-added `GenerateGitVersionInfo`
+MSBuild `<Target>` (build-number versioning added 2026-08-16) - the
+schema has no way to express a custom `<Target>`, so this isn't a bug,
+it's a known, unavoidable property of regenerating. `prebuild.xml`
+already had a warning comment saying exactly this - read it *after*
+already breaking the build, not before, which is its own lesson. Worse:
+the actual restore text wasn't saved anywhere git-tracked (`.csproj` is
+gitignored by design), so the fix from 2026-08-16 was gone with no
+record of its literal content - had to be reconstructed from scratch by
+reading the still-present, previously-generated
+`obj/Release/GitVersionInfo.g.cs` on disk to infer the target shape,
+then rewriting the MSBuild `<Exec>`/`<WriteLinesToFile>` logic to
+reproduce it. Hit one new bug while doing this that the original
+2026-08-16 fix apparently didn't (or the write-up of it didn't mention):
+`WriteLinesToFile`'s `Lines` attribute splits item values on a literal
+`;` as an MSBuild list separator, so the generated C#'s trailing
+semicolons were silently dropped, causing a second, different compile
+error (`CS1002: ; expected`) before landing on the working `%3B`-escaped
+version.
+
+Fixed this gap for real this time: the complete, exact, copy-pasteable
+`<Target>` XML now lives directly inside `prebuild.xml`'s own top-of-file
+comment (git-tracked, survives regeneration by construction, since the
+comment describes what to do *to* the regenerated file rather than
+being part of what gets regenerated) rather than only in
+`OpenSim.Framework.csproj` itself or in prose here. Should not need to
+be reconstructed from scratch a third time.
+
+Full solution build clean, 0 errors, after all of the above. Not
+deployed - `TESTING.txt`/`Makefile`/`CONTRIBUTORS.txt`/`prebuild.xml`
+changes plus the restored (equivalent, re-verified)
+`GenerateGitVersionInfo` target have no runtime behavior change.
+
+### .NET 8 vs .NET 10
+
+User asked directly why this repo targets net8.0 instead of the newer
+net10.0. Checked rather than assumed: **upstream opensim/opensim's own
+current master also targets `net8_0`**, identically, confirmed via its
+`prebuild.xml`/`runprebuild.sh`. Not something Confluence is behind on
+relative to its own reference point. .NET 8 is the current LTS
+(supported to Nov 2026); .NET 10 is also LTS but only ~9 months old as
+of this session. Independent supporting evidence surfaced in the same
+session's Tranquillity branch audit above: their own `.NET 9` migration
+work sits on an explicitly-named, unmerged `dev-future` branch - even a
+more aggressive fork in this ecosystem treats a runtime-version jump as
+risky, in-progress work, not something to land on a stable branch
+casually. Moving Confluence to net10 unilaterally would mean diverging
+from upstream (cutting against this project's own "stay close enough to
+accept continuing upstream work" goal) and would need real verification
+of the native interop pieces (BulletSim, ODE physics, Mono.Addins)
+first - not attempted, logged as a real option only if pursued
+deliberately as its own effort.
