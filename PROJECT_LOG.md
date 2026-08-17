@@ -6855,3 +6855,53 @@ is loaded by both region processes and Robust from one shared
 location, so deploying it means stopping the whole grid again;
 holding that for a batched deploy alongside whatever's next rather
 than asking for another full stop/start cycle for one small change.
+
+### PRIM_GLTF_* primitive-parameter dispatch wired into llSetPrimitiveParams
+
+Next README gap, and one this session already had a real head start
+on - a full read/write backend for the four `PRIM_GLTF_*` codes
+(`ApplyGltfPrimitiveParams`, `ApplyGltfPrimitiveParamsToFace`, plus
+per-property helpers for texture/transform/base-color/metallic-
+roughness/emissive, all working against the same compact JSON stored
+in `GetMaterialOverrideData`/`SetMaterialOverrideData` that
+`llSetLinkGLTFOverrides` also uses) already existed in `LSL_Api.cs`,
+confirmed genuinely dormant - `ApplyGltfPrimitiveParams` had exactly
+one reference in the whole file: its own definition. Nothing in
+`SetPrimParams` (the shared per-part dispatch loop both
+`llSetPrimitiveParams` and `llSetLinkPrimitiveParamsFast` route
+through) had a case for any of the four codes, so a script setting
+`PRIM_GLTF_BASE_COLOR` etc. would just silently fall through instead
+of the backend running.
+
+Matched real SL's own parameter shape for these (confirmed against
+the existing helper functions' index reads, which already expected
+it): `[face, texture, repeats, offsets, rotation]` common to all four,
+then type-specific extras - none for `PRIM_GLTF_NORMAL` (5 total),
+metallic+roughness floats for `PRIM_GLTF_METALLIC_ROUGHNESS` (7),
+an emissive color vector for `PRIM_GLTF_EMISSIVE` (6), and color/
+alpha/alpha_mode/alpha_cutoff/double_sided for `PRIM_GLTF_BASE_COLOR`
+(10). Added a case to `SetPrimParams` covering all four - computes the
+right argument count per code, takes exactly that many items as a
+sublist via `LSL_List.GetSublist` (confirmed inclusive-both-ends
+first), and hands it to the existing `ApplyGltfPrimitiveParams`,
+which already does its own per-field validation and error reporting
+(`Error(originFunc, ...)`, same convention every other case here
+uses) - matches the existing `PRIM_NORMAL`/`PRIM_SPECULAR` cases'
+shape closely since they're the nearest real analogs (also
+texture-map-plus-transform parameters). Folded into the same
+`materialChanged` flag those two already use, so it gets the same
+post-loop update/persist handling for free.
+
+Checked the GET side too while in there (`llGetPrimitiveParams`/
+`llGetLinkPrimitiveParams`'s own dispatch, a separate switch further
+down in the same file) - confirmed no `PRIM_GLTF_*` case exists there
+either, so reading these values back through the generic prim-params
+API still isn't possible. That's a separate, not-yet-scoped gap the
+README's wording never actually claimed was fixed (it specifically
+named the SET functions) - noted here rather than silently expanded
+into this fix.
+
+Build-verified (`OpenSim.Region.ScriptEngine.Shared.Api.csproj` and a
+full solution build, both clean). Not yet deployed/live-tested for
+the same batching reason as `InternalPort = MATCHING` above - this
+DLL is also shared, not region-specific.

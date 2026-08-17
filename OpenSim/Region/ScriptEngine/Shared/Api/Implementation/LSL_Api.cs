@@ -12754,6 +12754,32 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
                             break;
 
+                        case ScriptBaseClass.PRIM_GLTF_NORMAL:
+                        case ScriptBaseClass.PRIM_GLTF_METALLIC_ROUGHNESS:
+                        case ScriptBaseClass.PRIM_GLTF_EMISSIVE:
+                        case ScriptBaseClass.PRIM_GLTF_BASE_COLOR:
+                            // [face, texture, repeats, offsets, rotation] common to
+                            // all four, plus type-specific extra values: none for
+                            // NORMAL, metallic+roughness floats for
+                            // METALLIC_ROUGHNESS, an emissive color vector for
+                            // EMISSIVE, and color/alpha/alpha_mode/alpha_cutoff/
+                            // double_sided for BASE_COLOR - see
+                            // ApplyGltfPrimitiveParams and its helpers for the
+                            // exact per-index handling.
+                            int gltfNeed = code switch
+                            {
+                                ScriptBaseClass.PRIM_GLTF_BASE_COLOR => 10,
+                                ScriptBaseClass.PRIM_GLTF_METALLIC_ROUGHNESS => 7,
+                                ScriptBaseClass.PRIM_GLTF_EMISSIVE => 6,
+                                _ => 5, // PRIM_GLTF_NORMAL
+                            };
+                            if (remain < gltfNeed)
+                                return new LSL_List();
+
+                            materialChanged |= ApplyGltfPrimitiveParams(part, code, rules.GetSublist(idx, idx + gltfNeed - 1), originFunc);
+                            idx += gltfNeed;
+                            break;
+
                         case ScriptBaseClass.PRIM_LINK_TARGET:
                             if (remain < 3) // setting to 3 on the basis that parsing any usage of PRIM_LINK_TARGET that has nothing following it is pointless.
                                 return new LSL_List();

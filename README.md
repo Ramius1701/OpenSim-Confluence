@@ -264,10 +264,12 @@ Deliberately deferred, not forgotten — see roadmap.
 - `llGetRegionTimeOfDay`, `llTransferOwnership`, `llSitOnLink`.
 - `llSetLinkRenderMaterial`, `llSetLinkGLTFOverrides` — a full PBR
   material override read/write pipeline (glTF JSON extraction, compact
-  key-value encoding, KHR texture transforms). The `PRIM_GLTF_*`
-  primitive-parameter helpers exist in the codebase but are not yet wired
-  into `llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast` — dormant,
-  not dispatched.
+  key-value encoding, KHR texture transforms). `PRIM_GLTF_BASE_COLOR`/
+  `_NORMAL`/`_METALLIC_ROUGHNESS`/`_EMISSIVE` are now wired into
+  `llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast` (build-verified;
+  see PROJECT_LOG.md) — reading them back through
+  `llGetPrimitiveParams`/`llGetLinkPrimitiveParams` still isn't
+  implemented, a separate, not-yet-scoped gap.
 - `llIsExperienceTrusted`, `llGetExperiencePermissions`,
   `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats` —
   Experience introspection queries backed by Confluence's own Experience
@@ -529,10 +531,10 @@ work continues — don't let them go stale.
   implemented — logged rather than started, since no known client in
   this project's own stack speaks the login-RPC protocol it needs;
   see the Display Names and identity section above.
-- The misc LSL/OSSL functions listed as "not yet implemented" above.
-- `PRIM_GLTF_*` primitive-parameter dispatch is dormant — the backing
-  code exists but nothing calls it from `llSetPrimitiveParams`/
-  `llSetLinkPrimitiveParamsFast`.
+- `PRIM_GLTF_*` readback via `llGetPrimitiveParams`/
+  `llGetLinkPrimitiveParams` isn't implemented — the write side
+  (`llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast`) now is; see
+  the LSL/OSSL compatibility section above.
 - RegionCurrency vs. RegionWeb's currency portal duplication is
   unreconciled.
 - The Bot/NPC management framework is infrastructure only — no script
@@ -592,7 +594,7 @@ half-finished work on the integration branch.
 - Experience Tools is not full Second Life Experience-service
   compatibility.
 - `llOpenFloater` is not implemented, not even as a stub.
-- `PRIM_GLTF_*` primitive parameters are present but not dispatched.
+- `PRIM_GLTF_*` primitive parameters can be set but not read back.
 - Pathfinding is region-local and approximate, not a physics-engine-native
   or Linden-proprietary navmesh service.
 - Weather is meaningfully improved but still reasonably called
