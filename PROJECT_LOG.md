@@ -7391,8 +7391,37 @@ than inventing a parallel one, since bots warrant the same trust
 threshold NPCs already have.
 
 Full solution build clean after every batch, 0 warnings throughout,
-including the `SensorRepeat.cs` changes. Not yet deployed/live-tested
-- new code across `IBotManager.cs`/`BotManager.cs`/`OSSL_Api.cs`/
-`IOSSL_Api.cs`/`OSSL_Stub.cs`/`SensorRepeat.cs`/`LSL_Constants.cs`,
-batched for whenever this is next redeployed alongside the other
-pending script-engine changes above.
+including the `SensorRepeat.cs` changes.
+
+**Live-verified.** Deployed (full rebuild, 186-file DLL/PDB sync, zero
+mismatches on re-verify; caught and fixed a real `osslDefaultEnable.ini`
+drift in the same pass - the live deployment's copy had an
+`Allow_osGetAgentViewer` line from an earlier session's live-verification
+work that had never been carried back into the tracked file, restored
+before overwriting the live copy with the new `Allow_bot*` entries so
+that permission wasn't regressed). Grid restarted clean, both regions
+came up with no errors in `Robust.log`/`OpenSim.log`.
+
+Verified in-world with a self-contained smoke-test script (rezzed on
+Welcome Center as an estate-owner account, since `osslNPC`'s default
+group is `ESTATE_MANAGER,ESTATE_OWNER`) exercising a representative
+sample from all six batches end to end: `botCreateBot` returned a real
+key; `botIsBot`/`botGetOwner`/`botGetName`/`botGetAllBotsInRegion` all
+read back correctly; `botChangeOwner` correctly returned `BOT_ERROR`
+(-3); `botGetPos`/`botSetRotation`/`botTeleportTo`/
+`botSetMovementSpeed` ran clean; `botSay` actually spoke
+"Hello from the bot* wiring test" in local chat as "TestBot One" -
+real delivery through the chat pipeline, not just a non-throwing stub;
+`botAddTag`/`botHasTag`/`botGetBotTags`/`botGetBotsWithTag`/
+`botRemoveTag` round-tripped correctly; `botSetProfileParams`/
+`botGetProfileParams` round-tripped `BOT_ABOUT_TEXT`/`BOT_EMAIL`
+correctly; `botSensor` correctly reported the one nearby avatar via a
+real `sensor()` event - confirming the new `ScenePresence`-hosted
+`SensorRepeat.cs` path works, not just compiles; `botListen` returned
+a valid handle; and `botRemoveBot` correctly removed the bot
+(`botIsBot` false afterward). Zero exceptions or errors in
+`OpenSim.log`/`Robust.log` during the test window. Not covered by
+this pass (needs real assets/other avatars to test meaningfully, left
+for a follow-up session): outfits, persistence, animation,
+`botGiveInventory`, `botSitObject`/`botTouchObject`, multi-waypoint
+navigation/following, `botSensorRepeat`, `botMessageLinked`.

@@ -31,7 +31,7 @@ below.
 | Windows build | Successful — full solution build verified clean (0 errors) as of the latest commit |
 | GitHub Actions | `.github/workflows/msbuildnet.yml` present; not yet exercised now that the repo is pushed |
 | Web/Admin UI | Extensively live-verified against a running Robust instance (real HTTP round-trips: login, admin actions, database writes confirmed) — see the note on testing scope below |
-| In-world/viewer testing | Live-verified with a real viewer (Firestorm) against a running region: login, teleport between regions, weather rendering, and a full end-to-end currency/land-purchase transaction all confirmed working over an extended live session. An intermittent region-startup hang was tracked as an open blocker for a period (see PROJECT_LOG.md) but has not recurred across many region starts/restarts since, including a full session's worth on 2026-08-16 — its root cause was never conclusively identified, so treat it as currently non-blocking rather than definitively fixed. |
+| In-world/viewer testing | Live-verified with a real viewer (Firestorm) against a running region: login, teleport between regions, weather rendering, and a full end-to-end currency/land-purchase transaction all confirmed working over an extended live session. An intermittent region-startup hang was tracked as an open blocker for a period (see PROJECT_LOG.md) but has not recurred across many region starts/restarts since, including a full session's worth on 2026-08-16 and again on 2026-08-18 (region processes appeared briefly idle at startup with no open listener ports, but both came up clean within about a minute with no restart needed) — its root cause was never conclusively identified, so treat it as currently non-blocking rather than definitively fixed. |
 
 **On "tested" vs. "compiled":** these are two different claims and this
 README used to conflate them. The Web/Admin UI runs on Robust alone and
@@ -350,7 +350,13 @@ Tranquillity's own (58 functions: lifecycle, movement/navigation,
 chat/IM/interaction/animation, tagging, persistence, profile/outfits,
 and bot-hosted sensors/comms), wired into Confluence's own
 `OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs` so YEngine scripts can call
-it directly — see PROJECT_LOG.md for the implementation notes. Separately,
+it directly. Live-verified in-world (2026-08-18): a real bot created,
+tagged, given a profile, spoken through — its chat line actually
+appeared in local chat — sensed a nearby avatar, and cleanly removed,
+all through real script calls with zero server-side errors. Outfits,
+persistence, animation, item-giving, and multi-waypoint navigation are
+build-verified only so far — see PROJECT_LOG.md for the full batch
+breakdown and exactly what was and wasn't exercised. Separately,
 avatar-follow and tag-group management remain available via `osNpc` too.
 
 ### Sit targets and avatar animation
