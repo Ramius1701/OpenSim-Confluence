@@ -7552,6 +7552,26 @@ messier cleanup than waiting would have cost. Restarted only what was
 already running before the deploy (Robust + both regions - no
 MoneyServer, which wasn't part of the running state).
 
+Both regions reached `RegionReady`'s "server_startup" ready state
+cleanly (`Welcome Center` and `Var Test Region` both logged "Region ...
+is ready", YEngine loaded its LSL/LS/MOD/OSSL apis with no errors, map
+tiles generated, grid registration succeeded). Checked both regions'
+real per-region logs (`Simulators\<Region>\OpenSim.log` - learned this
+session that this is where output actually lands once a region finds
+its config, not the root-level `OpenSim.log`, which stops mid-startup
+and had been misleading me into thinking an earlier restart had hung
+when it hadn't) for anything new and specific to `ModifyRegionModule`
+or the wider `CoreModules` load: nothing - no exceptions, no missing-
+type errors, nothing beyond the same handful of long-standing,
+unrelated warnings already present before today (a `DATASNAPSHOT` null-
+reference warning that's been silently ignored for weeks, stale
+connection-refused entries against the test deployment's own public
+hostname from over a week ago).
+Confirms the new code loads and the region starts healthy with it in
+place - genuine full verification of the capability's actual GET/POST
+behavior still needs a real PBR-capable viewer session, which needs
+the user.
+
 ### SLua investigation - real scope, not started
 
 Moved to the last remaining actionable item before the two blocked
