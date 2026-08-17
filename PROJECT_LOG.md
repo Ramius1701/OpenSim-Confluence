@@ -7114,3 +7114,89 @@ leftover state. A stale Mono.Addins registry cache entry
 was left alone - Mono.Addins is expected to self-heal that on next
 scan now that the DLL is actually gone, and hand-editing its internal
 cache format wasn't worth the risk for what's already a no-op.
+
+### OAR-load 502 - the code fix above didn't resolve the user's actual symptom
+
+Retested against the real deployment after the fix/full-sync deployed:
+same 502. Confirmed via two independent signals that the request never
+reaches `HandleMyRegionsOarLoad` at all - `Robust.log` had zero new
+entries (including the new logging this fix added, which should have
+fired either way), and the user directly observed no command ever
+appeared in Var Test Region's own live console window either. So the
+fire-and-forget fix above is a real, legitimate bug fix (the response
+message was always lying about "queued" when the code actually
+blocked), but it does not explain or resolve this specific reported
+502 - something between the browser and Robust's own HTTP listener is
+where this request is actually dying, before any of this session's
+code ever runs.
+
+Investigated the reverse-proxy angle (the user's own deployment runs
+nginx via Laragon, unconfigured/default) but explicitly stopped short
+of touching or documenting a fix around that specific setup - the user
+correctly pushed back: baking one person's reverse-proxy configuration
+into the project doesn't help anyone whose deployment looks different,
+and framing it as a required doc note has the same problem by
+implication. Proposed two code-level architecture options (bypass the
+proxy by uploading straight to the target region's own port; stream/
+chunk the upload instead of one large body) - the user rejected the
+first on real UX grounds (a direct-to-region upload would force every
+self-service resident, not just an admin doing this locally, to stage
+their OAR somewhere else first, like Google Drive, before this page
+could reach it - worse than what exists today) and asked for more
+research before committing to either.
+
+Left open, not resolved. Practical workaround the user already has:
+load the OAR directly from the region's own console instead of
+through the web page. `HandleMyRegionsOarLoad`'s fire-and-forget fix
+stays in - it's independently correct regardless of this - but the
+actual reported 502 needs a real root-cause investigation into what
+sits between the public domain and Robust before any further fix is
+attempted.
+
+### Resolution: browser-based OAR/IAR restore removed entirely
+
+Follow-up to the still-open 502 above, after redeploying the
+full-sync build and retesting for real: same result, and the user
+directly observed no command ever reached Var Test Region's own
+console from the web attempt either - a second independent signal
+(beyond `Robust.log` staying silent) that the request dies before any
+of this project's code runs at all.
+
+Traced the actual reverse proxy: the live deployment runs nginx via
+Laragon, effectively unconfigured (no vhost anywhere in it references
+the public domain, port 9002, or `myregions`/`myinventory` at all -
+whatever's terminating public traffic for the real domain isn't one
+of Laragon's own configured sites). Stopped short of chasing that
+specific setup further or writing a "configure your reverse proxy
+this way" doc note - correctly pushed back on: this deployment's
+particular proxy setup isn't representative, and documenting a fix
+tied to one specific reverse-proxy product doesn't help anyone whose
+deployment looks different. Also considered, and the user rejected on
+real UX grounds: bypassing the proxy entirely by uploading straight
+to the target region's own port - that would force every self-service
+resident (not just an admin testing locally) to stage the file
+somewhere else first, worse than today.
+
+Landed on removing the feature rather than continuing to chase it:
+browser-based OAR/IAR *restore* doesn't exist in any OpenSim web UI
+this project has checked (WhiteCore-Dev's own ~100-page web module
+included), and neither of us knows of a real deployed grid that
+offers it either - it was never an established, expected feature to
+begin with, just something added along the way. Backup (*save*, to
+the server's own configured folder - the exact same local-disk
+operation autobackup already does, no HTTP relay, no proxy, no upload
+size question) stays exactly as it was; only the upload-and-restore
+half is gone.
+
+Removed `HandleMyRegionsOarLoad` and `HandleMyInventoryIarLoad`
+(including the just-added fire-and-forget fix - net win regardless,
+since it was masking a promise the code couldn't keep, but moot once
+the whole path is gone), their two route-dispatch cases, both
+pages' upload `<form>`s (replaced with a short explanation of why and
+a pointer to the region console), and the hand-rolled
+`ParseMultipartFormData`/`ExtractQuotedValue`/`IndexOfSequence`
+helpers - confirmed nothing else in the file used them once both
+Load handlers were gone. `HandleMyRegionsOarSave`/
+`HandleMyInventoryIarSave` (the backup-only paths) are untouched.
+Full solution build clean, 0 warnings - confirms nothing else
+referenced any of the removed code either.

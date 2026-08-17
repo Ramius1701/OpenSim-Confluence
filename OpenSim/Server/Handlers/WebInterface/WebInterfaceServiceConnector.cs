@@ -602,9 +602,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/myregions/oar-save":
                         HandleMyRegionsOarSave(request, response);
                         break;
-                    case BasePath + "/myregions/oar-load":
-                        HandleMyRegionsOarLoad(request, response);
-                        break;
                     case BasePath + "/myregions/restart":
                         HandleMyRegionsRestart(request, response);
                         break;
@@ -613,9 +610,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/myinventory/iar-save":
                         HandleMyInventoryIarSave(request, response);
-                        break;
-                    case BasePath + "/myinventory/iar-load":
-                        HandleMyInventoryIarLoad(request, response);
                         break;
                     default:
                         // Static pages are served at an operator-chosen slug,
@@ -7315,16 +7309,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                     rows.Append("<button type=\"submit\">Back up my region (save OAR)</button>");
                     rows.Append("</form>");
-
-                    rows.Append("<form method=\"post\" enctype=\"multipart/form-data\" action=\"")
-                            .Append(BasePath).Append("/myregions/oar-load\">");
-                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
-                    rows.Append("<p class=\"error\">Warning: restoring an OAR REPLACES everything currently in this region. This cannot be undone.</p>");
-                    rows.Append("<label><input type=\"checkbox\" name=\"confirm\" required> I understand this will replace all current content in ")
-                            .Append(Html(region.RegionName)).Append("</label><br/>");
-                    rows.Append("<input type=\"file\" name=\"file\" accept=\".oar\" required><br/>");
-                    rows.Append("<button type=\"submit\">Restore from OAR</button>");
-                    rows.Append("</form>");
+                    rows.Append("<p class=\"news-meta\">Saves to this region's configured OAR folder on the server (same as autobackup) - restoring from a browser-uploaded OAR isn't offered here. No OpenSim web UI this project has checked against (including WhiteCore-Dev's) offers browser-based OAR restore either, and relaying a whole region archive through a public-facing reverse proxy has real, environment-dependent failure modes (body size limits, read timeouts) that a self-service page can't fix on its own. Restore an OAR from the region's own console instead.</p>");
 
                     rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/restart\" onsubmit=\"return confirm('Restart ")
                             .Append(Html(region.RegionName).Replace("'", "\\'")).Append("? Everyone in the region will be disconnected.');\">");
@@ -7481,209 +7466,18 @@ namespace OpenSim.Server.Handlers.WebInterface
             response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
-        private void HandleMyRegionsOarLoad(IOSHttpRequest request, IOSHttpResponse response)
-        {
-            WebSession session = GetSession(request);
-            if (session == null)
-            {
-                response.StatusCode = (int)HttpStatusCode.Forbidden;
-                return;
-            }
-
-            string message;
-
-            if (request.HttpMethod != "POST")
-            {
-                message = "Invalid request.";
-            }
-            else
-            {
-                Dictionary<string, string> textFields;
-                byte[] fileBytes;
-                ParseMultipartFormData(request, out textFields, out fileBytes);
-
-                if (!UUID.TryParse(textFields.GetValueOrDefault("region_id", string.Empty), out UUID regionID))
-                {
-                    message = "No region specified.";
-                }
-                else if (textFields.GetValueOrDefault("confirm", string.Empty) != "on")
-                {
-                    message = "You must check the confirmation box to restore an OAR.";
-                }
-                else if (fileBytes == null || fileBytes.Length == 0)
-                {
-                    message = "No file was uploaded.";
-                }
-                else
-                {
-                    GridRegion region = GetOwnedRegionOrNull(session, regionID);
-                    if (region == null || string.IsNullOrEmpty(region.ServerURI))
-                    {
-                        message = "Region not found or not owned by you.";
-                    }
-                    else
-                    {
-                        // Fire-and-forget the actual relay to the region's
-                        // OAR/Load endpoint instead of blocking this request
-                        // on it - this message already claimed "queued...
-                        // will take a little while", but the code used to
-                        // synchronously wait (up to 30s) for the full
-                        // uploaded OAR to be relayed and accepted before
-                        // ever sending a response. For anything but a
-                        // trivial OAR that's long enough to trip an
-                        // external reverse proxy's own read timeout,
-                        // producing a real 502 with nothing in Robust.log
-                        // to explain it (this handler had no logging at
-                        // all before this fix). The multipart body is
-                        // already fully parsed into fileBytes by this
-                        // point, so the browser upload itself has already
-                        // completed - only the region-to-region relay was
-                        // ever the blocking part.
-                        string url = region.ServerURI + "OAR/Load/" + region.RegionHandle;
-                        string regionName = region.RegionName;
-                        int fileSize = fileBytes.Length;
-                        Util.FireAndForget(
-                            o =>
-                            {
-                                try
-                                {
-                                    using System.Net.Http.HttpClient client = new System.Net.Http.HttpClient();
-                                    client.Timeout = TimeSpan.FromMinutes(5);
-                                    var content = new System.Net.Http.ByteArrayContent(fileBytes);
-                                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                                    var result = client.PostAsync(url, content).GetAwaiter().GetResult();
-                                    if (result.IsSuccessStatusCode)
-                                        m_log.InfoFormat("[WEBINTERFACE]: OAR restore ({0} bytes) accepted by {1}.", fileSize, regionName);
-                                    else
-                                        m_log.WarnFormat("[WEBINTERFACE]: OAR restore request to {0} responded with {1}.", regionName, (int)result.StatusCode);
-                                }
-                                catch (Exception e)
-                                {
-                                    m_log.WarnFormat("[WEBINTERFACE]: OAR restore request to {0} failed: {1}", regionName, e.Message);
-                                }
-                            },
-                            null, "MyRegionsOarLoad", false);
-
-                        message = "Restore queued for " + region.RegionName + ". This will take a little while.";
-                    }
-                }
-            }
-
-            response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
-        }
-
-        // No multipart/form-data parser existed anywhere in this codebase
-        // (confirmed before writing this - OpenSim/Framework/MultipartForm.cs
-        // only builds outgoing requests). Hand-rolled: splits the raw body on
-        // the boundary marker from the Content-Type header, then for each part
-        // reads its Content-Disposition to get the field name and (for the
-        // file part) the filename, treating everything after the blank line as
-        // that field's value/content.
-        private static void ParseMultipartFormData(IOSHttpRequest request, out Dictionary<string, string> textFields, out byte[] fileBytes)
-        {
-            textFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            fileBytes = null;
-
-            string contentType = request.ContentType ?? string.Empty;
-            int boundaryIndex = contentType.IndexOf("boundary=", StringComparison.OrdinalIgnoreCase);
-            if (boundaryIndex < 0)
-                return;
-
-            string boundary = contentType.Substring(boundaryIndex + "boundary=".Length).Trim().Trim('"');
-            byte[] boundaryBytes = Encoding.ASCII.GetBytes("--" + boundary);
-
-            byte[] body;
-            using (MemoryStream buffer = new MemoryStream())
-            {
-                request.InputStream.CopyTo(buffer);
-                body = buffer.ToArray();
-            }
-
-            List<int> boundaryPositions = new List<int>();
-            for (int i = 0; i <= body.Length - boundaryBytes.Length; i++)
-            {
-                bool match = true;
-                for (int j = 0; j < boundaryBytes.Length; j++)
-                {
-                    if (body[i + j] != boundaryBytes[j])
-                    {
-                        match = false;
-                        break;
-                    }
-                }
-                if (match)
-                    boundaryPositions.Add(i);
-            }
-
-            for (int p = 0; p < boundaryPositions.Count - 1; p++)
-            {
-                int partStart = boundaryPositions[p] + boundaryBytes.Length;
-                int partEnd = boundaryPositions[p + 1];
-                if (partEnd <= partStart)
-                    continue;
-
-                // Header/body split: first blank line ("\r\n\r\n")
-                int headerEnd = IndexOfSequence(body, Encoding.ASCII.GetBytes("\r\n\r\n"), partStart, partEnd);
-                if (headerEnd < 0)
-                    continue;
-
-                string headerText = Encoding.ASCII.GetString(body, partStart, headerEnd - partStart);
-                int contentStart = headerEnd + 4;
-                int contentEnd = partEnd - 2; // trailing "\r\n" before next boundary
-                if (contentEnd < contentStart)
-                    contentEnd = contentStart;
-
-                string nameMatch = ExtractQuotedValue(headerText, "name=");
-                string filenameMatch = ExtractQuotedValue(headerText, "filename=");
-
-                if (!string.IsNullOrEmpty(filenameMatch))
-                {
-                    byte[] partBytes = new byte[contentEnd - contentStart];
-                    Array.Copy(body, contentStart, partBytes, 0, partBytes.Length);
-                    fileBytes = partBytes;
-                }
-                else if (!string.IsNullOrEmpty(nameMatch))
-                {
-                    textFields[nameMatch] = Encoding.UTF8.GetString(body, contentStart, contentEnd - contentStart);
-                }
-            }
-        }
-
-        private static string ExtractQuotedValue(string headerText, string key)
-        {
-            int idx = headerText.IndexOf(key, StringComparison.OrdinalIgnoreCase);
-            if (idx < 0)
-                return null;
-
-            int quoteStart = headerText.IndexOf('"', idx);
-            if (quoteStart < 0)
-                return null;
-
-            int quoteEnd = headerText.IndexOf('"', quoteStart + 1);
-            if (quoteEnd < 0)
-                return null;
-
-            return headerText.Substring(quoteStart + 1, quoteEnd - quoteStart - 1);
-        }
-
-        private static int IndexOfSequence(byte[] haystack, byte[] needle, int start, int end)
-        {
-            for (int i = start; i <= end - needle.Length; i++)
-            {
-                bool match = true;
-                for (int j = 0; j < needle.Length; j++)
-                {
-                    if (haystack[i + j] != needle[j])
-                    {
-                        match = false;
-                        break;
-                    }
-                }
-                if (match)
-                    return i;
-            }
-            return -1;
-        }
+        // Browser-based OAR restore (upload-through-Robust-relay) used to
+        // live here (HandleMyRegionsOarLoad) but was removed - see the
+        // README/PROJECT_LOG entry on this. Relaying a whole region archive
+        // through a public-facing reverse proxy has real, environment-
+        // dependent failure modes (body size limits, read timeouts) no
+        // amount of application-level fixing can fully solve, no OpenSim
+        // web UI checked against (WhiteCore-Dev included) offers this
+        // either, and this project doesn't know of any real grid that
+        // does. OAR restore stays console-only. The hand-rolled multipart
+        // parser this and the equivalent IAR handler used
+        // (ParseMultipartFormData/ExtractQuotedValue/IndexOfSequence) was
+        // removed along with both, since nothing else in this file used it.
 
         #endregion Self-service region owner OAR backup/restore
 
@@ -7719,14 +7513,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Password: <input type=\"password\" name=\"password\" required></label> "
                     + "<button type=\"submit\">Back up my inventory (save IAR)</button>"
                     + "</form>"
-                    + "<h2>Restore from inventory archive</h2>"
-                    + "<p class=\"error\">Restoring an IAR adds its contents into your inventory as new folders. It does not delete anything you currently have.</p>"
-                    + "<form method=\"post\" enctype=\"multipart/form-data\" action=\"" + BasePath + "/myinventory/iar-load\">"
-                    + "<label>Password: <input type=\"password\" name=\"password\" required></label><br/>"
-                    + "<label><input type=\"checkbox\" name=\"confirm\" required> I understand this will add the archive's contents to my inventory</label><br/>"
-                    + "<input type=\"file\" name=\"file\" accept=\".iar\" required><br/>"
-                    + "<button type=\"submit\">Restore from IAR</button>"
-                    + "</form>";
+                    + "<p class=\"news-meta\">Saves to a configured folder on the server. Restoring from a browser-uploaded IAR isn't offered here - same reasoning as OAR restore above, see the My Regions page.</p>";
 
             WritePage(request, response, "Confluence Grid - My Inventory", body);
         }
@@ -7821,80 +7608,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             response.Redirect(BasePath + "/myinventory?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
-        private void HandleMyInventoryIarLoad(IOSHttpRequest request, IOSHttpResponse response)
-        {
-            WebSession session = GetSession(request);
-            if (session == null)
-            {
-                response.StatusCode = (int)HttpStatusCode.Forbidden;
-                return;
-            }
-
-            string message;
-
-            if (request.HttpMethod != "POST")
-            {
-                message = "Invalid request.";
-            }
-            else
-            {
-                Dictionary<string, string> textFields;
-                byte[] fileBytes;
-                ParseMultipartFormData(request, out textFields, out fileBytes);
-
-                string password = textFields.GetValueOrDefault("password", string.Empty);
-                string confirm = textFields.GetValueOrDefault("confirm", string.Empty);
-
-                if (confirm != "on")
-                {
-                    message = "You must check the confirmation box to restore an inventory archive.";
-                }
-                else if (fileBytes == null || fileBytes.Length == 0)
-                {
-                    message = "No file was uploaded.";
-                }
-                else
-                {
-                    string[] nameParts = session.Name.Split(' ', 2);
-                    string firstName = nameParts.Length > 0 ? nameParts[0] : session.Name;
-                    string lastName = nameParts.Length > 1 ? nameParts[1] : string.Empty;
-
-                    string serverURI = ResolveAnyRegionServerURI(session.PrincipalID);
-                    if (string.IsNullOrEmpty(serverURI))
-                    {
-                        message = "Could not reach a region to service this request.";
-                    }
-                    else
-                    {
-                        try
-                        {
-                            string url = serverURI + "IAR/Load";
-                            using (System.Net.Http.HttpClient client = new System.Net.Http.HttpClient())
-                            {
-                                client.Timeout = TimeSpan.FromSeconds(60);
-                                client.DefaultRequestHeaders.Add("X-Iar-First-Name", Uri.EscapeDataString(firstName));
-                                client.DefaultRequestHeaders.Add("X-Iar-Last-Name", Uri.EscapeDataString(lastName));
-                                client.DefaultRequestHeaders.Add("X-Iar-Password", Uri.EscapeDataString(password));
-                                var content = new System.Net.Http.ByteArrayContent(fileBytes);
-                                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                                var result = client.PostAsync(url, content).GetAwaiter().GetResult();
-                                message = result.StatusCode == HttpStatusCode.Forbidden
-                                        ? "Incorrect password."
-                                        : result.IsSuccessStatusCode
-                                                ? "Inventory restore queued. This will take a little while."
-                                                : "Region responded with " + (int)result.StatusCode + ".";
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            message = "Could not reach a region: " + e.Message;
-                        }
-                    }
-                }
-            }
-
-            response.Redirect(BasePath + "/myinventory?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
-        }
+        // Browser-based IAR restore removed for the same reason as OAR
+        // restore above - see that comment.
 
         #endregion Self-service inventory owner IAR backup/restore
 

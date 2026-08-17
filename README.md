@@ -101,10 +101,10 @@ memberships and regions-owned, both privacy/visibility aware), friends
 list, a full partner proposal flow (propose/accept/decline/cancel/
 breakup, with real reciprocal database writes), transaction history,
 classifieds/events management, region management for estate owners
-(OAR backup/restore, and full estate settings/access-list editing for
-any resident who owns one — not just admins), inventory backup/restore
-(IAR), account changes (password/email), and self-service account
-deletion.
+(OAR backup, and full estate settings/access-list editing for any
+resident who owns one — not just admins), inventory backup (IAR),
+account changes (password/email), and self-service account deletion.
+Backup (save) only, by design — see "Known limitations."
 
 **Admin console:** user management (search, create, edit, ban with
 optional auto-expiry, soft-delete, kick/message an online resident
@@ -602,6 +602,18 @@ half-finished work on the integration branch.
 
 ## Known limitations
 
+- Self-service OAR/IAR restore (upload a file through the web page) is
+  deliberately not offered — only backup (save to the server's
+  configured folder, same as autobackup) is. A real live 502 while
+  testing OAR restore traced back to relaying an entire uploaded
+  archive through a public-facing reverse proxy, which runs into
+  environment-specific body-size/timeout limits no amount of
+  application-level fixing can fully solve. No OpenSim web UI checked
+  against this project (WhiteCore-Dev included) offers browser-based
+  restore either, and no real grid it's aware of does. Restore an OAR
+  from the region's own console, or an IAR the same way inventory
+  archives are normally handled server-side. See PROJECT_LOG.md for
+  the full investigation.
 - Some database migrations remain MySQL-specific in places PGSQL/SQLite
   parity hasn't been added yet.
 - Experience Tools is not full Second Life Experience-service
