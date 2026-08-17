@@ -579,10 +579,13 @@ work continues — don't let them go stale.
   `RenderMaterials` capability already uses, storing the 4 override
   blobs verbatim (the server never interprets them) in a new
   `RegionSettings.TerrainPBROverrides` field with matching SQLite/
-  MySQL/PGSQL migrations and OAR round-trip. Build-verified and
-  deployed; live verification against a real PBR-capable viewer is
-  still pending a grid restart — see PROJECT_LOG.md for the full
-  writeup and exactly what remains to be checked in-world.
+  MySQL/PGSQL migrations and OAR round-trip. Deployed; the grid has
+  restarted cleanly with it in place (twice, no errors either time).
+  What's still outstanding is testing the capability against a real
+  PBR-capable viewer with actual glTF material assets — the grid owner
+  doesn't have any uploaded yet, so this is genuinely untested against
+  real content, not just "pending a restart." See PROJECT_LOG.md for
+  the full writeup.
 - **SLua** — Second Life's modern Luau-based (Roblox's Lua variant)
   scripting language, in open beta on the SL production grid since
   2025-12-02 ([LL's announcement](https://community.secondlife.com/news/featured-news/announcing-the-slua-open-beta-modern-scripting-comes-to-second-life-r11237/)):
