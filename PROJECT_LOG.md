@@ -7425,3 +7425,112 @@ this pass (needs real assets/other avatars to test meaningfully, left
 for a follow-up session): outfits, persistence, animation,
 `botGiveInventory`, `botSitObject`/`botTouchObject`, multi-waypoint
 navigation/following, `botSensorRepeat`, `botMessageLinked`.
+
+### Real PBR terrain support - the ModifyRegion capability
+
+Moved to the next README gap - the last real item on the priority list
+before the two flagship "logged, not started" entries (SLua, Phlox).
+Re-scoped this properly before writing anything, since the existing
+README note called it "substantial from-scratch build (comparable to
+Experience Tools or the native currency service)" and that framing
+turned out to be based on an incomplete picture.
+
+**Scoping.** Spawned a research pass first (repo-wide grep across this
+codebase, `OpenSim-Tranquillity` via `git show origin/develop:<path>`
+since that branch isn't locally checked out, and `opensim-vanilla`,
+Gunthar's fork) to confirm the gap precisely rather than trusting the
+existing note. It confirmed `ModifyRegion` doesn't exist as a real
+capability in any of the three - only a `RemoteAdminPlugin.cs` XML-RPC
+method with a similar name, unrelated. But it also surfaced something
+the earlier investigation had missed entirely: a real, working, but
+write-inaccessible PBR terrain **storage** system already inherited
+from real upstream OpenSim (commit `54fe5747ea`, "add storage for pbr
+terrain feature that viewers for opensim may add") -
+`RegionSettings.TerrainPBR1-4` (4 UUID slots, mirroring the classic
+`TerrainTexture1-4` shape), with full DB migrations in all three
+backends, OAR round-trip, and - most importantly - delivery to
+PBR-capable viewers on every region handshake
+(`LLClientView.cs`, gated on the client's `SupportTerrainPBR` flag).
+The *only* write paths were a console command and an OSSL function
+(`osSetTerrainTextures`), neither reachable from any viewer UI. Also
+found that Gunthar's fork has a real, still-partial LSL entry point
+Confluence lacks (`llSetGroundTexture`), whose own inline comment
+acknowledges the same structural gap this investigation was about to
+hit: *"OpenSim's current terrain settings persist PBR material IDs,
+but not per-layer UV transforms."*
+
+That gap - what a `ModifyRegion` capability's actual request/response
+LLSD schema looks like - was the one thing genuinely unanswerable from
+any of the three codebases: no stub, no comment, no prior attempt
+anywhere. Rather than guess at a schema and risk building something
+that doesn't interoperate with a real viewer, checked the actual
+source of a PBR-capable viewer already present on this machine
+(`S:\Github\phoenix-firestorm`, the same checkout used earlier this
+project's history to find the real Region Debug Console UI).
+`indra/newview/llpbrterrainfeatures.cpp`/`.h` and
+`llvlcomposition.h` gave the real answer directly: `ModifyRegion` GET
+returns `{success, overrides: [4 entries]}`, POST accepts
+`{overrides: [4 entries]}`, and each entry is either an empty map (no
+override) or a glTF material-override LLSD blob
+(`LLGLTFMaterial::getOverrideLLSD`/`applyOverrideLLSD` on the viewer
+side - tiling/scale/rotation/offset and similar per-slot tweaks).
+Critically, `LLModifyRegion` itself is a one-method abstract interface
+(`virtual const LLGLTFMaterial* getMaterialOverride(S32 asset) const`)
+- the capability only ever deals with the *override* layer. Which glTF
+material asset occupies each of the 4 slots is set through a
+completely separate call (`setDetailAssetID`) that this repo's
+inherited `TerrainPBR1-4` + region-handshake delivery already handles
+end to end. This single finding cut the real remaining scope down
+dramatically from the README's "substantial from-scratch build"
+framing: no new base-material-assignment system was needed, only a
+capability to store/relay 4 opaque override blobs the server never
+needs to interpret.
+
+**Implementation.** Cross-checked `MaterialsModule.cs` (the working
+`RenderMaterials`/`ModifyMaterialParams` capabilities) for the exact
+registration pattern used throughout this codebase -
+`OnRegisterCaps` + `caps.RegisterSimpleHandler(name, new
+SimpleStreamHandler("/" + UUID.Random(), handler))` is what gives a
+capability name a real URL in the SEED-cap response (unlike the
+`VTPBR`/`VETPBR` pseudo-cap flags `BunchOfCaps.cs` reads directly out
+of the SEED *request* and deliberately excludes from `validCaps` -
+confirmed at the line level, and confirmed irrelevant here since
+`RegisterSimpleHandler` is a completely different, working path that
+needed no changes to `BunchOfCaps.cs` at all).
+
+- `RegionSettings.cs`: new `TerrainPBROverrides` string property - an
+  opaque store for the serialized 4-entry LLSD override array. The
+  server never parses glTF fields out of it; it only persists exactly
+  what a POST body carries and relays it back verbatim on GET, matching
+  `LLModifyRegion`'s own contract.
+- New migrations (SQLite VERSION 44, MySQL VERSION 69, PGSQL VERSION
+  59) adding the matching `TerrainPBROverrides` column to
+  `regionsettings`, plus read/write wiring into all three
+  `SimulationData.cs` `Store`/`Load` methods (PGSQL's is a genuine
+  `INSERT ... ON CONFLICT DO UPDATE`, needed the new column in three
+  separate places in that one query) and the OAR round-trip in
+  `RegionSettingsSerializer.cs` (`PBROverrides` element, alongside the
+  existing `PBR1-4`).
+- New `ModifyRegionModule.cs`
+  (`OpenSim/Region/CoreModules/World/Terrain/`, added to
+  `OpenSim.Region.CoreModules.csproj`'s explicit file list - confirmed
+  this project uses `EnableDefaultItems=false`, not glob includes, so
+  a new file needs an explicit `<Compile Include>` entry or it's
+  silently never compiled). GET returns the 4 stored overrides
+  (defaulting to 4 empty maps if unset/corrupt); POST validates the
+  body shape (`overrides` must be an array of exactly 4 entries),
+  gates on `Scene.Permissions.CanIssueEstateCommand` (same trust level
+  as `SetEstateTerrainTextures` and the classic `"texturedetail"`
+  estate-message path - estate managers/owners only), stores the array
+  verbatim, and calls `RegionSettings.Save()` (confirmed this actually
+  persists - `rs.OnSave += StoreRegionSettings` is wired in all three
+  `SimulationData.cs` constructors). GET is left unrestricted, matching
+  how region-handshake terrain data itself isn't per-avatar gated.
+
+Full solution build clean, 0 warnings. Deployed (full rebuild, 186-file
+DLL/PDB sync, zero mismatches on re-verify) - **live verification
+against a real PBR-capable viewer is still pending**, since the grid
+wasn't restarted before this entry was written. What to check once
+it's back up: that `ModifyRegion` actually appears in the SEED-cap
+response for a PBR-capable viewer's login, and that a real GET/POST
+round-trip through it behaves as the Firestorm source predicts.

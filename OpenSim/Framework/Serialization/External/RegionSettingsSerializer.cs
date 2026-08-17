@@ -152,6 +152,9 @@ namespace OpenSim.Framework.Serialization.External
                     case "PBR4":
                         settings.TerrainPBR4 = UUID.Parse(xtr.ReadElementContentAsString());
                         break;
+                    case "PBROverrides":
+                        settings.TerrainPBROverrides = xtr.ReadElementContentAsString();
+                        break;
                     case "ElevationLowSW":
                         settings.Elevation1SW = double.Parse(xtr.ReadElementContentAsString(), Culture.NumberFormatInfo);
                         break;
@@ -317,6 +320,7 @@ namespace OpenSim.Framework.Serialization.External
             xtw.WriteElementString("PBR2", settings.TerrainPBR2.ToString());
             xtw.WriteElementString("PBR3", settings.TerrainPBR3.ToString());
             xtw.WriteElementString("PBR4", settings.TerrainPBR4.ToString());
+            xtw.WriteElementString("PBROverrides", settings.TerrainPBROverrides);
             xtw.WriteElementString("ElevationLowSW", settings.Elevation1SW.ToString());
             xtw.WriteElementString("ElevationLowNW", settings.Elevation1NW.ToString());
             xtw.WriteElementString("ElevationLowSE", settings.Elevation1SE.ToString());

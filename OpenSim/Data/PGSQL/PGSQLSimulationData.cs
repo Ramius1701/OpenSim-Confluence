@@ -950,7 +950,7 @@ namespace OpenSim.Data.PGSQL
                          terrain_lower_limit, use_estate_sun, fixed_sun, sun_position, covenant, covenant_datetime, "Sandbox",
                          sunvectorx, sunvectory, sunvectorz, loaded_creation_datetime, loaded_creation_id, "map_tile_ID",
                          block_search, casino, "TelehubObject", "parcel_tile_ID", "cacheID", "TerrainPBR1", "TerrainPBR2",
-                         "TerrainPBR3", "TerrainPBR4")
+                         "TerrainPBR3", "TerrainPBR4", "TerrainPBROverrides")
                          VALUES
                          (:RegionUUID, :block_terraform, :block_fly, :allow_damage, :restrict_pushing, :allow_land_resell,
                          :allow_land_join_divide, :block_show_in_search, :agent_limit, :object_bonus, :maturity, :disable_scripts,
@@ -960,7 +960,7 @@ namespace OpenSim.Data.PGSQL
                          :use_estate_sun, :fixed_sun, :sun_position, :covenant, :covenant_datetime, :Sandbox, :sunvectorx,
                          :sunvectory, :sunvectorz, :Loaded_Creation_DateTime, :Loaded_Creation_ID, :map_tile_ID,
                          :block_search, :casino, :TelehubObject, :ParcelImageID, :cacheID, :TerrainPBR1, :TerrainPBR2,
-                         :TerrainPBR3, :TerrainPBR4)
+                         :TerrainPBR3, :TerrainPBR4, :TerrainPBROverrides)
                          ON CONFLICT ("regionUUID")
                          DO UPDATE SET "regionUUID" = :RegionUUID, block_terraform = :block_terraform, block_fly = :block_fly,
                          allow_damage = :allow_damage, restrict_pushing = :restrict_pushing, allow_land_resell = :allow_land_resell,
@@ -978,7 +978,7 @@ namespace OpenSim.Data.PGSQL
                          loaded_creation_id = :Loaded_Creation_ID, "map_tile_ID" = :map_tile_ID, block_search = :block_search,
                          casino = :casino, "TelehubObject" = :TelehubObject, "parcel_tile_ID" = :ParcelImageID, "cacheID" = :cacheID,
                          "TerrainPBR1" = :TerrainPBR1, "TerrainPBR2" = :TerrainPBR2, "TerrainPBR3" = :TerrainPBR3,
-                         "TerrainPBR4" = :TerrainPBR4
+                         "TerrainPBR4" = :TerrainPBR4, "TerrainPBROverrides" = :TerrainPBROverrides
                          """;
 
             using (NpgsqlConnection connection = new(m_connectionString))
@@ -1079,6 +1079,7 @@ namespace OpenSim.Data.PGSQL
             newSettings.TerrainPBR2 = new UUID((Guid)row["TerrainPBR2"]);
             newSettings.TerrainPBR3 = new UUID((Guid)row["TerrainPBR3"]);
             newSettings.TerrainPBR4 = new UUID((Guid)row["TerrainPBR4"]);
+            newSettings.TerrainPBROverrides = row["TerrainPBROverrides"] is DBNull ? string.Empty : (string)row["TerrainPBROverrides"];
 
             return newSettings;
         }
@@ -1604,6 +1605,7 @@ namespace OpenSim.Data.PGSQL
                 _Database.CreateParameter("TerrainPBR2", settings.TerrainPBR2),
                 _Database.CreateParameter("TerrainPBR3", settings.TerrainPBR3),
                 _Database.CreateParameter("TerrainPBR4", settings.TerrainPBR4),
+                _Database.CreateParameter("TerrainPBROverrides", settings.TerrainPBROverrides),
             ];
 
             return parameters.ToArray();

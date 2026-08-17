@@ -1441,6 +1441,7 @@ namespace OpenSim.Data.SQLite
             createCol(regionsettings, "TerrainPBR2", typeof(String));
             createCol(regionsettings, "TerrainPBR3", typeof(String));
             createCol(regionsettings, "TerrainPBR4", typeof(String));
+            createCol(regionsettings, "TerrainPBROverrides", typeof(String));
             createCol(regionsettings, "elevation_1_nw", typeof(Double));
             createCol(regionsettings, "elevation_2_nw", typeof(Double));
             createCol(regionsettings, "elevation_1_ne", typeof(Double));
@@ -2017,6 +2018,7 @@ namespace OpenSim.Data.SQLite
             newSettings.TerrainPBR2 = new UUID((String)row["TerrainPBR2"]);
             newSettings.TerrainPBR3 = new UUID((String)row["TerrainPBR3"]);
             newSettings.TerrainPBR4 = new UUID((String)row["TerrainPBR4"]);
+            newSettings.TerrainPBROverrides = row["TerrainPBROverrides"] is System.DBNull ? string.Empty : (String)row["TerrainPBROverrides"];
 
             return newSettings;
         }
@@ -2388,6 +2390,7 @@ namespace OpenSim.Data.SQLite
             row["TerrainPBR2"] = settings.TerrainPBR2.ToString();
             row["TerrainPBR3"] = settings.TerrainPBR3.ToString();
             row["TerrainPBR4"] = settings.TerrainPBR4.ToString();
+            row["TerrainPBROverrides"] = settings.TerrainPBROverrides;
 
         }
 

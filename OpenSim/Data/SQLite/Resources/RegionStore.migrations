@@ -424,3 +424,8 @@ COMMIT;
 BEGIN;
 ALTER TABLE `prims` ADD COLUMN `StartStr` TEXT;
 COMMIT;
+
+:VERSION 44         #----- add pbr terrain override storage (ModifyRegion capability)
+BEGIN;
+ALTER TABLE regionsettings ADD COLUMN TerrainPBROverrides TEXT NOT NULL DEFAULT '';
+COMMIT;

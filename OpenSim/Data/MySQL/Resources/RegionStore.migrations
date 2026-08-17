@@ -580,3 +580,8 @@ ALTER TABLE `prims`
 	ADD COLUMN `AllowUnsit` TINYINT(3) NULL DEFAULT '1',
 	ADD COLUMN `ScriptedSitOnly` TINYINT(3) NULL DEFAULT '0';
 COMMIT;
+
+:VERSION 69         #----- add pbr terrain override storage (ModifyRegion capability)
+BEGIN;
+ALTER TABLE `regionsettings` ADD COLUMN `TerrainPBROverrides` text default NULL;
+COMMIT;

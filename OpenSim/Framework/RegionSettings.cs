@@ -286,6 +286,17 @@ namespace OpenSim.Framework
             set { m_TerrainPBR4 = value; }
         }
 
+        // Opaque store for the viewer's "ModifyRegion" capability: a serialized LLSD array of 4
+        // glTF material-override blobs (one per TerrainPBR slot, empty map = no override applied).
+        // The server never interprets these -- it only persists and relays exactly what the
+        // capability's GET/POST bodies carry, same as the viewer's own LLModifyRegion contract.
+        private string m_TerrainPBROverrides = string.Empty;
+        public string TerrainPBROverrides
+        {
+            get { return m_TerrainPBROverrides; }
+            set { m_TerrainPBROverrides = value ?? string.Empty; }
+        }
+
 
         private double m_Elevation1NW = 10;
         public double Elevation1NW

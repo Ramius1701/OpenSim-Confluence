@@ -907,7 +907,8 @@ namespace OpenSim.Data.MySQL
                          "sunvectorz, loaded_creation_datetime, " +
                          "loaded_creation_id, map_tile_ID, block_search, casino, " +
                          "TelehubObject, parcel_tile_ID, cacheID, " +
-                         "TerrainPBR1, TerrainPBR2, TerrainPBR3, TerrainPBR4)" +
+                         "TerrainPBR1, TerrainPBR2, TerrainPBR3, TerrainPBR4, " +
+                         "TerrainPBROverrides)" +
                           "values (?RegionUUID, ?BlockTerraform, " +
                          "?BlockFly, ?AllowDamage, ?RestrictPushing, " +
                          "?AllowLandResell, ?AllowLandJoinDivide, " +
@@ -925,7 +926,8 @@ namespace OpenSim.Data.MySQL
                          "?loaded_creation_datetime, ?loaded_creation_id, " +
                          "?map_tile_ID, ?block_search, ?casino, " +
                          "?TelehubObject, ?parcel_tile_ID, ?cacheID, " +
-                         "?TerrainPBR1, ?TerrainPBR2, ?TerrainPBR3, ?TerrainPBR4)";
+                         "?TerrainPBR1, ?TerrainPBR2, ?TerrainPBR3, ?TerrainPBR4, " +
+                         "?TerrainPBROverrides)";
 
                     FillRegionSettingsCommand(cmd, rs);
                     ExecuteNonQuery(cmd);
@@ -1312,6 +1314,7 @@ namespace OpenSim.Data.MySQL
             newSettings.TerrainPBR2 = DBGuid.FromDB(row["TerrainPBR2"]);
             newSettings.TerrainPBR3 = DBGuid.FromDB(row["TerrainPBR3"]);
             newSettings.TerrainPBR4 = DBGuid.FromDB(row["TerrainPBR4"]);
+            newSettings.TerrainPBROverrides = row["TerrainPBROverrides"] is DBNull ? string.Empty : (string)row["TerrainPBROverrides"];
 
 
             return newSettings;
@@ -1735,6 +1738,7 @@ namespace OpenSim.Data.MySQL
             cmd.Parameters.AddWithValue("TerrainPBR2", settings.TerrainPBR2.ToString());
             cmd.Parameters.AddWithValue("TerrainPBR3", settings.TerrainPBR3.ToString());
             cmd.Parameters.AddWithValue("TerrainPBR4", settings.TerrainPBR4.ToString());
+            cmd.Parameters.AddWithValue("TerrainPBROverrides", settings.TerrainPBROverrides);
         }
 
         /// <summary>

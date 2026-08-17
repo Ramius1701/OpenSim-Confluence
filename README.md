@@ -560,19 +560,29 @@ work continues — don't let them go stale.
   this project's own stack speaks the login-RPC protocol it needs;
   see the Display Names and identity section above.
 - **Real PBR terrain support** — genuinely unclaimed territory, verified
-  rather than assumed. Object-level PBR materials (per-face `gltf_json`
-  overrides via the `RenderMaterials` capability) already work — that
-  part is done, inherited from real upstream OpenSim. Terrain is the
-  actual gap: the `"ModifyRegion"` capability real PBR terrain editing
-  needs doesn't exist in this repo's own merged-upstream tree, Gunthar's
-  fork, or Tranquillity. `SimulatorFeaturesModule.cs` currently echoes
-  `PBRTerrainEnabled: true` only because it's parroting a flag the
-  viewer itself sets, not because anything backs it — the capability
-  request fails today on all three. Building the real capability backend
-  first would be a genuine competitive edge, not a port from anywhere.
-  Substantial from-scratch build (comparable to Experience Tools or the
-  native currency service) — logged, not started. See PROJECT_LOG.md
-  for the full investigation.
+  rather than assumed, and now built. Object-level PBR materials
+  (per-face `gltf_json` overrides via the `RenderMaterials` capability)
+  already worked — inherited from real upstream OpenSim. The gap was the
+  `"ModifyRegion"` capability real PBR terrain editing needs, absent
+  from this repo's own merged-upstream tree, Gunthar's fork, and
+  Tranquillity alike. Turned out to be smaller than first scoped once
+  Firestorm's own source (`llpbrterrainfeatures.cpp`) was checked
+  directly: `ModifyRegion` only carries the per-slot glTF *override*
+  layer (tiling/scale/rotation/offset) — which glTF material occupies
+  each of the region's 4 terrain slots is a separate mechanism
+  (`RegionSettings.TerrainPBR1-4`) already fully inherited and working
+  end to end (DB, OAR, region-handshake delivery to PBR-capable
+  viewers) — this repo just never had anything answering the capability
+  itself. Implemented as `ModifyRegionModule.cs`
+  (`OpenSim/Region/CoreModules/World/Terrain/`), following the same
+  `OnRegisterCaps`/`RegisterSimpleHandler` pattern the working
+  `RenderMaterials` capability already uses, storing the 4 override
+  blobs verbatim (the server never interprets them) in a new
+  `RegionSettings.TerrainPBROverrides` field with matching SQLite/
+  MySQL/PGSQL migrations and OAR round-trip. Build-verified and
+  deployed; live verification against a real PBR-capable viewer is
+  still pending a grid restart — see PROJECT_LOG.md for the full
+  writeup and exactly what remains to be checked in-world.
 - **SLua** — Second Life's modern Luau-based (Roblox's Lua variant)
   scripting language, in open beta on the SL production grid since
   2025-12-02 ([LL's announcement](https://community.secondlife.com/news/featured-news/announcing-the-slua-open-beta-modern-scripting-comes-to-second-life-r11237/)):
