@@ -6824,3 +6824,34 @@ location), so unlike the Robust-only DLLs deployed earlier this
 session, this deploy needed the whole grid stopped, not just Robust.
 Confirmed via DB query after redeploy and restart that the orphaned
 rows are gone and the schema is clean.
+
+### InternalPort = MATCHING - ported from Mobius
+
+Moved to the next README gap: two real Mobius features, RSA-key
+login authentication and `InternalPort = MATCHING`. Checked the local
+`S:\Github\mobius-master` checkout first and found it's not usable as
+a reference - a sparse 42-file Display-Names/HG/UserAccount-only
+extraction, not a real Mobius checkout, with zero trace of either
+feature. `S:\Github\OpenSim-Continuum` (a sibling repo with real git
+history) already has both, done by an earlier "Merge Bot" session and
+explicitly labeled "ported from Mobius fork" - a much better
+reference than mobius-master, so worked from that instead.
+
+`InternalPort = MATCHING` first, since it's small and clean: in
+`Regions.ini`, setting `InternalPort = MATCHING` instead of a literal
+number makes the region adopt whatever `[Network] http_listener_port`
+its own simulator process is already using, instead of needing that
+value hand-kept in sync across two config files. Confluence's
+`OpenSim/Framework/RegionInfo.cs` was byte-for-byte identical to
+Continuum's pre-port version at the relevant spot, so the logic
+ported directly with no adaptation needed - added the `MATCHING`
+string check right where `InternalPort` is parsed in
+`ReadNiniConfig`, reading `[Network] http_listener_port` as the
+fallback source when it's set. Documented the option in
+`bin/Regions/Regions.ini.example` too. Full solution build clean.
+Not yet deployed/live-tested - `RegionInfo.cs` lives in
+`OpenSim.Framework.dll`, which (like `OpenSim.Data.MySQL.dll` above)
+is loaded by both region processes and Robust from one shared
+location, so deploying it means stopping the whole grid again;
+holding that for a batched deploy alongside whatever's next rather
+than asking for another full stop/start cycle for one small change.

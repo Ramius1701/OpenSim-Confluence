@@ -553,7 +553,21 @@ namespace OpenSim.Framework
             allKeys.Remove("InternalPort");
             if (config.Contains("InternalPort"))
             {
-                port = config.GetInt("InternalPort", 9000);
+                string str_port = config.GetString("InternalPort", "9000");
+                if (str_port == "MATCHING")
+                {
+                    // Adopt whatever http_listener_port this simulator
+                    // process is already using instead of requiring
+                    // InternalPort to be hand-kept in sync with it -
+                    // only useful for a single-region-per-process setup
+                    // (each region needs its own real port otherwise).
+                    IConfig networkConfig = source.Configs["Network"];
+                    port = networkConfig is not null ? networkConfig.GetInt("http_listener_port", 9000) : 9000;
+                }
+                else if (!int.TryParse(str_port, out port))
+                {
+                    port = 9000;
+                }
             }
             else
             {

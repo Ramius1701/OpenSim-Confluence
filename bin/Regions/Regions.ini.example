@@ -20,6 +20,10 @@ RegionUUID = 11111111-2222-3333-4444-555555555555
 Location = 1000,1000
 InternalAddress = 0.0.0.0
 InternalPort = 9000
+;; InternalPort can also be set to MATCHING, which adopts this simulator
+;; process's own [Network] http_listener_port instead of needing to be
+;; hand-kept in sync with it - only meaningful for a single-region-per-
+;; process setup.
 AllowAlternatePorts = False
 ExternalHostName = SYSTEMIP
 

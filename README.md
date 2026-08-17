@@ -216,9 +216,14 @@ data layers, replacing what would otherwise be external dependencies:
   console command for accounts that haven't logged in since.
 
 **Not yet implemented** (referenced in older project docs, verified absent
-by direct code search): RSA-key login authentication, and
-`InternalPort = MATCHING` region configuration. Both are real Mobius
-features not yet ported. See "Progress and roadmap."
+by direct code search): RSA-key login authentication — a real Mobius
+feature, ported from a login-RPC challenge/response scheme aimed at
+LibOMV-based bots/proxies rather than stock viewers; no known client
+in this project's own stack actually speaks it, so it's logged rather
+than started pending confirmation it's worth building. See "Progress
+and roadmap." (`InternalPort = MATCHING` region configuration, the
+other item formerly listed here, has since been ported — see
+PROJECT_LOG.md.)
 
 ### Abuse Reports
 
@@ -520,8 +525,10 @@ work continues — don't let them go stale.
   Inventory/Groups/Grid/Presence/Currency/Estate references) —
   soft-delete (scrambled password + blocked login) covers the
   practical need instead.
-- RSA-key login authentication and `InternalPort = MATCHING` (both real
-  Mobius features) are not implemented.
+- RSA-key login authentication (a real Mobius feature) is not
+  implemented — logged rather than started, since no known client in
+  this project's own stack speaks the login-RPC protocol it needs;
+  see the Display Names and identity section above.
 - The misc LSL/OSSL functions listed as "not yet implemented" above.
 - `PRIM_GLTF_*` primitive-parameter dispatch is dormant — the backing
   code exists but nothing calls it from `llSetPrimitiveParams`/
