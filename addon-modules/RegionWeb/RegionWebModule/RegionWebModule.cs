@@ -1612,8 +1612,8 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 return;
             }
 
-            IMoneyModule money = GetCurrencyMoneyModule();
-            if (money == null)
+            ICurrencyService currency = GetCurrencyService();
+            if (currency == null)
             {
                 message = "Currency module is not active.";
                 return;
@@ -1646,17 +1646,17 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 string reason;
                 if (action.Equals("admin-set-balance", StringComparison.OrdinalIgnoreCase))
                 {
-                    result = InvokeWebSetBalance(money, targetID, amount, note, out reason);
+                    result = InvokeWebSetBalance(currency, targetID, amount, note, out reason);
                     message = result ? "Set " + targetName + " balance to " + amount.ToString(CultureInfo.InvariantCulture) + "." : reason;
                 }
                 else if (action.Equals("admin-credit", StringComparison.OrdinalIgnoreCase))
                 {
-                    result = InvokeWebCreditCurrency(money, targetID, amount, note, out reason);
+                    result = InvokeWebCreditCurrency(currency, targetID, amount, note, out reason);
                     message = result ? "Credited " + amount.ToString(CultureInfo.InvariantCulture) + " tokens to " + targetName + "." : reason;
                 }
                 else
                 {
-                    result = InvokeWebDebitCurrency(money, targetID, amount, note, out reason);
+                    result = InvokeWebDebitCurrency(currency, targetID, amount, note, out reason);
                     message = result ? "Debited " + amount.ToString(CultureInfo.InvariantCulture) + " tokens from " + targetName + "." : reason;
                 }
 
@@ -1681,7 +1681,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
                 string note = FormValue(form, "note");
                 string description = string.IsNullOrWhiteSpace(note) ? "This estate admin transfer" : note;
-                if (InvokeWebTransfer(money, fromID, toID, amount, description, out string reason))
+                if (InvokeWebTransfer(currency, fromID, toID, amount, description, out string reason))
                 {
                     severity = "ok";
                     message = "Transferred " + amount.ToString(CultureInfo.InvariantCulture) + " tokens from " + fromName + " to " + toName + ".";
@@ -1725,14 +1725,14 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 return;
             }
 
-            IMoneyModule money = GetCurrencyMoneyModule();
-            if (money == null)
+            ICurrencyService currency = GetCurrencyService();
+            if (currency == null)
             {
                 message = "Currency module is not active.";
                 return;
             }
 
-            if (InvokeWebBuyCurrency(money, session.AgentID, amount, out string reason))
+            if (InvokeWebBuyCurrency(currency, session.AgentID, amount, out string reason))
             {
                 severity = "ok";
                 message = "Purchased " + amount.ToString(CultureInfo.InvariantCulture) + " tokens.";
@@ -1844,27 +1844,18 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 }
             }
 
-            IMoneyModule money = GetCurrencyMoneyModule();
-            if (money == null)
-            {
-                MarkCurrencyPayPalOrder(order.LocalID, "capture_pending_credit", "PayPal captured, but currency module is not active.");
-                SendCurrencyDashboard(response, session, "PayPal payment captured, but the currency module is not active. Admin can credit from the order log.", "error");
-                return;
-            }
-
-            if (!InvokeWebBuyCurrency(money, order.AgentID, order.TokenAmount, out string creditReason))
-            {
-                string failure = string.IsNullOrWhiteSpace(creditReason) ? "Currency credit failed after PayPal capture." : creditReason;
-                MarkCurrencyPayPalOrder(order.LocalID, "capture_pending_credit", failure);
-                SendCurrencyDashboard(response, session, failure, "error");
-                return;
-            }
-
-            MarkCurrencyPayPalOrder(order.LocalID, "completed", "PayPal captured and tokens credited.");
-            NotifyCurrencyAvatar(session.AgentID, "This estate PayPal checkout " + order.LocalID + " completed: "
-                + order.TokenAmount.ToString(CultureInfo.InvariantCulture) + " tokens credited.");
-            SendCurrencyDashboard(response, session, "PayPal payment captured. Credited "
-                + order.TokenAmount.ToString(CultureInfo.InvariantCulture) + " tokens.", "ok");
+            // PayPal capture succeeded above - real money changed hands.
+            // Treated as a straight donation for now, not a currency
+            // purchase: no token credit happens here. (Selling in-world
+            // currency for real money directly is a bigger regulatory
+            // question than this project has settled yet; a donation with
+            // no promised exchange rate sidesteps that for the moment.)
+            // The order still records TokenAmount/FiatAmount for the
+            // admin order log's own reference, but nothing in this method
+            // credits it to any balance.
+            MarkCurrencyPayPalOrder(order.LocalID, "completed", "PayPal donation captured.");
+            NotifyCurrencyAvatar(session.AgentID, "This estate PayPal donation " + order.LocalID + " completed. Thank you!");
+            SendCurrencyDashboard(response, session, "Thank you - your PayPal donation was received.", "ok");
         }
 
         private void HandleCurrencyPayPalCancel(CurrencyWebSession session, Dictionary<string, string> form, IOSHttpResponse response)
@@ -1904,14 +1895,14 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             if (description.Length > 160)
                 description = description.Substring(0, 160);
 
-            IMoneyModule money = GetCurrencyMoneyModule();
-            if (money == null)
+            ICurrencyService currency = GetCurrencyService();
+            if (currency == null)
             {
                 message = "Currency module is not active.";
                 return;
             }
 
-            if (InvokeWebTransfer(money, session.AgentID, recipientID, amount, description, out string reason))
+            if (InvokeWebTransfer(currency, session.AgentID, recipientID, amount, description, out string reason))
             {
                 severity = "ok";
                 message = "Transferred " + amount.ToString(CultureInfo.InvariantCulture) + " tokens to " + recipientName + ".";
@@ -2005,6 +1996,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
         {
             EstatePageContent estate = LoadEstateContent();
             IMoneyModule money = GetCurrencyMoneyModule();
+            ICurrencyService currency = GetCurrencyService();
             int balance = 0;
             bool hasBalance = false;
             if (money != null)
@@ -2041,7 +2033,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
             if (money == null)
             {
-                html.Append("<p class=\"wallet-message error\">Currency module is not active. Enable BetaGridLikeMoneyModule in [Economy].</p>");
+                html.Append("<p class=\"wallet-message error\">Currency module is not active. Enable a currency module (e.g. ConfluenceCurrencyModule) in [Economy].</p>");
             }
             else
             {
@@ -2055,14 +2047,14 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                         .Append(m_currencyBuyLimit.ToString(CultureInfo.InvariantCulture)).Append("\" required></label>")
                         .Append("<button type=\"submit\">")
                         .Append(m_currencyBuyMode.Equals("request", StringComparison.OrdinalIgnoreCase) ? "Request tokens"
-                            : (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase) ? "Pay with PayPal" : "Buy tokens"))
+                            : (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase) ? "Donate via PayPal" : "Buy tokens"))
                         .Append("</button></form>");
                     if (m_currencyBuyMode.Equals("request", StringComparison.OrdinalIgnoreCase))
                         html.Append("<p class=\"wallet-note\">This creates a pending purchase request for estate staff approval from the console.</p>");
                     else if (m_currencyBuyMode.Equals("paypal", StringComparison.OrdinalIgnoreCase))
-                        html.Append("<p class=\"wallet-note\">Checkout uses PayPal, then credits the local simulator ledger after payment capture. Price: ")
+                        html.Append("<p class=\"wallet-note\">Checkout uses PayPal as a donation to This estate - it does not purchase or credit in-world currency. Suggested rate: ")
                             .Append(Html(m_payPalPricePerToken.ToString("0.00##", CultureInfo.InvariantCulture))).Append(" ")
-                            .Append(Html(m_payPalCurrencyCode)).Append(" per token.</p>");
+                            .Append(Html(m_payPalCurrencyCode)).Append(" per unit.</p>");
                     else
                         html.Append("<p class=\"wallet-note\">This credits the local simulator ledger and updates the viewer-visible balance.</p>");
                 }
@@ -2092,7 +2084,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 }
                 html.Append("</article></section>");
 
-                AppendCurrencyStatement(html, money, session.AgentID);
+                AppendCurrencyStatement(html, currency, session.AgentID);
                 AppendCurrencyPurchaseRequests(html, session.AgentID);
             }
 
@@ -2107,7 +2099,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
         private void SendCurrencyAdminDashboard(IOSHttpResponse response, CurrencyWebSession session, string message, string severity)
         {
             EstatePageContent estate = LoadEstateContent();
-            IMoneyModule money = GetCurrencyMoneyModule();
+            ICurrencyService currency = GetCurrencyService();
             StringBuilder html = BeginPage("Money Admin - " + estate.Title);
             html.Append("<main class=\"wrap wallet-page\">");
             AppendPageLinks(html,
@@ -2122,9 +2114,9 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 .Append(Html(session.ExpiresUTC.ToLocalTime().ToString("dd MMM HH:mm", CultureInfo.InvariantCulture)))
                 .Append("</strong></div></section>");
 
-            if (money == null)
+            if (currency == null)
             {
-                html.Append("<p class=\"wallet-message error\">Currency module is not active. Enable BetaGridLikeMoneyModule in [Economy].</p>");
+                html.Append("<p class=\"wallet-message error\">Currency module is not active. Enable a currency module (e.g. ConfluenceCurrencyModule) in [Economy].</p>");
             }
             else
             {
@@ -2166,7 +2158,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                     .Append("<label>Note<input name=\"note\" maxlength=\"160\" placeholder=\"Optional audit note\"></label>")
                     .Append("<button type=\"submit\">Transfer</button></form></article></section>");
 
-                AppendCurrencyAdminBalances(html, money);
+                AppendCurrencyAdminBalances(html, currency);
             }
 
             html.Append("<form class=\"wallet-logout\" method=\"post\" action=\"").Append(Html(m_basePath)).Append("/currency/admin\">")
@@ -2177,9 +2169,9 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             SendHtml(response, html.ToString());
         }
 
-        private void AppendCurrencyStatement(StringBuilder html, IMoneyModule money, UUID agentID)
+        private void AppendCurrencyStatement(StringBuilder html, ICurrencyService currency, UUID agentID)
         {
-            List<Dictionary<string, string>> rows = GetCurrencyStatement(money, agentID);
+            List<Dictionary<string, string>> rows = GetCurrencyStatement(currency, agentID);
             html.Append("<section class=\"wallet-card wallet-statement\"><h2>Statement</h2>");
             if (rows.Count == 0)
             {
@@ -2315,9 +2307,9 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             html.Append("</tbody></table></div></section>");
         }
 
-        private void AppendCurrencyAdminBalances(StringBuilder html, IMoneyModule money)
+        private void AppendCurrencyAdminBalances(StringBuilder html, ICurrencyService currency)
         {
-            List<Dictionary<string, string>> rows = GetCurrencyBalances(money, 50);
+            List<Dictionary<string, string>> rows = GetCurrencyBalances(currency, 50);
             html.Append("<section class=\"wallet-card wallet-statement\"><h2>Top balances</h2>");
             html.Append("<p class=\"wallet-note\"><a href=\"").Append(Html(m_basePath))
                 .Append("/currency/admin/balances.csv\">Download balances CSV</a></p>");
@@ -2349,8 +2341,8 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
         private void SendCurrencyStatementCsv(IOSHttpResponse response, CurrencyWebSession session)
         {
-            IMoneyModule money = GetCurrencyMoneyModule();
-            if (money == null)
+            ICurrencyService currency = GetCurrencyService();
+            if (currency == null)
             {
                 response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
                 response.ContentType = "text/plain";
@@ -2358,7 +2350,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 return;
             }
 
-            List<Dictionary<string, string>> rows = GetCurrencyStatement(money, session.AgentID);
+            List<Dictionary<string, string>> rows = GetCurrencyStatement(currency, session.AgentID);
             StringBuilder csv = new StringBuilder();
             csv.Append("utc,local_time,action,direction,amount,balance,description,source,destination,success\n");
             string agentText = session.AgentID.ToString();
@@ -2417,8 +2409,8 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
         private void SendCurrencyAdminBalancesCsv(IOSHttpResponse response)
         {
-            IMoneyModule money = GetCurrencyMoneyModule();
-            if (money == null)
+            ICurrencyService currency = GetCurrencyService();
+            if (currency == null)
             {
                 response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
                 response.ContentType = "text/plain";
@@ -2426,7 +2418,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 return;
             }
 
-            List<Dictionary<string, string>> rows = GetCurrencyBalances(money, 10000);
+            List<Dictionary<string, string>> rows = GetCurrencyBalances(currency, 10000);
             StringBuilder csv = new StringBuilder();
             csv.Append("agent_id,display_name,balance\n");
             foreach (Dictionary<string, string> row in rows)
@@ -2487,91 +2479,129 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             return null;
         }
 
-        private bool InvokeWebBuyCurrency(IMoneyModule money, UUID agentID, int amount, out string reason)
+        // ICurrencyService.Transfer's transactionType is a plain int with no
+        // fixed meaning at the interface level - it's recorded for display/
+        // categorization only, backend-defined. Values here match
+        // ConfluenceCurrencyModule's own ConfluenceTransactionType (the
+        // currency module actually configured live), kept as local int
+        // constants rather than a reference to that module's enum type so
+        // this portal stays decoupled from any one particular
+        // ICurrencyService-backed IMoneyModule implementation.
+        private const int CurrencyTransactionTypeSystemGenerated = 0;
+        private const int CurrencyTransactionTypeMoveMoney = 3;
+
+        // The wallet portal's own currency-mutating actions (buy/transfer/
+        // admin set-credit-debit) and its statement/balances listings used
+        // to reach into whatever IMoneyModule was active via reflection,
+        // looking up methods (WebBuyCurrency, WebTransfer, WebSetBalance,
+        // GetCurrencyStatement, GetCurrencyBalances, ...) that only
+        // RegionCurrency/RegionWeb themselves ever declared - no real
+        // IMoneyModule implementation in this repo (ConfluenceCurrencyModule
+        // included) has ever exposed them. Confirmed live: every one of
+        // those lookups failed silently, so Buy/Transfer/admin balance
+        // actions all no-opped with a generic failure message, and the
+        // statement/balances tables just rendered empty. GetBalance is a
+        // real IMoneyModule member, so it kept working - dashboards showed
+        // a correct balance while nothing on them could actually change it.
+        // Fixed by calling the real, DB-backed ICurrencyService directly
+        // instead (same interface ConfluenceCurrencyModule itself adapts to
+        // IMoneyModule) - no reflection, no dependency on any particular
+        // IMoneyModule exposing wallet-portal-specific methods.
+        private ICurrencyService GetCurrencyService()
         {
-            reason = string.Empty;
-            MethodInfo method = money.GetType().GetMethod("WebBuyCurrency", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null)
+            foreach (Scene scene in GetSceneSnapshot())
             {
-                reason = "Currency module does not expose This estate purchases.";
-                return false;
+                ICurrencyService currency = scene.RequestModuleInterface<ICurrencyService>();
+                if (currency != null)
+                    return currency;
             }
 
-            object[] args = new object[] { agentID, amount, reason };
+            return null;
+        }
+
+        private bool InvokeWebBuyCurrency(ICurrencyService currency, UUID agentID, int amount, out string reason)
+        {
+            reason = string.Empty;
             try
             {
-                bool result = method.Invoke(money, args) is bool b && b;
-                reason = args[2] as string ?? string.Empty;
-                return result;
+                if (currency.Transfer(agentID, UUID.Zero, amount, "Token purchase (grant)", CurrencyTransactionTypeSystemGenerated, UUID.Zero))
+                    return true;
+
+                reason = "Currency credit failed.";
+                return false;
             }
             catch (Exception e)
             {
-                reason = e.InnerException != null ? e.InnerException.Message : e.Message;
+                reason = e.Message;
                 return false;
             }
         }
 
-        private bool InvokeWebTransfer(IMoneyModule money, UUID fromUser, UUID toUser, int amount, string description, out string reason)
+        private bool InvokeWebTransfer(ICurrencyService currency, UUID fromUser, UUID toUser, int amount, string description, out string reason)
         {
             reason = string.Empty;
-            MethodInfo method = money.GetType().GetMethod("WebTransfer", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null)
-                method = money.GetType().GetMethod("WebTransferCurrency", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null)
-            {
-                reason = "Currency module does not expose This estate transfers.";
-                return false;
-            }
-
-            object[] args = new object[] { fromUser, toUser, amount, description, reason };
             try
             {
-                bool result = method.Invoke(money, args) is bool b && b;
-                reason = args[4] as string ?? string.Empty;
-                return result;
+                if (currency.Transfer(toUser, fromUser, amount, description, CurrencyTransactionTypeMoveMoney, UUID.Zero))
+                    return true;
+
+                reason = "Transfer failed - the sender may not have enough balance.";
+                return false;
             }
             catch (Exception e)
             {
-                reason = e.InnerException != null ? e.InnerException.Message : e.Message;
+                reason = e.Message;
                 return false;
             }
         }
 
-        private bool InvokeWebSetBalance(IMoneyModule money, UUID agentID, int amount, string description, out string reason)
-        {
-            return InvokeMoneyAdminMethod(money, "WebSetBalance", agentID, amount, description, out reason);
-        }
-
-        private bool InvokeWebCreditCurrency(IMoneyModule money, UUID agentID, int amount, string description, out string reason)
-        {
-            return InvokeMoneyAdminMethod(money, "WebCreditCurrency", agentID, amount, description, out reason);
-        }
-
-        private bool InvokeWebDebitCurrency(IMoneyModule money, UUID agentID, int amount, string description, out string reason)
-        {
-            return InvokeMoneyAdminMethod(money, "WebDebitCurrency", agentID, amount, description, out reason);
-        }
-
-        private bool InvokeMoneyAdminMethod(IMoneyModule money, string methodName, UUID agentID, int amount, string description, out string reason)
+        private bool InvokeWebSetBalance(ICurrencyService currency, UUID agentID, int amount, string description, out string reason)
         {
             reason = string.Empty;
-            MethodInfo method = money.GetType().GetMethod(methodName, BindingFlags.Public | BindingFlags.Instance);
-            if (method == null)
-            {
-                reason = "Currency module does not expose " + methodName + ".";
-                return false;
-            }
-
-            object[] args = new object[] { agentID, amount, description ?? string.Empty, reason };
             try
             {
-                bool result = method.Invoke(money, args) is bool b && b;
-                reason = args[3] as string ?? string.Empty;
-                return result;
+                currency.SetBalance(agentID, amount, description);
+                return true;
             }
             catch (Exception e)
             {
-                reason = e.InnerException != null ? e.InnerException.Message : e.Message;
+                reason = e.Message;
+                return false;
+            }
+        }
+
+        private bool InvokeWebCreditCurrency(ICurrencyService currency, UUID agentID, int amount, string description, out string reason)
+        {
+            reason = string.Empty;
+            try
+            {
+                if (currency.Transfer(agentID, UUID.Zero, amount, description, CurrencyTransactionTypeSystemGenerated, UUID.Zero))
+                    return true;
+
+                reason = "Credit failed.";
+                return false;
+            }
+            catch (Exception e)
+            {
+                reason = e.Message;
+                return false;
+            }
+        }
+
+        private bool InvokeWebDebitCurrency(ICurrencyService currency, UUID agentID, int amount, string description, out string reason)
+        {
+            reason = string.Empty;
+            try
+            {
+                if (currency.Transfer(UUID.Zero, agentID, amount, description, CurrencyTransactionTypeSystemGenerated, UUID.Zero))
+                    return true;
+
+                reason = "Debit failed - the account may not have enough balance.";
+                return false;
+            }
+            catch (Exception e)
+            {
+                reason = e.Message;
                 return false;
             }
         }
@@ -2631,15 +2661,15 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
                 SaveCurrencyPurchaseRequestsLocked();
             }
 
-            IMoneyModule money = GetCurrencyMoneyModule();
-            if (money == null)
+            ICurrencyService currency = GetCurrencyService();
+            if (currency == null)
             {
                 MarkCurrencyPurchasePending(requestID, "Currency module is not active.");
                 message = "Currency module is not active. Request left pending.";
                 return false;
             }
 
-            if (!InvokeWebBuyCurrency(money, agentID, amount, out string reason))
+            if (!InvokeWebBuyCurrency(currency, agentID, amount, out string reason))
             {
                 string failure = string.IsNullOrWhiteSpace(reason) ? "Token purchase failed." : reason;
                 MarkCurrencyPurchasePending(requestID, failure);
@@ -2722,38 +2752,93 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             }
         }
 
-        private List<Dictionary<string, string>> GetCurrencyStatement(IMoneyModule money, UUID agentID)
+        // Row shape (keys read by AppendCurrencyStatement/SendCurrencyStatementCsv):
+        // "utc", "action", "amount", "balance", "source", "destination",
+        // "description". Merges CurrencyTransfer (both directions - the
+        // interface ANDs to/from when both are non-zero, so this agent's
+        // incoming and outgoing transfers need two separate calls) and
+        // CurrencyPurchase into one combined, newest-first ledger view.
+        private List<Dictionary<string, string>> GetCurrencyStatement(ICurrencyService currency, UUID agentID)
         {
             List<Dictionary<string, string>> rows = new List<Dictionary<string, string>>();
-            MethodInfo method = money.GetType().GetMethod("GetCurrencyStatement", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null)
+            if (currency == null)
                 return rows;
+
+            DateTime start = DateTime.UtcNow.AddYears(-20);
+            DateTime end = DateTime.UtcNow;
+            string agentText = agentID.ToString();
 
             try
             {
-                object result = method.Invoke(money, new object[] { agentID, m_currencyStatementLimit });
-                if (result is IEnumerable<Dictionary<string, string>> enumerable)
-                    rows.AddRange(enumerable);
+                HashSet<UUID> seen = new HashSet<UUID>();
+                List<CurrencyTransfer> transfers = new List<CurrencyTransfer>();
+                transfers.AddRange(currency.GetTransactionHistory(agentID, UUID.Zero, start, end, 0, (uint)m_currencyStatementLimit));
+                transfers.AddRange(currency.GetTransactionHistory(UUID.Zero, agentID, start, end, 0, (uint)m_currencyStatementLimit));
+
+                foreach (CurrencyTransfer t in transfers)
+                {
+                    if (!seen.Add(t.ID))
+                        continue;
+
+                    bool toSelf = t.ToAgent == agentID;
+                    rows.Add(new Dictionary<string, string>
+                    {
+                        ["utc"] = t.TransferDate.ToString("o", CultureInfo.InvariantCulture),
+                        ["action"] = "Transfer",
+                        ["amount"] = t.Amount.ToString(CultureInfo.InvariantCulture),
+                        ["balance"] = (toSelf ? t.ToBalance : t.FromBalance).ToString(CultureInfo.InvariantCulture),
+                        ["source"] = t.FromAgent.ToString(),
+                        ["destination"] = t.ToAgent.ToString(),
+                        ["description"] = t.Description ?? string.Empty,
+                        ["success"] = "true",
+                    });
+                }
+
+                foreach (CurrencyPurchase p in currency.GetPurchaseHistory(agentID, start, end, 0, (uint)m_currencyStatementLimit))
+                {
+                    rows.Add(new Dictionary<string, string>
+                    {
+                        ["utc"] = p.PurchaseDate.ToString("o", CultureInfo.InvariantCulture),
+                        ["action"] = "Purchase",
+                        ["amount"] = p.Amount.ToString(CultureInfo.InvariantCulture),
+                        ["balance"] = string.Empty,
+                        ["source"] = string.Empty,
+                        ["destination"] = agentText,
+                        ["description"] = p.RealAmount > 0
+                            ? "Real-money purchase (" + (p.RealAmount / 100.0).ToString("0.00", CultureInfo.InvariantCulture) + ")"
+                            : "Token purchase",
+                        ["success"] = "true",
+                    });
+                }
             }
             catch
             {
             }
 
+            rows.Sort((a, b) => string.CompareOrdinal(RowValue(b, "utc"), RowValue(a, "utc")));
+            if (rows.Count > m_currencyStatementLimit)
+                rows.RemoveRange(m_currencyStatementLimit, rows.Count - m_currencyStatementLimit);
+
             return rows;
         }
 
-        private List<Dictionary<string, string>> GetCurrencyBalances(IMoneyModule money, int limit)
+        // Row shape: "agent_id", "balance".
+        private List<Dictionary<string, string>> GetCurrencyBalances(ICurrencyService currency, int limit)
         {
             List<Dictionary<string, string>> rows = new List<Dictionary<string, string>>();
-            MethodInfo method = money.GetType().GetMethod("GetCurrencyBalances", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null)
+            if (currency == null)
                 return rows;
 
             try
             {
-                object result = method.Invoke(money, new object[] { limit });
-                if (result is IEnumerable<Dictionary<string, string>> enumerable)
-                    rows.AddRange(enumerable);
+                foreach (CurrencyBalanceEntry entry in currency.GetTopBalances(limit))
+                {
+                    rows.Add(new Dictionary<string, string>
+                    {
+                        ["agent_id"] = entry.PrincipalID.ToString(),
+                        ["balance"] = entry.Balance.ToString(CultureInfo.InvariantCulture),
+                    });
+                }
             }
             catch
             {
@@ -5500,31 +5585,31 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
 
         private void AppendEconomy(StringBuilder html, Scene scene)
         {
-            IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
-            if (money == null)
+            // Same reflection bug as the wallet portal's own currency
+            // actions/statement (see GetCurrencyService) - GetCurrencyStats
+            // was never implemented by any real IMoneyModule in this repo,
+            // so this section silently never rendered. Built from
+            // ICurrencyService's own real summary methods instead.
+            ICurrencyService currency = scene.RequestModuleInterface<ICurrencyService>();
+            if (currency == null)
                 return;
 
-            MethodInfo method = money.GetType().GetMethod("GetCurrencyStats", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null)
-                return;
-
-            IDictionary<string, string> stats;
+            int circulation;
+            int accountsWithBalance;
             try
             {
-                stats = method.Invoke(money, null) as IDictionary<string, string>;
+                circulation = currency.GetTotalCirculation();
+                accountsWithBalance = currency.CountAccountsWithBalance();
             }
             catch
             {
                 return;
             }
 
-            if (stats == null || stats.Count == 0)
-                return;
-
-            html.Append("<section class=\"stats\"><h2>Economy</h2><dl>");
-            foreach (KeyValuePair<string, string> entry in stats)
-                html.Append(Stat(entry.Key, entry.Value));
-            html.Append("</dl><p><a href=\"")
+            html.Append("<section class=\"stats\"><h2>Economy</h2><dl>")
+                .Append(Stat("In Circulation", circulation.ToString(CultureInfo.InvariantCulture)))
+                .Append(Stat("Accounts With Balance", accountsWithBalance.ToString(CultureInfo.InvariantCulture)))
+                .Append("</dl><p><a href=\"")
                 .Append(Html(m_basePath)).Append("/currency/\">Open avatar wallet</a></p></section>");
         }
 

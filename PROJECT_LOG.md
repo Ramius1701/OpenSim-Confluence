@@ -1485,7 +1485,7 @@ Current inventory of everything under `addon-modules/`:
 | `OpenSim-Modules-Currency` | Vendored 3rd-party (DTLNSLMoneyModule, region-side client of MoneyServer) | Currency | same as above |
 | `OpenSim-Data-MySQL-MySQLMoneyDataWrapper` | Vendored 3rd-party (MoneyServer's DB layer) | Currency | same as above |
 | `Gloebit` | Vendored 3rd-party (real-money payment gateway) | Currency | no equivalent found yet — real-money gateways are a different problem than an in-grid ledger |
-| `RegionCurrency` | Confluence's own fork (ported from Gunthar's RegionWeb currency/PayPal code, split out and independently developed) | Currency (web front-end only — explicitly depends on an `IMoneyModule` for the actual ledger) | n/a — this is Confluence's own already-diverged code, not vendored-and-untouched |
+| `RegionCurrency` | **REMOVED** — confirmed (not just suspected) to be RegionWeb's own currency/PayPal code, mechanically split to its own base path by an earlier AI-assisted session: its own `HandleRequest` comment said so directly ("RegionCurrency now owns its whole path rather than living under RegionWeb's `/regionweb/currency/` as it did *in the source project*"), and its default storage paths/session cookie/admin-check method were still literally named after RegionWeb, never renamed. No unique capability RegionWeb's own `/currency` didn't already have. Removed rather than reconciled - see the "RegionCurrency vs. RegionWeb reconciliation" entry below. | n/a |
 | `RegionWeb` | Confluence's own fork (per-region web control panel) | Web/admin | WhiteCore `WhiteCore/Modules/Web` (~100 pages: region/user/estate/abuse/news/purchases/transactions manager, user self-service, multi-language) — breadth is real but uneven (e.g. its web sim-console page hardcodes "not yet implemented" despite calling `MainConsole.Instance.RunCommand()`) |
 | `OpenSimMarketplace` | **Wholly original Confluence creation** — an attempt to build the thing (a Second-Life-Marketplace equivalent) because nothing like it exists anywhere in the OpenSim ecosystem to vendor in the first place | Web/admin (marketplace) | none — there is no upstream to compare against; WhiteCore's `html/classifieds/marketplace.cs` is the closest analog, but this isn't a vendored/replace situation like the rest of the table, it's Confluence's own answer to a real gap |
 | `OpenSimSearch` | Vendored 3rd-party — [kcozens/OpenSimSearch](https://github.com/kcozens/OpenSimSearch) | Search | **REPLACED (2026-08-10)** — native `ConfluenceSearchModule`/`SearchService` ships as of Batch 14 (land/places search against the grid's own `land` table, queried directly, no external server); addon kept selectable via `[Search] Module` for anyone who wants an external XML-RPC backend instead. The data layer is genuinely verified (direct .NET harness test). The region-module client-facing wiring (`ConfluenceSearchModule.AddRegion`) briefly appeared broken on Var Test Region specifically, initially attributed to a "Mono.Addins reliability issue" - **root cause found and fixed (2026-08-10, see the "root cause found" entry near the end of this file): a config-file structuring bug (`[OnDemand]`/`[SimProtection]` had been inserted into the middle of `[Startup]`, corrupting it) was the real cause, not Mono.Addins.** Re-enabling this on Var Test Region today should work correctly now that the actual cause is fixed. |
@@ -1493,7 +1493,7 @@ Current inventory of everything under `addon-modules/`:
 | `OpenSimWeather` | **Not straight-vendored** — started as a GitHub Copilot–assisted fork/port of Gunthar's weather code, then heavily debugged this cycle (config-precedence bug, environment-persistence corruption — see weather sections above). Same category as RegionCurrency/RegionWeb: Confluence's own diverged derivative, not untouched third-party code | Environmental (tabled) | unconfirmed |
 | `OpenSimMutelist` | Vendored 3rd-party — [kcozens/OpenSimMutelist](https://github.com/kcozens/OpenSimMutelist) | Social | **CONFIRMED (2026-08-10)** — a complete native equivalent already existed before this task even started: `OpenSim.Services.MuteListService` + `Local`/`RemoteMuteListServiceConnector` + the native `MuteListModule`, already wired and active (`[Messaging] MuteListModule = MuteListModule`) in every current test deployment config. The addon self-disables under that config and is confirmed dead code on this deployment. See PROJECT_LOG.md Batch 14. |
 | `HoloPhysicsGuard` | Vendored 3rd-party — [holoneon/HoloPhysicsGuard](https://github.com/holoneon/HoloPhysicsGuard) | Security (tabled) | unconfirmed |
-| `GroupAutoInvite` | Vendored 3rd-party | Social (tabled) | unconfirmed |
+| `GroupAutoInvite` | **CONFIRMED** - a real port of Gunthar's own vanilla feature (`OpenSim/Region/OptionalModules/Avatar/GroupAutoInvite/GroupAutoInviteModule.cs`), diffed directly against that source. Adapted (not fabricated): re-wired as a Mono.Addins addon-module instead of a built-in optional module, English default invite message instead of vanilla's Italian, and one real robustness improvement over the vanilla version - invites are matched to the specific login session that triggered them (`SessionId` check before firing, plus a deterministic per-session invite ID derived via SHA256 rather than vanilla's simple in-memory "already invited" set), so a delayed invite task can't fire against a since-relogged session. | Social | n/a - genuine addition, no native equivalent built |
 
 **Currency, additional reference not yet examined:** ManfredAabye also
 authored [opensimcurrencyserver-dotnet](https://github.com/ManfredAabye/opensimcurrencyserver-dotnet)
@@ -6905,3 +6905,126 @@ Build-verified (`OpenSim.Region.ScriptEngine.Shared.Api.csproj` and a
 full solution build, both clean). Not yet deployed/live-tested for
 the same batching reason as `InternalPort = MATCHING` above - this
 DLL is also shared, not region-specific.
+
+### RegionCurrency vs. RegionWeb reconciliation - a real bug, not just duplication
+
+The last README gap: "RegionCurrency vs. RegionWeb's currency portal
+duplication is unreconciled." Investigated properly rather than
+guessing at scope. Found this was bigger than a doc note.
+
+**The actual overlap.** RegionCurrency (`addon-modules/RegionCurrency`)
+turned out to be a strict subset of RegionWeb's own built-in `/currency`
+wallet - same login-token flow, same balance/buy/transfer dashboard,
+same admin console, same PayPal integration, same TSV storage pattern,
+both wired live in the deployment (`RegionCurrency.ini`
+`Enabled = true`; RegionWeb's own `/currency` portal enabled by code
+default even though the deployed `RegionWeb.ini` predates the keys
+that would say so explicitly). Confirmed directly from RegionCurrency's
+own code, not inferred: its `HandleRequest` method's doc comment reads
+"RegionCurrency now owns its whole path rather than living under
+RegionWeb's `/regionweb/currency/` as it did *in the source project*" -
+and its default storage paths (`Currency/regionweb-purchases.tsv`,
+`Currency/regionweb-paypal-orders.tsv`), session cookie
+(`"RegionWebCurrency"`), and admin-check method name
+(`IsRegionWebSuperAdmin`) were all still literally named after
+RegionWeb, never renamed. This wasn't two independently-built modules
+that happened to converge - it's RegionWeb's own currency code,
+mechanically split out to its own base path by an earlier AI-assisted
+session, exactly as the README had already (correctly) noted before
+this investigation started.
+
+**The real bug underneath, found while scoping the removal.** Both
+wallets resolve their money module via
+`scene.RequestModuleInterface<IMoneyModule>()`, and every
+currency-mutating action - buy, transfer, admin set/credit/debit - plus
+the statement and top-balances listings, reached into whatever
+`IMoneyModule` was active via **reflection**, looking up methods
+(`WebBuyCurrency`, `WebTransfer`/`WebTransferCurrency`,
+`WebSetBalance`, `WebCreditCurrency`, `WebDebitCurrency`,
+`GetCurrencyStatement`, `GetCurrencyBalances`, and (found while already
+in the file) `GetCurrencyStats` for the RegionWeb homepage's Economy
+stats block) that only RegionCurrency/RegionWeb themselves ever
+declared. Grepped the whole repository for every one of those method
+names - none exist anywhere else, including on `ConfluenceCurrencyModule`
+(the money module actually configured live), which only implements the
+real `IMoneyModule` interface members. Every reflection lookup failed
+silently. `GetBalance` is a real `IMoneyModule` member, so it kept
+working - dashboards correctly showed a balance while nothing on them
+could actually change one, and the statement/balances tables just
+rendered empty rather than erroring.
+
+**The fix.** Rather than re-adding a `Web*`-method shim to one more
+money module (the fragility this bug came from in the first place),
+rewired RegionWeb's wallet (the survivor) to call `ICurrencyService`
+directly - the same real, DB-backed interface `ConfluenceCurrencyModule`
+itself adapts to `IMoneyModule`, already exposing `Transfer`,
+`SetBalance`, `GetTransactionHistory`, `GetPurchaseHistory`,
+`GetTopBalances`, `GetTotalCirculation`, `CountAccountsWithBalance`.
+Added a `GetCurrencyService()` helper alongside the existing
+`GetCurrencyMoneyModule()` (kept for the still-working `GetBalance`
+reads), rewrote the five `InvokeWeb*` helpers to call `Transfer`/
+`SetBalance` directly instead of reflecting, and rewrote
+`GetCurrencyStatement`/`GetCurrencyBalances` to build their row data
+from `GetTransactionHistory` (called twice - once per direction, since
+the interface ANDs `toAgentID`/`fromAgentID` when both are non-zero,
+unlike the group-scoped `GetGroupTransactionHistory` which explicitly
+returns either-side matches) plus `GetPurchaseHistory`, merged into one
+newest-first ledger. Fixed the homepage Economy stats block
+(`AppendEconomy`) the same way, off `GetTotalCirculation`/
+`CountAccountsWithBalance`. Used local `CurrencyTransactionTypeSystemGenerated`/
+`CurrencyTransactionTypeMoveMoney` int constants rather than referencing
+`ConfluenceCurrencyModule`'s own `ConfluenceTransactionType` enum
+directly, since `ICurrencyService.Transfer`'s `transactionType` is a
+plain backend-defined int at the interface level and RegionWeb
+shouldn't be coupled to one specific `ICurrencyService`-backed
+`IMoneyModule` implementation's private enum.
+
+**Mid-fix product decision on PayPal.** The user clarified partway
+through: PayPal should stay, but be treated as a straight donation to
+the estate, not a currency purchase - no token credit, no promised
+exchange rate, at least until directly selling in-world currency for
+real money is a decision actually made rather than inherited from
+whatever the original split-out code happened to do. Reworked
+`HandleCurrencyPayPalReturn` accordingly - after a successful PayPal
+capture, the order is marked completed directly with no
+`ICurrencyService` call of any kind (the capture-then-`RecordPurchase`
+version written moments earlier in this same session was itself
+replaced, never shipped/deployed), and the buy-flow UI copy for PayPal
+mode was reworded from "Pay with PayPal" / "credits the local
+simulator ledger" to "Donate via PayPal" / "does not purchase or
+credit in-world currency."
+
+**RegionCurrency removed**, not reconciled - zero unique capability
+once the shared bug was fixed at the source, matching the
+OpenSimMutelist/OpenSimSearch precedent for confirmed-redundant
+addons. Removed `addon-modules/RegionCurrency` (git rm, plus the
+untracked `obj/`/csproj build artifacts), the deployed
+`bin/addon-modules/RegionCurrency/` copy, and its `OpenSim.sln`
+project entry (both the `Project`/`EndProject` block and its four
+`ProjectConfigurationPlatforms` lines) - it was never in `prebuild.xml`
+or referenced by any other project's `.csproj`, so no other cleanup
+was needed. Full solution build clean after removal.
+
+**GroupAutoInvite audit, prompted by the same "was this an AI-invented
+split?" question applied to a different module.** The addon-modules
+inventory table already flagged this one as "unconfirmed" origin from
+an earlier session. Diffed it directly against Gunthar's real vanilla
+source (`OpenSim/Region/OptionalModules/Avatar/GroupAutoInvite/
+GroupAutoInviteModule.cs`, confirmed present and substantively similar)
+rather than trusting the stale flag either way. Unlike RegionCurrency,
+this one checks out as a genuine port: same core logic, same
+`IGroupsModule.InviteGroup` call, adapted for this repo's addon-module
+wiring (Mono.Addins attributes vanilla's built-in-module form doesn't
+need), an English default invite message instead of vanilla's Italian,
+and one real improvement over the vanilla version - invites are tied
+to the specific login `SessionId` that triggered them (checked again
+before firing after the configured delay) via a deterministic
+SHA256-derived per-session invite ID, instead of vanilla's simple
+in-memory "already invited this session" set, so a delayed invite
+task queued for one login can't misfire against a since-relogged
+session. Inventory table corrected from "unconfirmed" to confirmed
+with the specific diff findings.
+
+All of the above (fix + removal + PayPal reframing) is deployed to
+`OpenSim.Addons.RegionWeb.dll` only - build-verified, not yet
+live-tested against the real grid.

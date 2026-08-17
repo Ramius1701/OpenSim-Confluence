@@ -394,7 +394,14 @@ All modules are under `addon-modules`. They are generated into the
 solution but are not necessarily enabled by default.
 
 - **Gloebit** — optional Gloebit economy integration.
-- **GroupAutoInvite** — configurable automatic group invitations.
+- **GroupAutoInvite** — configurable automatic group invitations on
+  arrival. Verified against Gunthar's real vanilla source
+  (`OpenSim/Region/OptionalModules/Avatar/GroupAutoInvite`) — a genuine
+  port, not an invented/misattributed module, with reasonable
+  adaptations for this repo's addon-module wiring plus a real
+  robustness fix (matches invites to the specific login session that
+  triggered them, so a stale delayed invite can't fire against a
+  since-relogged session).
 - **HoloPhysicsGuard** — reduces idle physics load when regions are empty.
 - **OpenSimMarketplace** — portable Direct Delivery marketplace system.
 - **OpenSimSearch** — external viewer search client (the native Search
@@ -403,21 +410,29 @@ solution but are not necessarily enabled by default.
 - **OpenSimTide** — configurable tide and water-level simulation.
 - **OpenSimWeather** — rain, snow, storms, lightning, thunder, wind,
   clouds; see "Weather" above.
-- **RegionCurrency** — web front end for an existing `IMoneyModule`
-  (avatar wallet, balance/statement, PayPal token purchases, admin
-  dashboard).
 - **RegionWeb** — per-region web pages, protected estate administration,
   an in-world LSL/OSSL compatibility reference (auto-discovered from the
-  script API plus hand-written notes), and its own separate currency/wallet
-  portal (see note below).
+  script API plus hand-written notes), and its own avatar wallet portal
+  (balance/statement, token purchases, admin dashboard, PayPal donations).
 
-**Known duplication:** RegionCurrency and RegionWeb's `/currency` portal
-are two independent PayPal/wallet implementations that both exist in the
-tree. This wasn't a deliberate architecture choice — RegionCurrency was
-split out of RegionWeb by an earlier AI-assisted session, not by design —
-and the two haven't been reconciled. RegionWeb's PayPal integration ships
-present but unconfigured/dormant (gated by its own `IsPayPalConfigured()`
-check), reserved for future use rather than active.
+**Removed: RegionCurrency.** It duplicated RegionWeb's own `/currency`
+wallet exactly — not by design, but because it turned out to be RegionWeb's
+own currency/PayPal code, mechanically split out to its own base path by
+an earlier AI-assisted session (confirmed directly from its own code: a
+comment on its HTTP entry point read "RegionCurrency now owns its whole
+path rather than living under RegionWeb's `/regionweb/currency/` as it
+did *in the source project*", and its default storage paths/session
+cookie/admin-check method were still literally named after RegionWeb,
+never renamed). No unique capability of its own, so removed rather than
+reconciled — see PROJECT_LOG.md for the full writeup, including a real
+bug the reconciliation work found: both wallets' buy/transfer/admin
+balance actions were silently broken (a reflection-based bridge to
+`IMoneyModule` methods no real money module in this repo ever
+implemented), fixed by calling `ICurrencyService` directly instead.
+PayPal donations (RegionWeb's own integration) are real money changing
+hands, so they're treated as a straight donation rather than a currency
+purchase for now — no token credit, no promised exchange rate — pending
+a real decision on directly selling in-world currency for cash.
 
 Detailed Marketplace documentation is located at:
 
@@ -535,8 +550,6 @@ work continues — don't let them go stale.
   `llGetLinkPrimitiveParams` isn't implemented — the write side
   (`llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast`) now is; see
   the LSL/OSSL compatibility section above.
-- RegionCurrency vs. RegionWeb's currency portal duplication is
-  unreconciled.
 - The Bot/NPC management framework is infrastructure only — no script
   can reach it yet. Tranquillity's ~50 `bot*` OSSL functions exist only
   in their Phlox script engine; wiring an equivalent into Confluence's
@@ -599,8 +612,9 @@ half-finished work on the integration branch.
   or Linden-proprietary navmesh service.
 - Weather is meaningfully improved but still reasonably called
   experimental.
-- RegionWeb's PayPal integration is unconfigured/dormant and duplicates
-  RegionCurrency's separate implementation.
+- RegionWeb's PayPal integration is treated as a donation, not a
+  currency purchase (see "Included add-on modules" above) — no
+  exchange-rate/token-credit path exists yet if that's ever wanted.
 - A listed feature may still be disabled in configuration.
 - Build success does not replace controlled runtime testing — see the
   "tested vs. compiled" note near the top of this document for exactly
