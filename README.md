@@ -589,9 +589,33 @@ work continues — don't let them go stale.
   faster than LSL/Mono, ~50% less memory, native tables, dynamic event
   subscription, multiple timers, coroutines, native JSON — while staying
   compatible with existing LSL knowledge. No evidence found of any
-  OpenSim fork having touched this (checked the same three codebases as
-  above). A second, likely larger, genuinely unclaimed opportunity —
-  logged, not started, needs its own investigation pass before scoping.
+  OpenSim fork having touched this. The investigation pass this bullet
+  used to call for is now done: SLua is a genuine separate runtime, not
+  a new front-end on the existing script engine — Linden Lab's own
+  [source repo](https://github.com/secondlife/slua) describes it as "a
+  friendly fork of Luau" with SL-specific state-serialization
+  (`Ares`/`Eris`) so scripts survive region crossings and restarts, the
+  same problem OpenSim's own script-state persistence solves today for
+  LSL. Licensing is clean either way (Luau and SL's fork are both
+  MIT), unlike Phlox below, and a real embeddable C++ Luau VM exists
+  with early-stage C#/.NET P/Invoke bindings already published
+  ([NuLua](https://github.com/nuskey8/NuLua),
+  successor to the now-archived
+  [luau-dotnet](https://github.com/nuskey8/luau-dotnet)) — meaning a
+  from-scratch interpreter isn't the likely path, embedding the real
+  VM is. What's still missing and would have to be built from nothing:
+  the region-crossing-safe state-serialization layer (SL's own
+  equivalent is explicitly non-upstreamable, SL-specific code), a
+  bridge exposing the existing LSL/OSSL function surface to Luau
+  scripts, and the actual upload/compile capability wiring (undocumented
+  even within the SL community - no implementer-facing protocol spec
+  exists publicly, only user-facing wiki/FAQ pages). Genuinely
+  unclaimed territory in the OpenSim ecosystem - no mailing-list
+  thread, RFC, or prototype found anywhere. A real, multi-month-class
+  undertaking on its own terms, not a quick win the PBR terrain
+  investigation turned out to be - logged, not started, deliberately
+  left for the user to decide whether/when to commit to it given the
+  scope. See PROJECT_LOG.md for the full research writeup and sources.
 - Tranquillity's "Phlox" LSL/SLua script engine (~98,000 lines) is
   audited but NOT ported: it turned out to be a resurrection of
   InWorldz/Halcyon's own closed-source Phlox engine, now appearing as

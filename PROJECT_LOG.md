@@ -7534,3 +7534,106 @@ wasn't restarted before this entry was written. What to check once
 it's back up: that `ModifyRegion` actually appears in the SEED-cap
 response for a PBR-capable viewer's login, and that a real GET/POST
 round-trip through it behaves as the Firestorm source predicts.
+
+Grid restarted after this entry (user was stepping away and asked to
+keep going autonomously) - found the exact launch commands by
+inspecting the desktop shortcut chain rather than guessing:
+`CasperiaControl.bat.lnk` on the desktop pointed at
+`S:\Opensim\CasperiaControl.bat`, which turned out to be the
+production-grid launcher (`BASE=S:\Opensim\Casperia`, the one this
+project's own instructions say to leave untouched during Dev testing)
+- but its sibling `CasperiaDevControl.bat` in the same folder is the
+real Dev-grid launcher, giving the exact `Robust.exe -inifile=Robust.HG.ini`
+/ `OpenSim.exe -inifile=Simulators\<Region>\OpenSim.ini` commands and
+working directory the user's own control panel uses. Replicated that
+exactly (same exe/args/cwd, one window per process) rather than
+guessing at a launch mechanism, since a wrong guess here risks a
+messier cleanup than waiting would have cost. Restarted only what was
+already running before the deploy (Robust + both regions - no
+MoneyServer, which wasn't part of the running state).
+
+### SLua investigation - real scope, not started
+
+Moved to the last remaining actionable item before the two blocked
+flagship entries (this one, then Phlox). Unlike PBR terrain, this one
+turned out to be genuinely as large as the README already suspected -
+no pleasant surprise this time.
+
+Confirmed no local source exists to answer this from code the way
+Firestorm's checkout answered `ModifyRegion` - grepped
+`S:\Github\phoenix-firestorm` for "SLua"/"Luau" across
+`indra/newview`, `indra/llcommon`, `indra/llmessage`: zero hits. That
+checkout either predates SLua's 2025-12-02 open beta or Firestorm
+hasn't merged Linden Lab's SLua support yet. Spawned a research pass
+with real web access instead of guessing from general knowledge.
+
+**What SLua actually is.** A genuine separate runtime, not a new
+front-end on the existing script engine. Linden Lab's own source repo
+(`github.com/secondlife/slua`, MIT-licensed) describes it as "a
+friendly fork of Luau" (Roblox's own MIT-licensed engine,
+`github.com/luau-lang/luau`) with SL-specific additions: a modified
+state-serialization library ("Ares", derived from "Eris") so scripts
+survive region crossings and sim restarts - explicitly noted by LL as
+"unlikely to be up-streamable to Luau" - plus yielded-thread
+serialization, isolated global environments, per-script memory limits,
+and pre-emptive scheduling hooks. The viewer's new script editor
+exposes four compile targets, not two (legacy LSO2, Mono, Lua, and
+"LSL: 2025 VM" - classic LSL compiled to run on the same new Luau VM),
+confirming LL is treating the Luau VM as a genuine third execution
+engine, not a syntax-only addition.
+
+**Protocol.** Execution and compilation are both confirmed
+server-side. A Linden Lab developer (Harold Linden, on the official
+feedback tracker) stated plainly: "The compiler currently runs fully
+on the server, and there's no existing facilities we can hook into for
+pulling in another script's source." The external-editor upload flow
+described on that same page is consistent with source text being
+transmitted, the same shape as today's LSL upload - but no wiki page
+or forum post names the actual capability, and one community member
+on `Talk:SLua_FAQ` said outright "nobody knows how the LL server code
+looks like." This is a real, unresolved gap, not something glossed
+over - there is no implementer-facing protocol spec, only user-facing
+wiki/FAQ pages. SL's own SLua *compiler* front-end is open source
+though (confirmed via the `secondlife/slua` repo itself, corroborating
+a community announcement that couldn't be fetched directly - 403'd),
+which is a real asset if this is ever built: LSL/Lua-to-Luau-bytecode
+compilation logic wouldn't need to be reverse-engineered from nothing.
+
+**Licensing/provenance - the opposite of Phlox.** Clean. Both upstream
+Luau and Second Life's own fork are MIT-licensed, with an explained,
+public chain of custody (Roblox's engine, forked by Linden Lab, both
+sides open about it). No provenance question to raise with anyone.
+Real, early-stage C#/.NET P/Invoke bindings to the actual native Luau
+VM already exist - `NuLua` (successor to the now-archived
+`luau-dotnet`, both by the same author) - meaning the likely path is
+embedding the real VM via native interop, not writing a Lua/Luau
+interpreter from scratch in C#. Neither binding has any indication of
+production use at OpenSim's kind of concurrency/isolation scale, and
+neither includes anything like SL's own "Ares" serialization layer -
+that piece is SL-specific, explicitly non-upstreamable, and would need
+building from nothing regardless of which VM binding gets used.
+
+**Prior art check.** None found anywhere in the OpenSim ecosystem -
+opensimulator.org wiki/mailing-list archives, OSGrid forums,
+`opensim/opensim` GitHub issues, general search - all empty for
+"SLua"/"Luau". Unsurprising given the 2.5-month-old beta, but it means
+this would be genuinely greenfield work within OpenSim, not a port
+with a reference implementation to check against. The one adjacent
+but unrelated prior-art hit: `LuaSL`, an old SledjHamr.org project that
+tried replacing XEngine with a LuaJIT-based engine years before SLua
+existed - different Lua variant, no connection to Second Life's actual
+implementation, but shows "use Lua for OpenSim's script engine" isn't
+a new idea to the community even if the specific SLua/Luau angle is.
+
+**Verdict.** Real, substantial, multi-month-class engineering work if
+ever undertaken - embedding a foreign native VM into this all-C#
+codebase is a meaningfully bigger commitment (new native build
+dependency, new toolchain requirements) than anything else attempted
+this session, and the hardest single piece (state serialization across
+region crossings) has no existing reference to build from since SL's
+own solution is explicitly non-portable. Deliberately left logged, not
+started, rather than begun without the user's explicit sign-off on
+committing to something this size - unlike PBR terrain, this isn't a
+"turned out smaller than expected, just build it" situation. Full
+source list and open questions in the research pass; see the
+"Known gaps" section of README.md for the condensed version.
