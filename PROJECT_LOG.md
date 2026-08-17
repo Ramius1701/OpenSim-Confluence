@@ -7028,3 +7028,53 @@ with the specific diff findings.
 All of the above (fix + removal + PayPal reframing) is deployed to
 `OpenSim.Addons.RegionWeb.dll` only - build-verified, not yet
 live-tested against the real grid.
+
+### Real live bug: /myregions/oar-load 502 Bad Gateway
+
+The user hit this live while the above work was still uncommitted:
+tried to restore an OAR through the self-service `/myregions` page and
+got a straight "502 Bad Gateway" from the external reverse proxy in
+front of the real deployment. `Robust.log` had zero trace of the
+request at all - not even a session-check failure - which turned out
+to be explained by the handler itself: `HandleMyRegionsOarLoad`
+(`WebInterfaceServiceConnector.cs`) had no logging calls anywhere in
+it, so silence in the log didn't actually prove the request never
+reached Robust.
+
+Root cause, found by reading the handler rather than guessing at
+proxy config: the response message already promised "Restore queued
+for X. This will take a little while." - but the code didn't queue
+anything. It parsed the uploaded OAR into memory, then synchronously
+blocked the entire request (`client.PostAsync(url,
+content).GetAwaiter().GetResult()`, a 30-second `HttpClient` timeout)
+relaying the whole file on to the target region's own `OAR/Load/`
+endpoint, and only sent a response after that relay completed or
+failed. For a small OAR this might squeak under most reverse proxies'
+default read-timeout; for anything bigger, the external proxy's own
+timeout fires first and kills the connection with a 502 - the browser
+never sees Robust's real (eventually-successful-or-not) response at
+all, because Robust was still mid-relay when the proxy gave up.
+`HandleMyRegionsOarSave` (the backup half, same page) had the
+identical pattern with a 10s timeout, less likely to actually be hit
+in practice since it POSTs an empty body rather than relaying a file,
+but the same design bug.
+
+Fixed both: the actual HTTP relay to the target region now runs via
+`Util.FireAndForget` instead of blocking the request thread - the
+handler validates everything it can synchronously (session, region
+ownership, the uploaded file's presence for Load, the confirmation
+checkbox), then hands the network call off to a background thread and
+redirects immediately with the same "queued" message that was already
+being shown, except now it's actually true. Success/failure of the
+background relay is logged via `m_log` (`[WEBINTERFACE]: OAR restore
+(N bytes) accepted by X` / `... responded with N` / `... failed:
+reason`) so a future failure is diagnosable from `Robust.log` instead
+of vanishing silently the way this one did. Bumped the Load relay's
+own internal timeout from 30 seconds to 5 minutes while at it, since
+without the external proxy read-timeout in the way, there's no longer
+a strong reason to cut off what could be a genuinely large file
+transfer between two region processes.
+
+Build-verified. Same `OpenSim.Server.Handlers.dll` (Robust-only)
+already queued for redeploy from the ban-fix/restart-fix work earlier
+this session - batched together, not yet deployed.

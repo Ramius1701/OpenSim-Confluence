@@ -7401,22 +7401,38 @@ namespace OpenSim.Server.Handlers.WebInterface
                     GridRegion region = GetOwnedRegionOrNull(session, regionID);
                     if (region != null && !string.IsNullOrEmpty(region.ServerURI))
                     {
-                        try
-                        {
-                            string url = region.ServerURI + "OAR/Save/" + region.RegionHandle;
-                            using (System.Net.Http.HttpClient client = new System.Net.Http.HttpClient())
+                        // Fire-and-forget, not a blocking wait for the
+                        // region to respond - this message already claims
+                        // "queued", but the old code actually blocked the
+                        // whole request on client.PostAsync(...).GetAwaiter()
+                        // .GetResult() first. Harmless for a same-host Save
+                        // (empty body, fast), but the identical pattern on
+                        // HandleMyRegionsOarLoad below - relaying an entire
+                        // uploaded OAR file synchronously - is what produced
+                        // a real live 502 (external reverse proxy read
+                        // timeout) once an actual OAR was involved. Fixed
+                        // both the same way for consistency.
+                        string url = region.ServerURI + "OAR/Save/" + region.RegionHandle;
+                        string regionName = region.RegionName;
+                        Util.FireAndForget(
+                            o =>
                             {
-                                client.Timeout = TimeSpan.FromSeconds(10);
-                                var result = client.PostAsync(url, new System.Net.Http.StringContent(string.Empty)).GetAwaiter().GetResult();
-                                message = result.IsSuccessStatusCode
-                                        ? "Backup queued for " + region.RegionName + "."
-                                        : "Region " + region.RegionName + " responded with " + (int)result.StatusCode + ".";
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            message = "Could not reach " + region.RegionName + ": " + e.Message;
-                        }
+                                try
+                                {
+                                    using System.Net.Http.HttpClient client = new System.Net.Http.HttpClient();
+                                    client.Timeout = TimeSpan.FromSeconds(30);
+                                    var result = client.PostAsync(url, new System.Net.Http.StringContent(string.Empty)).GetAwaiter().GetResult();
+                                    if (!result.IsSuccessStatusCode)
+                                        m_log.WarnFormat("[WEBINTERFACE]: OAR save request to {0} responded with {1}.", regionName, (int)result.StatusCode);
+                                }
+                                catch (Exception e)
+                                {
+                                    m_log.WarnFormat("[WEBINTERFACE]: OAR save request to {0} failed: {1}", regionName, e.Message);
+                                }
+                            },
+                            null, "MyRegionsOarSave", false);
+
+                        message = "Backup queued for " + region.RegionName + ".";
                     }
                 }
             }
@@ -7507,24 +7523,48 @@ namespace OpenSim.Server.Handlers.WebInterface
                     }
                     else
                     {
-                        try
-                        {
-                            string url = region.ServerURI + "OAR/Load/" + region.RegionHandle;
-                            using (System.Net.Http.HttpClient client = new System.Net.Http.HttpClient())
+                        // Fire-and-forget the actual relay to the region's
+                        // OAR/Load endpoint instead of blocking this request
+                        // on it - this message already claimed "queued...
+                        // will take a little while", but the code used to
+                        // synchronously wait (up to 30s) for the full
+                        // uploaded OAR to be relayed and accepted before
+                        // ever sending a response. For anything but a
+                        // trivial OAR that's long enough to trip an
+                        // external reverse proxy's own read timeout,
+                        // producing a real 502 with nothing in Robust.log
+                        // to explain it (this handler had no logging at
+                        // all before this fix). The multipart body is
+                        // already fully parsed into fileBytes by this
+                        // point, so the browser upload itself has already
+                        // completed - only the region-to-region relay was
+                        // ever the blocking part.
+                        string url = region.ServerURI + "OAR/Load/" + region.RegionHandle;
+                        string regionName = region.RegionName;
+                        int fileSize = fileBytes.Length;
+                        Util.FireAndForget(
+                            o =>
                             {
-                                client.Timeout = TimeSpan.FromSeconds(30);
-                                var content = new System.Net.Http.ByteArrayContent(fileBytes);
-                                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                                var result = client.PostAsync(url, content).GetAwaiter().GetResult();
-                                message = result.IsSuccessStatusCode
-                                        ? "Restore queued for " + region.RegionName + ". This will take a little while."
-                                        : "Region " + region.RegionName + " responded with " + (int)result.StatusCode + ".";
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            message = "Could not reach " + region.RegionName + ": " + e.Message;
-                        }
+                                try
+                                {
+                                    using System.Net.Http.HttpClient client = new System.Net.Http.HttpClient();
+                                    client.Timeout = TimeSpan.FromMinutes(5);
+                                    var content = new System.Net.Http.ByteArrayContent(fileBytes);
+                                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                                    var result = client.PostAsync(url, content).GetAwaiter().GetResult();
+                                    if (result.IsSuccessStatusCode)
+                                        m_log.InfoFormat("[WEBINTERFACE]: OAR restore ({0} bytes) accepted by {1}.", fileSize, regionName);
+                                    else
+                                        m_log.WarnFormat("[WEBINTERFACE]: OAR restore request to {0} responded with {1}.", regionName, (int)result.StatusCode);
+                                }
+                                catch (Exception e)
+                                {
+                                    m_log.WarnFormat("[WEBINTERFACE]: OAR restore request to {0} failed: {1}", regionName, e.Message);
+                                }
+                            },
+                            null, "MyRegionsOarLoad", false);
+
+                        message = "Restore queued for " + region.RegionName + ". This will take a little while.";
                     }
                 }
             }
