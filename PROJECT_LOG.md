@@ -7248,3 +7248,151 @@ Build-verified (script engine project + full solution, both clean, 0
 warnings). Not yet deployed/live-tested - same
 `OpenSim.Region.ScriptEngine.Shared.Api.dll` this session's SET-side
 fix already touched, batched for whenever that's next redeployed.
+
+### Bot/NPC OSSL wiring - all 58 bot* functions reachable from scripts
+
+Moved to the next README gap: the `IBotManager`/`BotManager`/
+`BotPersistenceManager` framework (ported from Tranquillity earlier
+this project's history) was fully built but genuinely unreachable -
+zero `bot*` OSSL functions existed anywhere in `OSSL_Api.cs`/
+`IOSSL_Api.cs`/`OSSL_Stub.cs`. Confirmed Tranquillity's actual `bot*`
+API surface directly against its own source (`origin/develop` branch,
+not checked out locally so read via `git show`) rather than trusting
+guesswork: `Source/InWorldz.Phlox/Compiler/DefaultConstants.cs` for
+every `BOT_*` constant's exact numeric value, and
+`Source/Phlox.ScriptEngine/LSLSystemAPI.cs` for the exact 58 function
+names/signatures. Only bare names, signatures, and constant values
+were extracted - not Phlox's actual VM/interpreter implementation,
+consistent with this project's standing position that the Phlox
+provenance concern applies to the ~98,000-line engine implementation,
+not to what amounts to a documented function-name API surface.
+
+Wired in six batches, building clean after each one before moving on:
+
+1. **Lifecycle** - `botCreateBot`/`botRemoveBot`/`botGetOwner`/
+   `botIsBot`/`botGetName`/`botChangeOwner`/`botGetAllBotsInRegion`/
+   `botGetAllMyBotsInRegion`. `botCreateBot` returns the new bot's key
+   directly (`LSL_Key`) rather than Tranquillity's `void` - Phlox's
+   version likely relies on an engine-specific callback/global-state
+   convention that doesn't apply to YEngine; returning the key
+   synchronously is the correct adaptation for this engine, matching
+   `osNpcCreate`'s own existing precedent. `botChangeOwner` always
+   returns `BOT_ERROR`, matching Tranquillity's own implementation,
+   which stubs it out too - not a caps gap they have and we don't.
+2. **Movement/navigation + events** - `botSetNavigationPoints`/
+   `botFollowAvatar`/`botStopMovement`/`botPauseMovement`/
+   `botResumeMovement`/`botSetMovementSpeed`/`botGetPos`/
+   `botTeleportTo`/`botSetRotation`/`botWanderWithin`/
+   `botRegisterForNavigationEvents`/`botDeregisterFromNavigationEvents`/
+   `botRegisterForCollisionEvents`/`botDeregisterFromCollisionEvents`.
+   `BotMovementResult`'s existing values (`Success`/`BotNotFound`/
+   `UserNotFound`/`Error` = 0/-1/-2/-3) already matched `BOT_SUCCESS`/
+   `BOT_NOT_FOUND`/`BOT_USER_NOT_FOUND`/`BOT_ERROR` exactly, and
+   `TravelMode`'s 1-5 values already matched `BOT_TRAVELMODE_*` exactly
+   - both enums were evidently written against the same Tranquillity
+   reference during the original port, so `botFollowAvatar`/
+   `botSetNavigationPoints` needed no translation layer, just a cast.
+   Added a private `ParseBotOptionsList` helper in `OSSL_Api.cs` to
+   turn the flat `[key, value, key, value, ...]` LSL option lists this
+   API uses throughout (`BOT_FOLLOW_OFFSET` etc.) into the
+   `Dictionary<int, object>` shape `IBotManager` already expected.
+3. **Chat/IM/interaction/animation** - `botWhisper`/`botSay`/
+   `botShout`/`botStartTyping`/`botStopTyping`/
+   `botSendInstantMessage`/`botSitObject`/`botStandUp`/
+   `botTouchObject`/`botGiveInventory`/`botStartAnimation`/
+   `botStopAnimation`. Animation name-to-asset-ID resolution mirrors
+   `osNpcPlayAnimation`/`osNpcStopAnimation` exactly - look the name up
+   in `m_host.Inventory`, require `AssetType.Animation`, pass the
+   resolved `AssetID` through.
+4. **Tagging + persistence** - `botAddTag`/`botRemoveTag`/`botHasTag`/
+   `botGetBotTags`/`botGetBotsWithTag`/`botRemoveBotsWithTag`/
+   `botSetPersistent`/`botRemovePersistent`/`botIsPersistent`/
+   `botGetPersistentData`/`botSetPersistentData`. Tagging was pure
+   wiring against existing `BotManager` methods. Persistence needed a
+   small, deliberate interface addition first: `IBotManager` had no
+   passthrough to `BotPersistenceManager` at all (only `BotManager`'s
+   own `PersistenceManager` property reached it, and `OSSL_Api.cs` only
+   holds an `IBotManager` reference, not the concrete class) - added
+   `SetBotPersistent`/`RemoveBotPersistent`/`IsBotPersistent`/
+   `GetBotPersistentData`/`SetBotPersistentData` to `IBotManager`
+   itself as thin forwards to `m_persistence`, returning
+   `BotPersistError`'s existing codes directly (no confirmed
+   Tranquillity `BOT_PERSIST_*` constants exist for this - our own
+   persistence layer is a novel addition beyond stock Tranquillity, so
+   its own error-code convention applies).
+5. **Profile + outfits** - `botSetProfile` (deprecated, per the
+   original API's own convention)/`botSetProfileParams`/
+   `botGetProfileParams`/`botSetOutfit`/`botRemoveOutfit`/
+   `botChangeOutfit`/`botGetBotOutfits`/`botSearchBotOutfits`.
+   `IBotManager` had a setter (`SetBotProfile`) but no getter at all -
+   `BotData` was already storing `AboutText`/`Email`/`ImageID`/
+   `ProfileURL` (set-only, never read back), so added `GetBotProfile`
+   reading those same fields. `botSetProfileParams`/
+   `botGetProfileParams` use the `[BOT_ABOUT_TEXT/BOT_EMAIL/
+   BOT_IMAGE_UUID/BOT_PROFILE_URL, value, ...]` pair-list convention
+   the two functions' shared parameter name (`profileInformation`)
+   implies. `botSetOutfit`/`botRemoveOutfit` take no bot ID by design
+   (confirmed against Tranquillity's own signature) - they save/remove
+   a named outfit snapshot of the *calling script owner's* current
+   appearance for later use via `botChangeOutfit`, not a bot's own
+   outfit. `botSearchBotOutfits` needed genuinely new logic (no
+   confirmed Tranquillity semantics for its `matchType`/paging
+   argument existed to port) - implemented as `matchType` 0/1/2 =
+   substring/prefix/exact (case-insensitive) over
+   `GetBotOutfitsByOwner`, `start`/`end` as an inclusive 0-based slice
+   of the matches (`-1` for `end` meaning "to the last match") -
+   documented as an interpretation, not a confirmed port, in both the
+   code comment and the README.
+6. **Sensors/comms** - `botSensor`/`botSensorRepeat`/
+   `botSensorRemove`/`botListen`/`botMessageLinked`. Done last as
+   planned, since it needed real new backend work rather than pure
+   wiring. `SensorRepeat.cs`'s `SenseOnce`/`SetSenseRepeatEvent`/
+   `SensorSweep`/`doObjectSensor`/`doAgentSensor` only understood a
+   `SceneObjectPart host` as the sensing origin (self-exclusion,
+   position, rotation, attachment handling all read from it directly).
+   Added a `ScenePresence hostPresence` field to `SensorInfo` and two
+   new overloads of `SenseOnce`/`SetSenseRepeatEvent` accepting a
+   `ScenePresence` instead, then branched the three read sites (`ts.host
+   is null` → use `ts.hostPresence`'s position/rotation/UUID instead,
+   with "attached" always false and self-exclusion set to the bot's own
+   UUID) - existing prim-hosted sensor behavior is provably untouched
+   since every new branch is guarded by the host being null, which
+   never happens on the existing `llSensor`/`llSensorRepeat` call path.
+   `botSensorRemove` reuses `UnSetSenseRepeaterEvents` unchanged (keyed
+   by script localID/itemID regardless of host type, so it already
+   removes bot-hosted sensors too). `botListen` deliberately does *not*
+   use the bot's position - traced `WorldCommModule.TryEnqueueMessage`
+   and found its range-check path resolves the listener's `hostID` via
+   `Scene.GetSceneObjectPart` and does `if (sPart == null) return;`
+   (not `continue`) on a miss, meaning a bot's `ScenePresence` UUID
+   there would silently abort delivery to every other listener sharing
+   that channel, not just this one - a real landmine, not a stylistic
+   choice. `botListen` gates on bot ownership via
+   `IBotManager.CheckPermission` but otherwise behaves exactly like
+   `llListen` (host position, not bot position). `botMessageLinked`
+   had no existing delivery path to build on, so added
+   `IBotManager.BotMessageLinked`, mirroring the existing
+   `FirePathEvent`'s multi-engine `PostScriptEvent` broadcast pattern
+   (posts to every `IScriptModule` on the bot's scene since only one
+   owns the target script item) but firing `link_message` with
+   `sender_num` hardcoded to `0` (a bot has no link number) against
+   whichever script most recently called
+   `botRegisterForNavigationEvents` for that bot.
+
+All 58 `BOT_*` constants (`BOT_ERROR` through `BOT_PROFILE_URL`) added
+to `LSL_Constants.cs`, values taken directly from the confirmed
+Tranquillity source rather than inferred. `osslDefaultEnable.ini`
+given `Allow_bot*` entries for every function (split across the
+existing `ThreatLevel None`/`ThreatLevel High` sections to match each
+function's `CheckThreatLevel` call - getters None, everything else
+High, mirroring `osNpc*`'s own existing threat-level pattern exactly),
+all pointed at the pre-existing `${OSSL|osslNPC}` macro group rather
+than inventing a parallel one, since bots warrant the same trust
+threshold NPCs already have.
+
+Full solution build clean after every batch, 0 warnings throughout,
+including the `SensorRepeat.cs` changes. Not yet deployed/live-tested
+- new code across `IBotManager.cs`/`BotManager.cs`/`OSSL_Api.cs`/
+`IOSSL_Api.cs`/`OSSL_Stub.cs`/`SensorRepeat.cs`/`LSL_Constants.cs`,
+batched for whenever this is next redeployed alongside the other
+pending script-engine changes above.

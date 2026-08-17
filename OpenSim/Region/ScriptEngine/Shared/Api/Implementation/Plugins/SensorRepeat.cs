@@ -57,6 +57,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             public float arc;
             public SceneObjectPart host;
 
+            // Set instead of `host` for bot-originated sensors (botSensor/botSensorRepeat), whose
+            // sensing point is a bot's own ScenePresence rather than a scripted prim. host and
+            // hostPresence are mutually exclusive -- exactly one is non-null on any SensorInfo.
+            public ScenePresence hostPresence;
+
             public SensorInfo Clone()
             {
                 return (SensorInfo)MemberwiseClone();
@@ -156,6 +161,33 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             AddSenseRepeater(ts);
         }
 
+        // Bot-hosted overload: same as above but sensing from a bot's ScenePresence instead of a
+        // scripted prim. Used by botSensorRepeat.
+        public void SetSenseRepeatEvent(uint m_localID, UUID m_itemID,
+                                        string name, UUID keyID, int type, double range,
+                                        double arc, double sec, ScenePresence hostPresence)
+        {
+            UnSetSenseRepeaterEvents(m_localID, m_itemID);
+
+            if (sec == 0) // Disabling timer
+                return;
+            float frange = (float)range;
+            SensorInfo ts = new()
+            {
+                localID = m_localID,
+                itemID = m_itemID,
+                interval = sec,
+                next = DateTime.UtcNow.AddSeconds(sec),
+                name = name,
+                keyID = keyID,
+                type = type,
+                range = frange >= maximumRange ? maximumRange : frange,
+                arc = (float)arc,
+                hostPresence = hostPresence
+            };
+            AddSenseRepeater(ts);
+        }
+
         private void AddSenseRepeater(SensorInfo senseRepeater)
         {
             lock (SenseRepeatListLock)
@@ -227,9 +259,31 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             AddSenseRepeater(ts);
         }
 
+        // Bot-hosted overload: same as above but sensing from a bot's ScenePresence instead of a
+        // scripted prim. Used by botSensor.
+        public void SenseOnce(uint m_localID, UUID m_itemID,
+                              string name, UUID keyID, int type,
+                              double range, double arc, ScenePresence hostPresence)
+        {
+            float frange = (float)range;
+            SensorInfo ts = new()
+            {
+                localID = m_localID,
+                itemID = m_itemID,
+                interval = 0,
+                name = name,
+                keyID = keyID,
+                type = type,
+                range = frange >= maximumRange ? maximumRange : frange,
+                arc = (float)arc,
+                hostPresence = hostPresence
+            };
+            AddSenseRepeater(ts);
+        }
+
         private void SensorSweep(SensorInfo ts)
         {
-            if (ts.host is null)
+            if (ts.host is null && ts.hostPresence is null)
                 return;
 
             List<SensedEntity> sensedEntities = new();
@@ -333,40 +387,67 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             Vector3 fromRegionPos;
             Vector3 forward_dir;
             float mag_fwd; // to compensate in case rotation is not normalized
-            if (sensorPart.ParentGroup.IsAttachment)
-            {
-                // In attachments, rotate the sensor cone with the
-                // avatar rotation. This may include a nonzero elevation if
-                // in mouselook.
-                // This will not include the rotation and position of the
-                // attachment point (e.g. your head when a sensor is in your
-                // hair attached to your scull. Your hair  will turn with
-                // your head but the sensor will stay with your (global)
-                // avatar rotation and position.
-                // Position of a sensor in a child prim attached to an avatar
-                // will be still wrong.
-                ScenePresence avatar = m_CmdManager.m_ScriptEngine.World.GetScenePresence(sensorPart.ParentGroup.AttachedAvatar);
-                if (avatar is null)
-                    return sensedEntities;
+            UUID excludeUUID = UUID.Zero; // self-exclusion; only meaningful for the prim-hosted path
 
-                fromRegionPos = avatar.AbsolutePosition;
-                if (doarc)
+            if (sensorPart is not null)
+            {
+                excludeUUID = sensorPart.UUID;
+
+                if (sensorPart.ParentGroup.IsAttachment)
                 {
-                    forward_dir = Vector3.UnitXRotated(avatar.Rotation);
-                    mag_fwd = forward_dir.LengthSquared();
+                    // In attachments, rotate the sensor cone with the
+                    // avatar rotation. This may include a nonzero elevation if
+                    // in mouselook.
+                    // This will not include the rotation and position of the
+                    // attachment point (e.g. your head when a sensor is in your
+                    // hair attached to your scull. Your hair  will turn with
+                    // your head but the sensor will stay with your (global)
+                    // avatar rotation and position.
+                    // Position of a sensor in a child prim attached to an avatar
+                    // will be still wrong.
+                    ScenePresence avatar = m_CmdManager.m_ScriptEngine.World.GetScenePresence(sensorPart.ParentGroup.AttachedAvatar);
+                    if (avatar is null)
+                        return sensedEntities;
+
+                    fromRegionPos = avatar.AbsolutePosition;
+                    if (doarc)
+                    {
+                        forward_dir = Vector3.UnitXRotated(avatar.Rotation);
+                        mag_fwd = forward_dir.LengthSquared();
+                    }
+                    else
+                    {
+                        forward_dir = Vector3.Zero;
+                        mag_fwd = 1;
+                    }
                 }
                 else
                 {
-                    forward_dir = Vector3.Zero;
-                    mag_fwd = 1;
+                    fromRegionPos = sensorPart.GetWorldPosition();
+                    if (doarc)
+                    {
+                        forward_dir = Vector3.UnitXRotated(sensorPart.GetWorldRotation());
+                        mag_fwd = forward_dir.LengthSquared();
+                    }
+                    else
+                    {
+                        forward_dir = Vector3.Zero;
+                        mag_fwd = 1;
+                    }
                 }
             }
             else
             {
-                fromRegionPos = sensorPart.GetWorldPosition();
+                // Bot-hosted sensor (botSensor/botSensorRepeat): sense from the bot's own
+                // ScenePresence position/rotation. A bot has no attachment concept.
+                ScenePresence bot = ts.hostPresence;
+                if (bot is null || bot.IsDeleted)
+                    return sensedEntities;
+
+                fromRegionPos = bot.AbsolutePosition;
                 if (doarc)
                 {
-                    forward_dir = Vector3.UnitXRotated(sensorPart.GetWorldRotation());
+                    forward_dir = Vector3.UnitXRotated(bot.Rotation);
                     mag_fwd = forward_dir.LengthSquared();
                 }
                 else
@@ -391,7 +472,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                 if (sog.IsAttachment) // Attached so ignore
                     continue;
 
-                if (sensorPart.UUID.Equals(ent.UUID))
+                if (excludeUUID.IsNotZero() && excludeUUID.Equals(ent.UUID))
                     continue;
 
                 if (nameSearch && !ent.Name.Equals(ts.name))
@@ -457,36 +538,59 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                 return sensedEntities;
 
             SceneObjectPart SensePoint = ts.host;
-            Vector3 fromRegionPos = SensePoint.GetWorldPosition();
-
+            Vector3 fromRegionPos;
             Quaternion q;
-            if (SensePoint.ParentGroup.IsAttachment)
-            {
-                // In attachments, rotate the sensor cone with the
-                // avatar rotation. This may include a nonzero elevation if
-                // in mouselook.
-                // This will not include the rotation and position of the
-                // attachment point (e.g. your head when a sensor is in your
-                // hair attached to your scull. Your hair  will turn with
-                // your head but the sensor will stay with your (global)
-                // avatar rotation and position.
-                // Position of a sensor in a child prim attached to an avatar
-                // will be still wrong.
-                ScenePresence avatar = m_CmdManager.m_ScriptEngine.World.GetScenePresence(SensePoint.ParentGroup.AttachedAvatar);
+            bool attached;
+            UUID selfExcludeUUID; // never include this presence (the sensor's own bot) in results
 
-                // Don't proceed if the avatar for this attachment has since been removed from the scene.
-                if (avatar is null)
-                    return sensedEntities;
-                fromRegionPos = avatar.AbsolutePosition;
-                q = avatar.Rotation;
+            if (SensePoint is not null)
+            {
+                fromRegionPos = SensePoint.GetWorldPosition();
+
+                if (SensePoint.ParentGroup.IsAttachment)
+                {
+                    // In attachments, rotate the sensor cone with the
+                    // avatar rotation. This may include a nonzero elevation if
+                    // in mouselook.
+                    // This will not include the rotation and position of the
+                    // attachment point (e.g. your head when a sensor is in your
+                    // hair attached to your scull. Your hair  will turn with
+                    // your head but the sensor will stay with your (global)
+                    // avatar rotation and position.
+                    // Position of a sensor in a child prim attached to an avatar
+                    // will be still wrong.
+                    ScenePresence avatar = m_CmdManager.m_ScriptEngine.World.GetScenePresence(SensePoint.ParentGroup.AttachedAvatar);
+
+                    // Don't proceed if the avatar for this attachment has since been removed from the scene.
+                    if (avatar is null)
+                        return sensedEntities;
+                    fromRegionPos = avatar.AbsolutePosition;
+                    q = avatar.Rotation;
+                }
+                else
+                    q = SensePoint.GetWorldRotation();
+
+                attached = (SensePoint.ParentGroup.AttachmentPoint != 0);
+                selfExcludeUUID = attached ? SensePoint.OwnerID : UUID.Zero;
             }
             else
-                q = SensePoint.GetWorldRotation();
+            {
+                // Bot-hosted sensor (botSensor/botSensorRepeat): sense from the bot's own
+                // ScenePresence position/rotation. A bot has no attachment concept, but it
+                // should never sense itself.
+                ScenePresence bot = ts.hostPresence;
+                if (bot is null || bot.IsDeleted)
+                    return sensedEntities;
+
+                fromRegionPos = bot.AbsolutePosition;
+                q = bot.Rotation;
+                attached = false;
+                selfExcludeUUID = bot.UUID;
+            }
 
             Vector3 forward_dir = Vector3.UnitXRotated(q);
             float mag_fwd = forward_dir.LengthSquared();
 
-            bool attached = (SensePoint.ParentGroup.AttachmentPoint != 0);
             Vector3 toRegionPos;
 
             Action<ScenePresence> senseEntity = new(presence =>
@@ -529,9 +633,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                 if (presence.IsDeleted || presence.IsChildAgent || presence.IsViewerUIGod)
                     return;
 
-                // if the object the script is in is attached and the avatar is the owner
-                // then this one is not wanted
-                if (attached && presence.UUID.Equals(SensePoint.OwnerID))
+                // if the object the script is in is attached and the avatar is the owner (or this is
+                // a bot-hosted sensor and the presence is the bot itself), then this one is not wanted
+                if (selfExcludeUUID.IsNotZero() && presence.UUID.Equals(selfExcludeUUID))
                     return;
 
                 toRegionPos = presence.AbsolutePosition;

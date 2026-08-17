@@ -1151,6 +1151,24 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             }
         }
 
+        public bool GetBotProfile(UUID botID, out string aboutText, out string email,
+            out UUID imageID, out string profileURL)
+        {
+            aboutText = string.Empty;
+            email = string.Empty;
+            imageID = UUID.Zero;
+            profileURL = string.Empty;
+
+            BotData data = GetBot(botID);
+            if (data == null) return false;
+
+            aboutText = data.AboutText;
+            email = data.Email;
+            imageID = data.ImageID;
+            profileURL = data.ProfileURL;
+            return true;
+        }
+
         #endregion
 
         #region Outfits
@@ -1343,6 +1361,58 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             if (data == null) return;
             data.CollisionEventHost = null;
             UnsubscribeBotCollision(data);
+        }
+
+        #endregion
+
+        #region Persistence
+
+        public int SetBotPersistent(UUID botID, UUID ownerID, UUID scriptItemID, UUID objectID, int ttlSeconds)
+        {
+            if (m_persistence == null) return BotPersistError.DISABLED;
+            return m_persistence.SetPersistent(botID, ownerID, scriptItemID, objectID, ttlSeconds);
+        }
+
+        public int RemoveBotPersistent(UUID botID, UUID ownerID)
+        {
+            if (m_persistence == null) return BotPersistError.DISABLED;
+            return m_persistence.RemovePersistent(botID, ownerID);
+        }
+
+        public bool IsBotPersistent(UUID botID)
+        {
+            return m_persistence != null && m_persistence.IsPersistent(botID);
+        }
+
+        public string GetBotPersistentData(UUID botID, string key)
+        {
+            return m_persistence?.GetPersistentData(botID, key) ?? string.Empty;
+        }
+
+        public int SetBotPersistentData(UUID botID, UUID ownerID, string key, string value)
+        {
+            if (m_persistence == null) return BotPersistError.DISABLED;
+            return m_persistence.SetPersistentData(botID, ownerID, key, value);
+        }
+
+        public bool BotMessageLinked(UUID botID, UUID ownerID, int num, string msg, UUID id)
+        {
+            BotData data = GetBotWithPermission(botID, ownerID);
+            if (data == null || data.PathEventScriptID == UUID.Zero) return false;
+
+            Scene scene = GetBotScene(data);
+            if (scene == null) return false;
+
+            // Same multi-engine broadcast rationale as FirePathEvent: post to every engine, the one
+            // that owns the registered script item delivers, the rest ignore an unknown item.
+            IScriptModule[] engines = scene.RequestModuleInterfaces<IScriptModule>();
+            if (engines == null) return false;
+
+            object[] args = new object[] { 0, num, msg, id.ToString() };
+            foreach (IScriptModule engine in engines)
+                engine?.PostScriptEvent(data.PathEventScriptID, "link_message", args);
+
+            return true;
         }
 
         #endregion

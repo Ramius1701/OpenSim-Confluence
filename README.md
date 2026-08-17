@@ -344,9 +344,14 @@ used by some sibling forks, but a real, backend-persisted system:
 ### Bot/NPC framework
 
 A management framework (`IBotManager`/`BotManager`/
-`BotPersistenceManager`, ported from Tranquillity) for avatar-follow and
-tag-group management via `osNpc`. Infrastructure only at this stage —
-see "Progress and roadmap" for what's not wired up yet.
+`BotPersistenceManager`, ported from Tranquillity) for scripted bots,
+fully reachable from LSL/OSSL scripts via a `bot*` function set mirroring
+Tranquillity's own (58 functions: lifecycle, movement/navigation,
+chat/IM/interaction/animation, tagging, persistence, profile/outfits,
+and bot-hosted sensors/comms), wired into Confluence's own
+`OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs` so YEngine scripts can call
+it directly — see PROJECT_LOG.md for the implementation notes. Separately,
+avatar-follow and tag-group management remain available via `osNpc` too.
 
 ### Sit targets and avatar animation
 
@@ -548,12 +553,6 @@ work continues — don't let them go stale.
   implemented — logged rather than started, since no known client in
   this project's own stack speaks the login-RPC protocol it needs;
   see the Display Names and identity section above.
-- The Bot/NPC management framework is infrastructure only — no script
-  can reach it yet. Tranquillity's ~50 `bot*` OSSL functions exist only
-  in their Phlox script engine; wiring an equivalent into Confluence's
-  own `OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs` so YEngine scripts can
-  actually call it is deferred as its own effort, comparable in size to
-  the module port itself.
 - **Real PBR terrain support** — genuinely unclaimed territory, verified
   rather than assumed. Object-level PBR materials (per-face `gltf_json`
   overrides via the `RenderMaterials` capability) already work — that
@@ -627,6 +626,15 @@ half-finished work on the integration branch.
 - RegionWeb's PayPal integration is treated as a donation, not a
   currency purchase (see "Included add-on modules" above) — no
   exchange-rate/token-credit path exists yet if that's ever wanted.
+- `botListen` gates on bot ownership but delivers using the calling
+  object's position (like `llListen`), not the bot's own position —
+  `WorldCommModule`'s range-check path resolves its listener host as a
+  prim and aborts the whole channel's delivery (not just one listener)
+  on a miss, so a bot's `ScenePresence` UUID can't safely be used there.
+  `botSensor`/`botSensorRepeat` do sense from the bot's own position
+  (a separate, safely-guarded extension to `SensorRepeat.cs`), and
+  `botChangeOwner` is unsupported (returns `BOT_ERROR`), matching
+  Tranquillity's own bot implementation, which stubs it out too.
 - A listed feature may still be disabled in configuration.
 - Build success does not replace controlled runtime testing — see the
   "tested vs. compiled" note near the top of this document for exactly

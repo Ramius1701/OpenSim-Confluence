@@ -961,6 +961,48 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         public const int OS_NPC_SENSE_AS_AGENT = 0x4;
         public const int OS_NPC_OBJECT_GROUP = 0x08;
 
+        // Constants for bot* functions (Tranquillity/InWorldz bot* API surface)
+        public const int BOT_ERROR = -3;
+        public const int BOT_USER_NOT_FOUND = -2;
+        public const int BOT_NOT_FOUND = -1;
+        public const int BOT_SUCCESS = 0;
+
+        public const int BOT_ALLOW_RUNNING = 1;
+        public const int BOT_ALLOW_FLYING = 2;
+        public const int BOT_ALLOW_JUMPING = 3;
+        public const int BOT_FOLLOW_OFFSET = 4;
+        public const int BOT_REQUIRES_LINE_OF_SIGHT = 5;
+        public const int BOT_START_FOLLOWING_DISTANCE = 6;
+        public const int BOT_STOP_FOLLOWING_DISTANCE = 7;
+        public const int BOT_LOST_AVATAR_DISTANCE = 8;
+
+        public const int BOT_TRAVELMODE_WALK = 1;
+        public const int BOT_TRAVELMODE_RUN = 2;
+        public const int BOT_TRAVELMODE_FLY = 3;
+        public const int BOT_TRAVELMODE_TELEPORT = 4;
+        public const int BOT_TRAVELMODE_WAIT = 5;
+
+        public const int BOT_MOVEMENT_TYPE = 0;
+        public const int BOT_MOVEMENT_TELEPORT_AFTER = 1;
+
+        public const int BOT_MOVEMENT_FLAG_NONE = 0;
+        public const int BOT_MOVEMENT_FLAG_FOLLOW_INDEFINITELY = 1;
+
+        public const int BOT_CREATE_DEFAULT = 0;
+
+        public const int BOT_MOVE_COMPLETE = 1;
+        public const int BOT_MOVE_UPDATE = 2;
+        public const int BOT_MOVE_FAILED = 3;
+        public const int BOT_MOVE_AVATAR_LOST = 4;
+
+        public const int BOT_WANDER_MOVEMENT_TYPE = 1;
+        public const int BOT_WANDER_TIME_BETWEEN_NODES = 2;
+
+        public const int BOT_ABOUT_TEXT = 1;
+        public const int BOT_EMAIL = 2;
+        public const int BOT_IMAGE_UUID = 3;
+        public const int BOT_PROFILE_URL = 4;
+
         public const string URL_REQUEST_GRANTED = "URL_REQUEST_GRANTED";
         public const string URL_REQUEST_DENIED = "URL_REQUEST_DENIED";
 

@@ -521,6 +521,131 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
         //ApiDesc Instructs a given NPC (key) to whisper a given message on a given channel.
               void osNpcWhisper(key npc, int channel, string message);
 
+        // ── bot* functions (Tranquillity/InWorldz-compatible bot API, backed by IBotManager) ──
+
+        //ApiDesc Creates a new bot with a given name, appearance outfit, and starting position. Returns the bot's key, or NULL_KEY on failure.
+               key botCreateBot(string firstName, string lastName, string outfit, vector position, int options);
+        //ApiDesc Removes a given bot (key).
+              void botRemoveBot(key botID);
+        //ApiDesc Returns the owner key of a given bot (key).
+               key botGetOwner(key botID);
+        //ApiDesc Returns TRUE if the given key belongs to a bot managed by this region.
+        LSL_Integer botIsBot(key id);
+        //ApiDesc Returns the display name of a given bot (key).
+        LSL_String botGetName(key botID);
+        //ApiDesc Changes the owner of a given bot. Unsupported (mirrors Tranquillity); always returns BOT_ERROR.
+        LSL_Integer botChangeOwner(key botID, key newOwnerID);
+        //ApiDesc Returns a list of the keys of every bot in the region.
+           LSL_List botGetAllBotsInRegion();
+        //ApiDesc Returns a list of the keys of every bot in the region owned by the calling script's owner.
+           LSL_List botGetAllMyBotsInRegion();
+
+        //ApiDesc Sets a list of waypoints (vectors) for a given bot to walk/run/fly/teleport through, with a matching list of BOT_TRAVELMODE_* values and an options list.
+              void botSetNavigationPoints(key botID, LSL_List positions, LSL_List movementTypes, LSL_List options);
+        //ApiDesc Instructs a given bot to continuously follow a target avatar/bot (key) until botStopMovement is called. Returns BOT_SUCCESS or an error code.
+        LSL_Integer botFollowAvatar(key botID, key target, LSL_List options);
+        //ApiDesc Stops all current movement (navigation, following, wandering) for a given bot.
+              void botStopMovement(key botID);
+        //ApiDesc Pauses the current movement of a given bot; resume with botResumeMovement.
+              void botPauseMovement(key botID);
+        //ApiDesc Resumes movement previously paused with botPauseMovement.
+              void botResumeMovement(key botID);
+        //ApiDesc Sets a given bot's movement speed multiplier.
+              void botSetMovementSpeed(key botID, LSL_Float speed);
+        //ApiDesc Returns the current position of a given bot.
+            vector botGetPos(key botID);
+        //ApiDesc Instantly teleports a given bot to a position (no pathing/walking).
+              void botTeleportTo(key botID, vector position);
+        //ApiDesc Sets the facing rotation of a given bot.
+              void botSetRotation(key botID, rotation rot);
+        //ApiDesc Makes a given bot wander randomly within xDistance/yDistance of an origin point, per an options list.
+              void botWanderWithin(key botID, vector origin, LSL_Float xDistance, LSL_Float yDistance, LSL_List options);
+        //ApiDesc Registers the calling script to receive bot_update events (BOT_MOVE_COMPLETE/BOT_MOVE_FAILED) for a given bot's navigation.
+              void botRegisterForNavigationEvents(key botID);
+        //ApiDesc Deregisters the calling script from bot_update navigation events for a given bot.
+              void botDeregisterFromNavigationEvents(key botID);
+        //ApiDesc Registers the object containing the calling script to receive collision events (collision_start/collision/collision_end and land equivalents) for a given bot.
+              void botRegisterForCollisionEvents(key botID);
+        //ApiDesc Deregisters the object containing the calling script from collision events for a given bot.
+              void botDeregisterFromCollisionEvents(key botID);
+
+        //ApiDesc Instructs a given bot to play a given animation (name) from the inventory of the object containing the script.
+              void botStartAnimation(key botID, string animation);
+        //ApiDesc Instructs a given bot to stop playing a given animation (name).
+              void botStopAnimation(key botID, string animation);
+        //ApiDesc Instructs a given bot to whisper a given message on a given channel.
+              void botWhisper(key botID, int channel, string message);
+        //ApiDesc Instructs a given bot to say a given message on a given channel.
+              void botSay(key botID, int channel, string message);
+        //ApiDesc Instructs a given bot to shout a given message on a given channel.
+              void botShout(key botID, int channel, string message);
+        //ApiDesc Instructs a given bot to start showing the typing indicator.
+              void botStartTyping(key botID);
+        //ApiDesc Instructs a given bot to stop showing the typing indicator.
+              void botStopTyping(key botID);
+        //ApiDesc Sends an instant message from a given bot to a given avatar/bot (key).
+              void botSendInstantMessage(key botID, key userID, string message);
+        //ApiDesc Instructs a given bot to sit on a given object (key).
+              void botSitObject(key botID, key objectID);
+        //ApiDesc Instructs a given bot to stand up.
+              void botStandUp(key botID);
+        //ApiDesc Instructs a given bot to touch a given object (key).
+              void botTouchObject(key botID, key objectID);
+        //ApiDesc Instructs a given bot to give an item from the calling object's inventory to a given avatar/bot (key).
+              void botGiveInventory(key botID, key destination, string inventory);
+
+        //ApiDesc Tags a given bot (key) with a name for later bulk lookup/management via botGetBotsWithTag/botRemoveBotsWithTag.
+              void botAddTag(key botID, string tag);
+        //ApiDesc Removes a tag from a given bot (key).
+              void botRemoveTag(key botID, string tag);
+        //ApiDesc Returns TRUE if a given bot (key) carries a given tag.
+        LSL_Integer botHasTag(key botID, string tag);
+        //ApiDesc Returns a list of every tag on a given bot (key).
+           LSL_List botGetBotTags(key botID);
+        //ApiDesc Returns a list of bot keys carrying a given tag.
+           LSL_List botGetBotsWithTag(string tag);
+        //ApiDesc Removes every bot (owned by the calling script's owner) carrying a given tag.
+              void botRemoveBotsWithTag(string tag);
+
+        //ApiDesc Marks a given bot (key) persistent, surviving region restarts, for up to ttlSeconds (0 = grid default). Returns BOT_SUCCESS or a negative error code.
+        LSL_Integer botSetPersistent(key botID, int ttlSeconds);
+        //ApiDesc Removes persistence from a given bot (key); the bot itself is not removed. Returns BOT_SUCCESS or a negative error code.
+        LSL_Integer botRemovePersistent(key botID);
+        //ApiDesc Returns TRUE if a given bot (key) is currently persistent.
+        LSL_Integer botIsPersistent(key botID);
+        //ApiDesc Returns a script-set custom data value stored against a persistent bot (key), or an empty string if unset.
+        LSL_String botGetPersistentData(key botID, string dataKey);
+        //ApiDesc Sets a script-set custom data value against a persistent bot (key). Returns BOT_SUCCESS or a negative error code.
+        LSL_Integer botSetPersistentData(key botID, string dataKey, string value);
+
+        //ApiDesc Deprecated -- use botSetProfileParams. Sets a given bot's about/email/image/profile-URL fields (first-life fields are ignored).
+              void botSetProfile(key botID, string about, string email, string firstLifeAbout, string firstLifeImage, key image, string profileURL);
+        //ApiDesc Sets a given bot's profile fields from a [BOT_ABOUT_TEXT/BOT_EMAIL/BOT_IMAGE_UUID/BOT_PROFILE_URL, value, ...] pair list.
+              void botSetProfileParams(key botID, LSL_List profileInformation);
+        //ApiDesc Given a list of BOT_ABOUT_TEXT/BOT_EMAIL/BOT_IMAGE_UUID/BOT_PROFILE_URL keys, returns a list of the matching profile values for a given bot, in the same order.
+           LSL_List botGetProfileParams(key botID, LSL_List profileInformation);
+        //ApiDesc Saves the calling script owner's current avatar appearance as a named outfit, for later use with botChangeOutfit.
+              void botSetOutfit(string outfitName);
+        //ApiDesc Removes a previously saved outfit belonging to the calling script's owner.
+              void botRemoveOutfit(string outfitName);
+        //ApiDesc Changes a given bot's appearance to a previously saved outfit belonging to the calling script's owner.
+              void botChangeOutfit(key botID, string outfitName);
+        //ApiDesc Returns a list of every outfit name saved by the calling script's owner.
+           LSL_List botGetBotOutfits();
+        //ApiDesc Returns a paged list of outfit names saved by the calling script's owner matching a pattern. matchType: 0 = substring, 1 = prefix, 2 = exact (case-insensitive). start/end select a slice of the matched results (0-based, inclusive; -1 for end means to the last match).
+           LSL_List botSearchBotOutfits(string pattern, int matchType, int start, int end);
+
+        //ApiDesc Performs a one-time sense sweep from a given bot's position, delivering sensor/no_sensor to the calling script (same semantics as llSensor).
+              void botSensor(key botID, string name, key id, int type, LSL_Float range, LSL_Float arc);
+        //ApiDesc Performs a repeated sense sweep from a given bot's position every rate seconds, delivering sensor/no_sensor to the calling script (same semantics as llSensorRepeat).
+              void botSensorRepeat(key botID, string name, key id, int type, LSL_Float range, LSL_Float arc, LSL_Float rate);
+        //ApiDesc Removes any sensor (bot-hosted or otherwise) registered by the calling script (same semantics as llSensorRemove).
+              void botSensorRemove();
+        //ApiDesc Registers a chat listener gated on ownership of a given bot; delivers via the normal listen() event (same semantics as llListen). The bot's own position is not used for range checks -- the calling object's position is, as with llListen.
+        LSL_Integer botListen(key botID, int channel, string name, key id, string msg);
+        //ApiDesc Delivers a link_message-style event (sender_num 0, num, msg, id) to the script currently registered for a given bot's navigation events via botRegisterForNavigationEvents.
+              void botMessageLinked(key botID, int num, string msg, key id);
+
         //ApiDesc Save appearance of object owner to a notecard in the primitive inventory.
            LSL_Key osOwnerSaveAppearance(LSL_String notecard);
         //ApiDesc Save appearance of object owner (with the choice to include Huds or no) to a notecard in the primitive inventory.

@@ -3788,6 +3788,722 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             }
         }
 
+        // ── bot* functions (Tranquillity/InWorldz-compatible bot API, backed by IBotManager) ──
+
+        public LSL_Key botCreateBot(string firstName, string lastName, string outfit, LSL_Vector position, int options)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botCreateBot");
+
+            if (!World.Permissions.CanRezObject(1, m_host.OwnerID, new Vector3((float)position.x, (float)position.y, (float)position.z)))
+            {
+                OSSLError("no permission to rez a bot at requested location");
+                return LSL_Key.NullKey;
+            }
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null)
+            {
+                OSSLError("bot module not enabled");
+                return LSL_Key.NullKey;
+            }
+
+            UUID botID = module.CreateBot(firstName, lastName, position,
+                string.IsNullOrEmpty(outfit) ? null : outfit,
+                m_item.ItemID, m_host.OwnerID, out string reason);
+
+            if (botID.IsZero())
+            {
+                OSSLError(string.Format("botCreateBot: {0}", reason ?? "failed"));
+                return LSL_Key.NullKey;
+            }
+
+            return new LSL_Key(botID.ToString());
+        }
+
+        public void botRemoveBot(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botRemoveBot");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.RemoveBot(id, m_host.OwnerID);
+        }
+
+        public LSL_Key botGetOwner(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botGetOwner");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+            {
+                UUID owner = module.GetBotOwner(id);
+                if (!owner.IsZero())
+                    return new LSL_Key(owner.ToString());
+            }
+
+            return LSL_Key.NullKey;
+        }
+
+        public LSL_Integer botIsBot(LSL_Key id)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botIsBot");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(id.m_string, out UUID uid) && module.IsBot(uid))
+                return ScriptBaseClass.TRUE;
+
+            return ScriptBaseClass.FALSE;
+        }
+
+        public LSL_String botGetName(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botGetName");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                return module.GetBotName(id) ?? string.Empty;
+
+            return string.Empty;
+        }
+
+        public LSL_Integer botChangeOwner(LSL_Key botID, LSL_Key newOwnerID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botChangeOwner");
+
+            // Unsupported -- Tranquillity's own bot implementation stubs this out too.
+            return ScriptBaseClass.BOT_ERROR;
+        }
+
+        public LSL_List botGetAllBotsInRegion()
+        {
+            CheckThreatLevel(ThreatLevel.High, "botGetAllBotsInRegion");
+
+            LSL_List result = new LSL_List();
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null)
+            {
+                foreach (UUID id in module.GetAllBots())
+                    result.Add(new LSL_Key(id.ToString()));
+            }
+
+            return result;
+        }
+
+        public LSL_List botGetAllMyBotsInRegion()
+        {
+            CheckThreatLevel(ThreatLevel.High, "botGetAllMyBotsInRegion");
+
+            LSL_List result = new LSL_List();
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null)
+            {
+                foreach (UUID id in module.GetAllOwnedBots(m_host.OwnerID))
+                    result.Add(new LSL_Key(id.ToString()));
+            }
+
+            return result;
+        }
+
+        // Parses a flat [key, value, key, value, ...] LSL option list (as used throughout the bot*
+        // API, e.g. BOT_FOLLOW_OFFSET) into the Dictionary<int, object> shape IBotManager expects.
+        private static Dictionary<int, object> ParseBotOptionsList(LSL_List options)
+        {
+            Dictionary<int, object> result = new Dictionary<int, object>();
+            object[] data = options.Data;
+            for (int i = 0; i + 1 < data.Length; i += 2)
+            {
+                if (!int.TryParse(data[i].ToString(), out int key))
+                    continue;
+
+                object raw = data[i + 1];
+                object value = raw switch
+                {
+                    LSL_Vector v => new Vector3((float)v.x, (float)v.y, (float)v.z),
+                    LSL_Rotation r => new Quaternion((float)r.x, (float)r.y, (float)r.z, (float)r.s),
+                    LSL_Integer li => (int)li.value,
+                    LSL_Float lf => (double)lf.value,
+                    _ => raw
+                };
+                result[key] = value;
+            }
+            return result;
+        }
+
+        public void botSetNavigationPoints(LSL_Key botID, LSL_List positions, LSL_List movementTypes, LSL_List options)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetNavigationPoints");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return;
+
+            List<Vector3> points = new List<Vector3>();
+            foreach (object o in positions.Data)
+                if (o is LSL_Vector v)
+                    points.Add(new Vector3((float)v.x, (float)v.y, (float)v.z));
+
+            List<TravelMode> modes = new List<TravelMode>();
+            foreach (object o in movementTypes.Data)
+            {
+                int m = Convert.ToInt32(o);
+                modes.Add(Enum.IsDefined(typeof(TravelMode), m) ? (TravelMode)m : TravelMode.Walk);
+            }
+
+            module.SetBotNavigationPoints(id, points, modes, ParseBotOptionsList(options), m_host.OwnerID);
+        }
+
+        public LSL_Integer botFollowAvatar(LSL_Key botID, LSL_Key target, LSL_List options)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botFollowAvatar");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id) || !UUID.TryParse(target.m_string, out UUID targetId))
+                return ScriptBaseClass.BOT_ERROR;
+
+            return (int)module.StartFollowingAvatar(id, targetId, ParseBotOptionsList(options), m_host.OwnerID);
+        }
+
+        public void botStopMovement(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botStopMovement");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.StopMovement(id, m_host.OwnerID);
+        }
+
+        public void botPauseMovement(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botPauseMovement");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.PauseBotMovement(id, m_host.OwnerID);
+        }
+
+        public void botResumeMovement(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botResumeMovement");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.ResumeBotMovement(id, m_host.OwnerID);
+        }
+
+        public void botSetMovementSpeed(LSL_Key botID, LSL_Float speed)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetMovementSpeed");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.SetBotSpeed(id, (float)speed.value, m_host.OwnerID);
+        }
+
+        public LSL_Vector botGetPos(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botGetPos");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                return new LSL_Vector(module.GetBotPosition(id, m_host.OwnerID));
+            return LSL_Vector.Zero;
+        }
+
+        public void botTeleportTo(LSL_Key botID, LSL_Vector position)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botTeleportTo");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.SetBotPosition(id, position, m_host.OwnerID);
+        }
+
+        public void botSetRotation(LSL_Key botID, LSL_Rotation rot)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetRotation");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.SetBotRotation(id, rot, m_host.OwnerID);
+        }
+
+        public void botWanderWithin(LSL_Key botID, LSL_Vector origin, LSL_Float xDistance, LSL_Float yDistance, LSL_List options)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botWanderWithin");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+            {
+                Vector3 distances = new Vector3((float)xDistance.value, (float)yDistance.value, 0f);
+                module.WanderWithin(id, origin, distances, ParseBotOptionsList(options), m_host.OwnerID);
+            }
+        }
+
+        public void botRegisterForNavigationEvents(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botRegisterForNavigationEvents");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotRegisterForPathUpdateEvents(id, m_item.ItemID, m_host.OwnerID);
+        }
+
+        public void botDeregisterFromNavigationEvents(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botDeregisterFromNavigationEvents");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotDeregisterFromPathUpdateEvents(id, m_item.ItemID, m_host.OwnerID);
+        }
+
+        public void botRegisterForCollisionEvents(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botRegisterForCollisionEvents");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotRegisterForCollisionEvents(id, m_host.ParentGroup, m_host.OwnerID);
+        }
+
+        public void botDeregisterFromCollisionEvents(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botDeregisterFromCollisionEvents");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotDeregisterFromCollisionEvents(id, m_host.ParentGroup, m_host.OwnerID);
+        }
+
+        public void botStartAnimation(LSL_Key botID, string animation)
+        {
+            if (string.IsNullOrEmpty(animation))
+                return;
+
+            CheckThreatLevel(ThreatLevel.High, "botStartAnimation");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return;
+
+            TaskInventoryItem item = m_host.Inventory.GetInventoryItem(animation);
+            if (item is not null && item.Type == (int)AssetType.Animation && item.AssetID.IsNotZero())
+                module.StartBotAnimation(id, item.AssetID, animation, m_host.UUID, m_host.OwnerID);
+        }
+
+        public void botStopAnimation(LSL_Key botID, string animation)
+        {
+            if (string.IsNullOrEmpty(animation))
+                return;
+
+            CheckThreatLevel(ThreatLevel.High, "botStopAnimation");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return;
+
+            TaskInventoryItem item = m_host.Inventory.GetInventoryItem(animation);
+            if (item is not null && item.Type == (int)AssetType.Animation && item.AssetID.IsNotZero())
+                module.StopBotAnimation(id, item.AssetID, animation, m_host.OwnerID);
+        }
+
+        public void botWhisper(LSL_Key botID, int channel, string message)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botWhisper");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotChat(id, channel, message, ChatTypeEnum.Whisper, m_host.OwnerID);
+        }
+
+        public void botSay(LSL_Key botID, int channel, string message)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSay");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotChat(id, channel, message, ChatTypeEnum.Say, m_host.OwnerID);
+        }
+
+        public void botShout(LSL_Key botID, int channel, string message)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botShout");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotChat(id, channel, message, ChatTypeEnum.Shout, m_host.OwnerID);
+        }
+
+        public void botStartTyping(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botStartTyping");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotChat(id, 0, string.Empty, ChatTypeEnum.StartTyping, m_host.OwnerID);
+        }
+
+        public void botStopTyping(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botStopTyping");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.BotChat(id, 0, string.Empty, ChatTypeEnum.StopTyping, m_host.OwnerID);
+        }
+
+        public void botSendInstantMessage(LSL_Key botID, LSL_Key userID, string message)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSendInstantMessage");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id) && UUID.TryParse(userID.m_string, out UUID targetId))
+                module.SendInstantMessageForBot(id, targetId, message, m_host.OwnerID);
+        }
+
+        public void botSitObject(LSL_Key botID, LSL_Key objectID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSitObject");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id) && UUID.TryParse(objectID.m_string, out UUID objId))
+                module.SitBotOnObject(id, objId, m_host.OwnerID);
+        }
+
+        public void botStandUp(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botStandUp");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.StandBotUp(id, m_host.OwnerID);
+        }
+
+        public void botTouchObject(LSL_Key botID, LSL_Key objectID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botTouchObject");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id) && UUID.TryParse(objectID.m_string, out UUID objId))
+                module.BotTouchObject(id, objId, m_host.OwnerID);
+        }
+
+        public void botGiveInventory(LSL_Key botID, LSL_Key destination, string inventory)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botGiveInventory");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id) || !UUID.TryParse(destination.m_string, out UUID destId))
+                return;
+
+            TaskInventoryItem item = m_host.Inventory.GetInventoryItem(inventory);
+            if (item is null)
+            {
+                OSSLError(string.Format("botGiveInventory: item '{0}' not found in object inventory", inventory));
+                return;
+            }
+
+            module.GiveInventoryObject(id, m_host, item.Name, item.ItemID, (byte)item.Type, destId, m_host.OwnerID);
+        }
+
+        public void botAddTag(LSL_Key botID, string tag)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botAddTag");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.AddTagToBot(id, tag, m_host.OwnerID);
+        }
+
+        public void botRemoveTag(LSL_Key botID, string tag)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botRemoveTag");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                module.RemoveTagFromBot(id, tag, m_host.OwnerID);
+        }
+
+        public LSL_Integer botHasTag(LSL_Key botID, string tag)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botHasTag");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id) && module.BotHasTag(id, tag))
+                return ScriptBaseClass.TRUE;
+            return ScriptBaseClass.FALSE;
+        }
+
+        public LSL_List botGetBotTags(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botGetBotTags");
+            LSL_List result = new LSL_List();
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                foreach (string tag in module.GetBotTags(id))
+                    result.Add(new LSL_String(tag));
+            return result;
+        }
+
+        public LSL_List botGetBotsWithTag(string tag)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botGetBotsWithTag");
+            LSL_List result = new LSL_List();
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null)
+                foreach (UUID id in module.GetBotsWithTag(tag))
+                    result.Add(new LSL_Key(id.ToString()));
+            return result;
+        }
+
+        public void botRemoveBotsWithTag(string tag)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botRemoveBotsWithTag");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            module?.RemoveBotsWithTag(tag, m_host.OwnerID);
+        }
+
+        public LSL_Integer botSetPersistent(LSL_Key botID, int ttlSeconds)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetPersistent");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return ScriptBaseClass.BOT_ERROR;
+            return module.SetBotPersistent(id, m_host.OwnerID, m_item.ItemID, m_host.UUID, ttlSeconds);
+        }
+
+        public LSL_Integer botRemovePersistent(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botRemovePersistent");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return ScriptBaseClass.BOT_ERROR;
+            return module.RemoveBotPersistent(id, m_host.OwnerID);
+        }
+
+        public LSL_Integer botIsPersistent(LSL_Key botID)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botIsPersistent");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id) && module.IsBotPersistent(id))
+                return ScriptBaseClass.TRUE;
+            return ScriptBaseClass.FALSE;
+        }
+
+        public LSL_String botGetPersistentData(LSL_Key botID, string dataKey)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botGetPersistentData");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null && UUID.TryParse(botID.m_string, out UUID id))
+                return module.GetBotPersistentData(id, dataKey);
+            return string.Empty;
+        }
+
+        public LSL_Integer botSetPersistentData(LSL_Key botID, string dataKey, string value)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetPersistentData");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return ScriptBaseClass.BOT_ERROR;
+            return module.SetBotPersistentData(id, m_host.OwnerID, dataKey, value);
+        }
+
+        public void botSetProfile(LSL_Key botID, string about, string email, string firstLifeAbout, string firstLifeImage, LSL_Key image, string profileURL)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetProfile");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return;
+
+            UUID? imageID = UUID.TryParse(image.m_string, out UUID imgId) ? imgId : (UUID?)null;
+            module.SetBotProfile(id, about, email, imageID, profileURL, m_host.OwnerID);
+        }
+
+        public void botSetProfileParams(LSL_Key botID, LSL_List profileInformation)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetProfileParams");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return;
+
+            string about = null, email = null, profileURL = null;
+            UUID? imageID = null;
+
+            object[] data = profileInformation.Data;
+            for (int i = 0; i + 1 < data.Length; i += 2)
+            {
+                if (!int.TryParse(data[i].ToString(), out int key))
+                    continue;
+                string value = data[i + 1].ToString();
+                switch (key)
+                {
+                    case ScriptBaseClass.BOT_ABOUT_TEXT: about = value; break;
+                    case ScriptBaseClass.BOT_EMAIL: email = value; break;
+                    case ScriptBaseClass.BOT_IMAGE_UUID:
+                        if (UUID.TryParse(value, out UUID img)) imageID = img;
+                        break;
+                    case ScriptBaseClass.BOT_PROFILE_URL: profileURL = value; break;
+                }
+            }
+
+            module.SetBotProfile(id, about, email, imageID, profileURL, m_host.OwnerID);
+        }
+
+        public LSL_List botGetProfileParams(LSL_Key botID, LSL_List profileInformation)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botGetProfileParams");
+
+            LSL_List result = new LSL_List();
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return result;
+
+            if (!module.GetBotProfile(id, out string about, out string email, out UUID imageID, out string profileURL))
+                return result;
+
+            foreach (object o in profileInformation.Data)
+            {
+                if (!int.TryParse(o.ToString(), out int key))
+                    continue;
+
+                switch (key)
+                {
+                    case ScriptBaseClass.BOT_ABOUT_TEXT: result.Add(new LSL_String(about)); break;
+                    case ScriptBaseClass.BOT_EMAIL: result.Add(new LSL_String(email)); break;
+                    case ScriptBaseClass.BOT_IMAGE_UUID: result.Add(new LSL_Key(imageID.ToString())); break;
+                    case ScriptBaseClass.BOT_PROFILE_URL: result.Add(new LSL_String(profileURL)); break;
+                }
+            }
+            return result;
+        }
+
+        public void botSetOutfit(string outfitName)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSetOutfit");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null) return;
+
+            module.SaveOutfitToDatabase(m_host.OwnerID, outfitName, out string reason);
+            if (reason != null)
+                OSSLError(string.Format("botSetOutfit: {0}", reason));
+        }
+
+        public void botRemoveOutfit(string outfitName)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botRemoveOutfit");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            module?.RemoveOutfitFromDatabase(m_host.OwnerID, outfitName);
+        }
+
+        public void botChangeOutfit(LSL_Key botID, string outfitName)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botChangeOutfit");
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID id))
+                return;
+
+            module.ChangeBotOutfit(id, outfitName, m_host.OwnerID, out string reason);
+            if (reason != null)
+                OSSLError(string.Format("botChangeOutfit: {0}", reason));
+        }
+
+        public LSL_List botGetBotOutfits()
+        {
+            CheckThreatLevel(ThreatLevel.None, "botGetBotOutfits");
+            LSL_List result = new LSL_List();
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is not null)
+                foreach (string name in module.GetBotOutfitsByOwner(m_host.OwnerID))
+                    result.Add(new LSL_String(name));
+            return result;
+        }
+
+        public LSL_List botSearchBotOutfits(string pattern, int matchType, int start, int end)
+        {
+            CheckThreatLevel(ThreatLevel.None, "botSearchBotOutfits");
+
+            LSL_List result = new LSL_List();
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null) return result;
+
+            List<string> matches = new List<string>();
+            string needle = pattern ?? string.Empty;
+            foreach (string name in module.GetBotOutfitsByOwner(m_host.OwnerID))
+            {
+                bool isMatch = matchType switch
+                {
+                    1 => name.StartsWith(needle, StringComparison.OrdinalIgnoreCase),
+                    2 => name.Equals(needle, StringComparison.OrdinalIgnoreCase),
+                    _ => needle.Length == 0 || name.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
+                };
+                if (isMatch) matches.Add(name);
+            }
+
+            if (matches.Count == 0) return result;
+
+            int from = Math.Clamp(start, 0, matches.Count - 1);
+            int to = end < 0 ? matches.Count - 1 : Math.Clamp(end, 0, matches.Count - 1);
+            if (to < from) return result;
+
+            for (int i = from; i <= to; i++)
+                result.Add(new LSL_String(matches[i]));
+
+            return result;
+        }
+
+        public void botSensor(LSL_Key botID, string name, LSL_Key id, int type, LSL_Float range, LSL_Float arc)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSensor");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID botId) || !module.CheckPermission(botId, m_host.OwnerID))
+                return;
+
+            ScenePresence botSP = World.GetScenePresence(botId);
+            if (botSP is null) return;
+
+            UUID.TryParse(id.m_string, out UUID keyID);
+
+            InitLSL();
+            AsyncCommandManager.GetSensorRepeatPlugin(m_ScriptEngine)?.SenseOnce(
+                m_host.LocalId, m_item.ItemID, name, keyID, type, range, arc, botSP);
+        }
+
+        public void botSensorRepeat(LSL_Key botID, string name, LSL_Key id, int type, LSL_Float range, LSL_Float arc, LSL_Float rate)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSensorRepeat");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID botId) || !module.CheckPermission(botId, m_host.OwnerID))
+                return;
+
+            ScenePresence botSP = World.GetScenePresence(botId);
+            if (botSP is null) return;
+
+            UUID.TryParse(id.m_string, out UUID keyID);
+
+            InitLSL();
+            AsyncCommandManager.GetSensorRepeatPlugin(m_ScriptEngine)?.SetSenseRepeatEvent(
+                m_host.LocalId, m_item.ItemID, name, keyID, type, range, arc, rate, botSP);
+        }
+
+        public void botSensorRemove()
+        {
+            CheckThreatLevel(ThreatLevel.High, "botSensorRemove");
+
+            InitLSL();
+            AsyncCommandManager.GetSensorRepeatPlugin(m_ScriptEngine)?.UnSetSenseRepeaterEvents(m_host.LocalId, m_item.ItemID);
+        }
+
+        // botListen deliberately keeps the calling object (m_host) as the listener's position source,
+        // matching llListen, rather than the bot's own position. WorldCommModule.TryEnqueueMessage
+        // resolves the listener's hostID via Scene.GetSceneObjectPart and does `if (sPart == null) return;`
+        // (not `continue`) on a miss -- passing a bot's ScenePresence UUID there would silently abort
+        // delivery to every other listener sharing that channel, not just this one. botID here only
+        // gates the call on bot ownership.
+        public LSL_Integer botListen(LSL_Key botID, int channel, string name, LSL_Key id, string msg)
+        {
+            CheckThreatLevel(ThreatLevel.Low, "botListen");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID botId) || !module.CheckPermission(botId, m_host.OwnerID))
+                return -1;
+
+            IWorldComm wComm = m_ScriptEngine.World.RequestModuleInterface<IWorldComm>();
+            if (wComm is null) return -1;
+
+            UUID.TryParse(id.m_string, out UUID keyID);
+            return wComm.Listen(m_item.ItemID, m_host.UUID, channel, name, keyID, msg);
+        }
+
+        public void botMessageLinked(LSL_Key botID, int num, string msg, LSL_Key id)
+        {
+            CheckThreatLevel(ThreatLevel.High, "botMessageLinked");
+
+            IBotManager module = World.RequestModuleInterface<IBotManager>();
+            if (module is null || !UUID.TryParse(botID.m_string, out UUID botId))
+                return;
+
+            UUID.TryParse(id.m_string, out UUID targetId);
+            module.BotMessageLinked(botId, m_host.OwnerID, num, msg, targetId);
+        }
+
         /// <summary>
         /// Save the current appearance of the script owner permanently to the named notecard.
         /// </summary>

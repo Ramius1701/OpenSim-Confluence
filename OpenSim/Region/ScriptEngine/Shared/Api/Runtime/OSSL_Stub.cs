@@ -938,6 +938,354 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public key botCreateBot(string firstName, string lastName, string outfit, vector position, int options)
+        {
+            return m_OSSL_Functions.botCreateBot(firstName, lastName, outfit, position, options);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botRemoveBot(key botID)
+        {
+            m_OSSL_Functions.botRemoveBot(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public key botGetOwner(key botID)
+        {
+            return m_OSSL_Functions.botGetOwner(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botIsBot(key id)
+        {
+            return m_OSSL_Functions.botIsBot(id);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String botGetName(key botID)
+        {
+            return m_OSSL_Functions.botGetName(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botChangeOwner(key botID, key newOwnerID)
+        {
+            return m_OSSL_Functions.botChangeOwner(botID, newOwnerID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List botGetAllBotsInRegion()
+        {
+            return m_OSSL_Functions.botGetAllBotsInRegion();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List botGetAllMyBotsInRegion()
+        {
+            return m_OSSL_Functions.botGetAllMyBotsInRegion();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSetNavigationPoints(key botID, LSL_List positions, LSL_List movementTypes, LSL_List options)
+        {
+            m_OSSL_Functions.botSetNavigationPoints(botID, positions, movementTypes, options);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botFollowAvatar(key botID, key target, LSL_List options)
+        {
+            return m_OSSL_Functions.botFollowAvatar(botID, target, options);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botStopMovement(key botID)
+        {
+            m_OSSL_Functions.botStopMovement(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botPauseMovement(key botID)
+        {
+            m_OSSL_Functions.botPauseMovement(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botResumeMovement(key botID)
+        {
+            m_OSSL_Functions.botResumeMovement(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSetMovementSpeed(key botID, LSL_Float speed)
+        {
+            m_OSSL_Functions.botSetMovementSpeed(botID, speed);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public vector botGetPos(key botID)
+        {
+            return m_OSSL_Functions.botGetPos(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botTeleportTo(key botID, vector position)
+        {
+            m_OSSL_Functions.botTeleportTo(botID, position);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSetRotation(key botID, rotation rot)
+        {
+            m_OSSL_Functions.botSetRotation(botID, rot);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botWanderWithin(key botID, vector origin, LSL_Float xDistance, LSL_Float yDistance, LSL_List options)
+        {
+            m_OSSL_Functions.botWanderWithin(botID, origin, xDistance, yDistance, options);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botRegisterForNavigationEvents(key botID)
+        {
+            m_OSSL_Functions.botRegisterForNavigationEvents(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botDeregisterFromNavigationEvents(key botID)
+        {
+            m_OSSL_Functions.botDeregisterFromNavigationEvents(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botRegisterForCollisionEvents(key botID)
+        {
+            m_OSSL_Functions.botRegisterForCollisionEvents(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botDeregisterFromCollisionEvents(key botID)
+        {
+            m_OSSL_Functions.botDeregisterFromCollisionEvents(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botStartAnimation(key botID, string animation)
+        {
+            m_OSSL_Functions.botStartAnimation(botID, animation);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botStopAnimation(key botID, string animation)
+        {
+            m_OSSL_Functions.botStopAnimation(botID, animation);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botWhisper(key botID, int channel, string message)
+        {
+            m_OSSL_Functions.botWhisper(botID, channel, message);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSay(key botID, int channel, string message)
+        {
+            m_OSSL_Functions.botSay(botID, channel, message);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botShout(key botID, int channel, string message)
+        {
+            m_OSSL_Functions.botShout(botID, channel, message);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botStartTyping(key botID)
+        {
+            m_OSSL_Functions.botStartTyping(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botStopTyping(key botID)
+        {
+            m_OSSL_Functions.botStopTyping(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSendInstantMessage(key botID, key userID, string message)
+        {
+            m_OSSL_Functions.botSendInstantMessage(botID, userID, message);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSitObject(key botID, key objectID)
+        {
+            m_OSSL_Functions.botSitObject(botID, objectID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botStandUp(key botID)
+        {
+            m_OSSL_Functions.botStandUp(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botTouchObject(key botID, key objectID)
+        {
+            m_OSSL_Functions.botTouchObject(botID, objectID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botGiveInventory(key botID, key destination, string inventory)
+        {
+            m_OSSL_Functions.botGiveInventory(botID, destination, inventory);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botAddTag(key botID, string tag)
+        {
+            m_OSSL_Functions.botAddTag(botID, tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botRemoveTag(key botID, string tag)
+        {
+            m_OSSL_Functions.botRemoveTag(botID, tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botHasTag(key botID, string tag)
+        {
+            return m_OSSL_Functions.botHasTag(botID, tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List botGetBotTags(key botID)
+        {
+            return m_OSSL_Functions.botGetBotTags(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List botGetBotsWithTag(string tag)
+        {
+            return m_OSSL_Functions.botGetBotsWithTag(tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botRemoveBotsWithTag(string tag)
+        {
+            m_OSSL_Functions.botRemoveBotsWithTag(tag);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botSetPersistent(key botID, int ttlSeconds)
+        {
+            return m_OSSL_Functions.botSetPersistent(botID, ttlSeconds);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botRemovePersistent(key botID)
+        {
+            return m_OSSL_Functions.botRemovePersistent(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botIsPersistent(key botID)
+        {
+            return m_OSSL_Functions.botIsPersistent(botID);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String botGetPersistentData(key botID, string dataKey)
+        {
+            return m_OSSL_Functions.botGetPersistentData(botID, dataKey);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botSetPersistentData(key botID, string dataKey, string value)
+        {
+            return m_OSSL_Functions.botSetPersistentData(botID, dataKey, value);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSetProfile(key botID, string about, string email, string firstLifeAbout, string firstLifeImage, key image, string profileURL)
+        {
+            m_OSSL_Functions.botSetProfile(botID, about, email, firstLifeAbout, firstLifeImage, image, profileURL);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSetProfileParams(key botID, LSL_List profileInformation)
+        {
+            m_OSSL_Functions.botSetProfileParams(botID, profileInformation);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List botGetProfileParams(key botID, LSL_List profileInformation)
+        {
+            return m_OSSL_Functions.botGetProfileParams(botID, profileInformation);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSetOutfit(string outfitName)
+        {
+            m_OSSL_Functions.botSetOutfit(outfitName);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botRemoveOutfit(string outfitName)
+        {
+            m_OSSL_Functions.botRemoveOutfit(outfitName);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botChangeOutfit(key botID, string outfitName)
+        {
+            m_OSSL_Functions.botChangeOutfit(botID, outfitName);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List botGetBotOutfits()
+        {
+            return m_OSSL_Functions.botGetBotOutfits();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_List botSearchBotOutfits(string pattern, int matchType, int start, int end)
+        {
+            return m_OSSL_Functions.botSearchBotOutfits(pattern, matchType, start, end);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSensor(key botID, string name, key id, int type, LSL_Float range, LSL_Float arc)
+        {
+            m_OSSL_Functions.botSensor(botID, name, id, type, range, arc);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSensorRepeat(key botID, string name, key id, int type, LSL_Float range, LSL_Float arc, LSL_Float rate)
+        {
+            m_OSSL_Functions.botSensorRepeat(botID, name, id, type, range, arc, rate);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botSensorRemove()
+        {
+            m_OSSL_Functions.botSensorRemove();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Integer botListen(key botID, int channel, string name, key id, string msg)
+        {
+            return m_OSSL_Functions.botListen(botID, channel, name, id, msg);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void botMessageLinked(key botID, int num, string msg, key id)
+        {
+            m_OSSL_Functions.botMessageLinked(botID, num, msg, id);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public LSL_Key osOwnerSaveAppearance(LSL_String notecard)
         {
             return m_OSSL_Functions.osOwnerSaveAppearance(notecard);

@@ -145,6 +145,10 @@ namespace OpenSim.Region.Framework.Interfaces
         void SetBotProfile(UUID botID, string aboutText, string email,
             UUID? imageID, string profileURL, UUID ownerID);
 
+        /// <summary>Get bot profile fields as previously set via SetBotProfile.</summary>
+        bool GetBotProfile(UUID botID, out string aboutText, out string email,
+            out UUID imageID, out string profileURL);
+
         // ── Outfits ──────────────────────────────────────────────────────
 
         /// <summary>Save current avatar appearance as a named outfit.</summary>
@@ -192,5 +196,32 @@ namespace OpenSim.Region.Framework.Interfaces
 
         /// <summary>Deregister from collision events.</summary>
         void BotDeregisterFromCollisionEvents(UUID botID, SceneObjectGroup hostGroup, UUID ownerID);
+
+        // ── Persistence ──────────────────────────────────────────────────
+        // Thin passthrough to BotPersistenceManager so script-facing bot* functions don't need
+        // to know about the concrete BotManager type. Returns are BotPersistError codes.
+
+        /// <summary>Mark an existing bot as persistent (survives region restart).</summary>
+        int SetBotPersistent(UUID botID, UUID ownerID, UUID scriptItemID, UUID objectID, int ttlSeconds);
+
+        /// <summary>Remove persistence from a bot (bot continues as non-persistent).</summary>
+        int RemoveBotPersistent(UUID botID, UUID ownerID);
+
+        /// <summary>Check if a bot is persistent.</summary>
+        bool IsBotPersistent(UUID botID);
+
+        /// <summary>Get custom script-set data value for a persistent bot.</summary>
+        string GetBotPersistentData(UUID botID, string key);
+
+        /// <summary>Set custom script data value for a persistent bot.</summary>
+        int SetBotPersistentData(UUID botID, UUID ownerID, string key, string value);
+
+        /// <summary>
+        /// Deliver a link_message-style event (sender_num 0, num, msg, id) to the script currently
+        /// registered for the bot's navigation events (via BotRegisterForPathUpdateEvents). Used by
+        /// botMessageLinked. Returns false if the bot doesn't exist, the caller lacks permission, or
+        /// no script is currently registered.
+        /// </summary>
+        bool BotMessageLinked(UUID botID, UUID ownerID, int num, string msg, UUID id);
     }
 }
