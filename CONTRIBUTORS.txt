@@ -222,6 +222,22 @@ what it is today.
 * Ckrinke
 * openlifegrid.com
 
+= Confluence-Specific Attribution =
+This fork (OpenSim-Confluence, https://github.com/Ramius1701/OpenSim-Confluence)
+has, beyond the upstream OpenSimulator contributors listed above,
+cherry-picked or hand-ported improvements from the following projects.
+See this repository's README.md ("Attribution and support") and
+PROJECT_LOG.md for the specifics of what was drawn from each:
+
+* Gunthar's OpenSim fork (https://github.com/GuntharDeNiro/opensim)
+* Tranquillity / OpenSim-NGC (https://github.com/OpenSim-NGC/OpenSim-Tranquillity)
+* Mobius (https://github.com/Mobius-Team/Mobius)
+* WhiteCore-Dev (https://github.com/WhiteCoreSim/WhiteCore-Dev)
+* opensim-lickx (original repository since deleted; archived locally)
+* Halcyon/InWorldz (https://github.com/HalcyonGrid/halcyon)
+* Homeworldz (https://github.com/homeworldz/server)
+* OpenSim-Grid-Interface (PHP grid portal, secondary Web UI reference)
+
 This software uses components from the following developers:
 * Sleepycat Software (Berkeley DB)
 * Aurora-Sim (http://aurora-sim.org)
