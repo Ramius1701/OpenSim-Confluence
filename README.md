@@ -265,11 +265,13 @@ Deliberately deferred, not forgotten — see roadmap.
 - `llSetLinkRenderMaterial`, `llSetLinkGLTFOverrides` — a full PBR
   material override read/write pipeline (glTF JSON extraction, compact
   key-value encoding, KHR texture transforms). `PRIM_GLTF_BASE_COLOR`/
-  `_NORMAL`/`_METALLIC_ROUGHNESS`/`_EMISSIVE` are now wired into
-  `llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast` (build-verified;
-  see PROJECT_LOG.md) — reading them back through
-  `llGetPrimitiveParams`/`llGetLinkPrimitiveParams` still isn't
-  implemented, a separate, not-yet-scoped gap.
+  `_NORMAL`/`_METALLIC_ROUGHNESS`/`_EMISSIVE` are wired into both
+  directions now — `llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast`
+  and `llGetPrimitiveParams`/`llGetLinkPrimitiveParams` (build-verified;
+  see PROJECT_LOG.md). The read side reflects the per-face override
+  data a script itself set, not the assigned base material merged
+  underneath it — a real, smaller scope than full SL parity, logged as
+  such rather than silently claimed as complete.
 - `llIsExperienceTrusted`, `llGetExperiencePermissions`,
   `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats` —
   Experience introspection queries backed by Confluence's own Experience
@@ -546,10 +548,6 @@ work continues — don't let them go stale.
   implemented — logged rather than started, since no known client in
   this project's own stack speaks the login-RPC protocol it needs;
   see the Display Names and identity section above.
-- `PRIM_GLTF_*` readback via `llGetPrimitiveParams`/
-  `llGetLinkPrimitiveParams` isn't implemented — the write side
-  (`llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast`) now is; see
-  the LSL/OSSL compatibility section above.
 - The Bot/NPC management framework is infrastructure only — no script
   can reach it yet. Tranquillity's ~50 `bot*` OSSL functions exist only
   in their Phlox script engine; wiring an equivalent into Confluence's
@@ -619,7 +617,9 @@ half-finished work on the integration branch.
 - Experience Tools is not full Second Life Experience-service
   compatibility.
 - `llOpenFloater` is not implemented, not even as a stub.
-- `PRIM_GLTF_*` primitive parameters can be set but not read back.
+- `PRIM_GLTF_*` readback returns a face's own override data, not the
+  assigned base material merged underneath it (full SL parity would
+  need both).
 - Pathfinding is region-local and approximate, not a physics-engine-native
   or Linden-proprietary navmesh service.
 - Weather is meaningfully improved but still reasonably called

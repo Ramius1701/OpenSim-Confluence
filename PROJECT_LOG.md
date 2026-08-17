@@ -7200,3 +7200,51 @@ Load handlers were gone. `HandleMyRegionsOarSave`/
 `HandleMyInventoryIarSave` (the backup-only paths) are untouched.
 Full solution build clean, 0 warnings - confirms nothing else
 referenced any of the removed code either.
+
+### PRIM_GLTF_* readback - the other half of today's dispatch fix
+
+Moved to the next README gap and finished what the earlier SET-side
+fix explicitly deferred: `llGetPrimitiveParams`/
+`llGetLinkPrimitiveParams` readback for the same four codes
+(`PRIM_GLTF_BASE_COLOR`/`_NORMAL`/`_METALLIC_ROUGHNESS`/`_EMISSIVE`).
+
+Turned out to need less new infrastructure than expected. The
+"compact" override format `ApplyGltfPrimitiveParams` writes to isn't
+JSON/OSD-serialized - it's a hand-rolled `{'key':value,...}` string
+format with its own manual parser - but the *read* side of that
+parser already existed in full (`ReadCompactArrayItems`,
+`ReadCompactUuidArrayItem`, `ReadCompactTransformMaps`/
+`ReadCompactTransformMap`, `ReadCompactNumberArray`,
+`ReadCompactDouble`, `ReadCompactBool`), built earlier for
+`llGetRenderMaterial`/`llIsLinkGLTFMaterial` and evidently never
+wired into `llGetPrimitiveParams` either. Wrote one new helper,
+`GetGltfPrimitiveParams`, that assembles the same `[texture, repeats,
+offsets, rotation]` shape plus the same type-specific extras the SET
+side accepts, entirely out of those existing readers - added a case
+to `GetPrimParams`'s switch (the GET-side per-part dispatch loop,
+confirmed to be the same method containing the existing `PRIM_NORMAL`/
+`PRIM_SPECULAR`/`PRIM_ALPHA_MODE` case, not a different one) that
+iterates faces the same way that case does for `ALL_SIDES`.
+
+Scoped deliberately smaller than full SL parity, and said so in both
+the code comment and here rather than letting the gap quietly stay
+hidden: this reads back a face's own override JSON
+(`GetMaterialOverrideData`) only, not the assigned base material
+merged in underneath it the way `GetGltfMaterialAssetData` (used by
+`llGetRenderMaterial`'s sibling code) can read from an asset. A face
+with an assigned material but no override returns the same "nothing
+here" defaults a bare prim would, rather than the material's actual
+values. What *does* work, and is the property that actually matters
+for the README's stated gap: a script that sets one of these four
+codes via `llSetPrimitiveParams`/`llSetLinkPrimitiveParamsFast` and
+reads it back on the same face sees exactly what it set - a real
+round trip, not just a non-crashing stub. Defaults for an unset field
+were kept consistent with `getLSLFaceMaterial`'s own existing
+"material not found" defaults just above it in the same switch
+(repeats 1,1; offset 0,0; rotation 0; alpha mode 1/BLEND), rather than
+inventing new ones.
+
+Build-verified (script engine project + full solution, both clean, 0
+warnings). Not yet deployed/live-tested - same
+`OpenSim.Region.ScriptEngine.Shared.Api.dll` this session's SET-side
+fix already touched, batched for whenever that's next redeployed.
