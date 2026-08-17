@@ -7657,3 +7657,73 @@ committing to something this size - unlike PBR terrain, this isn't a
 "turned out smaller than expected, just build it" situation. Full
 source list and open questions in the research pass; see the
 "Known gaps" section of README.md for the condensed version.
+
+### Upstream audit - opensim-master, Tranquillity (all branches), Tampa/opensim
+
+User asked to check three sources for anything new to absorb, per this
+project's own standing "don't let this repo fall behind" mission.
+
+**origin/master (opensim/opensim).** 3 new commits since last merge,
+2 of them real: `MaxSimulationHeight` bumped 50000f -> 65536f to match
+the viewer's own limit (`OpenSim/Framework/Constants.cs`), and a small
+dead-code cleanup in `MapSearchModule.cs` (an unused `MapBlockData`
+local left over from an earlier refactor that already introduced the
+`block` variable actually used). Both trivial and safe - merged
+directly (`git merge origin/master`, clean auto-merge on
+`Constants.cs`, no conflicts), full solution build verified clean
+afterward.
+
+**Tranquillity - checked every branch this time, not just `develop`**
+(prompted mid-task by the user pointing out the repo has multiple
+branches - correct catch, `develop` alone would have missed real
+content). `develop` itself had exactly one new commit: an xunit test-
+infrastructure restoration, not a feature - nothing to port. Went on
+to check every other branch (`dev-future`, 54 unique commits;
+`feature/robust-di`, 56; `moneyservice_di`, 7; `feature/fix-lslhttp`,
+1; `helper/xinv`, 1; two release branches, already fully absorbed).
+`dev-future` and `feature/robust-di` turned out to be Tranquillity's
+own internal architecture modernization work - dotnet 9 migration,
+replacing AppDomains with `AssemblyLoadContext`, introducing Autofac
+DI throughout Robust/region/money-service startup, `Nerdbank.Versioning`,
+restructuring `bin` to `Library`, an in-progress ASP.NET controller
+experiment for assets - explicitly marked "dev-future" (i.e. Tranquillity's
+own words for "not stable yet") and structurally tied to decisions
+Confluence hasn't made and doesn't need to inherit (this repo already
+targets net8.0 on its own timeline). Not proven features in the sense
+this project's mission statement means - correctly out of scope, not
+just skipped for time. `moneyservice_di` is the same kind of work
+scoped to just the money service. `feature/fix-lslhttp` (a real,
+targeted bug fix - `/lslhttp/` outbound URLs must never be blacklist-
+filtered) turned out to already be present in Confluence's own
+`OutboundUrlFilter.cs`, implemented independently and correctly (proper
+C# `IndexOf`/`StartsWith` casing, where Tranquillity's own commit
+actually has a bug - lowercase `url.indexOf(...)`, which doesn't exist
+in C# and wouldn't compile as written). `helper/xinv` is a standalone
+427-line PHP admin script for checking/repairing inventory problems
+(root folder issues, duplicate system folders, suitcase issues) - a
+real, self-contained tool, not core engine code; noted here rather
+than ported, since it's the kind of thing worth adding to a `Helpers/`
+or `Tools/` folder on its own merits if wanted, not part of the engine
+audit's normal scope.
+
+**Tampa/opensim** (github.com/Tampa/opensim) - the repo the user
+specifically asked to check. Confirmed via `git log` that "Tampa" is a
+real, currently-active upstream contributor (their PR #60,
+`Sim_height_like_viewer`, is literally the `MaxSimulationHeight` fix
+already merged above). Added as a temporary remote, fetched, checked
+every branch: `Sim_height_like_viewer`, `SmoothArea-fix`, and
+`webrtc-fix` all show zero commits unique relative to `origin/master` -
+already upstreamed, already covered by the merge above. Their fork's
+own `master` branch appeared to have 93 "unique" commits at first
+glance, but every one of them is a `Merge pull request #N from
+opensim/master` artifact from Tampa periodically syncing their fork
+against upstream - zero unique tree content (confirmed:
+`origin/master..tampa/master` shows 93 commits, but
+`tampa/master..origin/master` shows 0, meaning nothing in Tampa's fork
+is missing from upstream either - it's a mirror, not a divergent
+branch). Nothing to port. Temporary remote removed after the check.
+
+**Net result of this audit pass:** one small, safe upstream merge
+landed (sim height + dead-code cleanup); everything else checked out
+already-covered, out-of-scope-by-design, or a mirror with nothing
+unique. Build verified clean, pushed.
