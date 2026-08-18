@@ -861,7 +861,34 @@ work continues — don't let them go stale.
   attachments came back after login," confirmed identical in upstream
   `opensim-master`, but whether any real viewer actually triggers this
   race couldn't be confirmed from server source alone. Full writeup in
-  PROJECT_LOG.md.
+  PROJECT_LOG.md. Sixth item scoped: **mesh upload / physics shape
+  quality**. Traced ubODE's mesh decode → physics-shape resolution →
+  collision-geometry pipeline and found a real, silent gap: any mesh
+  generation failure (corrupted asset, decode exception, unsupported
+  legacy-sculpt combination) falls back to a plain bounding box as the
+  *entire* collision volume, with zero signal to the resident who
+  uploaded it — the exact mechanism behind "invisible wall" complaints
+  on anything with real negative space (archways, staircases, open
+  frameworks). Confirmed identical in upstream `opensim-master`.
+  Checked the tiny-object bounding-box shortcut (objects ≤10cm skip
+  meshing entirely) and confirmed that one's a reasonable, intentional
+  performance tradeoff, not a bug. Noted a lower-confidence, code-
+  comment-sourced observation that mesh assets carrying both a full
+  decomposition and a convex-hull blob get the heavier one when
+  Confluence's own comment says SL prefers the lighter one — flagged as
+  evidence from the comment, not independently verified. **Built and
+  deployed** the fix for the silent-failure gap: a new
+  `PhysicsShapeFallback` event on the shared `PhysicsActor` base class,
+  fired exactly once per object from `OdePrim.CreateGeom` when — and
+  only when — a mesh genuinely failed to build (`MeshState.MeshFailed`,
+  not the `noNeed` state every ordinary box/sphere prim carries, which
+  would have made this fire on every plain prim in the region if gated
+  wrong). `SceneObjectPart` subscribes unconditionally at physics-actor
+  creation and sends the object's owner a non-modal in-world alert
+  naming the object if they're present in the region. The underlying
+  physics behavior is untouched — the object still gets a box collision
+  shape either way; this only stops the failure from being invisible.
+  Full writeup in PROJECT_LOG.md.
 
 ## Repository model
 

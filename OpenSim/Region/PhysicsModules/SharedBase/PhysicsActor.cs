@@ -174,6 +174,7 @@ namespace OpenSim.Region.PhysicsModules.SharedBase
         public delegate void RequestTerseUpdate();
         public delegate void CollisionUpdate(EventArgs e);
         public delegate void OutOfBounds(Vector3 pos);
+        public delegate void PhysicsShapeFallback(string reason);
         public delegate CameraData GetCameraData();
 
         // disable warning: public events
@@ -191,6 +192,13 @@ namespace OpenSim.Region.PhysicsModules.SharedBase
         public event CollisionUpdate OnCollisionUpdate;
 
         public event OutOfBounds OnOutOfBounds;
+
+        /// <summary>
+        /// Fired at most once per physics actor lifetime, when this object's mesh/sculpt physics
+        /// representation failed to build and the engine fell back to a plain bounding-box or
+        /// sphere collision shape instead. Not fired for ordinary prims that never needed meshing.
+        /// </summary>
+        public event PhysicsShapeFallback OnPhysicsShapeFallback;
 #pragma warning restore 67
 
 
@@ -277,6 +285,11 @@ namespace OpenSim.Region.PhysicsModules.SharedBase
         public virtual void RaiseOutOfBounds(Vector3 pos)
         {
             OnOutOfBounds?.Invoke(pos);
+        }
+
+        public virtual void RaisePhysicsShapeFallback(string reason)
+        {
+            OnPhysicsShapeFallback?.Invoke(reason);
         }
 
         public virtual void SendCollisionUpdate(EventArgs e)

@@ -9163,3 +9163,108 @@ byte-for-byte via `Get-FileHash` MD5 match. Needs a grid restart to
 take effect. Live verification needs an avatar actually parked at
 `MaxAgentAttachments` crossing a border, which isn't practical to stage
 on demand - left for the user's own testing opportunity.
+
+### Mesh upload / physics shape quality - scoping pass, one strong
+### finding, one confirmed-fine design tradeoff, one lower-confidence note
+
+Confluence runs ubODE (`ubOdeMeshing`/`ODEMeshWorker`/`ODEPrim`) as its
+physics engine; BulletSim source is present in the tree but isn't the
+deployed engine, so this pass focused on the actual live path. Traced
+mesh asset decode (`Meshmerizer.cs`) through physics-shape resolution
+(`ODEMeshWorker.cs`) to actual collision geometry creation
+(`ODEPrim.CreateGeom`), rather than starting from "physics feels wrong"
+folklore.
+
+**Strong finding: any mesh generation failure silently falls back to a
+full bounding box, with zero signal to the resident who uploaded it.**
+When mesh decode throws (corrupted asset, a decompression exception in
+`Meshmerizer.cs`'s LLSD-binary/deflate parsing, an unsupported legacy-
+sculpt extrusion/profile combination) or the mesher otherwise returns
+null, `ODEMeshWorker` marks `MeshState.MeshFailed` and `ODEPrim.
+CreateGeom` takes the `!hasMesh` branch: it builds a plain box (or a
+sphere for a few very specific round-prim cases) sized to the object's
+raw `X/Y/Z` scale, and that box becomes the entire collision volume.
+For anything with real negative space - an archway, a staircase, an
+open framework, a vehicle chassis - this means the avatar (or a
+vehicle) collides with the object's full bounding volume instead of
+its actual shape: the exact mechanism behind "invisible wall" and "why
+can't I walk through this doorway" complaints. The failure is
+completely silent server-side - only a `m_log.Error`/`m_log.Warn` line
+the resident never sees, no in-world notice to the owner that their
+upload didn't get real physics. Confirmed identical in upstream
+`opensim-master` (`ODEPrim.CreateGeom`, same box/sphere fallback logic)
+- an ecosystem-wide gap, not a Confluence regression.
+
+**Checked and confirmed fine: the tiny-object shortcut is a reasonable
+tradeoff, not a bug.** `ODEMeshWorker.needsMeshing` skips full
+meshing entirely for anything whose X/Y/Z scale is all ≤
+`mesh_min_size` (default 0.1m - a 10cm cube) and uses a bounding box on
+purpose. At that size the visual difference between a precise mesh and
+a box is imperceptible, and skipping decomposition for tiny objects is
+a sensible performance tradeoff that real physics engines (including
+SL's own) make too. Included here to show it was checked, not to flag
+it as a problem - it isn't one.
+
+**Lower-confidence note, not independently verified: a documented
+divergence from SL's own priority order.** `Meshmerizer.cs`'s mesh-
+asset physics-data extraction carries its own comment: "priority is to
+use full mesh then decomposition - SL does the opposite." When an
+uploaded mesh asset's `PhysicsShapeType` is not explicitly Convex Hull
+but the asset happens to carry *both* a full decomposition and a
+convex-hull blob (common, since some mesh-upload tools attach both by
+default), this code prefers the heavier full decomposition; the
+comment states SL prefers the lighter convex data in the same
+situation. Confirmed the physics shape *type* itself is correctly
+respected end to end (`shapetype == 2` maps to convex, `== 0` to
+Prim/decomposition, matching the client's `PhysicsShapeType` choice) -
+this is a narrower tie-break that only matters when both
+representations are present in the same asset. Flagging this as
+evidence from the code's own comment, not as something independently
+verified against SL's actual behavior (no SL source available to
+check) - noted for completeness rather than presented as confirmed.
+
+**Built and deployed.** Added the visibility fix for the silent
+bounding-box fallback, without touching physics behavior itself.
+
+- New `PhysicsShapeFallback` event on the shared `PhysicsActor` base
+  class (`OpenSim.Region.PhysicsModules.SharedBase`), following the
+  exact pattern already used for `OnOutOfBounds` (a field-like event
+  can only be raised from the class that declares it, so a
+  `RaisePhysicsShapeFallback(reason)` virtual method mirrors the
+  existing `RaiseOutOfBounds`).
+- `OdePrim.CreateGeom` (ubODE) fires it exactly once per physics actor
+  lifetime, gated on `m_meshState == MeshState.MeshFailed` specifically
+  - not on `MeshState.noNeed`, which is what an ordinary box/sphere
+  prim carries when it never needed meshing at all. Getting this gate
+  right mattered: the naive version of this check (anything that ends
+  up on the box/sphere fallback path in `CreateGeom`) would have fired
+  on every single ordinary primitive shape in the region, which would
+  have been useless noise instead of a real signal. A `m_reportedMeshFallback`
+  guard flag stops it firing again on every subsequent physics rebuild
+  of the same already-failed object.
+- `SceneObjectPart` subscribes unconditionally at physics-actor
+  creation (`ApplyPhysics`, not gated on `isPhysical` - a static,
+  non-phantom object still gets a mesh-derived collision shape and can
+  still hit this failure) and unsubscribes in `RemoveFromPhysics`. The
+  handler logs a `Warn` with the object's name/UUID/owner, then looks
+  up the owner's `ScenePresence` in the region and, if they're actually
+  present with an active client, sends them a non-modal
+  `SendAgentAlertMessage` naming the object and suggesting they
+  re-check or re-upload it.
+
+Deliberately did not touch the fallback's actual physics behavior - the
+object still gets a bounding-box collision shape either way, since
+building a smarter fallback (e.g. deriving a convex hull from the
+render mesh instead of a box) is a much larger, riskier change to the
+physics pipeline that wasn't attempted here. This is purely "stop
+failing silently."
+
+Build-verified clean (0 errors, 0 warnings) via `dotnet build
+OpenSim.sln -c Release`. Deployed: grid confirmed down, `OpenSim.
+Region.PhysicsModules.SharedBase.dll`, `OpenSim.Region.PhysicsModule.
+ubOde.dll`, and `OpenSim.Region.Framework.dll` (plus `.pdb`s) copied via
+PowerShell `Copy-Item`, all three verified byte-for-byte via
+`Get-FileHash` MD5 match. Needs a grid restart to take effect. Live
+verification needs an actual mesh upload that fails to decompose, which
+isn't something to manufacture on demand - left for the user's own
+testing opportunity if/when a real failure occurs.

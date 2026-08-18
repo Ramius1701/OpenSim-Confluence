@@ -129,6 +129,7 @@ namespace OpenSim.Region.PhysicsModule.ubOde
 
         //private UUID? m_assetID;
         private MeshState m_meshState;
+        private bool m_reportedMeshFallback;
 
 
         /// <summary>
@@ -1851,6 +1852,16 @@ namespace OpenSim.Region.PhysicsModule.ubOde
                 m_physCost = 0.1f;
                 m_streamCost = 1.0f;
                 SetGeom(geo);
+
+                // Only fire for a genuine mesh/sculpt build failure, not for ordinary prims that
+                // never needed meshing at all (those carry MeshState.noNeed, not MeshFailed) and
+                // not repeatedly on every rebuild of the same failed object.
+                if (m_meshState == MeshState.MeshFailed && !m_reportedMeshFallback)
+                {
+                    m_reportedMeshFallback = true;
+                    RaisePhysicsShapeFallback(
+                        $"Physics shape for '{Name}' could not be built from its mesh/sculpt data and is using a plain bounding-box collision shape instead.");
+                }
             }
         }
 

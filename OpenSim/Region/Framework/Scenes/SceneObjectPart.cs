@@ -3202,6 +3202,27 @@ namespace OpenSim.Region.Framework.Scenes
             DoPhysicsPropertyUpdate(false, true);
         }
 
+        /// <summary>
+        /// Called at most once per physics actor lifetime when this part's mesh/sculpt physics
+        /// shape failed to build and the physics engine fell back to a plain bounding-box
+        /// collision shape. Lets the owner know their upload isn't colliding as intended, since
+        /// that failure is otherwise only visible in the region's own log.
+        /// </summary>
+        public void PhysicsShapeFallback(string reason)
+        {
+            m_log.WarnFormat(
+                "[SCENE OBJECT PART]: {0} for {1} ({2}) owned by {3} in {4}",
+                reason, Name, UUID, OwnerID, ParentGroup.Scene.Name);
+
+            ScenePresence sp = ParentGroup.Scene.GetScenePresence(OwnerID);
+            if (sp != null && !sp.IsChildAgent && sp.ControllingClient != null && sp.ControllingClient.IsActive)
+            {
+                sp.ControllingClient.SendAgentAlertMessage(
+                    $"'{Name}' has a mesh or sculpt that couldn't be built into a proper physics shape, so it's using a plain box for collisions instead of its real shape. You may want to re-check or re-upload it.",
+                    false);
+            }
+        }
+
         public void PhysicsRequestingTerseUpdate()
         {
             PhysicsActor pa = PhysActor;
@@ -5062,6 +5083,11 @@ namespace OpenSim.Region.Framework.Scenes
                 // we are going to tell rest of code about physics so better have this here
                 PhysActor = pa;
 
+                // Not gated on isPhysical: a non-physical, non-phantom object still gets a
+                // collision shape from mesh/sculpt data, so a build failure here matters
+                // regardless of whether the object is dynamically physical.
+                pa.OnPhysicsShapeFallback += PhysicsShapeFallback;
+
                 //                DoPhysicsPropertyUpdate(isPhysical, true);
                 // lets expand it here just with what it really needs to do
 
@@ -5123,6 +5149,7 @@ namespace OpenSim.Region.Framework.Scenes
                 pa.OnCollisionUpdate -= PhysicsCollision;
                 pa.OnRequestTerseUpdate -= PhysicsRequestingTerseUpdate;
                 pa.OnOutOfBounds -= PhysicsOutOfBounds;
+                pa.OnPhysicsShapeFallback -= PhysicsShapeFallback;
 
                 ParentGroup.Scene.PhysicsScene.RemovePrim(pa);
 
