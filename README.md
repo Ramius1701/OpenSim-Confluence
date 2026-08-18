@@ -888,6 +888,38 @@ work continues — don't let them go stale.
   naming the object if they're present in the region. The underlying
   physics behavior is untouched — the object still gets a box collision
   shape either way; this only stops the failure from being invisible.
+  Full writeup in PROJECT_LOG.md. Seventh item scoped: **region
+  stability under load**. Unlike every prior item, the strongest
+  finding here isn't a code gap — it's that Confluence already has a
+  complete, working answer (`SimProtectionModule`, WhiteCore-ported)
+  that auto-disables scripts then physics when FPS drops below a
+  configurable threshold and auto-restarts a genuinely deadlocked
+  region, on its own timer decoupled from the region heartbeat it's
+  protecting against — and it's disabled on both live regions.
+  Confirmed via this repo's own history (Batch 14, 2026-08-10) that the
+  module loads and wires up correctly; it was left off afterward for a
+  reasoned, still-valid reason — its disruptive mitigation behavior had
+  never been exercised against a real FPS drop, and nobody wanted to
+  force that on a region in active use. Checked the other classic
+  "stability under load" cause — physics numerically exploding — and
+  found `ODEPrim` already sanitizes NaN/Infinity on every major physics
+  input (Force, Velocity, Torque, Orientation, RotationalVelocity,
+  PIDTarget), closing off the "buggy script feeds garbage into
+  `llSetForce`" failure mode; flagged one narrower, unconfirmed gap (no
+  general max-velocity safety clamp against a legitimate-but-extreme
+  physics resolution event, only feature-specific ones). Confirmed the
+  thread-stall watchdog's log-only behavior is expected, not a gap —
+  it's a visibility tool, and `SimProtection`'s own zero-FPS check is
+  the actual recovery path for a truly stuck region. No code change was
+  recommended — it was a config decision the user needed to make
+  deliberately, not something to flip unilaterally. **The user chose to
+  enable it**: `[SimProtection] Enabled = true` at production defaults
+  on both live regions (`Var_Test_Region` already had the full config
+  block from Batch 14; added the same block to `Welcome_Center`, which
+  had none). Config-only change, needs a restart of each region to take
+  effect — and worth remembering the mitigation behavior itself
+  (scripts/physics auto-disable) is now *enabled* but still not
+  *exercised*; the first real FPS drop will be its first live test.
   Full writeup in PROJECT_LOG.md.
 
 ## Repository model

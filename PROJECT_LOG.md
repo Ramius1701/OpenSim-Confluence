@@ -9268,3 +9268,97 @@ PowerShell `Copy-Item`, all three verified byte-for-byte via
 verification needs an actual mesh upload that fails to decompose, which
 isn't something to manufacture on demand - left for the user's own
 testing opportunity if/when a real failure occurs.
+
+### Region stability under load - scoping pass: the real mitigation
+### already exists and works, it's just switched off
+
+Started this one expecting to find a gap to design around, the way
+every prior item in this campaign did. Instead the strongest finding is
+about a capability Confluence already has that simply isn't turned on -
+closer in shape to the script-engine-thread-count and avatar-baking
+findings than to a from-scratch design problem.
+
+**`SimProtectionModule` (WhiteCore-Dev-ported, task #17/Batch 14) is a
+real, complete, working answer to exactly this complaint - and it's
+disabled on both live regions.** It watches `SimStatsReporter`'s FPS
+and physics-FPS on a decoupled 60-second timer (not tied to the
+region's own heartbeat, so it keeps working even if the heartbeat
+itself is what's stalled) and automatically disables scripts, then
+physics, if either drops below a configurable percentage of a baseline
+rate - then re-enables both once FPS recovers and stays up for a
+cooldown period. If FPS is genuinely pinned near zero for a sustained
+period, it issues a full region restart rather than leaving a dead
+region running. This is precisely "automated response to a load
+spike" - the thing genuinely missing here isn't code, it's the config
+flag. Checked whether this was still an open question from when it was
+built: PROJECT_LOG's own Batch 14 entry (2026-08-10) already confirmed
+`Initialise()` and `AddRegion()` both fire correctly on this
+deployment (an earlier, unrelated `[Startup]`-section config-corruption
+bug had been misdiagnosed as "Mono.Addins isn't loading this module,"
+then fixed and re-verified) - so the module is proven to load and wire
+up correctly. It was deliberately left disabled afterward for a
+narrower, still-valid reason: the actual *mitigation* behavior
+(forcibly disabling scripts/physics) had never been exercised against
+a real FPS drop, and nobody wanted to force that on a region that might
+be in active use. That caution was reasonable when written and is
+worth respecting now too - this pass surfaces it as a live,
+actionable decision rather than re-deciding it unilaterally.
+
+**Checked the other classic "region stability" root cause - physics
+numerically exploding under load - and found it's already
+substantially guarded, with one narrower gap.** Grepped `ODEPrim.cs`
+for NaN/Infinity handling and found real, existing sanitization on
+every major physics input: Force, Velocity, Torque, Orientation,
+RotationalVelocity, and PIDTarget all get checked and rejected if
+NaN/Infinite before being handed to the ODE solver - the classic "a
+buggy script feeds garbage into `llSetForce` and the object shoots off
+into infinity, saturating the network with updates" failure mode is
+already closed off at the input boundary. What's *not* present: a
+general maximum-velocity/maximum-impulse safety clamp against a
+legitimate (not NaN, just extreme) physics *resolution* event - e.g.
+deep mesh interpenetration producing a huge but finite separation
+force. Only narrow, feature-specific velocity caps exist (avatar
+step-assist, water equilibrium), not a general safety valve. Flagging
+this as a real, unconfirmed gap rather than a proven one - didn't find
+evidence of it actually happening on this deployment, and building a
+general clamp risks fighting legitimate high-speed vehicle/projectile
+use cases if the threshold is chosen carelessly.
+
+**Checked the thread-stall watchdog and confirmed its current
+"log-only" behavior is expected, not a gap.** `OpenSim.Framework.
+Monitoring.Watchdog` detects any monitored thread that stops ticking
+and fires `OnWatchdogTimeout`; the one subscriber
+(`OpenSim.cs.WatchdogTimeoutHandler`) only logs an error - no
+self-healing, no automatic restart of the stalled thread. This
+matches the honest reality that safely restarting an arbitrary hung
+.NET thread from outside isn't something you can do in general; the
+watchdog's job is visibility, not recovery. The actual recovery path
+for "the region is well and truly stuck" is exactly `SimProtection`'s
+own `CheckZeroFPS` - a full region restart - which runs on its own
+decoupled timer specifically so it isn't dependent on the possibly-
+stalled heartbeat thread it's protecting against. The two mechanisms
+are already correctly layered; the recovery path simply is not switched
+on.
+
+No code change was recommended here - the fix-ready item was a config
+decision that had been previously deferred deliberately. Put it to the
+user rather than flipping it unilaterally; **the user chose to enable
+`SimProtectionModule` at production defaults on both live regions.**
+
+`Enabled = true` set in both `Var_Test_Region\OpenSim.ini` (already had
+the full config block from Batch 14, just flipped the one flag and
+updated its comment to record why) and `Welcome_Center\OpenSim.ini`
+(had no `[SimProtection]` section at all until now - added the same
+block, same production defaults, for consistency across both regions:
+`BaseRateFramesPerSecond = 45`, `PercentToBeginShutDownOfServices = 50`,
+`SecondsBeforeReenable = 20`, `AllowDisableScripts/AllowDisablePhysics
+= true`, `RestartSimIfZeroFPS = true`, `MinutesBeforeZeroFPSRestart = 1`,
+`CheckIntervalSeconds = 60`). This is a config-only change to the live
+deployment - no code was touched, nothing to build. Needs a restart of
+each region to take effect. The user picked "enable at production
+defaults" rather than the staged-test option (temporarily lowering the
+threshold to force a live disable-then-recover cycle during a chosen
+low-traffic window before trusting production thresholds) - worth
+keeping in mind that the actual mitigation behavior (scripts/physics
+auto-disable) still hasn't been *exercised*, only *enabled*; the first
+time it fires for real will be the first live test of that path.
