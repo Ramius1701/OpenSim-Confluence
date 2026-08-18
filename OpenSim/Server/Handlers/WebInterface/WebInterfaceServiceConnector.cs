@@ -5967,6 +5967,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                                 + "</form>";
                     }
 
+                    int currentMembershipType = AccountMembershipHelper.GetMembershipType(account.UserFlags);
+                    StringBuilder membershipOptions = new StringBuilder();
+                    foreach (KeyValuePair<int, string> type in AccountMembershipHelper.AllTypes)
+                    {
+                        membershipOptions.Append("<option value=\"" + type.Key + "\""
+                                + (type.Key == currentMembershipType ? " selected" : "")
+                                + ">" + Html(type.Value) + "</option>");
+                    }
+
                     body = "<h1>" + Html(account.Name) + "</h1>"
                             + "<p><a href=\"" + BasePath + "/admin/users\">Back to search</a></p>"
                             + message
@@ -5976,6 +5985,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "<tr><th>Created</th><td>" + Html(created) + "</td></tr>"
                             + "<tr><th>Status</th><td>" + statusLabel + "</td></tr>"
                             + "<tr><th>User Level</th><td>" + account.UserLevel + "</td></tr>"
+                            + "<tr><th>Account Type</th><td>" + Html(AccountMembershipHelper.GetName(currentMembershipType)) + "</td></tr>"
+                            + "<tr><th>Profile Title</th><td>" + (string.IsNullOrEmpty(account.UserTitle) ? "<em>none</em>" : Html(account.UserTitle)) + "</td></tr>"
                             + "<tr><th>Currency balance</th><td>" + balance + "</td></tr>"
                             + "</table>"
                             + "<p><a href=\"" + BasePath + "/profile?id=" + account.PrincipalID + "\">View public profile</a></p>"
@@ -5985,6 +5996,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "<label>First name: <input type=\"text\" name=\"first_name\" value=\"" + Html(account.FirstName) + "\" required></label>"
                             + "<label>Last name: <input type=\"text\" name=\"last_name\" value=\"" + Html(account.LastName) + "\" required></label>"
                             + "<label>Email: <input type=\"email\" name=\"email\" value=\"" + Html(account.Email) + "\"></label>"
+                            + "<label>Account type: <select name=\"membership_type\">" + membershipOptions + "</select></label>"
+                            + "<label>Profile title/badge: <input type=\"text\" name=\"user_title\" value=\"" + Html(account.UserTitle) + "\" placeholder=\"Shown in the resident's profile instead of the account type's built-in badge\"></label>"
+                            + "<p class=\"news-meta\">Only Trial Member/Charter Member/Grid Team have a built-in badge icon in most viewers - Resident and any other account type need a Profile title set to actually show anything (left blank here, it's auto-filled with the account type's name).</p>"
                             + "<button type=\"submit\">Save</button>"
                             + "</form>"
                             + "<h2>Reset password</h2>"
@@ -6208,6 +6222,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                         string firstName = FormValue(form, "first_name").Trim();
                         string lastName = FormValue(form, "last_name").Trim();
                         string email = FormValue(form, "email").Trim();
+                        string userTitle = FormValue(form, "user_title").Trim();
+                        int.TryParse(FormValue(form, "membership_type"), out int membershipType);
+                        if (!AccountMembershipHelper.AllTypes.ContainsKey(membershipType))
+                            membershipType = AccountMembershipHelper.GetMembershipType(account.UserFlags);
 
                         if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
                         {
@@ -6231,9 +6249,19 @@ namespace OpenSim.Server.Handlers.WebInterface
                             }
                             else
                             {
+                                // A membership type past CharterMember has no built-in
+                                // viewer badge icon and needs UserTitle set to actually
+                                // be visible in the resident's profile - auto-fill it
+                                // with the type's own name if the admin left the title
+                                // blank, rather than silently saving an invisible badge.
+                                if (string.IsNullOrEmpty(userTitle) && AccountMembershipHelper.NeedsTitleToDisplay(membershipType))
+                                    userTitle = AccountMembershipHelper.GetName(membershipType);
+
                                 account.FirstName = firstName;
                                 account.LastName = lastName;
                                 account.Email = email;
+                                account.UserTitle = userTitle;
+                                account.UserFlags = AccountMembershipHelper.SetMembershipType(account.UserFlags, membershipType);
                                 message = m_UserAccountService.StoreUserAccount(account)
                                         ? "Account details updated."
                                         : "Failed to update account details.";

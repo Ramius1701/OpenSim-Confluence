@@ -9658,3 +9658,74 @@ via `Get-FileHash` MD5 (confirmed the new hash differed from the
 previously-deployed OnObjectBuy-only build before confirming the match,
 since the file size alone was identical between builds and wasn't
 sufficient proof on its own). Needs a grid restart to take effect.
+
+### Follow-up: renamed and extended the account "membership type" badge
+### (unused SL-inherited values, now put to real use)
+
+Separate conversational thread that grew out of asking about the
+Gloebit/PayPal question above: the user asked about the classic Second
+Life account-type badge values (0=Resident, 1=Trial Member, 2=Charter
+Member, 3=Linden Lab Employee) and whether 3 could be renamed for an
+independent grid, then connected it back to the donor-perk idea from
+the PayPal discussion - "if they donate they get a new account type,
+and a grid owner configurable perk."
+
+**Traced how this actually works before touching anything.**
+`UserAccount.UserFlags` (already a persisted column, no schema change
+possible or needed) packs two sub-fields the code already reads:
+bits 0-7 are a separate set of flags (indexed/mature/identified/
+transacted/online/age-verified - untouched by this work) and bits 8-11
+are the "membership type" nibble `UserProfileModule.cs` reads to fill
+`AvatarPropertiesReply.CharterMember`, the classic viewer's profile
+badge field. Also found `UserAccount.UserTitle`: if set, the viewer
+shows that literal text *instead of* the numeric badge - meaning only
+values 0-3 have a real built-in icon in most viewers, and anything
+past that (a new custom type) needs `UserTitle` set to be visible at
+all, since a viewer with no icon for value 4+ shows nothing on its own.
+Checked the actual admin UI (`WebInterfaceServiceConnector.cs`'s
+`HandleAdminUsersEditDetails`) and confirmed neither field was wired to
+anything - genuinely unused infrastructure, exactly the shape of prior
+findings in this campaign (a real primitive sitting idle, not a design
+gap).
+
+Separately, the user pointed at djphil's `oshelpful` reference doc's
+"USER ACCOUNTS FLAGS" table (200/300/400/600/800 = Resident/Testing/
+Member Estate/Linden Contracted combinations) - checked whether
+Confluence's code interprets `UserFlags` that way and confirmed it
+doesn't; those values describe Second Life's own original whole-value
+account-standing convention, not what this codebase's bit-decomposition
+logic (0xff / 0x0f00) actually branches on. Didn't let an accurate-
+looking external reference override what the real code does.
+
+**Built and deployed.** New `OpenSim.Services.Interfaces.
+AccountMembershipHelper` (same pattern/location as the existing
+`AccountBanHelper`, so any future consumer beyond the web admin form
+can reuse it): named constants for the type nibble (`Resident`,
+`TrialMember`, `CharterMember`, `GridTeam` - renamed from Second
+Life's "Linden Lab Employee", meaningless for an independent grid -
+and a new `Supporter` value SL never had), a name lookup, a
+`NeedsTitleToDisplay` check (true for anything past `GridTeam`), and
+`GetMembershipType`/`SetMembershipType` helpers that read/write the
+nibble without disturbing the other bits packed into the same int.
+
+Extended `HandleAdminUsersEditDetails` and its form: the account
+details page now shows the current Account Type and Profile Title, and
+the edit form has a type dropdown plus a title field. If the admin
+picks a type past `GridTeam` and leaves the title blank, it auto-fills
+with the type's own name rather than silently saving an invisible
+badge - the exact trap the "viewer shows UserTitle instead of the
+numeric badge, or nothing at all for an unrecognized value" behavior
+would otherwise set up.
+
+This is scoped to the account-type/badge mechanism only. The donor-perk
+trigger (auto-applying `Supporter` when a PayPal donation completes)
+and the separate, still-open "should PayPal actually credit currency"
+regulatory question from earlier in this thread are not built here -
+this pass just makes the account-type field itself real and usable,
+ready for that trigger to call into once it exists.
+
+Build-verified clean (0 errors, 0 warnings). Deployed: grid confirmed
+down, `OpenSim.Services.Interfaces.dll` and `OpenSim.Server.Handlers.dll`
+(plus `.pdb`s) copied via PowerShell `Copy-Item`, both verified
+byte-for-byte via `Get-FileHash` MD5 match. Needs a grid restart to
+take effect.

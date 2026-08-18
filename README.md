@@ -1023,6 +1023,30 @@ work continues — don't let them go stale.
   changed before confirming the match, since file size alone matched
   the prior build). Needs a grid restart. Full writeup in
   PROJECT_LOG.md.
+- **Account membership type / profile badge, renamed and extended.**
+  `UserAccount.UserFlags` already packed a "membership type" nibble
+  (bits 8-11) the classic viewer renders as a profile badge — Second
+  Life's own fixed set (Resident/Trial Member/Charter Member/Linden Lab
+  Employee), unused by any admin tooling in this repo. Renamed value 3
+  from the meaningless-on-an-independent-grid "Linden Lab Employee" to
+  **Grid Team**, and added a new value SL never had: **Supporter**, for
+  residents who've financially supported the grid. New
+  `AccountMembershipHelper` (same pattern as `AccountBanHelper`) owns
+  the naming and the bit-packing so any future caller can reuse it
+  without hand-rolling the math. `UserAccount.UserTitle` — also
+  previously unused — now does double duty as the actual on-screen
+  badge text, since only values 0–3 have a built-in viewer icon;
+  anything past that needs `UserTitle` set to be visible at all, so the
+  admin UI auto-fills it with the type's name if left blank. Admin
+  Users page (`/admin/users/edit-details`) now shows and edits both.
+  Checked djphil's `oshelpful` reference table for the older SL
+  "200/300/400/600/800" `UserFlags` combinations first — confirmed
+  Confluence's actual code doesn't interpret `UserFlags` that way, so
+  didn't let an accurate-looking external reference override what the
+  code really does. Scoped to the account-type field itself — the
+  donor-perk auto-trigger and the still-open "should PayPal actually
+  credit currency" question are separate, not built here. Full writeup
+  in PROJECT_LOG.md.
 
 ## Repository model
 
