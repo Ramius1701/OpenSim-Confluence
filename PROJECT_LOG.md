@@ -8844,3 +8844,69 @@ verification (an actual HG visitor or a deliberately-broken local login
 showing the recovery working) is pending the user's own test - this is
 exactly the kind of fix that's hard to verify without a real client
 session hitting the actual failure condition.
+
+### Script engine (YEngine) performance - real, under-tuned default,
+### confirmed ecosystem-wide, not just a Confluence gap
+
+Checked whether "scripts are slow" (a common complaint, especially on
+vehicle/HUD-heavy regions) has a genuine architectural or configuration
+cause. Confirmed first that Confluence only ships YEngine (no XEngine
+directory at all) and that it's a real compile-to-CIL engine
+(`MMRScriptCodeGen.cs`/`MMRScriptObjWriter.cs`, 45k+ lines across the
+YEngine tree) - not a naive interpreter, architecturally comparable to
+SL's own Mono-based approach. So the complaint isn't "wrong engine
+choice"; it's tuning and scheduling.
+
+**Finding - `NumThreadScriptWorkers` defaults to 2 and nobody in the
+OpenSim family overrides it.** `XMREngine.cs:212`:
+`m_Config.GetInt("NumThreadScriptWorkers", 2)` - every region runs its
+entire script workload (every script's every event handler) across just
+2 worker threads unless explicitly raised. Checked the repo's own
+tracked `bin/OpenSimDefaults.ini` and the live Casperia-Dev deployment's
+copy - both had it commented out (`;NumThreadScriptWorkers = 2`),
+meaning the live grid was genuinely running at this default. Then
+checked whether this was a Confluence-specific oversight or an
+ecosystem-wide blind spot: grepped `OpenSim-Tranquillity` and a fresh
+`opensim-master` checkout - identical hardcoded default, identical
+commented-out line in both forks' shipped `OpenSimDefaults.ini`. Nobody
+in the OpenSim family tunes this; it's a real, ecosystem-wide gap, not
+something Confluence broke.
+
+The ini's own comment validates the concern directly: "if a region
+machine is not overload[ed] (ie has sleeping CPU cores), increasing this
+number may reduce events response latency." Checked the actual
+Casperia-Dev host: AMD Ryzen 7 6800H, 8 cores / 16 logical threads
+(`Get-CimInstance Win32_Processor`), running 2 region processes
+(`Welcome_Center`, `Var_Test_Region`), each its own `OpenSim.exe` with
+its own YEngine instance and thread pool, both reading the same shared
+`OpenSimDefaults.ini`. This is not an overloaded machine - real,
+unused headroom exists.
+
+**Secondary check - sensor/timer scanning for an algorithmic scaling
+bug.** Read `SensorRepeat.cs`'s `CheckSenseRepeaterEvents()` and
+`SensorSweep()` to see if there was a second, code-level finding to pair
+with the thread-count one. Found a per-sensor scene-wide entity scan
+(`doAgentSensor`/`doObjectSensor`) on every due sensor - real cost, but
+this is the inherent, expected cost of the LSL sensor model itself (SL's
+own sensor implementation has the same fundamental complexity - a
+sensor has to check candidate entities somehow). Not a Confluence-
+specific bug or a fixable regression; ruled out as a separate finding.
+
+**Fix - deliberately a config-tuning change, not a code change, and
+deliberately NOT raised in the repo's shipped default.** Raising the
+shipped `OpenSimDefaults.ini` template default for every downstream
+deployment regardless of hardware would be irresponsible - the
+conservative default of 2 is the right *safe* default for arbitrary,
+possibly-small hardware, matching upstream convention. What's wrong is
+that nobody had actually looked at *this* host's real headroom and
+tuned it. Edited only the live Casperia-Dev `OpenSimDefaults.ini`,
+uncommenting and raising `NumThreadScriptWorkers` to `4` (2 regions x 4
+= 8 script-worker threads total, leaving 8 of 16 logical threads for
+netcode/physics/OS), with a comment recording the reasoning and the
+host spec so a future reader doesn't have to re-derive it. This is a
+config-only change - it needs an `OpenSim.exe` restart to take effect,
+which is left to the user's own timing since the grid is up for
+resident testing right now. No specific speedup number is promised;
+this is a real, evidence-based, reversible lever, not a code fix, and
+its actual impact will depend on how script-heavy the live workload
+turns out to be.

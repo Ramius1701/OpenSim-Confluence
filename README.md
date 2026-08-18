@@ -793,7 +793,22 @@ work continues — don't let them go stale.
   deployment's actual copy (real, undeployed physics tuning sitting in
   the repo; real operator customization sitting only on the live grid)
   — flagged, not resolved, pending the user's own call on how to
-  reconcile it. Full writeup in PROJECT_LOG.md.
+  reconcile it. Second one done: **script engine (YEngine) performance**.
+  Confirmed YEngine is a real compile-to-CIL engine, not the wrong choice
+  — the actual gap is `NumThreadScriptWorkers` defaulting to just 2
+  worker threads region-wide, confirmed unset (running at that default)
+  on both the repo template and live Casperia-Dev, and confirmed the
+  *same* hardcoded default and commented-out line in `OpenSim-Tranquillity`
+  and upstream `opensim-master` — an ecosystem-wide blind spot, not a
+  Confluence regression. Checked the live host has real headroom (8
+  cores / 16 threads, 2 regions), so raised `NumThreadScriptWorkers` to
+  `4` on the live deployment only (not the repo's shipped default, which
+  stays conservative for arbitrary hardware). Config-only change, needs
+  an `OpenSim.exe` restart to take effect; no specific speedup promised.
+  A secondary check of sensor/timer scanning (`SensorRepeat.cs`) found
+  the per-sensor scene scan is the LSL sensor model's inherent cost, not
+  a distinct bug — no code fix needed there. Full writeup in
+  PROJECT_LOG.md.
 
 ## Repository model
 
