@@ -226,6 +226,76 @@ namespace OpenSim.Groups
             MakeRequest("REMOVEAGENTFROMGROUP", sendData);
         }
 
+        public Dictionary<string, int> GetGroupBans(string RequestingAgentID, UUID GroupID)
+        {
+            Dictionary<string, int> bans = new Dictionary<string, int>();
+
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["GroupID"] = GroupID.ToString();
+            sendData["RequestingAgentID"] = RequestingAgentID;
+
+            Dictionary<string, object> ret = MakeRequest("GETGROUPBANS", sendData);
+
+            if (ret == null)
+                return bans;
+
+            if (!ret.TryGetValue("RESULT", out object oRESULT))
+                return bans;
+
+            if (oRESULT.ToString() == "NULL")
+                return bans;
+
+            foreach (object v in ((Dictionary<string, object>)oRESULT).Values)
+            {
+                Dictionary<string, object> b = (Dictionary<string, object>)v;
+                bans[b["BannedID"].ToString()] = int.Parse(b["BanDate"].ToString());
+            }
+
+            return bans;
+        }
+
+        public bool AddGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            reason = string.Empty;
+
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["GroupID"] = GroupID.ToString();
+            sendData["BannedID"] = BannedID;
+            sendData["RequestingAgentID"] = RequestingAgentID;
+
+            Dictionary<string, object> ret = MakeRequest("ADDGROUPBAN", sendData);
+
+            if (ret == null || !ret.TryGetValue("RESULT", out object oRESULT) || oRESULT.ToString() != "true")
+            {
+                if (ret != null && ret.TryGetValue("REASON", out object oREASON))
+                    reason = oREASON.ToString();
+                return false;
+            }
+
+            return true;
+        }
+
+        public bool RemoveGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            reason = string.Empty;
+
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["GroupID"] = GroupID.ToString();
+            sendData["BannedID"] = BannedID;
+            sendData["RequestingAgentID"] = RequestingAgentID;
+
+            Dictionary<string, object> ret = MakeRequest("REMOVEGROUPBAN", sendData);
+
+            if (ret == null || !ret.TryGetValue("RESULT", out object oRESULT) || oRESULT.ToString() != "true")
+            {
+                if (ret != null && ret.TryGetValue("REASON", out object oREASON))
+                    reason = oREASON.ToString();
+                return false;
+            }
+
+            return true;
+        }
+
         public ExtendedGroupMembershipData GetMembership(string RequestingAgentID, string AgentID, UUID GroupID)
         {
             Dictionary<string, object> sendData = new Dictionary<string, object>();

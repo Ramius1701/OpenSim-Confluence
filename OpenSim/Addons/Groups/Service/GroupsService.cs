@@ -505,6 +505,16 @@ namespace OpenSim.Groups
         {
             reason = string.Empty;
 
+            // A banned agent can't (re)join, whether through open enrollment or
+            // by accepting an invite - both paths funnel through here, the one
+            // place membership actually gets created. Without this check the
+            // GroupAPIv1 ban list would just be an inert database nobody reads.
+            if (m_Database.RetrieveBan(GroupID, AgentID) is not null)
+            {
+                reason = "You are banned from this group.";
+                return false;
+            }
+
             _AddAgentToGroup(RequestingAgentID, AgentID, GroupID, RoleID, token);
 
             return true;
@@ -519,6 +529,53 @@ namespace OpenSim.Groups
             _RemoveAgentFromGroup(RequestingAgentID, AgentID, GroupID);
 
             return true;
+        }
+
+        public Dictionary<string, int> GetGroupBans(string RequestingAgentID, UUID GroupID)
+        {
+            Dictionary<string, int> bans = new();
+
+            BanData[] data = m_Database.RetrieveBans(GroupID);
+            if (data is null)
+                return bans;
+
+            foreach (BanData b in data)
+                bans[b.BannedID] = b.BanDate;
+
+            return bans;
+        }
+
+        public bool AddGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            reason = string.Empty;
+
+            if (!HasPower(RequestingAgentID, GroupID, GroupPowers.GroupBanAccess))
+            {
+                reason = "You do not have permission to ban members from this group.";
+                return false;
+            }
+
+            BanData data = new()
+            {
+                GroupID = GroupID,
+                BannedID = BannedID,
+                BanDate = Util.UnixTimeSinceEpoch()
+            };
+
+            return m_Database.StoreBan(data);
+        }
+
+        public bool RemoveGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            reason = string.Empty;
+
+            if (!HasPower(RequestingAgentID, GroupID, GroupPowers.GroupBanAccess))
+            {
+                reason = "You do not have permission to remove bans from this group.";
+                return false;
+            }
+
+            return m_Database.DeleteBan(GroupID, BannedID);
         }
 
         public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID)

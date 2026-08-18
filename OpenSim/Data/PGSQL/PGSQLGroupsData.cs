@@ -45,6 +45,7 @@ namespace OpenSim.Data.PGSQL
         private PGSqlGroupsInvitesHandler m_Invites;
         private PGSqlGroupsNoticesHandler m_Notices;
         private PGSqlGroupsPrincipalsHandler m_Principals;
+        private PGSqlGroupsBansHandler m_Bans;
 
         public PGSQLGroupsData(string connectionString, string realm)
         {
@@ -55,6 +56,7 @@ namespace OpenSim.Data.PGSQL
             m_Invites = new PGSqlGroupsInvitesHandler(connectionString, realm + "_invites");
             m_Notices = new PGSqlGroupsNoticesHandler(connectionString, realm + "_notices");
             m_Principals = new PGSqlGroupsPrincipalsHandler(connectionString, realm + "_principals");
+            m_Bans = new PGSqlGroupsBansHandler(connectionString, realm + "_bans");
         }
 
         #region groups table
@@ -355,6 +357,36 @@ namespace OpenSim.Data.PGSQL
 
         #endregion
 
+        #region bans table
+
+        public bool StoreBan(BanData data)
+        {
+            return m_Bans.Store(data);
+        }
+
+        public BanData RetrieveBan(UUID groupID, string bannedID)
+        {
+            BanData[] b = m_Bans.Get(new string[] { "GroupID", "BannedID" },
+                                     new string[] { groupID.ToString(), bannedID });
+            if (b != null && b.Length > 0)
+                return b[0];
+
+            return null;
+        }
+
+        public BanData[] RetrieveBans(UUID groupID)
+        {
+            return m_Bans.Get("GroupID", groupID.ToString());
+        }
+
+        public bool DeleteBan(UUID groupID, string bannedID)
+        {
+            return m_Bans.Delete(new string[] { "GroupID", "BannedID" },
+                                 new string[] { groupID.ToString(), bannedID });
+        }
+
+        #endregion
+
         #region combinations
         public MembershipData RetrievePrincipalGroupMembership(string principalID, UUID groupID)
         {
@@ -491,6 +523,20 @@ namespace OpenSim.Data.PGSQL
         }
 
         public PGSqlGroupsPrincipalsHandler(string connectionString, string realm)
+            : base(connectionString, realm, string.Empty)
+        {
+        }
+    }
+
+    public class PGSqlGroupsBansHandler : PGSQLGenericTableHandler<BanData>
+    {
+        protected override Assembly Assembly
+        {
+            // WARNING! Moving migrations to this assembly!!!
+            get { return GetType().Assembly; }
+        }
+
+        public PGSqlGroupsBansHandler(string connectionString, string realm)
             : base(connectionString, realm, string.Empty)
         {
         }

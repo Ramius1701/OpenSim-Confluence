@@ -681,7 +681,8 @@ namespace OpenSim.Services.InventoryService
                 Version = (ushort)folder.version,
                 Name = folder.folderName,
                 Owner = folder.agentID,
-                ID = folder.folderID
+                ID = folder.folderID,
+                Thumbnail = folder.thumbnail
             };
         }
 
@@ -694,7 +695,8 @@ namespace OpenSim.Services.InventoryService
                 version = (int)folder.Version,
                 folderName = folder.Name,
                 agentID = folder.Owner,
-                folderID = folder.ID
+                folderID = folder.ID,
+                thumbnail = folder.Thumbnail
             };
         }
 
@@ -721,7 +723,8 @@ namespace OpenSim.Services.InventoryService
                 SalePrice = item.salePrice,
                 SaleType = (byte)item.saleType,
                 Flags = (uint)item.flags,
-                CreationDate = item.creationDate
+                CreationDate = item.creationDate,
+                Thumbnail = item.thumbnail
             };
         }
 
@@ -748,7 +751,8 @@ namespace OpenSim.Services.InventoryService
                 salePrice = item.SalePrice,
                 saleType = (int)item.SaleType,
                 flags = (int)item.Flags,
-                creationDate = item.CreationDate
+                creationDate = item.CreationDate,
+                thumbnail = item.Thumbnail
             };
         }
 

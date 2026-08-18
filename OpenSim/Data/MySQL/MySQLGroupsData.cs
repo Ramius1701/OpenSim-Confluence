@@ -47,6 +47,7 @@ namespace OpenSim.Data.MySQL
         private MySqlGroupsInvitesHandler m_Invites;
         private MySqlGroupsNoticesHandler m_Notices;
         private MySqlGroupsPrincipalsHandler m_Principals;
+        private MySqlGroupsBansHandler m_Bans;
 
         public MySQLGroupsData(string connectionString, string realm)
         {
@@ -57,6 +58,7 @@ namespace OpenSim.Data.MySQL
             m_Invites = new MySqlGroupsInvitesHandler(connectionString, realm + "_invites");
             m_Notices = new MySqlGroupsNoticesHandler(connectionString, realm + "_notices");
             m_Principals = new MySqlGroupsPrincipalsHandler(connectionString, realm + "_principals");
+            m_Bans = new MySqlGroupsBansHandler(connectionString, realm + "_bans");
         }
 
         #region groups table
@@ -353,6 +355,36 @@ namespace OpenSim.Data.MySQL
 
         #endregion
 
+        #region bans table
+
+        public bool StoreBan(BanData data)
+        {
+            return m_Bans.Store(data);
+        }
+
+        public BanData RetrieveBan(UUID groupID, string bannedID)
+        {
+            BanData[] b = m_Bans.Get(new string[] { "GroupID", "BannedID" },
+                                     new string[] { groupID.ToString(), bannedID });
+            if (b != null && b.Length > 0)
+                return b[0];
+
+            return null;
+        }
+
+        public BanData[] RetrieveBans(UUID groupID)
+        {
+            return m_Bans.Get("GroupID", groupID.ToString());
+        }
+
+        public bool DeleteBan(UUID groupID, string bannedID)
+        {
+            return m_Bans.Delete(new string[] { "GroupID", "BannedID" },
+                                 new string[] { groupID.ToString(), bannedID });
+        }
+
+        #endregion
+
         #region combinations
         public MembershipData RetrievePrincipalGroupMembership(string principalID, UUID groupID)
         {
@@ -492,6 +524,20 @@ namespace OpenSim.Data.MySQL
         }
 
         public MySqlGroupsPrincipalsHandler(string connectionString, string realm)
+            : base(connectionString, realm, string.Empty)
+        {
+        }
+    }
+
+    public class MySqlGroupsBansHandler : MySQLGenericTableHandler<BanData>
+    {
+        protected override Assembly Assembly
+        {
+            // WARNING! Moving migrations to this assembly!!!
+            get { return GetType().Assembly; }
+        }
+
+        public MySqlGroupsBansHandler(string connectionString, string realm)
             : base(connectionString, realm, string.Empty)
         {
         }

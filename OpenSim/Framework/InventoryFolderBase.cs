@@ -52,6 +52,11 @@ namespace OpenSim.Framework
         /// </summary>
         private ushort _version;
 
+        /// <summary>
+        /// Asset UUID of the folder's thumbnail image, or UUID.Zero if unset.
+        /// </summary>
+        private UUID _thumbnail;
+
         public virtual UUID ParentID
         {
             get { return _parentID; }
@@ -68,6 +73,12 @@ namespace OpenSim.Framework
         {
             get { return _version; }
             set { _version = value; }
+        }
+
+        public virtual UUID Thumbnail
+        {
+            get { return _thumbnail; }
+            set { _thumbnail = value; }
         }
 
         public InventoryFolderBase()

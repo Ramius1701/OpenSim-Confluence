@@ -1393,21 +1393,36 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private void HandleProfile(IOSHttpRequest request, IOSHttpResponse response)
         {
+            // Two lookup paths: "id" (uuid, used by this webUI's own links) and
+            // "name" (First.Last, the shape Firestorm's OpenSim web-profile
+            // link builds from web_profile_url - see llavataractions.cpp's
+            // getProfileURL()/OPENSIM branch, which appends "?name=[AGENT_NAME]").
+            UserAccount account = null;
+
             string idParam = request.QueryString.Get("id");
-            if (string.IsNullOrEmpty(idParam) || !UUID.TryParse(idParam, out UUID userId))
+            if (!string.IsNullOrEmpty(idParam) && UUID.TryParse(idParam, out UUID parsedId))
             {
-                response.StatusCode = (int)HttpStatusCode.NotFound;
-                WritePage(request, response, "Confluence Grid - Profile", "<h1>Profile not found</h1><p>No profile ID given.</p>");
-                return;
+                account = m_UserAccountService?.GetUserAccount(UUID.Zero, parsedId);
+            }
+            else
+            {
+                string nameParam = request.QueryString.Get("name");
+                if (!string.IsNullOrEmpty(nameParam))
+                {
+                    string[] parts = nameParam.Split('.');
+                    if (parts.Length == 2)
+                        account = m_UserAccountService?.GetUserAccount(UUID.Zero, parts[0], parts[1]);
+                }
             }
 
-            UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, userId);
             if (account == null)
             {
                 response.StatusCode = (int)HttpStatusCode.NotFound;
-                WritePage(request, response, "Confluence Grid - Profile", "<h1>Profile not found</h1><p>No resident with that ID.</p>");
+                WritePage(request, response, "Confluence Grid - Profile", "<h1>Profile not found</h1><p>No resident matches that profile link.</p>");
                 return;
             }
+
+            UUID userId = account.PrincipalID;
 
             // Self vs. visitor view - About/Picks/Groups/Skills are all
             // edited entirely in-world via the viewer's own Profile floater

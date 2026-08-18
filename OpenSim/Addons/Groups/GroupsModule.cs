@@ -27,7 +27,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Reflection;
+using System.Text;
 using System.Timers;
 using log4net;
 using Mono.Addins;
@@ -35,6 +37,7 @@ using Nini.Config;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
+using OpenSim.Framework.Servers.HttpServer;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
@@ -180,6 +183,7 @@ namespace OpenSim.Groups
             scene.EventManager.OnMakeChildAgent += OnMakeChild;
             scene.EventManager.OnIncomingInstantMessage += OnGridInstantMessage;
             scene.EventManager.OnClientClosed += OnClientClosed;
+            scene.EventManager.OnRegisterCaps += OnRegisterCaps;
 
         }
 
@@ -195,6 +199,7 @@ namespace OpenSim.Groups
             scene.EventManager.OnMakeChildAgent -= OnMakeChild;
             scene.EventManager.OnIncomingInstantMessage -= OnGridInstantMessage;
             scene.EventManager.OnClientClosed -= OnClientClosed;
+            scene.EventManager.OnRegisterCaps -= OnRegisterCaps;
 
             lock (m_sceneList)
             {
@@ -1183,6 +1188,101 @@ namespace OpenSim.Groups
             // Should this also update everyone who is in the group?
             SendAgentGroupDataUpdate(remoteClient, true);
         }
+
+        #region GroupAPIv1 (group ban) capability
+
+        // Firestorm's group-ban list (llgroupmgr.cpp) - the one group operation
+        // with no legacy-UDP fallback at all (sendGroupBanRequest just silently
+        // returns if this cap is absent). One shared cap URL per agent; both GET
+        // and POST take "group_id" as a QUERY-STRING parameter, not part of the
+        // LLSD body - easy to get wrong copying other caps' shape. GET/POST both
+        // respond with the same {"group_id":uuid,"ban_list":{ban_id:{"ban_date":date}}}
+        // shape (processGroupBanRequest only acts if the response "has ban_list").
+        // ban_action: BAN_CREATE=1, BAN_DELETE=2 (BAN_UPDATE=4 never reaches the
+        // wire - it's stripped client-side into "POST then re-GET").
+
+        private void OnRegisterCaps(UUID agentID, OpenSim.Framework.Capabilities.Caps caps)
+        {
+            caps.RegisterSimpleHandler("GroupAPIv1",
+                new SimpleStreamHandler("/" + UUID.Random(),
+                    (httpRequest, httpResponse) => HandleGroupAPIv1Request(httpRequest, httpResponse, agentID)));
+        }
+
+        private void HandleGroupAPIv1Request(IOSHttpRequest request, IOSHttpResponse response, UUID agentID)
+        {
+            string groupIdStr = request.QueryString.Get("group_id");
+            if (string.IsNullOrEmpty(groupIdStr) || !UUID.TryParse(groupIdStr, out UUID groupID))
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            switch (request.HttpMethod)
+            {
+                case "GET":
+                    WriteGroupBanListResponse(response, agentID, groupID);
+                    break;
+                case "POST":
+                    HandleGroupBanPost(request, response, agentID, groupID);
+                    break;
+                default:
+                    response.StatusCode = (int)HttpStatusCode.NotFound;
+                    break;
+            }
+        }
+
+        private void HandleGroupBanPost(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, UUID groupID)
+        {
+            OSDMap req;
+            try
+            {
+                req = (OSDMap)OSDParser.DeserializeLLSDXml(request.InputStream);
+            }
+            catch
+            {
+                WriteGroupBanListResponse(response, agentID, groupID);
+                return;
+            }
+
+            if (req is not null && req.TryGetValue("ban_action", out OSD actionOsd) &&
+                req.TryGetValue("ban_ids", out OSD idsOsd) && idsOsd is OSDArray banIds)
+            {
+                int action = actionOsd.AsInteger();
+                string requestingAgentID = agentID.ToString();
+
+                foreach (OSD idOsd in banIds)
+                {
+                    string bannedID = idOsd.AsUUID().ToString();
+                    string reason = string.Empty;
+
+                    if (action == 1) // BAN_CREATE
+                        m_groupData.AddGroupBan(requestingAgentID, groupID, bannedID, out reason);
+                    else if (action == 2) // BAN_DELETE
+                        m_groupData.RemoveGroupBan(requestingAgentID, groupID, bannedID, out reason);
+                }
+            }
+
+            WriteGroupBanListResponse(response, agentID, groupID);
+        }
+
+        private void WriteGroupBanListResponse(IOSHttpResponse response, UUID agentID, UUID groupID)
+        {
+            Dictionary<string, int> bans = m_groupData.GetGroupBans(agentID.ToString(), groupID);
+
+            OSDMap banList = new();
+            foreach (KeyValuePair<string, int> b in bans)
+                banList[b.Key] = new OSDMap { ["ban_date"] = b.Value };
+
+            OSDMap resp = new()
+            {
+                ["group_id"] = groupID,
+                ["ban_list"] = banList
+            };
+            response.RawBuffer = Encoding.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(resp));
+            response.StatusCode = (int)HttpStatusCode.OK;
+        }
+
+        #endregion
 
         public void EjectGroupMemberRequest(IClientAPI remoteClient, UUID groupID, UUID ejecteeID)
         {

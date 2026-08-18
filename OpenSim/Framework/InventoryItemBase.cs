@@ -392,6 +392,16 @@ namespace OpenSim.Framework
         }
         protected int m_creationDate = (int)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
 
+        /// <value>
+        /// Asset UUID of this item's thumbnail image, or UUID.Zero if unset.
+        /// </value>
+        public UUID Thumbnail
+        {
+            get { return m_thumbnail; }
+            set { m_thumbnail = value; }
+        }
+        protected UUID m_thumbnail;
+
         public InventoryItemBase()
         {
         }
@@ -440,6 +450,13 @@ namespace OpenSim.Framework
                 LLSDxmlEncode2.AddElem_name(Name, lsl);
                 LLSDxmlEncode2.AddElem("desc", Description, lsl);
                 LLSDxmlEncode2.AddElem("created_at", CreationDate, lsl);
+
+                if (Thumbnail.IsNotZero())
+                {
+                    LLSDxmlEncode2.AddMap("thumbnail", lsl);
+                        LLSDxmlEncode2.AddElem_asset_id(Thumbnail, lsl);
+                    LLSDxmlEncode2.AddEndMap(lsl);
+                }
 
             LLSDxmlEncode2.AddEndMap(lsl);
         }

@@ -30,7 +30,9 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
@@ -349,6 +351,7 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
             Scene = scene;
             m_thisGridInfo ??= scene.SceneGridInfo;
             Scene.RegisterModuleInterface<IProfileModule>(this);
+            Scene.EventManager.OnRegisterCaps += OnRegisterCaps;
         }
 
         /// <summary>
@@ -362,6 +365,7 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
             if(!Enabled)
                 return;
 
+            scene.EventManager.OnRegisterCaps -= OnRegisterCaps;
             m_profilesCache.Clear();
             m_classifiedCache.Clear();
             m_classifiedInterest.Clear();
@@ -1822,6 +1826,149 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
             return true;
         }
         #endregion Avatar Properties
+
+        #region Profile Image Upload Capability
+
+        // Firestorm's "UploadAgentProfileImage" capability (llpanelprofile.cpp)
+        // - the only piece of the modern LL profile system with no legacy-UDP
+        // fallback (llpanelprofile.cpp aborts with a RegionCapabilityRequestError
+        // if this cap is absent). Everything else the profile floater needs
+        // (about text, first-life text/photo *reading*, partner, notes, etc.)
+        // is already served by this module's existing UDP
+        // AvatarPropertiesRequest/AvatarPropertiesUpdate handlers, which
+        // Firestorm falls back to on OpenSim - so only the two-phase image
+        // upload itself needs a real capability here.
+        //
+        // Same two-phase shape as InventoryThumbnailUpload: POST
+        // {"profile-image-asset": "sl_image_id"|"fl_image_id"} -> {"uploader": url},
+        // then POST raw JPEG2000 bytes to that url -> {"state":"complete","new_asset":uuid}.
+
+        private const int PROFILE_IMAGE_UPLOAD_TIMEOUT_MS = 120000;
+
+        private void OnRegisterCaps(UUID agentID, OpenSim.Framework.Capabilities.Caps caps)
+        {
+            caps.RegisterSimpleHandler("UploadAgentProfileImage",
+                new SimpleStreamHandler("/" + UUID.Random(),
+                    (httpRequest, httpResponse) => HandleUploadAgentProfileImageRequest(httpRequest, httpResponse, agentID, caps)));
+        }
+
+        private void HandleUploadAgentProfileImageRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID,
+            OpenSim.Framework.Capabilities.Caps caps)
+        {
+            if (request.HttpMethod != "POST")
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            OSDMap req = null;
+            try
+            {
+                req = (OSDMap)OSDParser.DeserializeLLSDXml(request.InputStream);
+            }
+            catch { /* handled by the null check below */ }
+
+            string slot = (req is not null && req.TryGetValue("profile-image-asset", out OSD slotOsd)) ? slotOsd.AsString() : null;
+            if (slot != "sl_image_id" && slot != "fl_image_id")
+            {
+                WriteProfileImageResponse(response, "error", "'profile-image-asset' must be 'sl_image_id' or 'fl_image_id'.");
+                return;
+            }
+
+            string uploaderPath = "/" + UUID.Random();
+            System.Timers.Timer timeoutTimer = new(PROFILE_IMAGE_UPLOAD_TIMEOUT_MS) { AutoReset = false };
+            timeoutTimer.Elapsed += (s, e) => caps.HttpListener.RemoveStreamHandler("POST", uploaderPath);
+            timeoutTimer.Start();
+
+            string HandleUpload(byte[] data, string path, string param)
+            {
+                timeoutTimer.Stop();
+                caps.HttpListener.RemoveStreamHandler("POST", uploaderPath);
+
+                if (data is null || data.Length == 0)
+                    return SerializeProfileImageResponse("failed", "Empty upload.");
+
+                bool foreign = GetUserProfileServerURI(agentID, out string serverURI);
+                if (string.IsNullOrWhiteSpace(serverURI))
+                    return SerializeProfileImageResponse("failed", "User profile service unavailable.");
+
+                // Read-modify-write: avatar_properties_update overwrites the
+                // profile row's URL/about-text/both-image columns wholesale
+                // (OpenSim/Data/MySQL/MySQLUserProfilesData.cs UpdateAvatarProperties),
+                // so the current values have to be fetched first or this upload
+                // would silently wipe out the rest of the resident's profile text.
+                UserProfileProperties props = new() { UserId = agentID };
+                object propObj = props;
+                if (!rpc.JsonRpcRequest(ref propObj, "avatar_properties_request", serverURI, UUID.Random().ToString()))
+                    return SerializeProfileImageResponse("failed", "Could not read current profile.");
+                props = (UserProfileProperties)propObj;
+
+                AssetBase asset = new(UUID.Random(), "Profile Image", (sbyte)AssetType.Texture, agentID.ToString())
+                {
+                    Data = data
+                };
+                Scene.AssetService.Store(asset);
+
+                if (slot == "sl_image_id")
+                    props.ImageId = asset.FullID;
+                else
+                    props.FirstLifeImageId = asset.FullID;
+
+                if (!m_allowUserProfileWebURLs)
+                    props.WebUrl = string.Empty;
+
+                object updateObj = props;
+                if (!rpc.JsonRpcRequest(ref updateObj, "avatar_properties_update", serverURI, UUID.Random().ToString()))
+                    return SerializeProfileImageResponse("failed", "Could not save the new image.");
+
+                lock (m_profilesCache)
+                {
+                    if (m_profilesCache.TryGetValue(agentID, out UserProfileCacheEntry uce) && uce is not null)
+                    {
+                        uce.props = null;
+                        uce.ClientsWaitingProps = null;
+                    }
+                }
+
+                if (foreign)
+                    cacheForeignImage(agentID, asset.FullID);
+
+                return SerializeProfileImageResponse("complete", null, asset.FullID);
+            }
+
+            caps.HttpListener.AddStreamHandler(
+                new BinaryStreamHandler("POST", uploaderPath, HandleUpload,
+                    "UploadAgentProfileImage", agentID.ToString()));
+
+            string protocol = caps.SSLCaps ? "https://" : "http://";
+            string uploaderURL = protocol + caps.HostName + ":" + caps.Port + uploaderPath;
+
+            OSDMap resp = new()
+            {
+                ["uploader"] = uploaderURL,
+                ["state"] = "upload"
+            };
+            response.RawBuffer = Encoding.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(resp));
+            response.StatusCode = (int)HttpStatusCode.OK;
+        }
+
+        private static void WriteProfileImageResponse(IOSHttpResponse response, string state, string message)
+        {
+            response.RawBuffer = Encoding.UTF8.GetBytes(SerializeProfileImageResponse(state, message));
+            response.StatusCode = (int)HttpStatusCode.OK;
+        }
+
+        private static string SerializeProfileImageResponse(string state, string message, UUID newAsset = default)
+        {
+            OSDMap resp = new() { ["state"] = state };
+            if (!string.IsNullOrEmpty(message))
+                resp["message"] = message;
+            if (newAsset.IsNotZero())
+                resp["new_asset"] = newAsset;
+            return OSDParser.SerializeLLSDXmlString(resp);
+        }
+
+        #endregion Profile Image Upload Capability
 
         #region Utils
 

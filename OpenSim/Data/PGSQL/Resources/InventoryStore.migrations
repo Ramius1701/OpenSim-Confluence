@@ -205,3 +205,12 @@ Alter table inventoryitems Rename Column "SaleType" to "saleType";
 
 Commit;
 
+:VERSION 11
+
+BEGIN TRANSACTION;
+
+alter table inventoryitems add column "thumbnail" uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+alter table inventoryfolders add column "thumbnail" uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+
+Commit;
+

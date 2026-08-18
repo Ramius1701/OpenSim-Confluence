@@ -51,6 +51,18 @@ namespace OpenSim.Groups
         bool AddAgentToGroup(string RequestingAgentID, string AgentID, UUID GroupID, UUID RoleID, string token, out string reason);
         void RemoveAgentFromGroup(string RequestingAgentID, string AgentID, UUID GroupID);
 
+        /// <summary>
+        /// Group bans - the "GroupAPIv1" capability's ban list. Unlike ejection,
+        /// there is no legacy-UDP fallback for this in any viewer, so this is
+        /// the sole source of truth for who is barred from a group. BannedID
+        /// follows the same string convention as AgentID/PrincipalID elsewhere
+        /// in this interface (HG-safe); the capability layer converts to/from
+        /// UUID at the wire boundary.
+        /// </summary>
+        Dictionary<string, int> GetGroupBans(string RequestingAgentID, UUID GroupID);
+        bool AddGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason);
+        bool RemoveGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason);
+
         bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID);
         GroupInviteInfo GetAgentToGroupInvite(string RequestingAgentID, UUID inviteID);
         void RemoveAgentToGroupInvite(string RequestingAgentID, UUID inviteID);

@@ -222,6 +222,21 @@ namespace OpenSim.Groups
 
         }
 
+        public Dictionary<string, int> GetGroupBans(string RequestingAgentID, UUID GroupID)
+        {
+            return m_GroupsService.GetGroupBans(RequestingAgentID, GroupID);
+        }
+
+        public bool AddGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            return m_GroupsService.AddGroupBan(RequestingAgentID, GroupID, BannedID, out reason);
+        }
+
+        public bool RemoveGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            return m_GroupsService.RemoveGroupBan(RequestingAgentID, GroupID, BannedID, out reason);
+        }
+
         public void SetAgentActiveGroup(string RequestingAgentID, string AgentID, UUID GroupID)
         {
             m_CacheWrapper.SetAgentActiveGroup(AgentID, delegate

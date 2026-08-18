@@ -121,6 +121,12 @@ namespace OpenSim.Groups
                         return HandleAddAgentToGroup(request);
                     case "REMOVEAGENTFROMGROUP":
                         return HandleRemoveAgentFromGroup(request);
+                    case "GETGROUPBANS":
+                        return HandleGetGroupBans(request);
+                    case "ADDGROUPBAN":
+                        return HandleAddGroupBan(request);
+                    case "REMOVEGROUPBAN":
+                        return HandleRemoveGroupBan(request);
                     case "GETMEMBERSHIP":
                         return HandleGetMembership(request);
                     case "GETGROUPMEMBERS":
@@ -294,6 +300,88 @@ namespace OpenSim.Groups
 
             //m_log.DebugFormat("[XXX]: resp string: {0}", xmlString);
             return Util.UTF8NoBomEncoding.GetBytes(ServerUtils.BuildXmlResponse(result));
+        }
+
+        byte[] HandleGetGroupBans(Dictionary<string, object> request)
+        {
+            Dictionary<string, object> result = new Dictionary<string, object>();
+
+            if (!request.ContainsKey("RequestingAgentID") || !request.ContainsKey("GroupID"))
+                NullResult(result, "Bad network data");
+            else
+            {
+                UUID groupID = new UUID(request["GroupID"].ToString());
+                string requestingAgentID = request["RequestingAgentID"].ToString();
+
+                Dictionary<string, int> bans = m_GroupsService.GetGroupBans(requestingAgentID, groupID);
+                if (bans == null || bans.Count == 0)
+                {
+                    NullResult(result, "No bans");
+                }
+                else
+                {
+                    Dictionary<string, object> dict = new Dictionary<string, object>();
+                    int i = 0;
+                    foreach (KeyValuePair<string, int> b in bans)
+                    {
+                        Dictionary<string, object> bdict = new Dictionary<string, object>();
+                        bdict["BannedID"] = b.Key;
+                        bdict["BanDate"] = b.Value.ToString();
+                        dict["b-" + i++] = bdict;
+                    }
+
+                    result["RESULT"] = dict;
+                }
+            }
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] HandleAddGroupBan(Dictionary<string, object> request)
+        {
+            Dictionary<string, object> result = new Dictionary<string, object>();
+
+            if (!request.ContainsKey("RequestingAgentID") || !request.ContainsKey("GroupID") || !request.ContainsKey("BannedID"))
+                NullResult(result, "Bad network data");
+            else
+            {
+                UUID groupID = new UUID(request["GroupID"].ToString());
+                string bannedID = request["BannedID"].ToString();
+                string requestingAgentID = request["RequestingAgentID"].ToString();
+                string reason = string.Empty;
+
+                if (!m_GroupsService.AddGroupBan(requestingAgentID, groupID, bannedID, out reason))
+                    NullResult(result, reason);
+                else
+                    result["RESULT"] = "true";
+            }
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] HandleRemoveGroupBan(Dictionary<string, object> request)
+        {
+            Dictionary<string, object> result = new Dictionary<string, object>();
+
+            if (!request.ContainsKey("RequestingAgentID") || !request.ContainsKey("GroupID") || !request.ContainsKey("BannedID"))
+                NullResult(result, "Bad network data");
+            else
+            {
+                UUID groupID = new UUID(request["GroupID"].ToString());
+                string bannedID = request["BannedID"].ToString();
+                string requestingAgentID = request["RequestingAgentID"].ToString();
+                string reason = string.Empty;
+
+                if (!m_GroupsService.RemoveGroupBan(requestingAgentID, groupID, bannedID, out reason))
+                    NullResult(result, reason);
+                else
+                    result["RESULT"] = "true";
+            }
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
         }
 
         byte[] HandleGetMembership(Dictionary<string, object> request)

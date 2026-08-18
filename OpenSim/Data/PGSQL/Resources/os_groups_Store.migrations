@@ -204,8 +204,21 @@ COMMIT;
 
 BEGIN;
 
-ALTER TABLE IF EXISTS os_groups_notices  
+ALTER TABLE IF EXISTS os_groups_notices
   ALTER COLUMN "AttachmentItemID" SET DEFAULT '00000000-0000-0000-0000-000000000000'
 ;
+
+COMMIT;
+
+:VERSION 5
+
+BEGIN;
+
+CREATE TABLE os_groups_bans (
+  "GroupID" uuid NOT NULL,
+  "BannedID" VARCHAR(255) NOT NULL DEFAULT '',
+  "BanDate" integer NOT NULL DEFAULT '0',
+  constraint os_groupbanspk PRIMARY KEY ("GroupID", "BannedID")
+);
 
 COMMIT;

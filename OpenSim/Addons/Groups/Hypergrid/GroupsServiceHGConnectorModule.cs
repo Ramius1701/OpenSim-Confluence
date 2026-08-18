@@ -448,6 +448,45 @@ namespace OpenSim.Groups
             m_LocalGroupsConnector.RemoveAgentFromGroup(AgentUUI(RequestingAgentID), AgentUUI(AgentID), GroupID);
         }
 
+        // Group bans, same restriction as role management above: only
+        // performable in the group's own origin world. Real cross-grid ban
+        // propagation (a banned HG visitor's home grid enforcing the ban too)
+        // isn't attempted - a foreign visitor's local-grid membership is what
+        // gets blocked, matching how role changes are already origin-world-only.
+        public Dictionary<string, int> GetGroupBans(string RequestingAgentID, UUID GroupID)
+        {
+            string url = string.Empty, gname = string.Empty;
+
+            if (IsLocal(GroupID, out url, out gname))
+                return m_LocalGroupsConnector.GetGroupBans(AgentUUI(RequestingAgentID), GroupID);
+            else
+                return new Dictionary<string, int>();
+        }
+
+        public bool AddGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            reason = string.Empty;
+            string url = string.Empty, gname = string.Empty;
+
+            if (IsLocal(GroupID, out url, out gname))
+                return m_LocalGroupsConnector.AddGroupBan(AgentUUI(RequestingAgentID), GroupID, AgentUUI(BannedID), out reason);
+
+            reason = "Operation not allowed outside this group's origin world.";
+            return false;
+        }
+
+        public bool RemoveGroupBan(string RequestingAgentID, UUID GroupID, string BannedID, out string reason)
+        {
+            reason = string.Empty;
+            string url = string.Empty, gname = string.Empty;
+
+            if (IsLocal(GroupID, out url, out gname))
+                return m_LocalGroupsConnector.RemoveGroupBan(AgentUUI(RequestingAgentID), GroupID, AgentUUI(BannedID), out reason);
+
+            reason = "Operation not allowed outside this group's origin world.";
+            return false;
+        }
+
         public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID)
         {
             string url = string.Empty, gname = string.Empty;

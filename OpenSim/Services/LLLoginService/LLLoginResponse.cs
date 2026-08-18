@@ -546,7 +546,14 @@ namespace OpenSim.Services.LLLoginService
                     responseData["map-server-url"] = mapTileURL;
 
                 if (profileURL != String.Empty)
+                {
                     responseData["profile-server-url"] = profileURL;
+                    // Firestorm's OpenSim-aware web-profile link (llavataractions.cpp
+                    // getProfileURL()) reads this key, not profile-server-url, and
+                    // appends "?name=[AGENT_NAME]" itself if the URL doesn't already
+                    // have it - matches this repo's own Robust.ini.example convention.
+                    responseData["web_profile_url"] = profileURL;
+                }
 
                 if (DestinationsURL != String.Empty)
                     responseData["destination_guide_url"] = DestinationsURL;
@@ -672,7 +679,10 @@ namespace OpenSim.Services.LLLoginService
                     map["map-server-url"] = OSD.FromString(mapTileURL);
 
                 if (profileURL != String.Empty)
+                {
                     map["profile-server-url"] = OSD.FromString(profileURL);
+                    map["web_profile_url"] = OSD.FromString(profileURL);
+                }
 
                 if (openIDURL != String.Empty)
                 {

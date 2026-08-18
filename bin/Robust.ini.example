@@ -516,6 +516,12 @@
     ; Url to search service
     ; SearchURL = "${Const|BaseURL}:${Const|PublicPort}/";
 
+    ; Web profile page - also feeds Firestorm's own OpenSim-aware "web profile"
+    ; link (it reads the login response's web_profile_url, which is populated
+    ; from this same value, and appends "?name=[AGENT_NAME]" itself if not
+    ; already present)
+    ; ProfileServerURL = "${Const|BaseURL}/profile"
+
     ; For V3 destination guide
     ; DestinationGuide = "${Const|BaseURL}/guide"
 

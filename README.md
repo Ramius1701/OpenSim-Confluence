@@ -586,6 +586,91 @@ work continues — don't let them go stale.
   doesn't have any uploaded yet, so this is genuinely untested against
   real content, not just "pending a restart." See PROJECT_LOG.md for
   the full writeup.
+- **Firestorm (OPENSIM-build) parity gaps** — a three-way research pass
+  cross-referenced Firestorm's own source against this repo, scoped
+  specifically to what the `OPENSIM` CMake build flag (and the
+  viewer's own `LLGridManager::isInOpenSim()` runtime gating) actually
+  ships, not full Second-Life-only Firestorm. Findings, most visible
+  first:
+  - **Inventory thumbnails** — now built. Per-item/per-folder custom
+    thumbnail images (gallery/grid inventory views, outfit gallery).
+    Confirmed genuinely absent from real upstream `opensim/opensim`
+    too (re-verified directly, not assumed, after a direct question
+    about it). Reverse-engineered Firestorm's exact two-phase upload
+    protocol from its own source
+    (`llfloatersimplesnapshot.cpp`/`llinventorymodel.cpp`) rather than
+    guessing. New `InventoryThumbnailUpload` capability module plus DB
+    schema/serialization changes across all three backends. AIS3-only
+    sub-flows ("set to an existing texture via the picker", "clear
+    thumbnail") are a known, documented limitation — AIS3 defaults off
+    on OpenSim-flagged builds and there's no legacy-UDP fallback for
+    either. See PROJECT_LOG.md for the full writeup.
+  - **`AgentProfile`/`UploadAgentProfileImage`** — the single biggest
+    remaining gap when first flagged, now mostly closed. Firestorm has
+    a full legacy-UDP fallback for every profile *text* field (about,
+    first-life text, partner, notes), already served by the existing
+    UDP `AvatarPropertiesRequest`/`AvatarPropertiesUpdate` handlers —
+    verified directly against Firestorm's own `#ifdef OPENSIM` fallback
+    code, nothing needed there. The one piece with no UDP fallback at
+    all is profile *photo upload* (`UploadAgentProfileImage`) — built,
+    same two-phase shape as inventory thumbnails, directly inside
+    `UserProfileModule.cs`. See PROJECT_LOG.md for a real data-loss
+    risk this caught and fixed along the way (a naive image-only update
+    would have silently wiped the rest of a resident's profile text).
+  - **Avatar Picker web-profile link** — was silently broken, now
+    fixed. Two independent mismatches against Firestorm's own
+    `getProfileURL()`: the login response emitted the wrong key
+    (`profile-server-url` instead of the `web_profile_url` Firestorm's
+    OpenSim-aware code actually reads), and even if pointed at the
+    right page, the query-parameter shape didn't match (`?id=<uuid>`
+    vs. the `?name=First.Last` the viewer builds). Both fixed.
+  - **`AvatarRenderInfo`** (avatar visual-complexity/jellydoll
+    accounting) — built. New `AvatarRenderInfoModule.cs`; server is a
+    passive aggregator of viewer-reported complexity weights, same
+    posture as `ModifyRegionModule.cs` toward the data it relays.
+  - **`GroupAPIv1`** (group bans — no legacy-UDP fallback exists for
+    this one operation) — built. Exact protocol re-verified directly
+    against `llgroupmgr.cpp`: one shared `GroupAPIv1` cap per agent,
+    `group_id` passed as a **query-string parameter** on both GET and
+    POST (not in the LLSD body — the one place a copy-paste from the
+    inventory-thumbnails/AvatarRenderInfo shape would have been silently
+    wrong), `ban_action` 1=create/2=delete. New `BanData` model +
+    `os_groups_bans` table (MySQL/PGSQL only — Groups has no SQLite
+    backend at all in this codebase), new service-layer methods wired
+    through all three connector implementations (Local/Remote/Hypergrid
+    — HG bans follow the same local-origin-world-only restriction the
+    existing role-management operations already use, resolving the
+    scoping pass's one open question by precedent rather than attempting
+    cross-grid ban propagation), a join/invite-acceptance check so a
+    ban actually blocks re-entry, and the capability itself built inside
+    `GroupsModule.cs` (its first capability ever — previously 100%
+    UDP-driven). Along the way, gave bans a real server-side permission
+    check (`GroupPowers.GroupBanAccess`, via the connector's existing
+    `HasPower` helper) that the pre-existing `EjectGroupMemberRequest`
+    path still doesn't have (its own `// Todo: Security check?` comment,
+    left alone — out of scope to fix here). See PROJECT_LOG.md for the
+    full five-layer writeup.
+  - `SpatialVoiceModerationRequest` (nearby-voice mute/mute-all).
+    Scoped, deliberately not built yet — the LLSD layer is small, but a
+    real implementation needs to actually silence someone's live voice
+    stream, and no callable mute API was found in the WebRTC/Janus voice
+    stack to hang it off of. Logged rather than built shallow.
+  - `UserInfo` — confirmed **not actually a gap**: Firestorm keeps a
+    full legacy-UDP fallback for this one too, already fully served by
+    existing UDP handlers.
+  - EEP (Extended Environment Protocol) — confirmed **exact wire-shape
+    match**, key-for-key, against `llenvironment.cpp`. No server-side
+    gap; any remaining EEP issue is viewer-facing UX, not this codebase.
+  - Destination Guide — confirmed **already correct in code**; the
+    login response already emits `destination_guide_url` correctly and
+    the native `/guide` page already exists and is routed. Purely an
+    operational toggle (`DestinationGuide = "${Const|BaseURL}/guide"`
+    is documented but commented out by default in
+    `bin/Robust.ini.example`) — not a code gap.
+  - Confirmed NOT gaps (false positives from the raw, unscoped first
+    audit pass, corrected once re-checked against the `OPENSIM` flag
+    specifically): `VETPBR`, `ObjectAnimation` — both already work via
+    alternate mechanisms already inherited from upstream.
 - **SLua** — Second Life's modern Luau-based (Roblox's Lua variant)
   scripting language, in open beta on the SL production grid since
   2025-12-02 ([LL's announcement](https://community.secondlife.com/news/featured-news/announcing-the-slua-open-beta-modern-scripting-comes-to-second-life-r11237/)):

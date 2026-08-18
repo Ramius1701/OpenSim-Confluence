@@ -7844,3 +7844,451 @@ accept continuing upstream work" goal) and would need real verification
 of the native interop pieces (BulletSim, ODE physics, Mono.Addins)
 first - not attempted, logged as a real option only if pursued
 deliberately as its own effort.
+
+### Inventory thumbnails - built, deployed
+
+Picked from the consolidated Firestorm-vs-Confluence gap report (three
+parallel research passes, properly `OPENSIM`-build-flag-scoped after an
+early correction) as the highest-visibility item: per-item and
+per-folder inventory thumbnails, the small image shown in gallery/grid
+inventory views and the outfit gallery. User asked directly whether
+this was already covered by upstream - re-verified from scratch rather
+than assuming: zero hits for "thumbnail" (case-insensitive) in both
+this repo's `origin` remote (real `opensim/opensim`) and a separate
+`opensim-master` checkout freshly fast-forwarded to the same commit.
+Confirmed absent upstream; distinct from the pre-existing (unrelated)
+"snapshot to inventory" texture-saving feature, which both already have.
+
+Reverse-engineered the exact wire protocol from Firestorm's own source
+rather than guessing: `llfloatersimplesnapshot.cpp`'s
+`post_thumbnail_image_coro`/`uploadImageUploadFile` and
+`llinventorymodel.cpp`/`llviewerinventory.cpp`'s `LLSD` (un)packing.
+Two-phase upload, same shape this codebase's own `NewFileAgentInventory`
+already uses: POST `{item_id: uuid}` or `{category_id: uuid}` to the
+`InventoryThumbnailUpload` capability, get back `{uploader: <url>}`;
+POST raw JPEG2000 bytes to that one-time url, get back `{state:
+"complete", new_asset: uuid}`. Confirmed via `LLInventoryCategory`/
+`LLViewerInventoryItem::fromLLSD`/`unpackMessage` that the thumbnail
+only ever travels inside the per-entry `thumbnail` map of the
+`FetchInventoryDescendents2` `categories`/`items` arrays - never as a
+separate field on the top-level requested-folder block (`InventoryCollection`
+only carries `FolderID`/`OwnerID`/`Version`/`Descendents`, confirmed by
+reading the class directly) - so no second serialization point was
+needed there.
+
+Three-part build:
+- **Data model + DB schema** (`IXInventoryData.cs`, `InventoryFolderBase.cs`,
+  `InventoryItemBase.cs`, `XInventoryService.cs`'s four `ConvertTo/FromOpenSim`
+  methods, migrations for all three backends - MySQL `InventoryStore.migrations`
+  v8, PGSQL `InventoryStore.migrations` v11, SQLite's oddly-named
+  `XInventoryStore.migrations` v3, the last one caught by its different
+  filename via `find` and its `varchar(36)` (not `char(36)`) column
+  convention caught by reading its own existing `CREATE TABLE`). Trivial
+  because inventory's reflection-based generic table handlers
+  (`MySQLGenericTableHandler<T>` etc.) map C# public fields to DB columns
+  by name automatically - add a field, add a migration, done.
+- **HTTP response serialization** (`FetchInvDescHandler.cs`): added the
+  `thumbnail` nested-map element to the per-subfolder `categories` loop,
+  matching the pattern `InventoryItemBase.ToLLSDxml` already used for items.
+- **`InventoryThumbnailUpload` capability module** (new file,
+  `Avatar/Inventory/Thumbnails/InventoryThumbnailUploadModule.cs`, added to
+  `OpenSim.Region.CoreModules.csproj`'s explicit `<Compile>` list since that
+  project has `EnableDefaultItems=false`): `INonSharedRegionModule` following
+  `ModifyRegionModule.cs`'s `OSDMap`/`SimpleStreamHandler` style for phase 1,
+  `BunchOfCaps.AssetUploader`'s single-use `BinaryStreamHandler` pattern
+  (mint random uploader path, register directly on `caps.HttpListener`,
+  remove-on-first-use plus a 120s timeout fallback) for phase 2. Validates
+  the requesting agent actually owns the item/folder before minting an
+  uploader - necessary because `XInventoryService.GetItem`/`GetFolder` look
+  up purely by ID and silently ignore the `principalID` parameter, so
+  without this check any agent could set another resident's thumbnail by
+  guessing a UUID. Stores the uploaded bytes as a normal `AssetType.Texture`
+  asset via `Scene.AssetService.Store`, matching how mesh-upload's
+  `texture_list` handling already creates texture assets in `BunchOfCaps.cs`.
+
+**Known, documented limitation, not a bug**: "set thumbnail to an
+existing texture via the picker" and "clear thumbnail" are AIS3-only
+flows in Firestorm (`llviewerinventory.cpp`'s branch on
+`FSUseAis3Api`/`isInSecondLife()`) - AIS3 defaults off on OpenSim-flagged
+builds, and there's no legacy-UDP fallback field for either operation
+(confirmed no `indra/llinventory` in this checkout, no `message_template.msg`
+to check directly, and the classic UDP inventory-update messages predate
+this feature by roughly two decades). Only the snapshot-floater upload
+path is implemented; a full AIS3 implementation would be a separate,
+much larger effort.
+
+Build-verified clean at each of the three stages (0 errors). Full
+rebuild + full deploy sync to Casperia-Dev: compared every `.dll`/`.pdb`
+by MD5, copied everything that differed (83 real diffs after the first
+copy attempt silently no-op'd on files it reported "Device or resource
+busy" for under Git Bash's `cp` - re-copied the same list via PowerShell's
+`Copy-Item`, which had no trouble with the same files, so the busy error
+was transient/tooling-specific rather than a real lock; no `OpenSim.exe`/
+`Robust.exe`/`MoneyServer.exe` process was ever running during any of
+this). Re-verified byte-for-byte after: zero mismatches. Grid was already
+down at deploy time and the user confirmed it's meant to stay down for
+now ("grid is down for the deployment purposes") - not restarted. Actual
+runtime verification (clean region startup with the new module loaded,
+the MySQL v8 migration applying against `casperia_dev`, and a real
+Firestorm session round-tripping an actual thumbnail upload) is still
+pending the user bringing the grid back up.
+
+### Firestorm gap verification pass - 5 remaining items checked against real source
+
+User asked directly to verify whether opensim-master and Confluence
+actually carry the exact wire-level shape Firestorm's `OPENSIM`-build
+code expects, across the rest of the earlier three-way audit (everything
+besides inventory thumbnails, already closed above). Ran a background
+research pass reading real source in all three repos rather than
+reasoning from memory - findings below, each independently spot-checked
+against Firestorm's own `.cpp` before acting on them (worth doing: one
+finding's exact JSON key names turned out to be wrong in the research
+agent's summary - `reporting_complexity_limit`/`over_complexity_limit`
+vs. the real `reportinglimit`/`overlimit` string literals in
+`llavatarrenderinfoaccountant.cpp` - caught only because the actual
+capability got built against the real source afterward, not the summary
+verbatim).
+
+- **UserInfo** (email/directory-visibility settings) - **CLOSED, no work
+  needed.** Firestorm has a full legacy-UDP fallback for this one
+  (`llagent.cpp`, explicitly kept "for OpenSim"), and both `LLClientView.cs`
+  and `UserProfileModule.cs` already implement the UDP
+  `UserInfoRequest`/`UpdateUserInfo` messages it falls back to.
+- **EEP** (Extended Environment Protocol) - **CLOSED, exact match
+  confirmed.** `EnvironmentModule.cs`'s `"ExtEnvironment"` cap and
+  `ViewerEnvironment.cs`'s `ToOSD()` emit the identical key set
+  Firestorm's `llenvironment.cpp` parses (`day_cycle`, `day_length`,
+  `day_offset`, `env_version`, `track_altitudes`, etc., nested under
+  `environment`). Nothing to do here - matches the README's existing
+  note that any remaining EEP gap is viewer-UX, not server-side.
+- **Destination Guide** - **CLOSED in code, operational-only gap.**
+  `LLLoginResponse.cs` already emits `destination_guide_url` correctly
+  when the `DestinationGuide` ini key is set, and Confluence's own
+  `/guide` page is live and routed. `bin/Robust.ini.example` already
+  documents the exact right value
+  (`DestinationGuide = "${Const|BaseURL}/guide"`) - it's just commented
+  out by default. Not a code change; an operator can enable it in their
+  own deployed ini whenever they want the Destinations floater to pick
+  it up automatically. Left the live grid's own ini alone rather than
+  editing it unprompted.
+- **Avatar Picker web-profile link** - **PARTIAL, now fixed.** Two real,
+  independent mismatches, both against Firestorm's `llavataractions.cpp`
+  `getProfileURL()` (OPENSIM branch): (1) `LLLoginResponse.cs` only ever
+  emitted the older `profile-server-url` key; Firestorm's OpenSim-aware
+  code path reads `web_profile_url` specifically and never falls back to
+  the other key, so the viewer's web-profile link was always using a
+  synthetic default instead of Confluence's real page. (2) Firestorm
+  builds that link as `...?name=[AGENT_NAME]` (`Firstname.Lastname`),
+  but `WebInterfaceServiceConnector.cs`'s `HandleProfile` only ever
+  parsed `?id=<uuid>` - even with the URL wired correctly it would have
+  404'd. Fixed both: `LLLoginResponse.cs` now also emits `web_profile_url`
+  (both the Hashtable and OSD-map response paths) alongside the existing
+  key rather than replacing it, and `HandleProfile` now accepts either
+  `?id=` or `?name=First.Last` (resolved via `IUserAccountService`'s
+  existing `GetUserAccount(scope, first, last)` overload). Also
+  documented `ProfileServerURL` in `bin/Robust.ini.example` next to
+  `DestinationGuide`/`AvatarPicker`, since it was previously an
+  undocumented config key. Build-verified (hit and fixed one `CS0128`/
+  `CS0165` variable-scope collision from reusing an `out UUID userId`
+  across both lookup branches - renamed the `TryParse` output to
+  `parsedId` and declared `userId` once, after `account` resolves,
+  instead).
+- **AgentProfile / UploadAgentProfileImage** - **PARTIAL, now mostly
+  closed.** Firestorm's profile floater has a full `#ifdef OPENSIM`
+  legacy-UDP fallback for every text field (about/first-life text,
+  partner, notes, etc. - `llpanelprofile.cpp`, "FS:Beq restore UDP
+  profiles for opensim"), already fully served by this module's existing
+  UDP `AvatarPropertiesRequest`/`AvatarPropertiesUpdate` handlers - no
+  work needed there. The one piece with **no UDP fallback at all** is
+  profile *photo upload* - `llpanelprofile.cpp` aborts with a
+  `RegionCapabilityRequestError` if the `UploadAgentProfileImage`
+  capability is absent. Built it directly inside `UserProfileModule.cs`
+  (not a new file - it needs the module's own `rpc`
+  `JsonRpcRequestManager`/`GetUserProfileServerURI` machinery to talk to
+  the grid-wide profiles service the same way the existing UDP handlers
+  already do, and duplicating that plumbing in a separate class wasn't
+  worth it). Same two-phase shape as inventory thumbnails: POST
+  `{"profile-image-asset": "sl_image_id"|"fl_image_id"}` (the exact
+  Firestorm request body - a slot selector, not a UUID) -> `{"uploader":
+  url}`, then POST raw JPEG2000 bytes to that url -> `{"state":"complete",
+  "new_asset":uuid}`. **Caught a real data-loss risk while building this**:
+  `UpdateAvatarProperties` (`MySQLUserProfilesData.cs` and the other two
+  backends) does a blanket `UPDATE` of the profile row's URL/about-text/
+  both-image columns from whatever `UserProfileProperties` object it's
+  given - not a partial/selective update. A naive image-only POST would
+  have silently wiped the resident's web URL, about text, and first-life
+  photo/text. Fixed by doing a proper read-modify-write: fetch the
+  current profile via the same `avatar_properties_request` JsonRpc call
+  the UDP path already uses, set only the one image field, then write
+  the full merged object back. Registered the new cap via
+  `Scene.EventManager.OnRegisterCaps`, which this module never hooked
+  before (it was UDP-only until now).
+- **AvatarRenderInfo** (avatar visual-complexity/jellydoll accounting) -
+  **MISSING, now built.** New file, `AvatarRenderInfoModule.cs`
+  (`OpenSim/Region/CoreModules/Avatar/RenderInfo/`, added to
+  `OpenSim.Region.CoreModules.csproj`'s explicit `<Compile>` list).
+  Confirmed the exact wire shape directly from
+  `llavatarrenderinfoaccountant.cpp`'s own `KEY_*` string constants
+  (deliberately re-checked rather than trusting the earlier research
+  summary's paraphrase, which had the two limit-key names wrong):
+  POST `{"agents": {agent_id: {"weight": int, "tooComplex": bool}}}` (every
+  connected viewer periodically reports the render complexity it computed
+  locally for every avatar it can see on the region), GET `{"agents":
+  {agent_id: {"weight": int}}, "reportinglimit": int, "overlimit": int}`.
+  The server is a passive aggregator here, same posture as
+  `ModifyRegionModule.cs` toward its glTF override blobs - it doesn't
+  compute complexity itself and doesn't decide who gets jellydolled
+  client-side, just stores whatever the last viewer reported
+  (`ConcurrentDictionary&lt;UUID, (weight, tooComplex)&gt;`, purged on
+  `EventManager.OnRemovePresence` to avoid unbounded growth from
+  visitors who've since left) and relays the two configurable threshold
+  ints (`avatar_render_reporting_limit`/`avatar_render_over_limit` in
+  `[ClientStack.LindenCaps]`, defaulting to 200000/350000 - reasonable
+  starting values, not independently verified against any canonical SL
+  default, since no authoritative source for "the" default was found;
+  worth an operator tuning pass later if this turns out to matter in
+  practice).
+- **SpatialVoiceModerationRequest** (nearby-voice mute/mute-all) -
+  **MISSING, scoped but deliberately NOT built this session.** The
+  capability/LLSD layer itself is small (`llnearbyvoicemoderation.cpp`:
+  POST `{"operand": "mute"|"unmute"|"mute_all"|"unmute_all"[, "agent_id":
+  uuid]}`), but a real implementation needs to actually silence someone's
+  audio in the live voice channel, not just record a flag - checked
+  `OpenSim/Addons/os-webrtc-janus/` for an existing mute primitive to hang
+  this off of and found none; the only "muted" references there are
+  read-only console debug output of Janus's own reported participant
+  state, not a callable mute API. Building this properly would mean
+  first understanding `WebRtcJanusService`'s actual control-plane surface
+  well enough to trust that a capability calling into it does what it
+  claims - not something to rush. Logged here rather than built shallow.
+- **GroupAPIv1 group ban** - **MISSING, scoped but not started.**
+  Real gap, no legacy-UDP fallback exists for this specific operation
+  (`llgroupmgr.cpp` just silently `return`s if the cap is absent - no
+  degraded behavior, banning simply isn't available). Needs a persisted
+  per-group ban list (new DB table/migrations across all three backends,
+  same shape as the inventory-thumbnails or PBR-terrain work), a new
+  service method, and a cap module matching `llgroupmgr.cpp`'s GET
+  `{"ban_list": {ban_id: {"ban_date":...}}}` / POST `{"ban_action":
+  1|2|4, "ban_ids": [uuid,...]}` shape. Checked `OpenSim/Addons/Groups/`
+  first for anything to build on top of - `GroupPowers.GroupBanAccess` is
+  only a permission-bit flag, and `GroupsModule.cs`'s existing
+  `EjectGroupMemberRequest` is a kick (doesn't prevent rejoining), not a
+  ban - there's no partial ban infrastructure to reuse. Similar
+  size/shape to inventory thumbnails' data-model batch; not attempted
+  this session, left for a dedicated pass.
+
+Build-verified clean after each of the AgentProfile/AvatarRenderInfo/
+Avatar-Picker changes (0 errors each time). Full deploy sync to
+Casperia-Dev: 70 changed `.dll`/`.pdb` files this round, all copied via
+PowerShell `Copy-Item` directly (skipped the Git-Bash-`cp`-then-retry
+dance from the thumbnails deploy since the "Device or resource busy"
+behavior there was already established as tooling-specific, not a real
+lock), re-verified byte-for-byte after: zero mismatches. Grid still
+intentionally down, not restarted - same pending-live-verification note
+as the inventory-thumbnails entry above applies to all of this batch's
+new capabilities too.
+
+### GroupAPIv1 group ban - scoped, not built
+
+User asked to scope this one out specifically, next in line after the
+previous batch. Re-verified the exact wire protocol directly against
+Firestorm's `llgroupmgr.cpp` myself rather than trusting the earlier
+research pass's summary verbatim (worth doing again - the
+`AvatarRenderInfo` key names from that same summary turned out wrong
+last time), then mapped it onto Confluence's real Groups architecture
+in `OpenSim/Addons/Groups/` and `OpenSim/Data/`.
+
+**Exact protocol** (`llgroupmgr.cpp:2017-2141`, `EBanRequestAction` in
+`llgroupmgr.h:379-384`): one shared `GroupAPIv1` capability URL per
+agent, not per-group - both GET and POST target the same URL with
+`?group_id=<uuid>` as a **query-string parameter**, not part of the LLSD
+body (easy to get wrong if the inventory-thumbnails/AvatarRenderInfo
+pattern gets copied too literally, since neither of those used a query
+string). GET response: `{"group_id":uuid, "ban_list": {ban_id:
+{"ban_date":date}}}`. POST body: `{"ban_action": 1|2, "ban_ids":
+[uuid,...]}` - `BAN_CREATE=1`, `BAN_DELETE=2`; `BAN_UPDATE=4` is a
+client-side-only flag meaning "POST, then immediately re-GET the list"
+(`action = ban_action & ~BAN_UPDATE` strips it before the value is ever
+sent over the wire - it never reaches the server as part of
+`ban_action`). Confirmed the real UI behavior too:
+`LLPanelGroupMembersSubTab::handleBanMember()` calls `BAN_CREATE` and
+then immediately triggers the existing eject flow in the same action -
+banning always also kicks. The capability's only job is the persisted
+ban list; ejection stays on the existing (separate, UDP)
+`EjectGroupMemberRequest` path, unchanged. Permission gating is
+`GP_GROUP_BAN_ACCESS` client-side, which already has a server-side
+counterpart - `GroupPowers.GroupBanAccess` is already a defined enum
+value in `OpenSim/Addons/Groups/Service/GroupsService.cs` - just never
+consulted anywhere today because nothing needs it yet.
+
+**Confluence architecture mapped**:
+- `OpenSim/Data/IGroupsData.cs` already has the exact right shape to
+  extend: fixed classes per table (`MembershipData`, `RoleData`, etc.)
+  backed by `MySQLGenericTableHandler<T>`/`PGSQLGenericTableHandler<T>`
+  reflection-based handlers - the same pattern the inventory-thumbnails
+  batch already used successfully, so a new `BanData` class
+  (`GroupID`, `BannedID` as string - matching `MembershipData`'s own
+  `PrincipalID` string convention for HG safety, `BanDate`) needs no
+  hand-written SQL beyond the migration itself.
+- **SQLite has no Groups backend at all in this codebase** (confirmed -
+  no `SQLiteGroupsData.cs` exists, unlike Inventory's three full
+  backends) - so this is real two-backend work (MySQL + PGSQL), not
+  three, one less migration/handler pair than the thumbnails batch
+  needed.
+- `os_groups_membership`'s schema in
+  `OpenSim/Data/MySQL/Resources/os_groups_Store.migrations` is the
+  template: a new `os_groups_bans` table (`GroupID`, `BannedID`,
+  `BanDate`, composite PK) as a new `:VERSION` block in both the MySQL
+  and PGSQL migration files.
+- `IGroupsServicesConnector.cs` (the interface `GroupsModule.cs` already
+  talks to via its own `m_groupData` field) needs 3 new methods:
+  `GetGroupBans`/`AddGroupBan`/`RemoveGroupBan`, implemented in
+  `GroupsService.cs` the same way `AddAgentToGroup`/
+  `RemoveAgentFromGroup` already are there.
+- **The capability itself belongs inside `GroupsModule.cs`**, not a new
+  file - same reasoning as `UploadAgentProfileImage` ending up inside
+  `UserProfileModule.cs` rather than a standalone module: it needs the
+  module's own `m_groupData`/session/agent-resolution machinery, and
+  duplicating that in a separate class isn't worth it.
+  `GroupsModule.cs` currently has **zero** capability registration of
+  any kind (100% UDP-message-driven today), so this is a first, not an
+  addition to an existing `OnRegisterCaps` hook.
+- **A real functional requirement, not just list-tracking**: for a ban
+  to mean anything, `AddAgentToGroup`/the invite-acceptance path in
+  `GroupsModule.cs` need a ban-list check inserted before granting
+  membership, refusing re-entry (open-enrollment or invited) to a
+  banned agent. Without this, the feature would just be a database that
+  nothing ever reads.
+- **A real server-side permission check the existing Eject path notably
+  lacks today**: `EjectGroupMemberRequest` in `GroupsModule.cs` has its
+  own `// Todo: Security check?` comment right in the code - it's
+  UDP-message-driven and currently trusts the client's own UI gating
+  entirely. The new ban capability should NOT copy that laxity: POST
+  should check the requesting agent's `GroupPowers.GroupBanAccess` bit
+  via the connector's existing `GetAgentGroupMembership(...).GroupPowers`
+  before applying `BAN_CREATE`/`BAN_DELETE`, a real check the old path
+  doesn't have.
+
+**Effort estimate**: comparable shape to the inventory-thumbnails batch
+(data-model/migration step, service-layer step, capability step) but
+two DB backends instead of three, plus one extra piece thumbnails didn't
+need (join/invite-time ban enforcement, without which the feature would
+be inert).
+
+**Open question, not resolved in this scoping pass**: Hypergrid
+semantics. The `BannedID`-as-string convention should carry
+foreign-grid identifiers transparently the same way `MembershipData`
+already does, but `HGGroupsService.cs` and
+`Remote/GroupsServiceRemoteConnector.cs` weren't audited here and may
+need their own small pass during implementation to confirm bans
+propagate/enforce correctly for HG-visited groups, not just local ones.
+
+Not started - scoping only, per explicit request. Ready to build
+whenever prioritized.
+
+### GroupAPIv1 group ban - built
+
+User asked to build it right after the scoping pass above. Followed the
+scope as written; the only real deviation was resolving the "open
+question" pragmatically rather than leaving it open: group bans got the
+same restriction `AddGroupRole`/`UpdateGroupRole`/`RemoveGroupRole`
+already have for foreign (HG) groups - local-origin-world-only, no
+cross-grid ban propagation attempted. Not a compromise found mid-build;
+it's the existing precedent this codebase already uses for every other
+group-moderation write operation, so bans following it is consistency,
+not a shortcut.
+
+**Five layers, each build-verified before moving to the next:**
+
+1. **Data model** - `BanData` class (`GroupID`, `BannedID` as `string`
+   matching `MembershipData.PrincipalID`'s own HG-safe convention,
+   `BanDate` as unix-timestamp `int`) plus `StoreBan`/`RetrieveBan`/
+   `RetrieveBans`/`DeleteBan` added to `OpenSim/Data/IGroupsData.cs`.
+2. **MySQL + PGSQL backends** - new `os_groups_bans` table
+   (`:VERSION 4`/`:VERSION 5` respectively, Groups has no SQLite backend
+   in this codebase at all, confirmed again during the scoping pass) via
+   a new `MySqlGroupsBansHandler`/`PGSqlGroupsBansHandler` reflection-based
+   generic table handler - zero hand-written SQL beyond the migration,
+   same pattern the existing `os_groups_membership`/`os_groups_roles`
+   handlers already use.
+3. **Service layer** - `GetGroupBans`/`AddGroupBan`/`RemoveGroupBan`
+   added to `IGroupsServicesConnector` and implemented in
+   `GroupsService.cs`, reusing the connector's existing private `HasPower`
+   helper to gate ban create/remove on `GroupPowers.GroupBanAccess` - a
+   real server-side permission check the existing `EjectGroupMemberRequest`
+   path still doesn't have (its own `// Todo: Security check?` comment,
+   left alone - fixing pre-existing unrelated code wasn't in scope here).
+   Wired into all three connector implementations of the interface
+   (`GroupsServiceLocalConnectorModule` - trivial passthrough;
+   `GroupsServiceRemoteConnectorModule`/`GroupsServiceRemoteConnector`/
+   `GroupsServiceRobustConnector` - three new `GETGROUPBANS`/`ADDGROUPBAN`/
+   `REMOVEGROUPBAN` cases added to the existing region-to-Robust XML-RPC-style
+   dispatch, mirroring `ADDAGENTTOGROUP`'s request/response shape exactly;
+   `GroupsServiceHGConnectorModule` - local-origin-only as described above).
+   Dropped a planned `IsAgentBannedFromGroup` connector method before it
+   spread across all four implementers - nothing ends up calling it
+   through the connector interface (the actual enforcement below reads
+   the database directly), so it would have been unused surface on every
+   implementer for no consumer.
+4. **Join/invite enforcement** - a banned agent can't (re)join, whether
+   through open enrollment or accepting an invite: both paths already
+   funnel through `GroupsService.AddAgentToGroup`, the one place
+   membership actually gets created, so a single `m_Database.RetrieveBan(...)`
+   check there (before `_AddAgentToGroup`, not inside it - `_AddAgentToGroup`
+   is also called for founder setup during group creation, which must
+   never be ban-blocked) covers both flows without touching
+   `AddAgentToGroupInvite` itself. Without this the ban list would just
+   be an inert database nobody reads, exactly the risk flagged in scoping.
+5. **Capability module** - `GroupAPIv1`, built inside `GroupsModule.cs`
+   itself (same reasoning as `UploadAgentProfileImage` landing inside
+   `UserProfileModule.cs`: needs the module's own `m_groupData`
+   connector reference directly, not worth a separate file for). First
+   capability this module has ever registered - it was 100% UDP-driven
+   before this. `group_id` read from the **query string**
+   (`request.QueryString.Get("group_id")`) on both GET and POST, exactly
+   as re-verified from `llgroupmgr.cpp` during scoping - not the LLSD
+   body shape every other capability built this session used, the one
+   place a copy-paste from `AvatarRenderInfoModule.cs` would have been
+   silently wrong. POST body `{"ban_action":1|2,"ban_ids":[uuid,...]}`,
+   both GET and POST respond with the same
+   `{"group_id":uuid,"ban_list":{ban_id:{"ban_date":date}}}` shape
+   (matches `processGroupBanRequest`'s check of `result.has("ban_list")`
+   on either verb). Permission enforcement lives one layer down, inside
+   `AddGroupBan`/`RemoveGroupBan` themselves, so the capability handler
+   doesn't duplicate the check - it just surfaces whatever `reason` comes
+   back.
+
+Build-verified clean after each of the five layers (0 errors every
+time). Deploy sync: **partially blocked**, not a code problem. Unlike
+the two previous deploy rounds this session (where every busy-file error
+turned out to be transient Git-Bash-`cp` noise with no real lock behind
+it, confirmed by successfully re-copying the exact same files moments
+later via PowerShell), this round hit a genuine lock: the live grid had
+come back up mid-session (`Robust.exe` PID 28428, both `OpenSim.exe`
+region processes PIDs 4124/29152, confirmed via `Get-CimInstance
+Win32_Process` after `tasklist` itself misleadingly reported nothing
+running - a `tasklist //FI` quoting quirk under Git Bash, not to be
+trusted again without the CIM cross-check). 86 of 158 changed files
+copied cleanly (anything not currently loaded by the running processes);
+the remaining 72 - every DLL actually in use by `Robust.exe`/`OpenSim.exe`
+right now, including `OpenSim.Addons.Groups.dll`,
+`OpenSim.Data.MySQL.dll`, and `OpenSim.Data.PGSQL.dll`, i.e. everything
+this feature actually touched - are still the pre-ban-feature versions
+on disk. Did not stop the grid to force the copy through: it came back
+up on its own after being deliberately left down for the previous
+deploy, which reads as the user (or their own control panel) actively
+using it, not an oversight - stopping a grid a user just brought up
+without asking crosses into the kind of action that needs to be asked
+about first, not assumed. The code is fully built and correct on disk
+in the repo; the remaining 72-file sync just needs a moment when the
+grid is down again.
+
+**Update**: user confirmed the grid was brought back down shortly after
+the above was written. Re-ran the copy for the same 158-file list -
+zero errors this time - and re-verified every `.dll`/`.pdb` byte-for-byte
+against the build output: zero mismatches. Deploy sync fully complete.
+Runtime verification (clean region startup with `GroupsModule`'s new
+`GroupAPIv1` cap loaded, the MySQL `os_groups_bans` migration applying
+against `casperia_dev`, and a real Firestorm session round-tripping an
+actual group-ban create/list/remove) is still pending the user bringing
+the grid back up and testing with a real group.
