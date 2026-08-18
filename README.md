@@ -734,26 +734,44 @@ work continues — don't let them go stale.
   crossing, letting the real crossing skip the `QueryAccess` round-trip
   entirely on a cache hit (falls back to the original synchronous check
   on a miss — no regression, pure latency win in the common case).
-  **Vehicle/prim crossings** — investigated further, not yet built.
-  Verified directly that velocity/angular velocity are *not* silently
-  zeroed on crossing (a common assumption) — they're serialized and
-  explicitly reapplied to the destination physics actor
-  (`SceneObjectPart.AddToPhysics()`); if a crossed vehicle still feels
-  like it loses momentum, the more likely cause is the timing gap itself,
-  not a coded bug. Also found the prim-crossing trigger is worse than
-  the avatar one, not just differently shaped: `SceneObjectGroup.AbsolutePosition`'s
-  setter only fires a crossing once the object is *already* outside the
-  region, with no lookahead at all — but that setter is the single
-  choke point for every scene-object position change in the simulator
-  (physics, `llSetPos`, sits, scripted movement, all of it), so adding a
-  predictive pre-check there safely needs a real design pass of its own,
-  not a rushed copy of the avatar fix into much higher-blast-radius code.
-  Full physics-continuity for vehicle crossing (the genuinely unclaimed,
-  no-fork-has-solved-it problem from the original scoping pass) is
-  unchanged and still needs its own dedicated effort. Full writeup,
-  including a real bug spotted along the way in the pre-existing
-  `BannedRegionCache` (unrelated, not fixed here, flagged separately),
-  in PROJECT_LOG.md.
+  **Vehicle/prim crossings** — fully scoped in a follow-up pass, real
+  root cause confirmed, not yet built. The actual cause: `PhysicsActor.CrossingStart()`
+  (traced into the real ubODE implementation Casperia-Dev runs) explicitly
+  zeroes the object's velocity and disables its physics body the instant
+  a crossing begins, and that freeze holds for the entire synchronous
+  `CreateObject` transfer (the whole object — mesh, scripts, inventory —
+  not a small payload). This is a deliberate server-side freeze, not
+  network jitter or lost data — velocity itself is captured and does
+  survive (confirmed via `SceneObjectPart.AddToPhysics()`'s
+  `applyDynamics` path), it's just held at zero for however long the
+  transfer takes. Also found the real trigger point is narrower and
+  safer than first assumed: not the general-purpose `AbsolutePosition`
+  setter (every code path's choke point), but `SceneObjectPart.PhysicsRequestingTerseUpdate()`
+  — the same kind of purpose-built, physics-only hook the avatar fix
+  used, meaning a predictive trigger *is* safely buildable here after
+  all. The one piece that's genuinely new engineering, now precisely
+  named rather than hand-waved: prims have no equivalent of an avatar's
+  deliberately-inert child agent, so predictively pre-transferring a
+  live vehicle (scripts included) risks a real duplicate — double script
+  execution, double collisions, a visible overlap for nearby viewers.
+  Closing that gap needs a new "staged/inert" object state that gets
+  promoted to live only at the real crossing commit — a concrete,
+  four-part candidate design is in PROJECT_LOG.md, not built in the
+  scoping pass itself.
+  **One real, safe piece built and deployed since**: `CrossingStart()`
+  — the call that freezes a vehicle's physics — used to fire
+  unconditionally before the code even checked whether a valid
+  destination region existed. Moved it to fire only after a destination
+  is confirmed, which shrinks the actual freeze window by the
+  destination-lookup time in the normal case, and fixes the
+  "no matching `CrossingFailure()`" gap by construction — the two
+  failure paths no longer freeze physics at all, so there's nothing
+  left to leave stuck near a grid edge. Deliberately scoped small and
+  safe: no predictive trigger, no caching, no attempt to shrink the
+  dominant `CreateObject` transfer cost — those still need the
+  staged/inert object state above. Not the full "feels like avatar
+  crossing now" outcome; a real, modest, safe win pending the user's
+  own live test.
 
 ## Repository model
 

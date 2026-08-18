@@ -781,8 +781,6 @@ namespace OpenSim.Region.Framework.Scenes
 
             root.KeyframeMotion?.StartCrossingCheck();
 
-            root.PhysActor?.CrossingStart();
-
             IEntityTransferModule entityTransfer = sogScene.RequestModuleInterface<IEntityTransferModule>();
 
             if (entityTransfer is null)
@@ -794,6 +792,17 @@ namespace OpenSim.Region.Framework.Scenes
             destination = entityTransfer.GetObjectDestination(sog, val, out newpos);
             if (destination is null)
                 return sog;
+
+            // PhysActor.CrossingStart() freezes the object (zero velocity, physics
+            // disabled) for however long the crossing takes - moved here, after a
+            // real destination has been confirmed, instead of unconditionally at the
+            // top of this method. The object no longer freezes while we're still
+            // finding out whether there's anywhere to cross into (previously frozen
+            // unconditionally, with no matching CrossingFailure() call on either of
+            // the two early-return paths above - this reordering removes that gap by
+            // construction rather than adding a cleanup call, and shortens the actual
+            // felt freeze window in the success path by the destination-lookup time).
+            root.PhysActor?.CrossingStart();
 
             if (sog.m_sittingAvatars.Count == 0)
             {

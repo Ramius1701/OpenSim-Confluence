@@ -8569,3 +8569,170 @@ confirmation this session that the widened lookahead +
 experience, not just the code path. Vehicle crossing continuity remains
 unverified/unbuilt as noted above - this confirms the avatar-crossing
 piece specifically.
+
+### Vehicle/prim crossing - full scoping pass
+
+User asked to scope this properly as its own effort, following the
+avatar-crossing fix's success. Picked up exactly where the earlier
+investigation left off (the "not built - too high blast radius" note
+above) and traced two more layers deep - this pass found the actual,
+confirmed root cause with hard evidence, not the working theory the
+earlier pass had to leave things at.
+
+**Root cause, confirmed, not theorized**: `SceneObjectGroup.CrossAsync`
+(the prim-crossing equivalent of `ScenePresence.CrossAsync`) calls
+`root.PhysActor?.CrossingStart()` (`SceneObjectGroup.cs:784`) as
+essentially the *first* thing it does, before even checking whether a
+valid destination region exists. In the physics engine actually running
+on Casperia-Dev (ubODE), `CrossingStart()`
+(`OpenSim/Region/PhysicsModules/ubOde/ODEPrim.cs:1024-1050`) captures
+the object's current linear/angular velocity (confirming the earlier
+finding that velocity data itself isn't lost), then explicitly does
+`BodySetLinearVel(Body, 0, 0, 0)`, `BodySetAngularVel(Body, 0, 0, 0)`,
+`disableBodySoft()` (stops collision), and `UnSubscribeEvents()`. This
+is a **deliberate, hard freeze** - the vehicle's physics body is
+stopped and disabled the instant a crossing begins, and stays that way
+for the entire duration of the synchronous
+`SimulationService.CreateObject` call that follows (which has to
+transmit the whole object - mesh, textures, scripts, inventory - not a
+small payload). This is not "the vehicle feels laggy because of network
+jitter" - it is server code explicitly commanding zero velocity and
+disabling physics, for however long the transfer takes. That fully
+explains why vehicle crossings are reported as qualitatively worse than
+avatar crossings, not just quantitatively slower.
+
+**A real, smaller, separately-fixable bug spotted while tracing this**:
+`CrossingStart()` fires before `GetObjectDestination()` is even called
+(`SceneObjectGroup.cs:784` vs `:794`). If no valid destination region is
+found (`destination is null`, `:795-796`) or there's no
+`IEntityTransferModule` (`:788-789`), the function returns early with
+**no matching `CrossingFailure()` call** to re-enable the body. Every
+other early-exit path in this codebase pairs a `CrossingStart()` with a
+`CrossingFailure()` on failure (that's the whole point of
+`CrossingFailure()` existing) - these two paths look like they'd leave
+a vehicle's physics permanently disabled after a failed crossing attempt
+near map edges or a misconfigured region. Not fixed here (tangential to
+the scoping task, needs its own verification pass with a real edge-of-grid
+test before touching it) - flagged as its own follow-up, matching how
+the `BannedRegionCache` bug was handled.
+
+**Good news on the trigger side - narrower and safer than the earlier
+pass assumed**: the earlier investigation flagged
+`SceneObjectGroup.AbsolutePosition`'s setter as the crossing trigger and
+concluded a predictive fix there was too high-blast-radius (that setter
+is called from everywhere - scripts, editing, sits, physics). Tracing
+one layer deeper found the setter isn't actually the primary entry
+point for a *moving physical object* - `SceneObjectPart.PhysicsRequestingTerseUpdate()`
+(`SceneObjectPart.cs:3205-3222`) is what the physics engine calls every
+time it reports a new position for a physical body, and *that* is what
+sets `AbsolutePosition` for a moving vehicle in practice. This is a much
+narrower, purpose-built hook - the direct prim equivalent of
+`ScenePresence.Update()`'s per-frame call to
+`CheckForBorderCrossing()` - so a predictive lookahead (mirroring the
+avatar fix's adaptive-window approach) could safely live here without
+touching the general-purpose position setter every other code path
+relies on. This resolves the specific "too risky to touch" objection
+from the earlier pass for the *trigger* half of the problem.
+
+**The real remaining gap, now precisely named instead of vaguely
+gestured at**: making the *transfer* predictive - starting
+`CreateObject` before the vehicle actually reaches the border, so the
+freeze window is mostly or entirely hidden - runs into a genuine safety
+problem avatars don't have. An avatar's pre-established neighbor
+presence is a *child agent*: deliberately inert (no scripts, no
+physics, camera/render purposes only), so having it exist in two
+regions briefly is safe. A prim has no equivalent inert state. If
+`CreateObject` fired predictively with the object's real, live
+representation - scripts included - while the source original is still
+fully interactive, the result would be a genuine live duplicate:
+double script execution (a vendor script could charge a purchase
+twice, a sensor could fire events twice), double collision physics, and
+two visibly overlapping copies for any nearby viewer with the border
+region in draw distance. **This specific gap - no "staged/inert" scene
+object lifecycle state - is the actual, precise scope of what earlier
+got called "a new subsystem."** It's real, and it's the one piece of
+this whole investigation (across both crossing scoping passes) that
+needs new engineering rather than a tuning change or a safe reuse of
+existing machinery.
+
+**Candidate design, not built, for whenever this gets picked up**:
+mirror the avatar pattern deliberately, since it's proven and already
+live-verified working. (1) Predictive trigger inside
+`PhysicsRequestingTerseUpdate`, adaptive lookahead like the avatar fix.
+(2) A new "staged" creation mode for `CreateObject`/
+`HandleIncomingSceneObject` that produces a phantom, non-physical,
+script-suspended copy on the destination - existing purely for
+render/position continuity, not simulation. (3) At the real crossing
+commit (the existing reactive, now-safe-to-keep-as-is trigger), a
+lightweight "promote" call instead of a full re-transfer: enable
+physics with the preserved velocity (already proven to survive via
+`AddToPhysics`'s `applyDynamics` path), resume scripts, and only then
+tear down and delete the source copy - never a window where both are
+simultaneously live and interactive. (4) `CrossingFailure()`-equivalent
+cleanup if the predictive stage goes stale (avatar approached, then
+turned away) needs to tear down the unused staged copy on the
+destination, not just leave it orphaned.
+
+**Sizing, honestly**: bigger than the avatar fix - it's a genuinely new
+object lifecycle state plus promotion/demotion logic requiring real
+care around the "never simultaneously live in both regions" invariant,
+not a config value or a cache. But it is no longer "unclaimed territory,
+scope unknown" - there's now a concrete design to execute against, a
+named root cause backed by the actual physics-engine source (not
+inference), a resolved answer for the trigger half (safe, narrow hook
+exists), and a precisely-scoped remaining gap (one missing object
+state) rather than an open-ended "needs a new subsystem" without
+knowing what that subsystem actually has to do.
+
+### Vehicle crossing - one real, safe, immediately-testable fix built
+
+User asked to build something real and pushable now, not wait for the
+full inert-copy subsystem above. Deliberately did **not** attempt the
+predictive-trigger/staged-object design from the scoping pass - that
+still needs the missing object-lifecycle state to be safe, and building
+it under "I want something testable now" pressure is exactly how a
+double-script-execution bug would ship. Instead built the one piece
+from the scoping pass that was already confirmed both safe and real:
+the `CrossingStart()`/`CrossingFailure()` ordering bug found while
+tracing the root cause.
+
+**What changed** (`SceneObjectGroup.cs`, `CrossAsync`):
+`root.PhysActor?.CrossingStart()` - the call that zeroes a physical
+object's velocity and disables its body - used to fire
+unconditionally as nearly the first thing in the method, before even
+checking whether a valid destination region exists or whether an
+`IEntityTransferModule` is available. Moved it to fire only after
+`GetObjectDestination()` has confirmed a real destination. Two direct
+effects:
+
+1. **The freeze window shrinks** by however long the destination
+   lookup (`GridService.GetRegionByPosition`) takes, in the normal
+   successful-crossing case - the object is no longer frozen while the
+   server is still figuring out where it's going. Not the dominant cost
+   (that's still the `CreateObject` transfer itself, untouched here and
+   still needing the staged-object work to fix for real), but a real,
+   measurable piece of it, and safe by construction - no new state, no
+   duplicate-object risk, nothing that can leave two live copies
+   anywhere.
+2. **Fixes the missing-`CrossingFailure()` bug by construction rather
+   than by adding cleanup calls.** The two early-return paths (no
+   transfer module; no destination found) never freeze physics in the
+   first place now, so there's nothing left to undo - a vehicle driven
+   toward the edge of the grid, or hitting either of those failure
+   conditions, no longer risks getting stuck with permanently disabled
+   physics. Withdrew the previously-flagged follow-up task for this -
+   superseded by this fix.
+
+Deliberately scoped small: no predictive trigger, no caching, no
+attempt to shrink the `CreateObject` transfer time itself. Those all
+still need either the new object-lifecycle state or further
+investigation this pass didn't do. What shipped is real and safe, not
+the full "vehicle crossings feel like avatar crossings now" outcome -
+that claim would be overselling what a two-line reorder can do. Set
+expectations accordingly when this gets tested.
+
+Build-verified clean (0 errors). Deployed: grid was down, 186 changed
+`.dll`/`.pdb` files copied, re-verified byte-for-byte after - zero
+mismatches. Live verification (a real vehicle crossing on Casperia-Dev,
+ideally timed/compared against the pre-fix behavior rather than just
+"does it still work") is pending the user's own test.
