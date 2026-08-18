@@ -9038,3 +9038,128 @@ only fires on failures that would otherwise have killed the teleport,
 so its effect will show up as "HG teleports that used to occasionally
 fail now don't," not as something directly reproducible in a single
 test session.
+
+### Attachment reliability (relog/crossing) - scoping pass, mixed
+### verdict: one real gap, one confirmed non-issue, one open question
+
+Traced both halves of "attachment reliability" the user asked about -
+crossing/teleport continuity and relog persistence - as separate
+mechanisms, since they turned out to go through completely different
+code paths. Graded each finding by how confident the evidence actually
+makes it, rather than treating "attachments are unreliable" as one
+undifferentiated complaint.
+
+**Crossing/teleport continuity - inherits this session's earlier
+fixes, one narrow silent-loss edge case found.** Attachments don't
+cross independently like free-standing prims - `AttachmentsModule.
+CopyAttachments` clones each worn object (with a script-state snapshot)
+directly into the same `AgentData` payload that carries the avatar
+itself, so they ride the identical synchronous `CreateAgent`/
+`UpdateAgent` calls already hardened by this session's border-crossing
+lookahead fix and, for HG destinations, the new connector retry. No
+separate transport, so no separate transport problem. The one real gap
+found: `Scene.AddSceneObject`'s attachment path (line ~3159) calls
+`AttachmentsModule.AttachObject` and, if it returns `false` (the one
+concrete way this happens in practice: the avatar is already at
+`Constants.MaxAgentAttachments` when the destination re-attaches),
+logs a single debug line ("arrived but failed to attach, setting to
+temp") and leaves the object sitting in the scene as a temp-flagged,
+unattached, ownerless-looking prim - it is not re-queued, not restored
+to inventory, and the avatar gets no notification. It will eventually
+be swept by ordinary temp-object cleanup and is then just gone. Low
+probability (needs the avatar to already be at the attachment cap) but
+completely silent and unrecoverable when it does happen. Confirmed
+`HandleIncomingAttachments` (the caller) already isolates one bad
+attachment from the rest of the batch rather than failing the whole
+crossing, so this is a narrow, self-contained gap, not a systemic one.
+
+**Relog persistence of in-session changes - checked, found already
+correct, not a bug.** Started from the hypothesis that repositioning a
+still-worn attachment (a HUD, typically) and then logging off without
+explicitly detaching it first would lose the new position, since
+`AttachmentsModule.UpdateAttachmentPosition` only sets `HasGroupChanged
+= true` and doesn't itself persist anything. Traced where that flag
+actually gets consumed: `UpdateKnownItem` (the only method that writes
+the attachment's state back to the inventory asset) is called from
+`UpdateDetachedObject`, which is called from `DeRezAttachments`, which
+*is* wired into `Scene.RemoveClient` - the real handler behind a
+genuine logout. Confirmed the wiring is correct in three ways: it only
+fires when `!isChildAgent` (so an ordinary region crossing, where the
+old presence becomes a child rather than being fully removed, correctly
+skips it - already-transferred attachments aren't redundantly re-saved
+mid-flight), it explicitly skips saving for Hypergrid visitors (a
+deliberate, correct choice - saving a foreign grid's item into a
+different-format local record would corrupt it on return home), and it
+fires before script/asset cleanup so the position at last-known-good is
+what gets written. The hypothesis was wrong: a graceful logout does not
+lose in-session attachment changes. Confirmed identical in upstream
+`opensim-master` (same single call site for `UpdateKnownItem`), so even
+if this *had* been a bug it wouldn't have been Confluence-specific.
+What this pass could not verify from server source alone is the
+ungraceful case - a viewer crash or dropped connection relies on the
+same generic dead-client watchdog that handles all session cleanup
+grid-wide, not anything attachment-specific, and auditing that watchdog
+is a distinct, larger networking question outside this pass's scope.
+
+**Open question, not confirmed either way.** `AttachmentsModule.
+RezAttachments` (the server-authoritative attachment rez on login)
+skips entirely - not just skips duplicates, skips *everything* - if
+`sp.GetAttachmentsCount() > 0` when it runs, logging "their viewer has
+already rezzed attachments." If a viewer ever rezzes even one
+attachment client-side on its own initiative before the server's sweep
+runs, every other attachment the avatar was wearing would silently
+never get server-rezzed - a plausible, concrete mechanism for "only
+some of my attachments came back after I logged in." Confirmed this
+exact check, comment included, exists verbatim in upstream `opensim-
+master`. What's unconfirmed: whether any viewer in practice actually
+rezzes attachments on its own initiative at login rather than waiting
+for the server (OpenSim's attachment model is meant to be server-
+authoritative), or whether this guard exists purely as a defensive
+idempotency check against `RezAttachments` somehow being invoked twice
+for the same login. Server-side source alone can't settle which it is.
+Flagging rather than fixing blind - the right next step is a live test
+with `DebugLevel` raised on this module during a real relog with
+several attachments worn, to see whether the skip path ever actually
+fires for a genuine relog.
+
+**Built and deployed.** Fixed the `MaxAgentAttachments`-triggered
+silent orphaning in `Scene.AddSceneObject` (the attachment branch,
+where `AttachmentsModule.AttachObject` can return `false`). Previously
+this logged a single debug line and left the object sitting in the
+scene as an unattached temp prim with no further handling - it would
+eventually vanish on the next temp-object sweep while the avatar's
+appearance data still claimed it was worn. Since the backing inventory
+item is untouched either way (nothing in this path ever removes it),
+the fix is to stop pretending it succeeded: on attach failure, remove
+the item from `sp.Appearance` (via `RemoveAttachment`) so the
+appearance record matches reality instead of claiming a phantom worn
+item, delete the orphaned in-world copy immediately instead of leaving
+it to rot, log a `Warn` (not `Debug`, since this is data-visible to the
+user) naming the item ID so it's traceable, and - critically - return
+`false` from `AddSceneObject` instead of the previous `true`. That last
+part matters: the caller (`EntityTransferModule.HandleIncomingAttachments`)
+keys off this return value to drop the object from its own working
+list before firing `TriggerOnIncomingSceneObject` on everything that's
+left; returning `true` while having just deleted the object would have
+left a dangling reference that could fire a scene-object event against
+something already gone, which would have been a worse bug than the one
+being fixed. The user experience is unchanged in the failure case
+itself (the item still doesn't make it across when the avatar is at
+the attachment cap - that's a real capacity limit, not something this
+fix removes) but the failure is now clean: no ghost prim, no appearance/
+reality desync, and the original inventory item was never touched, so
+the user can just re-wear it.
+
+Left the relog persistence open question (the `RezAttachments`
+all-or-nothing skip gate) unbuilt - it still needs the live-log
+verification described above before any code change is justified;
+building a fix for a race that hasn't been confirmed to occur would be
+guessing.
+
+Build-verified clean (0 errors, 0 warnings) via `dotnet build
+OpenSim.sln -c Release`. Deployed: grid confirmed down, `OpenSim.
+Region.Framework.dll`/`.pdb` copied via PowerShell `Copy-Item`, verified
+byte-for-byte via `Get-FileHash` MD5 match. Needs a grid restart to
+take effect. Live verification needs an avatar actually parked at
+`MaxAgentAttachments` crossing a border, which isn't practical to stage
+on demand - left for the user's own testing opportunity.

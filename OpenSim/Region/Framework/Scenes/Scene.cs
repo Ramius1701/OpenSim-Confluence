@@ -3163,7 +3163,28 @@ namespace OpenSim.Region.Framework.Scenes
                     if (attached)
                         RootPrim.RemFlag(PrimFlags.TemporaryOnRez);
                     else
-                        m_log.DebugFormat("[SCENE]: Attachment {0} arrived but failed to attach, setting to temp", sceneObject.UUID);
+                    {
+                        // Previously this just logged and left the object sitting in the scene as an
+                        // unattached temp prim - it was never re-queued or restored, so it just silently
+                        // vanished on the next temp-object sweep while the avatar's appearance data still
+                        // claimed it was worn. The backing inventory item is untouched either way (nothing
+                        // here ever removes it), so the least-harm outcome is to clean up the orphaned
+                        // in-world copy and reconcile the appearance record now rather than leave a ghost.
+                        m_log.WarnFormat(
+                            "[SCENE]: Attachment {0} (item {1}) arrived for {2} but failed to attach (avatar likely at MaxAgentAttachments) - discarding orphaned copy, item remains in inventory",
+                            sceneObject.UUID, grp.FromItemID, sp.Name);
+
+                        if (grp.FromItemID.IsNotZero())
+                            sp.Appearance.RemoveAttachment((int)grp.AttachmentPoint, grp.FromItemID);
+
+                        // Must report failure, not success: callers (e.g. EntityTransferModule.
+                        // HandleIncomingAttachments) key off this return value to drop the object from
+                        // their own working list. Returning true here despite deleting the object would
+                        // leave a dangling reference that a caller could still fire scene-object events
+                        // against after it's gone.
+                        DeleteSceneObject(sceneObject, false, true);
+                        return false;
+                    }
                 }
                 else
                 {

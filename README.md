@@ -830,7 +830,38 @@ work continues — don't let them go stale.
   real reply) — never on a genuine denial the peer actually sent. Build-
   verified clean, deployed to the live grid (confirmed down first, DLL/
   PDB copied and MD5-verified byte-identical), needs a restart to take
-  effect. Full writeup in PROJECT_LOG.md.
+  effect. Full writeup in PROJECT_LOG.md. Fifth item scoped (mixed
+  verdict): **attachment reliability (relog/crossing)**. Crossing
+  continuity turned out to ride the same `AgentData` transfer already
+  hardened above, with one narrow real gap — if an avatar is already at
+  `MaxAgentAttachments` when the destination re-attaches, the object
+  used to silently sit unattached until temp-object cleanup removed it,
+  with no notification and the avatar's appearance data still claiming
+  it was worn. **Built and deployed**: `Scene.AddSceneObject` now
+  reconciles the appearance record (removes the phantom attachment),
+  deletes the orphaned copy immediately instead of leaving a ghost, logs
+  a `Warn` naming the item, and correctly reports failure to its caller
+  instead of silently claiming success — the last part matters because
+  the caller uses that return value to drop the object from its own
+  list before firing scene-object events on everything left, so
+  reporting success while having just deleted the object would have
+  left a dangling reference. The underlying capacity limit isn't
+  removed — the item still can't cross while the avatar's at the cap —
+  but the failure is now clean instead of a silent leak, and the
+  original inventory item was never touched either way. Checked the
+  hypothesis that repositioning a worn HUD and logging off without
+  detaching would lose the change — traced the actual persistence path
+  (`Scene.RemoveClient` → `DeRezAttachments` → `UpdateKnownItem`) and
+  found it already correctly wired for graceful logout, so that
+  hypothesis was **wrong**, not confirmed; ungraceful disconnects rely
+  on the grid's generic dead-client watchdog, out of this pass's scope.
+  Flagged one open question rather than guessing, not built: `RezAttachments`
+  skips server-side rez of *all* attachments if even one is already
+  present when it runs — a plausible mechanism for "only some
+  attachments came back after login," confirmed identical in upstream
+  `opensim-master`, but whether any real viewer actually triggers this
+  race couldn't be confirmed from server source alone. Full writeup in
+  PROJECT_LOG.md.
 
 ## Repository model
 
