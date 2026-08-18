@@ -807,8 +807,24 @@ work continues — don't let them go stale.
   an `OpenSim.exe` restart to take effect; no specific speedup promised.
   A secondary check of sensor/timer scanning (`SensorRepeat.cs`) found
   the per-sensor scene scan is the LSL sensor model's inherent cost, not
-  a distinct bug — no code fix needed there. Full writeup in
-  PROJECT_LOG.md.
+  a distinct bug — no code fix needed there. Third one scoped (not yet
+  built): **Hypergrid teleport reliability**. Traced the actual outbound
+  HG code path and found a real, well-evidenced cause: every HG
+  teleport requires a minimum of 3–4 serial, synchronous WAN HTTP calls
+  across up to 3 independently-run grids (destination Gatekeeper lookup,
+  a login relay through the traveler's *home* grid that itself nests a
+  home→destination create-agent and a destination→home verify-client
+  call inside a single 30s budget, then a direct update-agent call) —
+  and confirmed **zero retry logic anywhere in that chain**, in both
+  Confluence and, checked side-by-side, identically in upstream
+  `opensim-master` and `OpenSim-Tranquillity` (`WhiteCore-Dev` doesn't
+  even ship Hypergrid connectors). One transient blip on any hop — even
+  ones the source sim never sees directly — fails the whole teleport
+  and forces a full manual retry from scratch. Verified a bounded
+  retry-with-backoff fix would be safe (traced `Scene.NewUserConnection`
+  and confirmed it already dedupes by AgentID, so a retry can't create
+  a duplicate agent) before recommending it. Not built yet — scoped and
+  ready, pending the user's go-ahead. Full writeup in PROJECT_LOG.md.
 
 ## Repository model
 

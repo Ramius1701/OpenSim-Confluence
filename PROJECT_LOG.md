@@ -8910,3 +8910,95 @@ resident testing right now. No specific speedup number is promised;
 this is a real, evidence-based, reversible lever, not a code fix, and
 its actual impact will depend on how script-heavy the live workload
 turns out to be.
+
+### Hypergrid teleport reliability - scoping pass (build pending)
+
+Traced the actual outbound-HG-teleport code path end to end rather than
+starting from "HG is just flaky" folklore, matching the same rigor as
+the border-crossing scoping pass. Confirmed a real, well-evidenced
+architectural cause and a specific, safe fix direction - not yet built,
+this is the scoping pass only.
+
+**The chain.** `HGEntityTransferModule.CreateAgent` (which every
+outbound HG teleport goes through) requires a minimum of three serial,
+synchronous WAN HTTP calls before the destination even starts
+constructing an agent, plus a fourth after:
+
+1. `GatekeeperServiceConnector.GetHyperlinkRegion` - source sim calls
+   the *destination* grid's Gatekeeper directly (XML-RPC, 10s timeout)
+   to resolve the real region behind the hyperlink.
+2. `UserAgentServiceConnector.LoginAgentToGrid` - source sim calls the
+   traveler's *home* grid's UserAgentService (`homeagent/` endpoint,
+   `SimulationServiceConnector.CreateAgent`, 30s timeout). This single
+   call from the source sim's point of view is actually a black box
+   containing **two more WAN hops it never sees directly**: the home
+   grid's own `UserAgentService` handler relays the login on to the
+   *destination* grid's `foreignagent/` endpoint, and the destination
+   sim in turn calls back to the *home* grid's `VerifyClient`/
+   `VerifyAgent` to authenticate the incoming session before accepting
+   it. All of this has to complete, serially, inside the source sim's
+   single 30-second timeout budget.
+3. `SimulationServiceConnector.UpdateAgent` - source sim to destination
+   sim directly, full agent data (30s, or 200s for the position-only
+   variant), same pattern already flagged in this session's earlier
+   border-crossing work.
+4. Viewer-driven `CompleteMovementIntoRegion` callback, awaited by
+   `WaitForAgentArrivedAtDestination` (shared machinery with local
+   teleports, not HG-specific).
+
+**The actual bug: zero retry anywhere in this stack.** Read every HG
+connector call site (`GatekeeperServiceConnector`,
+`UserAgentServiceConnector`, the base `SimulationServiceConnector`) -
+every single one is try/once/catch/fail, with no retry on transient
+failure. A local-grid neighbor crossing is typically LAN-fast between
+hosts an operator controls; an HG hop crosses to a third party's
+server over the open Internet, with no guarantee it's even up, let
+alone fast. One dropped packet, one slow DNS lookup, one momentarily
+busy destination on *any* of the three-to-four hops above (including
+the two the source sim never directly sees) kills the *entire*
+teleport, and the user has to start over from scratch - repeating every
+earlier hop, not just the one that actually failed. This is the
+concrete mechanism behind "HG teleport failed, try again" being such a
+common complaint: it's not that HG is unreliable in principle, it's
+that nothing in the chain tolerates a single blip.
+
+**Confirmed ecosystem-wide, not a Confluence regression.** Diffed
+these same three connector files against upstream `opensim-master` and
+`OpenSim-Tranquillity` - identical 10-second timeouts, identical
+zero-retry structure, in both. Checked `WhiteCore-Dev` for comparison
+and found it doesn't ship Hypergrid connectors at all (no Gatekeeper or
+UserAgent service in that fork). So this is a real, shared weak point
+in the standard OpenSim HG protocol implementation itself, not
+something introduced here - same pattern as the last two findings in
+this campaign.
+
+**Confluence already has one real, on-record mitigation for a
+different HG failure mode.** `HGEntityTransferModule.
+ApplyCanonicalLocalServiceURLs` (pre-existing in this repo) already
+rewrites a local user's stale `HomeURI`/`GatekeeperURI` before it's
+sent outbound, so a grid whose public domain changed after accounts
+were created doesn't keep broadcasting a dead address to every
+foreign grid forever. That's a different problem (identity drift, not
+transient network failure) and isn't touched by this finding.
+
+**Verified a retry-based fix would be safe before recommending it.**
+The obvious fix for "one blip kills everything" is a small bounded
+retry (a couple of attempts with a short backoff) around each of the
+three connector call sites, limited to genuinely transient failures
+(timeout, connection-refused, 5xx) and explicitly *not* retried on a
+real business-logic failure (banned, access denied, region not found).
+Before recommending this, checked whether retrying `CreateAgent`-style
+calls could ever create a duplicate agent if the first attempt actually
+landed but the response was merely lost - traced `Scene.
+NewUserConnection` (the real destination-side handler behind every
+`CreateAgent`/`homeagent`/`foreignagent` call) and confirmed it already
+looks up any existing `ScenePresence` by `AgentID` and reuses it rather
+than creating a second one. A retry is safe by construction; it would
+land on the same dedupe path a legitimate second attempt already goes
+through today (e.g. from a user manually retrying a failed TP).
+
+**Not built yet.** This was a scoping pass; the recommended fix
+(bounded retry-with-backoff on the three HG connector call sites, WAN-
+failure-only) is scoped and ready to build on request, matching the
+two-step scope-then-build cadence used for border-crossing and vehicle-
+crossing earlier in this campaign.
