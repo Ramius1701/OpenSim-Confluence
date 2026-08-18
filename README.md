@@ -1003,6 +1003,26 @@ work continues — don't let them go stale.
   and MD5-verified. Needs a grid restart to take effect; live
   verification against a real in-world purchase is left for the user's
   own testing opportunity. Full writeup in PROJECT_LOG.md.
+- **Follow-up: systematic audit found a second real gap in
+  `ConfluenceCurrencyModule`, `OnRequestPayPrice`.** After `OnObjectBuy`
+  turned up missing, the user asked whether more gaps might be sitting
+  undiscovered in this module specifically. Rather than wait for a
+  third to surface by accident, diffed every client event both
+  `DTLNSLMoneyModule` and `GloebitMoneyModule` subscribe to against
+  Confluence's own subscriptions — found one more real gap
+  (`OnRequestPayPrice`, which answers the viewer's query for an
+  object's `llSetPayPrice`-configured Pay-dialog amounts) and ruled out
+  two others as genuinely not gaps rather than assuming: `OnScriptAnswer`
+  is Gloebit-specific (its own external debit-permission flow, not
+  applicable here), and `OnParcelBuyPass` is already handled correctly
+  elsewhere via the generic `IMoneyModule` interface. **Built and
+  deployed**: `ProcessRequestPayPrice`, mirroring `DTLNSLMoneyModule`'s
+  own implementation exactly — a read-only response with no money
+  movement, unlike `OnObjectBuy`. Build-verified clean, grid confirmed
+  down, deployed and MD5-verified (confirmed the DLL had actually
+  changed before confirming the match, since file size alone matched
+  the prior build). Needs a grid restart. Full writeup in
+  PROJECT_LOG.md.
 
 ## Repository model
 

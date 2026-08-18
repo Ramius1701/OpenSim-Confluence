@@ -9613,3 +9613,48 @@ world "Buy" on a for-sale object with `ConfluenceCurrencyModule`
 active (which it already is, on both regions) - left for the user's
 own testing opportunity, since this is exactly the kind of change
 worth confirming against a real purchase before broader resident use.
+
+### Follow-up: systematic client-event audit found a second real gap
+### (`OnRequestPayPrice`), same shape as the `OnObjectBuy` one
+
+The user raised a fair concern directly: this is the second time a
+real gap turned up in `ConfluenceCurrencyModule` specifically by
+comparing it against `DTLNSLMoneyModule`, and asked whether there might
+be more sitting undiscovered. Rather than wait for a third one to
+surface by accident, did the systematic check that should have
+happened the first time: listed every client event both
+`DTLNSLMoneyModule` and `GloebitMoneyModule` subscribe to (two
+independent implementations, useful as cross-checks against each
+other) and diffed that against `ConfluenceCurrencyModule`'s own
+subscriptions.
+
+Result: one more real, confirmed gap - `OnRequestPayPrice`, present in
+both reference modules, absent from Confluence's native one. This
+answers the viewer's query for an object's configured Pay-dialog
+quick-pick amounts (the values set via `llSetPayPrice`) via
+`SendPayPrice`. Two other Gloebit-only hooks were checked and ruled
+out as *not* gaps rather than assumed clean: `OnScriptAnswer` is
+specific to Gloebit's own external OAuth-style debit-permission grant
+flow, not applicable to a first-party ledger with no external
+authorization step; `OnParcelBuyPass` is already handled correctly
+elsewhere - `LandManagementModule.ClientParcelBuyPass` calls the
+generic `IMoneyModule.MoveMoney(...)` interface directly, which
+`ConfluenceCurrencyModule` already implements, so it was never actually
+missing.
+
+**Built and deployed.** Added `ProcessRequestPayPrice`, subscribed to
+`OnRequestPayPrice` alongside the module's other events: looks up the
+target object, and calls `remoteClient.SendPayPrice(objectID,
+group.RootPart.PayPrice)` with the root part's configured pay-price
+array - mirroring `DTLNSLMoneyModule`'s own implementation exactly,
+since this one is a read-only informational response with no money
+movement at all, unlike `OnObjectBuy`, so there was no analogous
+"do better than the reference" opportunity here.
+
+Build-verified clean (0 errors, 0 warnings). Deployed: grid confirmed
+down, `OpenSim.Region.CoreModules.dll`/`.pdb` copied via PowerShell
+`Copy-Item`, verified as genuinely changed and byte-for-byte matching
+via `Get-FileHash` MD5 (confirmed the new hash differed from the
+previously-deployed OnObjectBuy-only build before confirming the match,
+since the file size alone was identical between builds and wasn't
+sufficient proof on its own). Needs a grid restart to take effect.

@@ -243,6 +243,7 @@ namespace OpenSim.Region.CoreModules.World.Currency
             client.OnMoneyBalanceRequest += SendMoneyBalanceHandler;
             client.OnMoneyTransferRequest += ProcessMoneyTransferRequest;
             client.OnObjectBuy += ProcessObjectBuy;
+            client.OnRequestPayPrice += ProcessRequestPayPrice;
             client.OnLogout += OnClientLoggedOut;
         }
 
@@ -252,7 +253,30 @@ namespace OpenSim.Region.CoreModules.World.Currency
             client.OnMoneyBalanceRequest -= SendMoneyBalanceHandler;
             client.OnMoneyTransferRequest -= ProcessMoneyTransferRequest;
             client.OnObjectBuy -= ProcessObjectBuy;
+            client.OnRequestPayPrice -= ProcessRequestPayPrice;
             client.OnLogout -= OnClientLoggedOut;
+        }
+
+        // Answers the viewer's "what are this object's configured Pay-dialog quick-pick
+        // amounts" query (the values set via llSetPayPrice) with SendPayPrice. Both other
+        // selectable currency modules in this repo (DTLNSLMoneyModule, GloebitMoneyModule)
+        // already implement this; this native module never had, until now - found by
+        // systematically diffing every client event those two wire up against this
+        // module's own subscriptions after the OnObjectBuy gap turned up the same way.
+        private void ProcessRequestPayPrice(IClientAPI remoteClient, UUID objectID)
+        {
+            if (remoteClient.Scene is not Scene scene)
+                return;
+
+            SceneObjectPart part = scene.GetSceneObjectPart(objectID);
+            if (part == null)
+                return;
+
+            SceneObjectGroup group = part.ParentGroup;
+            if (group == null || group.IsDeleted)
+                return;
+
+            remoteClient.SendPayPrice(objectID, group.RootPart.PayPrice);
         }
 
         private void EconomyDataRequestHandler(IClientAPI client)
