@@ -920,6 +920,39 @@ work continues — don't let them go stale.
   effect — and worth remembering the mitigation behavior itself
   (scripts/physics auto-disable) is now *enabled* but still not
   *exercised*; the first real FPS drop will be its first live test.
+  Full writeup in PROJECT_LOG.md. Eighth item scoped, grounded in a
+  direct diff against a reference fork the user pointed to
+  (`opensim-lickx`) rather than a blind audit: **permission-system /
+  content-protection weaknesses**. Found one real, additive, low-risk
+  feature worth porting: lickx's `take_copy_restricted` closes a
+  well-known content-theft vector where anyone nearby can right-click
+  "Take Copy" on someone else's rezzed full-perm object, since the
+  permission bits that make an object usable at all also happen to
+  make it copyable by total strangers. Confirmed Confluence lacks this
+  check but already has every piece of infrastructure it needs
+  (`IsFriendWithPerms`, unused for this purpose) — genuinely low-risk
+  since it defaults off. Checked `WhiteCore-Dev`/`OpenSim-Tranquillity`/
+  `opensim-master` for the same idea — none have it; this is
+  distinctive to this one fork. Also found a real but higher-stakes
+  difference presented as a decision, not a bug: lickx consistently
+  trusts region managers with less bypass power than Confluence does
+  (removes `RegionManagerIsAdmin` entirely, hardcodes no manager
+  override on parcel-property edits, favors real grid-god status by
+  default) — a tighter security posture than Confluence's current
+  `opensim-master`-following defaults, which many private-estate
+  operators rely on for self-management. Not changed unilaterally —
+  flagged as the user's own call. **Built and deployed**:
+  `take_copy_restricted` ported into Confluence's own
+  `PermissionsModule.cs`, off by default. Before building, confirmed
+  directly (the user asked) that this does not touch region-manager
+  bypass power — the only exemptions are the object's owner, a friend
+  with explicit modify rights, and `sp.IsGod`, computed entirely by
+  Confluence's existing, untouched god-status settings; a region owner
+  or manager who already has god status keeps it exactly as before.
+  The separate region-manager-posture question from this scoping pass
+  was deliberately left alone — only this one additive, opt-in feature
+  was ported. Config-only to actually activate (`take_copy_restricted
+  = true`, still off by default post-deploy), needs a grid restart.
   Full writeup in PROJECT_LOG.md.
 
 ## Repository model

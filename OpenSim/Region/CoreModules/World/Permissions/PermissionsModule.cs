@@ -94,6 +94,7 @@ namespace OpenSim.Region.CoreModules.World.Permissions
         private bool m_forceGridAdminsOnly;
         private bool m_forceAdminModeAlwaysOn;
         private bool m_allowAdminActionsWithoutGodMode;
+        private bool m_takeCopyRestricted = false;
 
         /// <value>
         /// The set of users that are allowed to create scripts.  This is only active if permissions are not being
@@ -177,6 +178,16 @@ namespace OpenSim.Region.CoreModules.World.Permissions
             m_allowAdminActionsWithoutGodMode = Util.GetConfigVarFromSections<bool>(config, "implicit_gods", sections, false);
             if(m_allowAdminActionsWithoutGodMode)
                 m_forceAdminModeAlwaysOn = false;
+
+            // Ported from opensim-lickx (content-protection scoping pass): closes the
+            // "anyone nearby can Take Copy a stranger's full-perm object" gap, since an
+            // object's own Copy+Transfer bits were never meant to double as "any passerby
+            // may take this". Off by default - existing behavior is unchanged unless an
+            // operator opts in. Does not touch god/admin bypass semantics in any way: an
+            // owner, a friend with CanModifyObjects granted, or anyone sp.IsGod already
+            // covers (including a region owner/manager under this region's existing
+            // region_owner_is_god/region_manager_is_god settings) is unaffected.
+            m_takeCopyRestricted = Util.GetConfigVarFromSections<bool>(config, "take_copy_restricted", sections, false);
 
             m_allowedScriptCreators
                 = ParseUserSetConfigSetting(config, "allowed_script_creators", m_allowedScriptCreators);
@@ -2022,6 +2033,18 @@ namespace OpenSim.Region.CoreModules.World.Permissions
 
             if(sog.OwnerID.NotEqual(sp.UUID) && (perms & (uint)PermissionMask.Transfer) == 0)
                  return false;
+
+            // Ported from opensim-lickx: an object's own Copy+Transfer bits were never meant
+            // to double as "any passerby may take this" - closes the "walk up and Take Copy a
+            // stranger's full-perm object" content-theft path when the operator opts in.
+            // sp.IsGod already covers a region owner/manager under this region's existing god
+            // settings, so this doesn't change who has bypass power, only who a plain resident
+            // can copy from.
+            if (sog.OwnerID.NotEqual(sp.UUID) && !IsFriendWithPerms(sp.UUID, sog.OwnerID) && !sp.IsGod)
+            {
+                if (m_takeCopyRestricted)
+                    return false;
+            }
             return true;
         }
 

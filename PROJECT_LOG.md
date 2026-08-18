@@ -9362,3 +9362,104 @@ low-traffic window before trusting production thresholds) - worth
 keeping in mind that the actual mitigation behavior (scripts/physics
 auto-disable) still hasn't been *exercised*, only *enabled*; the first
 time it fires for real will be the first live test of that path.
+
+### Permission-system / content-protection weaknesses - scoping pass,
+### grounded in a real diff against a reference fork the user pointed to
+
+The user specifically asked to check `opensim-lickx` (a local archived
+fork under `S:\Github\opensim-lickx`, no upstream remote recorded,
+single "initial archival commit") for permission/content-protection
+work already done elsewhere, rather than starting from a blank-slate
+audit. Diffed its `PermissionsModule.cs` directly against Confluence's
+own copy (not just against vanilla `opensim-master`, to make sure the
+comparison was to what Confluence actually ships) - the file is
+otherwise near-identical, so every line of that diff is a real,
+deliberate divergence.
+
+**Real, additive, low-risk finding: `take_copy_restricted`.** Lickx
+adds one new check to `CanTakeCopyObject`: even when an object's own
+permission bits allow Copy+Transfer (which is what "Take Copy" already
+requires), a non-owner who isn't a real grid god and isn't a friend
+with the specific "can modify my objects" right granted
+(`IsFriendWithPerms`, checked via the same `FriendRights.
+CanModifyObjects` flag Confluence already reads elsewhere) still can't
+take a copy, when `take_copy_restricted` is turned on. This closes a
+real, well-known content-theft vector: a resident rezzes their own
+full-perm creation to demo or interact with it, and *any* passerby can
+right-click "Take Copy" and walk off with a free copy, because the
+permission bits that make the object usable at all also happen to make
+it copyable by strangers - the object's own perms were never meant to
+double as "anyone nearby can just take this." Confirmed Confluence
+does not have this check at all, and confirmed Confluence already has
+every piece of infrastructure it needs (`IsFriendWithPerms` exists
+verbatim in Confluence's own `PermissionsModule.cs` already, just never
+wired into this specific check) - the exact "we already have every
+real primitive this needs, it just needs wiring" shape this whole
+campaign has kept finding. Defaults to `false` (off), so porting it
+changes nothing for any operator who doesn't opt in - genuinely
+low-risk to add. Checked `WhiteCore-Dev`, `OpenSim-Tranquillity`, and
+`opensim-master` for the same idea - none of them have it. This is a
+distinctive, well-built feature specific to this one fork, not an
+industry-standard practice Confluence is behind on.
+
+**Real but higher-stakes finding, presented as a decision rather than
+a bug: lickx trusts region managers with meaningfully less bypass
+power than Confluence does.** Three changes together tell a consistent
+story: lickx removes `RegionManagerIsAdmin` entirely (Confluence, like
+`opensim-master`, lets `region_manager_is_god` default-enable full
+god-mode bypass for any estate manager), defaults `allow_grid_gods` to
+`true` rather than `false` (favoring real grid-level god status as the
+trusted tier), and hardcodes `CanEditParcelProperties`'s manager
+override to `false` regardless of what the caller requests (Confluence
+respects the caller's `allowManager` argument). Read together, lickx's
+philosophy is "only actual owners and real grid gods get bypass power,
+regional management tiers don't" - a meaningfully tighter
+content-protection posture than Confluence's current default, which
+follows `opensim-master` in treating region owners (and optionally
+managers) as de facto gods on their own region. This is not presented
+as a bug to fix - `region_owner_is_god`/manager-override defaults are
+long-standing, widely-relied-upon OpenSim behavior that many private-
+estate operators depend on for day-to-day self-management without
+needing separate grid-god grants, and Confluence changing that default
+unilaterally could break real, legitimate workflows. Flagging it as a
+genuine security-posture tradeoff for the user's own call, not
+something to silently tighten.
+
+**Built and deployed.** Ported `take_copy_restricted` from `opensim-
+lickx` into Confluence's own `PermissionsModule.cs`, verbatim in
+substance: a new `m_takeCopyRestricted` field (default `false`), read
+from the same `take_copy_restricted` config key in the same `[Startup]`/
+`[Permissions]` sections every other permission toggle here uses, and
+one new gate added to `CanTakeCopyObject` right after the existing
+Copy/Transfer bit checks - if the requester isn't the object's owner,
+isn't a friend with `CanModifyObjects` granted (`IsFriendWithPerms`,
+already present in Confluence unused for this), and isn't `sp.IsGod`,
+the copy is refused when the config flag is on.
+
+Before building this, the user asked directly whether this would
+restrict region managers - it does not, and that was verified rather
+than assumed: the check's only exemptions are the object's owner, a
+friend with explicit modify rights, and `sp.IsGod`, which is computed
+entirely by Confluence's existing, *untouched*
+`region_owner_is_god`/`region_manager_is_god`/`allow_grid_gods` logic
+elsewhere in this same file. Nothing here changes who counts as a god
+on a given region - a region owner or manager who already has that
+status today keeps it exactly as before and is automatically exempt
+from this new check the same way they're exempt from everything else
+gated on `IsGod`. The separate, harder question raised earlier in this
+scoping pass - whether Confluence's region-manager-bypass posture
+itself should be tightened, the way lickx's *other*, unrelated changes
+do - was deliberately left untouched, exactly as scoped: this build
+only ports the one additive, off-by-default feature, nothing else from
+that fork.
+
+Build-verified clean (0 errors, 0 warnings) via `dotnet build
+OpenSim.sln -c Release`. Deployed: grid confirmed down,
+`OpenSim.Region.CoreModules.dll`/`.pdb` copied via PowerShell
+`Copy-Item`, verified byte-for-byte via `Get-FileHash` MD5 match. Needs
+a grid restart to take effect, and still needs `take_copy_restricted =
+true` added to config before it does anything - shipped off by default,
+matching lickx's own default and this campaign's practice of not
+silently changing live behavior. Enabling it and live-verifying the
+actual copy-refusal behavior is left for the user's own testing
+opportunity.
