@@ -9463,3 +9463,153 @@ matching lickx's own default and this campaign's practice of not
 silently changing live behavior. Enabling it and live-verifying the
 actual copy-refusal behavior is left for the user's own testing
 opportunity.
+
+### Fragmented-ecosystem feature gaps vs other forks - scoping pass,
+### one major live-impact finding, plus a real sibling-project reconciliation
+
+The local workspace has several reference repos beyond the ones already
+audited this campaign (`opensim-master`, `WhiteCore-Dev`, `OpenSim-
+Tranquillity`, `opensim-lickx`): `opensim-enhanced`, `OpenSim-Continuum`,
+`opensim-vanilla` (GuntharDeNiro's own repo, already well-represented in
+this session via credited commits), and `mobius-master`. Checked
+`opensim-enhanced` and `OpenSim-Continuum` in real depth; the other two
+were not re-audited beyond confirming their identity, since time was
+better spent following the one lead that turned into this pass's real
+finding rather than re-covering ground already well-represented
+elsewhere in this session.
+
+**`opensim-enhanced` turned out to be a close sibling of Confluence
+itself, not an untapped trove.** Its git history references "Casperia
+Marketplace v2.0.0" directly - it shares real lineage with this
+project. Its README lists ~90 features (55 LSL/OSSL functions,
+pathfinding, Combat2, GLTF/PBR overrides, RSA auth, Experience-Lite,
+weather, a complete OpenSim Marketplace v2.1.0 direct-delivery system,
+MoneyServer production hardening). Spot-checked the most novel-sounding
+ones directly rather than trusting the README's claims: `llCreateCharacter`,
+`llDamage`, `llSetLinkGLTFOverrides`, `llSignRSA` are all already
+present in Confluence. The `addon-modules` directories are nearly
+identical (`OpenSimMarketplace`, `HoloPhysicsGuard`, the MoneyServer
+trio, etc. all present in both). Confluence's own suite of native grid
+services (`CurrencyService`, `ExperienceService`, `SearchService`,
+`EventsService`, `SupportTicketService`, and others) doesn't exist in
+`opensim-enhanced` at all - Confluence has gone further than this
+sibling, not fallen behind it. The one real, concrete finding: a stale
+comment in `ConfluenceCurrencyModule.cs:419` still says "keep using
+RegionCurrency's PayPal integration" - but `RegionCurrency` was
+deliberately and correctly removed in an earlier session (documented in
+this repo's own README) as redundant with RegionWeb's own PayPal-
+enabled `/currency` wallet. The comment now points a future reader at a
+module that no longer exists in this repository. Small, safe,
+worth fixing whenever this area is next touched, not urgent enough to
+justify its own separate pass.
+
+**`OpenSim-Continuum` is a large, independently-run project with the
+same "reconcile the ecosystem" mission as Confluence** (its own README:
+"reconciles selected fixes, services, scripting capabilities, and
+optional modules from the wider OpenSim ecosystem onto a clean OpenSim
+Dev base"), 33,000+ commits deep. It independently reached the *same*
+conclusion Confluence did about RegionCurrency - its own README
+documents a "Deprecated RegionCurrency compatibility portal... it
+disables itself when RegionWeb is enabled," cross-validating that
+decision from a completely separate line of work. Its economy module
+("ContinuumEconomy") advertises "idempotent operations... and
+delivery-safe object purchase holds" as deliberate features - reading
+that description prompted checking how Confluence's own object-purchase
+path actually works, which is what surfaced the finding below.
+
+**Major finding, confirmed with live-impact evidence: Confluence's
+default currency module never implemented the object-purchase charge
+at all.** Traced the in-world "Buy" flow (right-click a for-sale
+object, or click-to-buy) end to end:
+
+- `BuySellModule.BuyObject` (`OpenSim/Region/CoreModules/World/Objects/
+  BuySell/BuySellModule.cs`) is the real, actively-wired handler - it
+  subscribes to every client's `OnObjectBuy` via `OnNewClient`, and is
+  not dead code. Read the entire 283-line method covering all three
+  real sale types (Original, Copy, Contents): it transfers ownership,
+  copies the object into inventory, or delivers contents - and never
+  once calls into any money/currency interface, for any sale type,
+  regardless of the object's `SalePrice`.
+- `ConfluenceCurrencyModule.OnNewClient` (this project's own native
+  currency service, Batch 12, explicitly built to replace Gloebit/
+  MoneyServer/Podex "as the default") subscribes to exactly four client
+  events: `OnEconomyDataRequest`, `OnMoneyBalanceRequest`,
+  `OnMoneyTransferRequest` (the "Pay" dialog - a different viewer
+  action from "Buy"), and `OnLogout`. `OnObjectBuy` is not among them.
+- Confirmed this isn't how the architecture is supposed to work in
+  general - the two *older* money modules Confluence still ships as
+  addon-module alternatives, `DTLNSLMoneyModule` (the MoneyServer-
+  compatible region module) and `GloebitMoneyModule`, both correctly
+  subscribe to `OnObjectBuy` and handle the charge themselves,
+  independently of `BuySellModule`'s delivery half - the classic
+  OpenSim pattern of two independent subscribers to the same client
+  event, one for delivery and one for payment. `ConfluenceCurrencyModule`
+  is the one piece that never picked up this responsibility when it was
+  built to replace them as the default.
+- Confirmed there's no alternate, newer HTTP-capability-based purchase
+  path quietly doing this instead - grepped every capability handler
+  for anything buy/purchase-related and found nothing.
+- Confirmed this has *live, current impact*, not just theoretical risk:
+  both `Var_Test_Region\OpenSim.ini` and `Welcome_Center\OpenSim.ini`
+  have `EconomyModule = ConfluenceCurrencyModule` configured as the
+  active economy module right now. On the live grid today, right-
+  clicking "Buy" on any for-sale object - the single most basic SL/
+  OpenSim in-world commerce interaction - delivers the object, the
+  copy, or its contents at no charge, regardless of the price the owner
+  set, because nothing in the active currency stack ever intercepts
+  that specific viewer action to charge for it.
+
+This is the most consequential finding of this entire systemic-
+complaints campaign - a live, present-tense gap in the grid's own
+default economy, not a historical OpenSim complaint being scoped for
+the first time.
+
+**Built and deployed.** Added `ProcessObjectBuy`, subscribed to every
+client's `OnObjectBuy` in `OnNewClient`/unsubscribed in
+`OnClientLoggedOut` alongside the module's existing four events. Built
+it as a real fix rather than a literal port of `DTLNSLMoneyModule`'s
+reference pattern, closing two things that pattern leaves open:
+
+- **Trusts the object's own server-side sale terms, not whatever the
+  requesting viewer claims.** `DTLNSLMoneyModule`'s reference
+  implementation charges whatever `salePrice` the client sends with the
+  buy request, with no cross-check against the object's actual listed
+  price - a modified viewer could ask to pay less (or nothing) for
+  something listed higher. The new handler instead requires
+  `saleType`/`salePrice` to match `rootPart.ObjectSaleType`/
+  `rootPart.SalePrice` exactly - the values set server-side via
+  `ObjectSaleInfo`, which is itself permission-checked - before ever
+  touching money. `ObjectSaleType == 0` (never put up for sale) is
+  refused outright.
+- **Refunds automatically if delivery fails after payment succeeds.**
+  Charges the buyer and credits the seller via `m_currency.Transfer`
+  first, then calls `IBuySellModule.BuyObject` for the actual delivery
+  and checks its return value - `BuySellModule.BuyObject` can
+  legitimately return `false` (permission mismatch, full inventory,
+  scene object deleted mid-transaction). On that path, immediately
+  reverses the charge via a second `Transfer` in the opposite
+  direction, so a failed delivery doesn't silently leave someone
+  charged for nothing. If the refund transfer itself somehow fails too
+  (a scenario that would need real, separate manual reconciliation),
+  logs an `Error` naming the buyer, amount, and object rather than
+  staying silent about it. This directly addresses the "delivery-safe
+  object purchase holds" idea `OpenSim-Continuum`'s own economy
+  hardening called out, adapted to Confluence's synchronous
+  charge-then-deliver flow rather than a separate hold/capture step.
+- Added a dedicated `ConfluenceTransactionType.ObjectSale = 5` (was
+  previously only `ObjectPays`, used for an object *paying* a person -
+  the reverse direction from a person *buying* an object - so reusing
+  it would have made transaction history read backwards).
+- Also fixed the stale comment noted above while in this file: it now
+  points to RegionWeb's own PayPal-enabled wallet instead of the
+  removed `RegionCurrency` module.
+
+Build-verified clean (0 errors, 0 warnings) via `dotnet build
+OpenSim.sln -c Release`. Deployed: grid confirmed down,
+`OpenSim.Region.CoreModules.dll`/`.pdb` copied via PowerShell
+`Copy-Item`, verified byte-for-byte via `Get-FileHash` MD5 match. Needs
+a grid restart to take effect. Live verification needs an actual in-
+world "Buy" on a for-sale object with `ConfluenceCurrencyModule`
+active (which it already is, on both regions) - left for the user's
+own testing opportunity, since this is exactly the kind of change
+worth confirming against a real purchase before broader resident use.

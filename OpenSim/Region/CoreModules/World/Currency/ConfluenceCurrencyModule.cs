@@ -27,7 +27,8 @@ namespace OpenSim.Region.CoreModules.World.Currency
         ObjectPays = 1,
         UploadCharge = 2,
         MoveMoney = 3,
-        LandSale = 4
+        LandSale = 4,
+        ObjectSale = 5
     }
 
 
@@ -241,6 +242,7 @@ namespace OpenSim.Region.CoreModules.World.Currency
             client.OnEconomyDataRequest += EconomyDataRequestHandler;
             client.OnMoneyBalanceRequest += SendMoneyBalanceHandler;
             client.OnMoneyTransferRequest += ProcessMoneyTransferRequest;
+            client.OnObjectBuy += ProcessObjectBuy;
             client.OnLogout += OnClientLoggedOut;
         }
 
@@ -249,6 +251,7 @@ namespace OpenSim.Region.CoreModules.World.Currency
             client.OnEconomyDataRequest -= EconomyDataRequestHandler;
             client.OnMoneyBalanceRequest -= SendMoneyBalanceHandler;
             client.OnMoneyTransferRequest -= ProcessMoneyTransferRequest;
+            client.OnObjectBuy -= ProcessObjectBuy;
             client.OnLogout -= OnClientLoggedOut;
         }
 
@@ -278,6 +281,93 @@ namespace OpenSim.Region.CoreModules.World.Currency
                 PushBalanceUpdate(sourceID);
                 PushBalanceUpdate(destID);
             }
+        }
+
+        // The classic OpenSim pattern: BuySellModule (right-click "Buy" on a for-sale
+        // object) handles delivery only and has no currency awareness at all - a real
+        // money module is expected to independently subscribe to this same client event
+        // and charge for the sale before delivery happens. DTLNSLMoneyModule and
+        // GloebitMoneyModule (this repo's other selectable currency modules) already do
+        // this; this native module never had, until now - meaning object purchases were
+        // silently free under it regardless of price. See PROJECT_LOG.md.
+        private void ProcessObjectBuy(IClientAPI remoteClient, UUID agentID, UUID sessionID, UUID groupID,
+                UUID categoryID, uint localID, byte saleType, int salePrice)
+        {
+            if (remoteClient.AgentId != agentID || remoteClient.SessionId != sessionID || salePrice < 0)
+                return;
+
+            if (remoteClient.Scene is not Scene scene)
+                return;
+
+            SceneObjectPart part = scene.GetSceneObjectPart(localID);
+            if (part == null)
+            {
+                remoteClient.SendAgentAlertMessage("Unable to buy now. The object was not found", false);
+                return;
+            }
+
+            SceneObjectGroup group = part.ParentGroup;
+            if (group == null || group.IsDeleted || group.inTransit)
+                return;
+
+            SceneObjectPart rootPart = group.RootPart;
+
+            // Trust the object's own server-side sale terms (set via ObjectSaleInfo, which
+            // is itself permission-checked), not whatever the requesting viewer claims - a
+            // modified client could otherwise ask to pay less than the actual listed price.
+            if (rootPart.ObjectSaleType == 0 || saleType != rootPart.ObjectSaleType || salePrice != rootPart.SalePrice)
+            {
+                remoteClient.SendAgentAlertMessage("Unable to buy now. This item doesn't appear to be for sale", false);
+                return;
+            }
+
+            UUID sellerID = rootPart.OwnerID;
+
+            if (salePrice > 0)
+            {
+                if (GetBalance(agentID) < salePrice)
+                {
+                    remoteClient.SendAgentAlertMessage("Unable to buy now. You don't have sufficient funds", false);
+                    return;
+                }
+
+                if (!m_currency.Transfer(sellerID, agentID, salePrice, "Object purchase: " + rootPart.Name,
+                        (int)ConfluenceTransactionType.ObjectSale, group.UUID))
+                {
+                    remoteClient.SendAgentAlertMessage("Unable to buy now. Payment failed", false);
+                    return;
+                }
+
+                PushBalanceUpdate(agentID);
+                PushBalanceUpdate(sellerID);
+            }
+
+            IBuySellModule buySell = scene.RequestModuleInterface<IBuySellModule>();
+            if (buySell != null && buySell.BuyObject(remoteClient, categoryID, localID, saleType, salePrice))
+                return;
+
+            // Delivery failed after payment already succeeded - refund immediately rather
+            // than leaving the buyer charged for nothing.
+            if (salePrice > 0)
+            {
+                if (m_currency.Transfer(agentID, sellerID, salePrice,
+                        "Object purchase refund (delivery failed): " + rootPart.Name,
+                        (int)ConfluenceTransactionType.ObjectSale, group.UUID))
+                {
+                    PushBalanceUpdate(agentID);
+                    PushBalanceUpdate(sellerID);
+                }
+                else
+                {
+                    m_log.Error(
+                        $"[CONFLUENCE CURRENCY]: Object purchase delivery failed for {rootPart.Name} ({group.UUID}) " +
+                        $"after payment succeeded, and the refund ALSO failed - buyer {agentID} was charged " +
+                        $"{salePrice} with nothing delivered. Needs manual reconciliation.");
+                }
+            }
+
+            remoteClient.SendAgentAlertMessage(
+                "Unable to buy now. Delivery failed" + (salePrice > 0 ? " - you have been refunded" : ""), false);
         }
 
         // Real SL/OpenSim behavior: the server pushes an unsolicited balance
@@ -416,8 +506,8 @@ namespace OpenSim.Region.CoreModules.World.Currency
         // whatever URL [GridInfo] economy points to. No real payment gateway is wired
         // in here - like the classic MoneyServer, this credits the requested amount
         // directly (a self-hosted grid trusting its own buy button). Operators who
-        // need real payment processing keep using RegionCurrency's PayPal integration
-        // or Gloebit, unaffected by this module being selected or not.
+        // need real payment processing can use RegionWeb's own PayPal-backed
+        // wallet donations, or Gloebit, unaffected by this module being selected or not.
 
         private XmlRpcResponse HandleGetCurrencyQuote(XmlRpcRequest request, IPEndPoint remoteClient)
         {
