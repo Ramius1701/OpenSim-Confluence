@@ -772,6 +772,28 @@ work continues — don't let them go stale.
   staged/inert object state above. Not the full "feels like avatar
   crossing now" outcome; a real, modest, safe win pending the user's
   own live test.
+- **Systemic OpenSim complaints campaign** — a deliberate, ongoing
+  effort to work through the community's other long-standing pain
+  points (script engine performance, Hypergrid reliability, attachment
+  reliability, mesh/physics upload quality, region stability, permission
+  weaknesses, ecosystem fragmentation), one at a time, with the same
+  rigor as border-crossing above rather than shallow fixes. First one
+  done: **avatar baking / "cloud avatar" failures**, the single most
+  commonly cited OpenSim complaint. Turned out Confluence already had a
+  complete, real recovery mechanism upstream `opensim/opensim` doesn't
+  have at all (GuntharDeNiro-authored, same fork already credited for
+  the region-crossing fix) — but it had never actually been active on
+  Casperia-Dev: the live deployment's `OpenSimDefaults.ini` still had
+  the mechanism's original pre-enablement values, silently overriding
+  the code's own `true` default the whole time. Fixed that, plus a real
+  separate code gap — the safety net explicitly excluded Hypergrid
+  arrivals, exactly the scenario most likely to produce a genuine cloud
+  avatar. Also surfaced a much bigger, two-directional config-drift
+  problem between the repo's tracked `OpenSimDefaults.ini` and the live
+  deployment's actual copy (real, undeployed physics tuning sitting in
+  the repo; real operator customization sitting only on the live grid)
+  — flagged, not resolved, pending the user's own call on how to
+  reconcile it. Full writeup in PROJECT_LOG.md.
 
 ## Repository model
 

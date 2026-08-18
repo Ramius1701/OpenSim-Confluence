@@ -2350,8 +2350,21 @@ namespace OpenSim.Region.Framework.Scenes
                         ParentPart.ParentGroup.SendFullAnimUpdateToClient(ControllingClient);
                     }
 
-                    // verify baked textures and cache
-                    if (m_scene.AvatarFactory != null && !isHGTP)
+                    // Verify baked textures and cache. Previously skipped entirely for HG
+                    // arrivals (!isHGTP) - but a Hypergrid visitor's baked textures come
+                    // from their home grid's asset service and are exactly the case most
+                    // likely to genuinely be missing on first arrival, so excluding HG left
+                    // the one scenario most prone to real "cloud avatar" failures with no
+                    // safety net at all. Safe to include now: ApplyTemporaryDefaultAppearanceFallback
+                    // doesn't show anything different to the client immediately - it stores
+                    // the real appearance and silently re-validates after
+                    // TemporaryDefaultAppearanceDelaySeconds (default 6s), so a texture that's
+                    // simply still in flight from a remote asset server recovers with zero
+                    // visible disruption; only a texture still missing after that grace period
+                    // shows the temporary default look. RequestRebake (asking the arriving
+                    // viewer to resend its baked textures) is a client-facing protocol message
+                    // that works identically for local and HG avatars.
+                    if (m_scene.AvatarFactory != null)
                     {
                         if (!m_scene.AvatarFactory.ValidateBakedTextureCache(this))
                         {

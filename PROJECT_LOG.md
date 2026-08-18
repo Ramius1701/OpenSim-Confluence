@@ -8736,3 +8736,111 @@ Build-verified clean (0 errors). Deployed: grid was down, 186 changed
 mismatches. Live verification (a real vehicle crossing on Casperia-Dev,
 ideally timed/compared against the pre-fix behavior rather than just
 "does it still work") is pending the user's own test.
+
+## Systemic OpenSim complaints campaign
+
+User asked what other long-standing OpenSim complaints exist, then
+committed to addressing all of them as a deliberate project mission
+statement ("fixing issues like those for Confluence is exactly the
+reason why this exists"). Working through them one at a time with the
+same rigor as border-crossing - trace the actual code, confirm root
+cause with evidence, check what other forks have solved - rather than
+attempting all of them shallowly at once. Tracked as tasks #123-130.
+
+### Avatar baking / "cloud avatar" failures - real mechanism already
+### existed, was silently disabled on the live grid
+
+The single most commonly cited OpenSim complaint. Expected to find
+nothing and have to design a fix from scratch - instead found Confluence
+already has a complete, real, working mitigation that upstream
+`opensim/opensim` does not have at all (confirmed: zero matches for
+`TemporaryDefaultAppearanceFallback`/`PendingCloudCheck` in a fresh
+`opensim-master` checkout). The actual work here turned into two
+separate, real findings rather than a from-scratch build.
+
+**The existing mechanism** (`AvatarFactoryModule.cs`), authored by
+GuntharDeNiro (`git log`: `7588f279f4` "Add temporary default appearance
+fallback", `e493d29e05` "Disable... by default", `66afe97ea5` "Make...
+one-shot", `aa3c16fc0a` "Fix cloud avatar recovery...", all dated
+May-Jun 2026 - the same fork already credited for this session's
+region-crossing velocity fix): on `CompleteMovement`, if
+`ValidateBakedTextureCache` finds a texture genuinely missing from the
+local asset cache, `ApplyTemporaryDefaultAppearanceFallback` doesn't
+immediately show anything different - it stores the real appearance,
+requests a rebake from the arriving viewer (`SendRebakeAvatarTextures`),
+and schedules a silent re-check `TemporaryDefaultAppearanceDelaySeconds`
+later (default 6s). Only if the texture is *still* missing after that
+grace period does it show the built-in default shape/skin/hair as a
+visible placeholder, then retries the real outfit once more before
+giving up. This is a genuinely well-designed mechanism - the grace
+period means a texture that was just slow to arrive (the common case)
+recovers with zero visible disruption, not a jarring flash.
+
+**Finding #1 - this was never actually active on Casperia-Dev.** The
+C# code's own default is `true` (set in the `aa3c16fc0a` fix commit,
+along with `PersistBakedTextures`/`ResendAppearanceUpdates`/`ReuseTextures`
+all flipped to `true`, and the repo's tracked `bin/OpenSimDefaults.ini`
+correctly reflects all of this) - but the *live deployment's* copy of
+`OpenSimDefaults.ini` still had the original, pre-fix values
+(`TemporaryDefaultAppearanceFallback = false`, `PersistBakedTextures = false`,
+etc.), silently overriding the code's own default the entire time. This
+is exactly the kind of gap this session's deploy process (DLL/PDB sync
+only, deliberately never touching `.ini` files, since `OpenSim.ini`/
+`Robust.ini` carry real per-deployment credentials and customization)
+was never going to catch on its own - `OpenSimDefaults.ini` specifically
+is meant to ship as the repo's own tracked canonical defaults, not be
+hand-customized, so it silently drifting out of sync went unnoticed.
+Fixed: edited the live `OpenSimDefaults.ini`'s `[Appearance]` section
+directly (a narrow, targeted edit to just the seven relevant keys, not
+a wholesale file replace - see the much bigger finding below on why not).
+
+**Finding #2 - a real, separate code gap, now fixed.** Even with the
+mechanism enabled, `ScenePresence.cs`'s `CompleteMovement` explicitly
+skipped the whole check for Hypergrid arrivals
+(`!isHGTP` in the original condition) - meaning the safety net excluded
+exactly the scenario most likely to produce a genuine cloud avatar (an
+HG visitor's baked textures live on their home grid's asset service, not
+the local one, and are the most likely to be missing on first arrival).
+Verified this wasn't a *necessary* exclusion before touching it - traced
+`ValidateBakedTextureCache` (checks the local `IAssetCache` for the
+referenced texture IDs) and `RequestRebake` (sends
+`SendRebakeAvatarTextures` to the arriving viewer, a client-facing
+protocol message with no dependency on which grid the avatar came from)
+and confirmed both work identically regardless of whether the avatar is
+local or foreign. The mechanism's own built-in grace period (Finding
+above) already protects against the obvious risk of false-triggering on
+an HG texture that's simply still in flight from a remote asset server -
+removed the `!isHGTP` exclusion in `ScenePresence.cs` so HG arrivals now
+get the same protection local logins already had.
+
+**Finding #3 - much bigger, flagged but deliberately not touched this
+pass.** Diffing the repo's tracked `bin/OpenSimDefaults.ini` against the
+live deployment's actual copy (to scope the fix for Finding #1) turned
+up drift far beyond the appearance settings: the repo has ~150 lines of
+real, apparently-already-built ubODE physics tuning (`world_erp`,
+per-material friction/bounce/density tables, boat/prim water dynamics,
+avatar physics tuning - all with real, considered-looking values and
+comments, not placeholders) that were **never deployed to the live
+grid at all**. Conversely, the live deployment's file has real operator
+customization the repo doesn't have on record - a `[GroupAutoInvite]`
+section with an actual live `GroupID`, a configured `[Weather]` section,
+`[RegionWeb]` settings - none of which exist in the repo's tracked copy.
+This is a two-directional drift problem: real repo work sitting
+undeployed, and real live customization sitting un-backed-up. Both
+matter, and blindly overwriting either direction would lose something
+real. Not resolved here - this deliberately stayed scoped to the seven
+appearance-specific keys needed for the baking fix, and the broader
+config-reconciliation question (should the physics tuning be deployed?
+should the live-only customization be captured back into the repo so
+it survives a fresh deploy?) needs its own explicit decision from the
+user, not an assumption either way.
+
+Build-verified clean (0 errors) for the `ScenePresence.cs` HG-exclusion
+fix. Deployed: grid was down, 186 changed `.dll`/`.pdb` files copied,
+verified byte-for-byte, plus the targeted live `OpenSimDefaults.ini`
+edit (not a full-file replace - preserved every other line, including
+the live-only customizations noted above, exactly as found). Live
+verification (an actual HG visitor or a deliberately-broken local login
+showing the recovery working) is pending the user's own test - this is
+exactly the kind of fix that's hard to verify without a real client
+session hitting the actual failure condition.
