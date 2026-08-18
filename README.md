@@ -823,8 +823,14 @@ work continues — don't let them go stale.
   and forces a full manual retry from scratch. Verified a bounded
   retry-with-backoff fix would be safe (traced `Scene.NewUserConnection`
   and confirmed it already dedupes by AgentID, so a retry can't create
-  a duplicate agent) before recommending it. Not built yet — scoped and
-  ready, pending the user's go-ahead. Full writeup in PROJECT_LOG.md.
+  a duplicate agent) before recommending it. **Built and deployed**: a
+  bounded 2-attempt retry with a 1s delay, gated strictly on "no reply
+  reached us at all" (a transport exception on the Gatekeeper lookup, or
+  the absence of the `success` key `AgentHandlers.cs` always sets on any
+  real reply) — never on a genuine denial the peer actually sent. Build-
+  verified clean, deployed to the live grid (confirmed down first, DLL/
+  PDB copied and MD5-verified byte-identical), needs a restart to take
+  effect. Full writeup in PROJECT_LOG.md.
 
 ## Repository model
 

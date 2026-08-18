@@ -8911,7 +8911,7 @@ this is a real, evidence-based, reversible lever, not a code fix, and
 its actual impact will depend on how script-heavy the live workload
 turns out to be.
 
-### Hypergrid teleport reliability - scoping pass (build pending)
+### Hypergrid teleport reliability - scoped, then built and deployed
 
 Traced the actual outbound-HG-teleport code path end to end rather than
 starting from "HG is just flaky" folklore, matching the same rigor as
@@ -8997,8 +8997,44 @@ than creating a second one. A retry is safe by construction; it would
 land on the same dedupe path a legitimate second attempt already goes
 through today (e.g. from a user manually retrying a failed TP).
 
-**Not built yet.** This was a scoping pass; the recommended fix
-(bounded retry-with-backoff on the three HG connector call sites, WAN-
-failure-only) is scoped and ready to build on request, matching the
-two-step scope-then-build cadence used for border-crossing and vehicle-
-crossing earlier in this campaign.
+**Built and deployed.** Added a bounded retry (2 attempts total, 1
+second delay) at the two call sites named above, gated strictly on
+"we never got a reply at all" - not on a real reply the peer actually
+sent, including a genuine denial:
+
+- `GatekeeperServiceConnector.GetHyperlinkRegion` - retries only on a
+  transport exception from `request.Send` (no response at all). A real
+  `response.IsFault` from the gatekeeper - the peer actually answering
+  - is untouched and still fails immediately, same as before. This call
+  is a read-only region lookup with no side effects, so retrying it
+  has no downside beyond the extra second of latency on the rare path
+  where it's needed.
+- `SimulationServiceConnector.CreateAgent` (the base class both plain
+  neighbor teleports and `UserAgentServiceConnector`'s `homeagent` hop
+  inherit) - added `PostToServiceWithTransientRetry`, gated on the
+  presence of the lowercase `"success"` key in the response. Confirmed
+  by reading both sides of the wire: `AgentHandlers.cs` always sets
+  `resp["success"]` explicitly on every real reply, success or refusal,
+  while `WebUtil`'s internal `ErrorResponseMap` (returned when the
+  request never reached the peer at all) only ever sets a capital-S
+  `"Success"` string and never the lowercase key `CreateAgent` actually
+  checks. That case difference is a reliable, already-existing signal
+  for "no real reply happened" versus "the peer replied, including with
+  a genuine no" - retrying only fires on the former.
+
+Left `UpdateAgent` and the XML-RPC `LinkRegion` (admin region-linking,
+not part of a live teleport) untouched - out of the documented scope of
+this pass.
+
+Build-verified clean (0 errors, 0 warnings) via `dotnet build
+OpenSim.sln -c Release`. Deployed: grid was confirmed down (no
+`OpenSim.exe`/`Robust.exe` processes running), `OpenSim.Services.
+Connectors.dll`/`.pdb` copied via PowerShell `Copy-Item`, verified
+byte-for-byte via `Get-FileHash` MD5 match against the freshly built
+copy. Needs a grid restart to take effect - left to the user's own
+timing. Live verification (an actual HG teleport surviving a real
+transient blip) isn't practically testable on demand - by nature this
+only fires on failures that would otherwise have killed the teleport,
+so its effect will show up as "HG teleports that used to occasionally
+fail now don't," not as something directly reproducible in a single
+test session.

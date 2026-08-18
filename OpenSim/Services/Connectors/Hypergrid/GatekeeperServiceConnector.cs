@@ -32,6 +32,7 @@ using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Reflection;
+using System.Threading;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
 using GridRegion = OpenSim.Services.Interfaces.GridRegion;
@@ -229,17 +230,35 @@ namespace OpenSim.Services.Connectors.Hypergrid
 
             XmlRpcRequest request = new XmlRpcRequest("get_region", paramList);
             m_log.Debug("[GATEKEEPER SERVICE CONNECTOR]: contacting " + gatekeeper.ServerURI);
+            // Never got a reply at all (dropped connection, DNS blip, momentary timeout) is a
+            // transient WAN failure worth one bounded retry - a real fault reply from the
+            // gatekeeper (response.IsFault below) is not, since that's the peer actually
+            // answering "no". This is a read-only query with no side effects, so retrying is safe.
+            const int retryAttempts = 2;
+            const int retryDelayMs = 1000;
             XmlRpcResponse response = null;
-            try
+            for (int attempt = 1; attempt <= retryAttempts; attempt++)
             {
-                using HttpClient hclient = WebUtil.GetNewGlobalHttpClient(10000);
-                response = request.Send(gatekeeper.ServerURI, hclient);
-            }
-            catch (Exception e)
-            {
-                message = "Error contacting grid.";
-                m_log.Debug("[GATEKEEPER SERVICE CONNECTOR]: Exception " + e.Message);
-                return null;
+                try
+                {
+                    using HttpClient hclient = WebUtil.GetNewGlobalHttpClient(10000);
+                    response = request.Send(gatekeeper.ServerURI, hclient);
+                    break;
+                }
+                catch (Exception e)
+                {
+                    if (attempt == retryAttempts)
+                    {
+                        message = "Error contacting grid.";
+                        m_log.Debug("[GATEKEEPER SERVICE CONNECTOR]: Exception " + e.Message);
+                        return null;
+                    }
+
+                    m_log.DebugFormat(
+                        "[GATEKEEPER SERVICE CONNECTOR]: get_region to {0} failed (attempt {1}/{2}): {3}, retrying after {4}ms",
+                        gatekeeper.ServerURI, attempt, retryAttempts, e.Message, retryDelayMs);
+                    Thread.Sleep(retryDelayMs);
+                }
             }
 
             if (response.IsFault)

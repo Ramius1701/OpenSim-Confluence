@@ -32,6 +32,7 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Collections;
+using System.Threading;
 
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
@@ -98,6 +99,35 @@ namespace OpenSim.Services.Connectors.Simulation
             args["teleport_flags"] = OSD.FromString(flags.ToString());
         }
 
+        // A response that never reached the peer (dropped connection, DNS blip, momentary
+        // timeout) comes back from WebUtil as a generic ErrorResponseMap, which never carries
+        // the lowercase "success" key - every real reply from AgentHandlers.cs sets that key
+        // explicitly, whether the agent was accepted or genuinely refused. That distinction is
+        // what makes one bounded retry safe here: we only retry when we know we never got a
+        // real answer, never when the peer actually replied (including a real "no").
+        // Destination-side NewUserConnection already dedupes by AgentID, so a retry that lands
+        // after a first attempt that actually succeeded just reuses the existing agent instead
+        // of creating a duplicate.
+        private const int TransientRetryAttempts = 2;
+        private const int TransientRetryDelayMs = 1000;
+
+        private static OSDMap PostToServiceWithTransientRetry(string uri, OSDMap args, int timeout)
+        {
+            OSDMap result = null;
+            for (int attempt = 1; attempt <= TransientRetryAttempts; attempt++)
+            {
+                result = WebUtil.PostToServiceCompressed(uri, args, timeout);
+                if (result.ContainsKey("success") || attempt == TransientRetryAttempts)
+                    return result;
+
+                m_log.DebugFormat(
+                    "[REMOTE SIMULATION CONNECTOR]: CreateAgent to {0} got no response (attempt {1}/{2}), retrying after {3}ms",
+                    uri, attempt, TransientRetryAttempts, TransientRetryDelayMs);
+                Thread.Sleep(TransientRetryDelayMs);
+            }
+            return result;
+        }
+
         public bool CreateAgent(GridRegion source, GridRegion destination, AgentCircuitData aCircuit, uint flags, EntityTransferContext ctx, out string reason)
         {
             reason = String.Empty;
@@ -121,7 +151,7 @@ namespace OpenSim.Services.Connectors.Simulation
                 args["context"] = ctx.Pack();
                 PackData(args, source, aCircuit, destination, flags);
 
-                OSDMap result = WebUtil.PostToServiceCompressed(uri, args, 30000);
+                OSDMap result = PostToServiceWithTransientRetry(uri, args, 30000);
                 bool success = result["success"].AsBoolean();
                 if (success && result.TryGetValue("_Result", out tmpOSD) && tmpOSD is OSDMap)
                 {
