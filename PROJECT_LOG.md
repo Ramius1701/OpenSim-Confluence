@@ -8559,3 +8559,13 @@ felt roughness, since that would mean the fix is about closing the gap
 than it's about physics state, which changes the shape of any future fix
 attempt. Neither built this session - logged as concrete groundwork for
 whenever vehicle crossing gets its own dedicated pass.
+
+**Live-verified**: user logged in with a real Firestorm session after
+the deploy above and crossed a region border on Casperia-Dev - reported
+not being able to tell when the crossing happened, which is exactly the
+target outcome (no visible hitch, no stall, no pop). First real
+confirmation this session that the widened lookahead +
+`PreApprovedCrossingCache` round-trip collapse actually changes the felt
+experience, not just the code path. Vehicle crossing continuity remains
+unverified/unbuilt as noted above - this confirms the avatar-crossing
+piece specifically.

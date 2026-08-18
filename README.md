@@ -711,7 +711,9 @@ work continues — don't let them go stale.
   shelved outright — a provenance question is pending with OpenSim-NGC
   before any engineering investment is considered. See PROJECT_LOG.md
   for the full writeup.
-- **Sim border-crossing smoothness** — avatar-crossing latency fix built.
+- **Sim border-crossing smoothness** — avatar-crossing latency fix built
+  and **live-verified**: crossed a region border in a real Firestorm
+  session on Casperia-Dev with no perceptible hitch — the target outcome.
   Traced the actual mechanism directly (not assumed): the reactive,
   one-physics-frame crossing trigger (`ScenePresence.CheckForBorderCrossing()`)
   and the two sequential synchronous network round-trips (`QueryAccess`
