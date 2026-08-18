@@ -6792,6 +6792,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "<label><input type=\"checkbox\" name=\"allow_direct_teleport\"" + (estate.AllowDirectTeleport ? " checked" : "") + "> Allow direct teleport</label>"
                             + "<label><input type=\"checkbox\" name=\"deny_anonymous\"" + (estate.DenyAnonymous ? " checked" : "") + "> Deny anonymous (non-identified) visitors</label>"
                             + "<label><input type=\"checkbox\" name=\"deny_minors\"" + (estate.DenyMinors ? " checked" : "") + "> Deny minors</label>"
+                            + "<label><input type=\"checkbox\" name=\"deny_new_accounts\"" + (estate.DenyNewAccounts ? " checked" : "") + "> Deny brand-new accounts (an extra layer of content protection - blocks a throwaway account made just to walk in and copy something; the grid's new-account threshold is configured in NewAccountThresholdDays)</label>"
                             + "<label><input type=\"checkbox\" name=\"allow_access_override\"" + (!estate.TaxFree ? " checked" : "") + "> Allow parcels in this estate to override its access rules</label>"
                             + "<label>Land price per square meter: <input type=\"number\" name=\"price_per_meter\" value=\"" + estate.PricePerMeter + "\" min=\"0\" required></label>"
                             + "<button type=\"submit\">Save changes</button>"
@@ -6913,6 +6914,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         estate.AllowDirectTeleport = FormValue(form, "allow_direct_teleport") == "on";
                         estate.DenyAnonymous = FormValue(form, "deny_anonymous") == "on";
                         estate.DenyMinors = FormValue(form, "deny_minors") == "on";
+                        estate.DenyNewAccounts = FormValue(form, "deny_new_accounts") == "on";
                         // TaxFree is the legacy DB column name - its actual
                         // meaning today is !AllowAccessOverride (see
                         // EstateSettings.cs), so the checkbox and the stored

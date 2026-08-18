@@ -9729,3 +9729,91 @@ down, `OpenSim.Services.Interfaces.dll` and `OpenSim.Server.Handlers.dll`
 (plus `.pdb`s) copied via PowerShell `Copy-Item`, both verified
 byte-for-byte via `Get-FileHash` MD5 match. Needs a grid restart to
 take effect.
+
+### Follow-up: DenyNewAccounts - real, per-estate, functional protection
+### against throwaway accounts (option 2 from the account-type conversation)
+
+Third sub-thread growing out of the same conversation: after settling
+Grid Team/Supporter as cosmetic badges, the user asked about giving
+Trial Member real teeth - mirroring modern Second Life's actual
+newbie-protection restrictions (new accounts can't own land, can't
+join age-restricted groups, can't enter age-restricted regions). Scoped
+this as "option 2" before building: found two of the three restrictions
+already had real, working hooks to extend (`PermissionsModule.
+CanBuyLand`, a permissive no-op stub since day one; `EstateSettings.
+IsBanned(avatarID, userFlags)`, the *already-working* enforcement point
+behind `DenyMinors`/`DenyAnonymous`, called from `Scene.cs`'s real
+connection gates). The third - a per-group minimum-account-age-to-join
+- doesn't exist anywhere in the Groups system today and would be
+genuinely new, comparably-sized work to the GroupAPIv1 ban feature;
+left out of this pass at the user's direction ("mirror the per-estate
+pattern" - the two hooks that already fit that pattern, not the
+third that doesn't).
+
+The user confirmed: mirror the per-estate opt-in pattern exactly (each
+estate owner decides whether to enable it, like `DenyMinors`/
+`DenyAnonymous` already work), framed explicitly as "another layer of
+protection like `take_copy_restricted` - so no one can just create an
+account to take items from the grid."
+
+**Design: age is computed, not manually flagged.** `UserAccount.
+Created` (already read elsewhere for profile "born on" display) is the
+source of truth - an account counts as "new" while younger than a
+grid-wide `NewAccountThresholdDays` (default 30, matching real SL),
+computed fresh on every check. No new per-account field, no admin
+upkeep, accounts age out automatically.
+
+**Built and deployed** across the full stack, DB migrations included
+(matching the multi-backend discipline from the GroupAPIv1 ban work):
+
+- `EstateSettings.cs`: new `DenyNewAccounts` bool (plain per-estate
+  property, no gate-flag - the existing `DoDenyMinors`/`DoDenyAnonymous`
+  master-switch fields this file already has looked like dead vestiges,
+  not something worth replicating for a new setting). New
+  `IsBanned(avatarID, userFlags, isNewAccount)` overload, deliberately
+  *not* folded into the existing 2-arg `IsBanned` - that overload is
+  also used for object-crossing ownership bans and LSL API queries
+  (`llGetAgentInfo`-style checks) where "is this a new account" isn't a
+  relevant question, so widening its meaning there would have been a
+  silent behavior change to unrelated callers.
+- DB migrations for `estate_settings.DenyNewAccounts`: MySQL (VERSION
+  39), PGSQL (VERSION 16), SQLite (VERSION 13) - same column-add
+  pattern as the existing `AllowEnviromentOverride` migration in each
+  backend.
+- `Scene.cs`: new `GetAccountAgeDays`/`IsNewAccount` helpers (same
+  shape as the existing `GetUserFlags`), a new `NewAccountThresholdDays`
+  config field (`[Startup]`, default 30), and both of the real agent-
+  entry gates (`NewUserConnection` and `IncomingUpdateChildAgent` - the
+  same two places `DenyMinors`/`DenyAnonymous` already gate) now call
+  the new 3-arg `IsBanned` overload. The denial message sent to the
+  client now distinguishes "you're banned" from "this estate doesn't
+  allow accounts younger than N days" rather than always claiming a
+  ban, which would have been misleading to a legitimate new resident.
+- `PermissionsModule.CanBuyLand`: now denies when the estate has
+  `DenyNewAccounts` set and the buyer is both new and not an estate
+  manager/owner - the same flag, so one checkbox covers "can't even get
+  in" and "can't buy land here" together as one cohesive restriction,
+  rather than needing two separate settings for what's really one
+  policy decision.
+- Web admin estate edit form (`WebInterfaceServiceConnector.cs`): new
+  "Deny brand-new accounts" checkbox, added right alongside the
+  existing (real, working) `deny_anonymous`/`deny_minors` checkboxes -
+  the classic viewer's own Estate Tools floater has a fixed, viewer-
+  hardcoded checkbox set that can't be extended from the server side,
+  same reason `PricePerMeter`/`TaxFree` live only in the web form
+  already.
+- Documented `NewAccountThresholdDays` in the repo's tracked
+  `bin/OpenSimDefaults.ini` (commented out, default 30 baked into the
+  C# default regardless) - not pushed to the live deployment's config,
+  consistent with this session's practice of not silently changing live
+  behavior; the feature works at the code default until an operator
+  opts in per estate.
+
+Build-verified clean (0 errors, 0 warnings). Deployed: grid confirmed
+down, all seven touched assemblies (`OpenSim.Data.MySQL/PGSQL/SQLite`,
+`OpenSim.Framework`, `OpenSim.Region.Framework`, `OpenSim.Region.
+CoreModules`, `OpenSim.Server.Handlers`) copied via PowerShell
+`Copy-Item`, all verified byte-for-byte via `Get-FileHash` MD5 match.
+Needs a grid restart (which also runs the new migrations on first
+start) to take effect. Off by default on every existing estate -
+nothing changes until an estate owner checks the new box.

@@ -80,4 +80,10 @@ ALTER TABLE `estate_settings`
     ADD COLUMN `AllowEnviromentOverride` tinyint not null default 0;
 COMMIT;
 
+:VERSION 13
+BEGIN;
+ALTER TABLE `estate_settings`
+    ADD COLUMN `DenyNewAccounts` tinyint not null default 0;
+COMMIT;
+
 

@@ -133,3 +133,9 @@ BEGIN TRANSACTION;
 ALTER TABLE "public"."estate_settings"
     ADD COLUMN "AllowEnviromentOverride" bool NOT NULL;
 COMMIT;
+
+:VERSION 16
+BEGIN TRANSACTION;
+ALTER TABLE "public"."estate_settings"
+    ADD COLUMN "DenyNewAccounts" bool NOT NULL DEFAULT false;
+COMMIT;

@@ -2284,6 +2284,18 @@ namespace OpenSim.Region.CoreModules.World.Permissions
             DebugPermissionInformation(MethodInfo.GetCurrentMethod().Name);
             if (m_bypassPermissions) return m_bypassPermissionsValue;
 
+            // Same DenyNewAccounts estate flag as the region-entry gate in
+            // Scene.cs - a throwaway account too young to even set foot on a
+            // protected estate obviously shouldn't be able to buy land on one
+            // either, if it somehow got in some other way (already-owned
+            // parcel access, group land, etc).
+            if (m_scene.RegionInfo.EstateSettings.DenyNewAccounts
+                    && !m_scene.RegionInfo.EstateSettings.IsEstateManagerOrOwner(userID)
+                    && m_scene.IsNewAccount(userID))
+            {
+                return false;
+            }
+
             return true;
         }
 

@@ -1047,6 +1047,31 @@ work continues — don't let them go stale.
   donor-perk auto-trigger and the still-open "should PayPal actually
   credit currency" question are separate, not built here. Full writeup
   in PROJECT_LOG.md.
+- **`DenyNewAccounts` — real, per-estate protection against throwaway
+  accounts.** Grew out of the same conversation: giving Trial Member
+  real teeth, mirroring modern SL's actual newbie restrictions.
+  Scoped first — found `PermissionsModule.CanBuyLand` (a permissive
+  no-op stub) and `EstateSettings.IsBanned` (the *already-working*
+  enforcement point behind `DenyMinors`/`DenyAnonymous`) both had real
+  hooks to extend; a per-group minimum-account-age-to-join would be
+  genuinely new work and was left out per the user's direction to
+  mirror the per-estate pattern specifically. Framed explicitly as
+  "another layer of protection like `take_copy_restricted` — so no one
+  can just create an account to take items from the grid." **Built and
+  deployed**, DB migrations included: a new opt-in per-estate
+  `DenyNewAccounts` flag (same pattern as `DenyMinors`/`DenyAnonymous`,
+  checkbox added to the web admin estate form alongside them, since the
+  classic viewer's own Estate Tools floater has a fixed checkbox set
+  that can't be extended server-side); "new" is *computed* from
+  `UserAccount.Created` against a grid-wide `NewAccountThresholdDays`
+  (default 30, matching real SL) rather than a manually-set flag, so
+  accounts age out automatically with zero admin upkeep; enforced at
+  both real agent-entry gates (`Scene.cs`'s `NewUserConnection` and
+  `IncomingUpdateChildAgent`) and in `CanBuyLand`, sharing the one
+  estate flag so "can't enter" and "can't buy land here" are one
+  cohesive policy rather than two separate settings. Off by default
+  everywhere — nothing changes until an estate owner opts in. Full
+  writeup in PROJECT_LOG.md.
 
 ## Repository model
 

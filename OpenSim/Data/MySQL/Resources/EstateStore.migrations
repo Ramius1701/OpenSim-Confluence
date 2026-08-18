@@ -103,3 +103,9 @@ CREATE TABLE IF NOT EXISTS `estate_blocked_experiences` (
   KEY `EstateID` (`EstateID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 COMMIT;
+
+:VERSION 39
+BEGIN;
+ALTER TABLE `estate_settings`
+    ADD COLUMN `DenyNewAccounts` tinyint(4) NOT NULL DEFAULT '0';
+COMMIT;

@@ -210,6 +210,13 @@ namespace OpenSim.Region.Framework.Scenes
         /// </summary>
         public int m_linksetCapacity = 0;
 
+        // How young an account has to be (UserAccount.Created) to count as "new"
+        // for EstateSettings.DenyNewAccounts and PermissionsModule.CanBuyLand -
+        // see GetAccountAgeDays below. Grid-wide, not per-estate: whether to
+        // enforce it is the per-estate DenyNewAccounts flag, but what "new"
+        // means is one consistent definition across the grid.
+        public int m_newAccountThresholdDays = 30;
+
         public bool m_clampPrimSize;
         public bool m_trustBinaries;
         public bool m_allowScriptCrossings = true;
@@ -1017,6 +1024,8 @@ namespace OpenSim.Region.Framework.Scenes
                 }
 
                 m_linksetPhysCapacity = startupConfig.GetInt("LinksetPhysPrims", m_linksetPhysCapacity);
+
+                m_newAccountThresholdDays = startupConfig.GetInt("NewAccountThresholdDays", m_newAccountThresholdDays);
 
 
                 SpawnPointRouting = startupConfig.GetString("SpawnPointRouting", "closest");
@@ -3240,6 +3249,25 @@ namespace OpenSim.Region.Framework.Scenes
             //}
         }
 
+        // Age of the account in days, from UserAccount.Created (a unix timestamp -
+        // same field UserProfileModule.cs already reads for the profile "born on"
+        // date). Returns int.MaxValue (never counts as "new") if the account can't
+        // be found or was never given a real creation date, so a lookup failure
+        // fails open rather than wrongly denying access.
+        public int GetAccountAgeDays(UUID user)
+        {
+            UserAccount uac = UserAccountService.GetUserAccount(RegionInfo.ScopeID, user);
+            if (uac is null || uac.Created <= 0)
+                return int.MaxValue;
+
+            return (int)((DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(uac.Created)).TotalDays);
+        }
+
+        public bool IsNewAccount(UUID user)
+        {
+            return GetAccountAgeDays(user) < m_newAccountThresholdDays;
+        }
+
         #endregion
 
         #region Add/Remove Avatar Methods
@@ -4539,12 +4567,17 @@ namespace OpenSim.Region.Framework.Scenes
 
                 // check estate ban
                 int flags = GetUserFlags(agent.AgentID);
-                if (RegionInfo.EstateSettings.IsBanned(agent.AgentID, flags))
+                bool isNewAccount = IsNewAccount(agent.AgentID);
+                if (RegionInfo.EstateSettings.IsBanned(agent.AgentID, flags, isNewAccount))
                 {
-                    m_log.WarnFormat("[CONNECTION BEGIN]: Denied access to: {0} ({1} {2}) at {3} because the user is on the banlist",
-                            agent.AgentID, agent.firstname, agent.lastname, RegionInfo.RegionName);
-                    reason = string.Format("Denied access to region {0}: You have been banned from that region.",
-                            RegionInfo.RegionName);
+                    bool actuallyBanned = RegionInfo.EstateSettings.IsBanned(agent.AgentID, flags);
+                    m_log.WarnFormat("[CONNECTION BEGIN]: Denied access to: {0} ({1} {2}) at {3} because {4}",
+                            agent.AgentID, agent.firstname, agent.lastname, RegionInfo.RegionName,
+                            actuallyBanned ? "the user is on the banlist" : "this estate denies new accounts");
+                    reason = actuallyBanned
+                            ? string.Format("Denied access to region {0}: You have been banned from that region.", RegionInfo.RegionName)
+                            : string.Format("Denied access to region {0}: this estate does not allow accounts younger than {1} days.",
+                                    RegionInfo.RegionName, m_newAccountThresholdDays);
                     return false;
                 }
 
@@ -4717,9 +4750,9 @@ Label_GroupsDone:
             }
 
             int flags = GetUserFlags(cAgentData.AgentID);
-            if (RegionInfo.EstateSettings.IsBanned(cAgentData.AgentID, flags))
+            if (RegionInfo.EstateSettings.IsBanned(cAgentData.AgentID, flags, IsNewAccount(cAgentData.AgentID)))
             {
-                m_log.DebugFormat("[SCENE]: Denying root agent entry to {0}: banned", cAgentData.AgentID);
+                m_log.DebugFormat("[SCENE]: Denying root agent entry to {0}: banned or new-account-denied", cAgentData.AgentID);
                 return false;
             }
 

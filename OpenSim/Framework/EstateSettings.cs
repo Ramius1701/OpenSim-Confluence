@@ -239,6 +239,20 @@ namespace OpenSim.Framework
             set { m_DenyMinors = value; }
         }
 
+        // Opt-in per estate, same shape as DenyMinors/DenyAnonymous above - an
+        // account younger than the grid's configured NewAccountThresholdDays
+        // (Scene.GetAccountAgeDays) is denied entry when this is set. Added
+        // alongside take_copy_restricted as another layer of content
+        // protection: a throwaway account created specifically to walk onto
+        // the grid and copy something can't get in at all on an estate that
+        // enables this.
+        private bool m_DenyNewAccounts = false;
+        public bool DenyNewAccounts
+        {
+            get { return m_DenyNewAccounts; }
+            set { m_DenyNewAccounts = value; }
+        }
+
         private bool m_AllowEnviromentOverride = false; //keep the mispell so not to go change the dbs
         public bool AllowEnvironmentOverride
         {
@@ -424,6 +438,25 @@ namespace OpenSim.Framework
                     }
                 }
             }
+            return false;
+        }
+
+        // Agent-entry-gate-only overload (see Scene.cs's NewUserConnection and
+        // IncomingUpdateChildAgent, the only two callers) - deliberately not
+        // folded into the plain IsBanned(avatarID, userFlags) overload above,
+        // since that one is also used for object-crossing ownership bans and
+        // LSL API queries (llGetAgentInfo-style checks) where "is this a new
+        // account" isn't a relevant question. isNewAccount is computed by the
+        // caller from UserAccount.Created against the grid's configured
+        // NewAccountThresholdDays, not looked up here.
+        public bool IsBanned(UUID avatarID, int userFlags, bool isNewAccount)
+        {
+            if (IsBanned(avatarID, userFlags))
+                return true;
+
+            if (!IsEstateManagerOrOwner(avatarID) && !HasAccess(avatarID) && DenyNewAccounts && isNewAccount)
+                return true;
+
             return false;
         }
 
