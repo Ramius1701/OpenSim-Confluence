@@ -100,3 +100,12 @@
     ; Where completed/pending PayPal orders are recorded (TSV file,
     ; relative to bin/ or absolute).
     PayPalOrderStorage = Currency/regionweb-paypal-orders.tsv
+
+    ; Donor perk (optional): when a PayPal donation completes, the donor's
+    ; account membership type is always set to Supporter (unless they're
+    ; already Grid Team). If DonorPerkSourceAgentID and DonorPerkItemID are
+    ; both set, one copy of that inventory item is also delivered to them
+    ; (works even if they're offline at the time). Leave both blank to skip
+    ; the item gift and only apply the Supporter badge.
+    ; DonorPerkSourceAgentID = 00000000-0000-0000-0000-000000000000
+    ; DonorPerkItemID = 00000000-0000-0000-0000-000000000000

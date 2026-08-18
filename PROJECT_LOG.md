@@ -9817,3 +9817,54 @@ CoreModules`, `OpenSim.Server.Handlers`) copied via PowerShell
 Needs a grid restart (which also runs the new migrations on first
 start) to take effect. Off by default on every existing estate -
 nothing changes until an estate owner checks the new box.
+
+### Follow-up: the donor-perk trigger itself, closing the original
+### "so if they donate they get a new account type, and a grid owner
+### configurable perk" request
+
+Back to the actual original ask, after the account-type rename/
+extension and `DenyNewAccounts` side branches. Both halves fire from
+`RegionWebModule.HandleCurrencyPayPalReturn`'s existing "completed"
+branch (the same place `MarkCurrencyPayPalOrder(..., "completed", ...)`
+already runs) - a genuine PayPal donation, not the still-open "should
+this credit currency" question, which this stays out of entirely: no
+currency changes hands here, matching the deliberate donation-not-
+purchase framing already in that method.
+
+**New `ApplyDonorPerk(agentID)`, two independent, best-effort effects:**
+
+1. Sets the donor's account membership type to `Supporter`
+   (`AccountMembershipHelper`, built earlier in this thread) unless
+   they're already `Grid Team` - donating shouldn't downgrade a staff
+   badge. Auto-fills `UserTitle` with "Supporter" if it was empty, same
+   visibility safeguard as the original account-type work.
+2. Delivers one grid-owner-configured inventory item, if both
+   `DonorPerkSourceAgentID` and `DonorPerkItemID` are set in
+   `RegionWeb.ini` (blank/unset by default - skips cleanly). Considered
+   and rejected two heavier mechanisms first: an in-world group auto-
+   invite (the existing `GroupAutoInvite` module's `InviteGroup` call
+   requires the recipient to be online *and* to manually accept a
+   viewer popup - unreliable for a web-only donation flow where the
+   donor may not be logged in at that moment) and reusing
+   `OpenSimMarketplace`'s delivery machinery (a snapshot-folder/
+   fingerprint/ledger system built for a product catalog, wildly
+   oversized for "give this one fixed item"). Landed on calling
+   `Scene.GiveInventoryItem` directly instead - the same real,
+   already-correct "give an existing item to a different resident"
+   operation every other gifting path in OpenSim uses (viewer-initiated
+   gifts, `osGiveInventory`), rather than hand-rolling a second, almost
+   certainly subtly-wrong copy of its permission-folding logic. Works
+   whether the donor is online or not, since it's a direct inventory-
+   service operation with no client dependency.
+
+Both effects are independent and failures don't roll each other back
+(or the donation itself) - the real money already moved, so a badge or
+gift hiccup shouldn't be treated as reversing that.
+
+Build-verified clean (0 errors, 0 warnings). Deployed: grid confirmed
+down, `OpenSim.Addons.RegionWeb.dll`/`.pdb` copied via PowerShell
+`Copy-Item`, verified byte-for-byte via `Get-FileHash` MD5 match. Needs
+a grid restart to take effect. `DonorPerkSourceAgentID`/
+`DonorPerkItemID` documented in `RegionWeb.ini.example`, both unset by
+default - the Supporter badge always applies on a completed donation,
+the item gift only once an operator configures a source item.

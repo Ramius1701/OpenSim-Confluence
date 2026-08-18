@@ -1072,6 +1072,22 @@ work continues — don't let them go stale.
   cohesive policy rather than two separate settings. Off by default
   everywhere — nothing changes until an estate owner opts in. Full
   writeup in PROJECT_LOG.md.
+- **Donor-perk trigger — closes the original ask.** Fires from
+  `RegionWebModule`'s existing PayPal-completion path, without touching
+  currency at all (stays out of the still-open "should this credit
+  balance" question). Two independent, best-effort effects: sets the
+  donor's account type to Supporter (unless already Grid Team), and
+  delivers one grid-owner-configured inventory item if
+  `DonorPerkSourceAgentID`/`DonorPerkItemID` are set in
+  `RegionWeb.ini` (unset by default). Considered and rejected two
+  heavier options first — an in-world group auto-invite (requires the
+  donor online *and* manually accepting a popup, unreliable for a web-
+  only flow) and `OpenSimMarketplace`'s delivery machinery (built for a
+  product catalog, oversized for one fixed item) — landed on calling
+  `Scene.GiveInventoryItem` directly, the same real operation every
+  other OpenSim gifting path already uses, rather than hand-rolling a
+  second copy of its permission logic. Works whether the donor is
+  online or not. Full writeup in PROJECT_LOG.md.
 
 ## Repository model
 

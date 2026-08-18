@@ -142,6 +142,8 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
         private string m_payPalCurrencyCode = "EUR";
         private string m_payPalReturnBaseUrl = string.Empty;
         private string m_payPalOrderStoragePath = "Currency/regionweb-paypal-orders.tsv";
+        private UUID m_donorPerkSourceAgentID = UUID.Zero;
+        private UUID m_donorPerkItemID = UUID.Zero;
         private string m_absoluteContentDirectory;
         private string m_absoluteCurrencyPurchaseStoragePath;
         private string m_absolutePayPalOrderStoragePath;
@@ -188,6 +190,8 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             m_payPalPricePerToken = ParsePositiveDecimal(config.GetString("PayPalPricePerToken", "0.01"), 0.01m);
             m_payPalReturnBaseUrl = config.GetString("PayPalReturnBaseUrl", string.Empty).Trim();
             m_payPalOrderStoragePath = config.GetString("PayPalOrderStorage", "Currency/regionweb-paypal-orders.tsv").Trim();
+            UUID.TryParse(config.GetString("DonorPerkSourceAgentID", string.Empty), out m_donorPerkSourceAgentID);
+            UUID.TryParse(config.GetString("DonorPerkItemID", string.Empty), out m_donorPerkItemID);
             m_defaultEstateTitle = config.GetString("EstateTitle", "My OpenSim Estate").Trim();
             if (string.IsNullOrEmpty(m_defaultEstateTitle))
                 m_defaultEstateTitle = "My OpenSim Estate";
@@ -1854,6 +1858,7 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             // admin order log's own reference, but nothing in this method
             // credits it to any balance.
             MarkCurrencyPayPalOrder(order.LocalID, "completed", "PayPal donation captured.");
+            ApplyDonorPerk(session.AgentID);
             NotifyCurrencyAvatar(session.AgentID, "This estate PayPal donation " + order.LocalID + " completed. Thank you!");
             SendCurrencyDashboard(response, session, "Thank you - your PayPal donation was received.", "ok");
         }
@@ -2477,6 +2482,83 @@ namespace OpenSim.Region.OptionalModules.World.RegionWeb
             }
 
             return null;
+        }
+
+        // Fires once a PayPal donation actually completes (see
+        // HandleCurrencyPayPalReturn) - deliberately does not touch currency at
+        // all, since whether a donation should credit in-world money is a
+        // separate, still-open question this module doesn't answer. Two
+        // effects, both offline-safe (a web donation doesn't require the donor
+        // to be logged into a viewer at the time):
+        //   1. Sets the donor's account membership type to Supporter
+        //      (AccountMembershipHelper), unless they're already Grid Team -
+        //      donating shouldn't downgrade a staff badge.
+        //   2. Delivers one grid-owner-configured inventory item, if
+        //      DonorPerkSourceAgentID/DonorPerkItemID are both set - a direct
+        //      inventory-service clone, not the Marketplace's snapshot/ledger
+        //      machinery, since this is one fixed item, not a product catalog.
+        // Both steps are independent and best-effort - a failure in one
+        // doesn't roll back the other, since the real donation already
+        // happened and shouldn't be undone over a badge or gift hiccup.
+        private void ApplyDonorPerk(UUID agentID)
+        {
+            foreach (Scene scene in GetSceneSnapshot())
+            {
+                IUserAccountService accounts = scene.UserAccountService;
+                if (accounts == null)
+                    continue;
+
+                UserAccount account = accounts.GetUserAccount(scene.RegionInfo.ScopeID, agentID)
+                    ?? accounts.GetUserAccount(UUID.Zero, agentID);
+                if (account == null)
+                    continue;
+
+                try
+                {
+                    int currentType = AccountMembershipHelper.GetMembershipType(account.UserFlags);
+                    if (currentType != AccountMembershipHelper.GridTeam)
+                    {
+                        account.UserFlags = AccountMembershipHelper.SetMembershipType(account.UserFlags, AccountMembershipHelper.Supporter);
+                        if (string.IsNullOrEmpty(account.UserTitle))
+                            account.UserTitle = AccountMembershipHelper.GetName(AccountMembershipHelper.Supporter);
+                        accounts.StoreUserAccount(account);
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[REGION WEB]: Failed to set donor membership type for {0}: {1}", agentID, e.Message);
+                }
+
+                if (!m_donorPerkSourceAgentID.IsZero() && !m_donorPerkItemID.IsZero())
+                    DeliverDonorPerkItem(scene, agentID);
+
+                return;
+            }
+        }
+
+        // Reuses Scene.GiveInventoryItem - the same real, already-correct "give an
+        // existing inventory item to a different resident" operation used
+        // everywhere else in OpenSim (viewer-initiated gifting, osGiveInventory,
+        // etc.) - rather than hand-rolling a second, likely subtly-wrong copy of
+        // its permission-folding logic. UUID.Zero for the folder means "pick the
+        // right default folder for this asset type automatically".
+        private void DeliverDonorPerkItem(Scene scene, UUID recipientID)
+        {
+            try
+            {
+                InventoryItemBase delivered = scene.GiveInventoryItem(
+                        recipientID, m_donorPerkSourceAgentID, m_donorPerkItemID, UUID.Zero, out string message);
+
+                if (delivered == null)
+                {
+                    m_log.WarnFormat("[REGION WEB]: Failed to deliver donor perk item {0} to {1}: {2}",
+                            m_donorPerkItemID, recipientID, message);
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[REGION WEB]: Exception delivering donor perk item to {0}: {1}", recipientID, e.Message);
+            }
         }
 
         // ICurrencyService.Transfer's transactionType is a plain int with no
