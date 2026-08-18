@@ -81,6 +81,8 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                 disposed = true;
                 m_bannedRegionCache?.Dispose();
                 m_bannedRegionCache = null;
+                m_preApprovedCrossingCache?.Dispose();
+                m_preApprovedCrossingCache = null;
             }
         }
 
@@ -258,6 +260,79 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
         }
 
         private BannedRegionCache m_bannedRegionCache = new();
+
+        // Short-lived positive cache of "this agent was granted SimulationService.QueryAccess
+        // to this region as of recently", populated both by ScenePresence's predictive
+        // pre-crossing warm-up (TryPreWarmCrossingAccess) and by GetDestination()'s own
+        // successful checks. Lets a crossing that already has a fresh entry skip the
+        // QueryAccess network round-trip entirely and go straight to UpdateAgent - collapsing
+        // the two sequential synchronous calls a crossing previously always made into one in
+        // the common case. Kept deliberately short-lived (a few seconds) since QueryAccess
+        // checks live, position-specific parcel access and region agent-count capacity that
+        // can legitimately change - this is a latency optimisation for the predictable case,
+        // not a replacement for the check itself; any cache miss (expired, or the exact
+        // neighbour/agent pair was never pre-warmed) simply falls back to the original
+        // synchronous QueryAccess call with no behaviour change.
+        private class PreApprovedCrossingCache
+        {
+            private const double TTL_SECONDS = 4.0;
+            private ExpiringCacheOS<ulong, Dictionary<UUID, double>> m_approved = new(8000);
+
+            ~PreApprovedCrossingCache()
+            {
+                Dispose(false);
+            }
+
+            public void Dispose()
+            {
+                Dispose(true);
+                GC.SuppressFinalize(this);
+            }
+
+            private void Dispose(bool disposing)
+            {
+                if (m_approved != null)
+                {
+                    m_approved.Dispose();
+                    m_approved = null;
+                }
+            }
+
+            // Return 'true' if there is a still-valid pre-approval for this agent/region
+            public bool IsApproved(ulong pRegionHandle, UUID pAgentID)
+            {
+                if (m_approved.TryGetValue(pRegionHandle, out Dictionary<UUID, double> idCache))
+                {
+                    lock (idCache)
+                    {
+                        if (idCache.TryGetValue(pAgentID, out double exp))
+                        {
+                            if (exp > Util.GetTimeStamp())
+                                return true;
+                            idCache.Remove(pAgentID);
+                        }
+                    }
+                }
+                return false;
+            }
+
+            public void Add(ulong pRegionHandle, UUID pAgentID)
+            {
+                double exp = Util.GetTimeStamp() + TTL_SECONDS;
+                if (m_approved.TryGetValue(pRegionHandle, out Dictionary<UUID, double> idCache))
+                {
+                    lock (idCache)
+                        idCache[pAgentID] = exp;
+                }
+                else
+                {
+                    idCache = new Dictionary<UUID, double> { [pAgentID] = exp };
+                    m_approved.AddOrUpdate(pRegionHandle, idCache, TTL_SECONDS);
+                }
+            }
+        }
+
+        private PreApprovedCrossingCache m_preApprovedCrossingCache = new();
 
         private IEventQueue m_eqModule;
 
@@ -1644,8 +1719,16 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                                       (float)(presenceWorldY - neighbourRegion.RegionLocY),
                                       pos.Z);
 
+            // A fresh pre-approval (from ScenePresence's predictive pre-crossing warm-up, or
+            // from an earlier call to this same method) means access was already validated
+            // for this agent/region combination within the last few seconds - skip the
+            // network round-trip and treat it as passed, same as upstream already does for
+            // a cached ban via m_bannedRegionCache above.
+            if (m_preApprovedCrossingCache.IsApproved(neighbourRegion.RegionHandle, agentID))
+                return neighbourRegion;
+
             string homeURI = m_scene.GetAgentHomeURI(agentID);
-           
+
             if (!m_scene.SimulationService.QueryAccess(
                     neighbourRegion, agentID, homeURI, false, newpos,
                     m_scene.GetFormatsOffered(), ctx, out failureReason))
@@ -1656,6 +1739,8 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                     failureReason = "Access Denied";
                 return null;
             }
+
+            m_preApprovedCrossingCache.Add(neighbourRegion.RegionHandle, agentID);
             return neighbourRegion;
         }
 

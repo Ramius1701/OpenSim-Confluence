@@ -711,6 +711,47 @@ work continues — don't let them go stale.
   shelved outright — a provenance question is pending with OpenSim-NGC
   before any engineering investment is considered. See PROJECT_LOG.md
   for the full writeup.
+- **Sim border-crossing smoothness** — avatar-crossing latency fix built.
+  Traced the actual mechanism directly (not assumed): the reactive,
+  one-physics-frame crossing trigger (`ScenePresence.CheckForBorderCrossing()`)
+  and the two sequential synchronous network round-trips (`QueryAccess`
+  then `UpdateAgent`) that sat on that critical path before the viewer
+  was told to render the new region. Cross-checked nine other local
+  OpenSim-family checkouts before building anything: Confluence already
+  carried a real, working partial fix inherited from GuntharDeNiro's fork
+  (velocity-preserving handoff + delayed attachment cleanup — stops the
+  classic "avatar stalls dead at the border" symptom, which neither
+  upstream nor Tranquillity have); WhiteCore-Dev's older, more diverged
+  architecture offered two real ideas worth learning from (a
+  wider/adaptive crossing-prediction window, and a `QueryAccess`-free
+  simulation-service design that collapses two round-trips to one) —
+  both now built here: the crossing trigger's lookahead widened from a
+  single physics frame to an adaptive 0.1s/0.2s window (WhiteCore's own
+  values, not invented), plus a new short-lived `PreApprovedCrossingCache`
+  that a predictive, side-effect-free pre-check warms ahead of the actual
+  crossing, letting the real crossing skip the `QueryAccess` round-trip
+  entirely on a cache hit (falls back to the original synchronous check
+  on a miss — no regression, pure latency win in the common case).
+  **Vehicle/prim crossings** — investigated further, not yet built.
+  Verified directly that velocity/angular velocity are *not* silently
+  zeroed on crossing (a common assumption) — they're serialized and
+  explicitly reapplied to the destination physics actor
+  (`SceneObjectPart.AddToPhysics()`); if a crossed vehicle still feels
+  like it loses momentum, the more likely cause is the timing gap itself,
+  not a coded bug. Also found the prim-crossing trigger is worse than
+  the avatar one, not just differently shaped: `SceneObjectGroup.AbsolutePosition`'s
+  setter only fires a crossing once the object is *already* outside the
+  region, with no lookahead at all — but that setter is the single
+  choke point for every scene-object position change in the simulator
+  (physics, `llSetPos`, sits, scripted movement, all of it), so adding a
+  predictive pre-check there safely needs a real design pass of its own,
+  not a rushed copy of the avatar fix into much higher-blast-radius code.
+  Full physics-continuity for vehicle crossing (the genuinely unclaimed,
+  no-fork-has-solved-it problem from the original scoping pass) is
+  unchanged and still needs its own dedicated effort. Full writeup,
+  including a real bug spotted along the way in the pre-existing
+  `BannedRegionCache` (unrelated, not fixed here, flagged separately),
+  in PROJECT_LOG.md.
 
 ## Repository model
 

@@ -8292,3 +8292,270 @@ Runtime verification (clean region startup with `GroupsModule`'s new
 against `casperia_dev`, and a real Firestorm session round-tripping an
 actual group-ban create/list/remove) is still pending the user bringing
 the grid back up and testing with a real group.
+
+### Sim border-crossing smoothness - scoped, not built
+
+User asked directly whether region crossings can be made smoother,
+pointing out that Second Life manages it and OpenSim should be able to
+too. Traced the actual mechanism in this codebase (not from memory),
+then cross-checked nine other local OpenSim-family checkouts for prior
+art before concluding anything was genuinely unclaimed - the same
+discipline used for the PBR terrain and GroupAPIv1 scoping passes.
+
+**How avatar crossing actually works here, traced directly:**
+Confluence already has most of the right bones. A child agent gets
+pre-established in all 8 neighboring regions the moment an avatar
+becomes root (`ScenePresence.cs:2471`, `EnableChildAgents` - called from
+`MakeRootAgent`), so a crossing isn't creating a stranger in the
+destination region; it's "promoting" a presence that's already sitting
+there. Three real, separable issues sit inside that otherwise-reasonable
+design:
+
+1. **The trigger is reactive and one frame late.**
+   `ScenePresence.CheckForBorderCrossing()` runs every physics frame
+   (called from `Update()`, `ScenePresence.cs:3950`) but only looks one
+   frame ahead - `t = pos.X + vel.X * m_scene.FrameTime`
+   (`ScenePresence.cs:4695-4702`), i.e. roughly one 45Hz physics tick
+   (~22ms) of lookahead at typical settings. The whole async crossing
+   sequence (two real network round-trips, below) doesn't start until
+   the avatar is already, by prediction, about to be outside the region
+   - there's no earlier, distance-based head start.
+2. **Two sequential synchronous HTTP calls sit on that reactive critical
+   path before the viewer is told to render the new region**:
+   `SimulationService.QueryAccess` (`EntityTransferModule.cs`'s
+   `GetDestination()`) followed by `SimulationService.UpdateAgent`
+   (`CrossAgentIntoNewRegionMain`, `EntityTransferModule.cs:1859`).
+   Confirmed these are real network calls even between two `OpenSim.exe`
+   processes on the same machine, which is exactly this project's own
+   Casperia-Dev topology (`Welcome_Center`/`Var_Test_Region` as separate
+   processes) - not something that collapses to an in-process call here.
+   Checked whether `QueryAccess` is actually redundant, given access was
+   already validated once when the child agent was first established -
+   it isn't quite: `Scene.QueryAccess` (`Scene.cs:6179-6220`) does live,
+   position-specific parcel-access and region-capacity checks that
+   legitimately need to be current at the exact crossing point, not
+   cacheable indefinitely from arrival time. The real problem isn't that
+   the check happens: it's that it happens *serially, at the last
+   instant*, rather than *predictively, while the avatar is still
+   approaching the border*.
+3. **Vehicle/prim crossings are architecturally heavier, not just
+   buggier.** There's no equivalent of a pre-existing child agent for an
+   in-motion vehicle. `CrossPrimGroupIntoNewRegion`
+   (`EntityTransferModule.cs:2774`) fully serializes the object and
+   sends it via `SimulationService.CreateObject` as a brand-new object
+   on the destination, then deletes the source copy - meaning physics
+   and velocity state get rebuilt from scratch on the far side rather
+   than continuing. This is the real reason vehicle crossings are the
+   much rougher case, not an incidental bug.
+
+**Reference-fork check** (background research pass, `opensim-master`,
+`OpenSim-Tranquillity`, `OpenSim-Continuum`, `opensim-vanilla`,
+`opensim-enhanced`, `opensim-lickx`, `WhiteCore-Dev`, `mobius-master` -
+`mobius-master`'s local checkout turned out to be data/services-only,
+no `Region/Framework/Scenes` present, so it couldn't be checked for
+this):
+
+- **Confluence already carries a real, working partial fix**, inherited
+  from GuntharDeNiro's fork (credited in-code, `EntityTransferModule.cs`
+  comments around line 1958) and confirmed identical in Continuum/
+  opensim-vanilla/opensim-enhanced: `PreserveVelocityOnRegionCrossing`/
+  `MaxRegionCrossingVelocity` send the avatar's real (clamped) velocity
+  to the destination handoff instead of upstream's hardcoded zero
+  (`GetRegionCrossingVelocity()`, `EntityTransferModule.cs:1975-1992`),
+  and `RegionCrossingAttachmentCleanupDelayMS` defers source-side
+  attachment deletion via `DelaySourceAttachmentCleanup()`
+  (`EntityTransferModule.cs:1957-1974`) to avoid a visible detach/
+  reattach flash. This addresses the classic "avatar visibly stalls dead
+  at the border" symptom. It does **not** touch the underlying trigger
+  latency or the two-round-trip sequence - upstream, Tranquillity, and
+  opensim-lickx are all unmodified from the reactive one-frame trigger
+  described above (Tranquillity's `EntityTransferModule.cs` is
+  byte-identical to master's for this subsystem).
+- **WhiteCore-Dev has two genuinely different, real architectural
+  choices worth learning from**, though it's a much older/more diverged
+  fork, not something to pull code from directly: (1) its
+  `CheckForBorderCrossing()` uses a larger, velocity-adaptive lookahead
+  (base 0.1s, doubled to 0.2s when speed is low) instead of a single
+  physics-frame window, and is wired through a `PhysicsActor` event
+  rather than an unconditional per-frame call - still linear
+  extrapolation, just a bigger and adaptive buffer. (2) More
+  significantly, **WhiteCore's `ISimulationService` has no `QueryAccess`
+  concept at all** - crossing is a single async message
+  (`AgentProcessing.CrossAgent`) that checks whether the destination's
+  child-agent/caps service already exists and skips re-establishing it
+  if so, collapsing what's a two-round-trip sequence here into
+  effectively one, by design rather than by caching a skip.
+- **Nobody checked - including WhiteCore - has improved vehicle/prim
+  crossing.** Every fork examined still does the same full
+  serialize-recreate-delete for `CrossPrimGroupIntoNewRegion`, with only
+  a minor addition in WhiteCore (copying `Velocity` for a seated avatar
+  before the crossing, not a real continuity fix). This is genuinely
+  unclaimed territory across the whole ecosystem checked here, not just
+  this codebase - consistent with the PBR terrain investigation's
+  experience of a gap turning out to be real once actually checked
+  rather than assumed already solved somewhere.
+
+**What this adds up to, in priority/risk order:**
+
+1. **Already have** - the Gunthar-derived velocity-preserving handoff +
+   delayed attachment cleanup. Nothing to build here; noted so it isn't
+   mistaken for unaddressed.
+2. **Small, low-risk, clear win** - widen and adapt
+   `CheckForBorderCrossing()`'s lookahead window (WhiteCore-style:
+   larger base window, bigger still at low speed) so the async crossing
+   sequence gets a real head start on the network round-trip(s) instead
+   of starting only once the avatar is already at the line. A
+   config-tunable value, following the same `[EntityTransfer]` pattern
+   the four existing knobs already use. Surgical change, contained to
+   `ScenePresence.CheckForBorderCrossing()`.
+3. **Real improvement, well-scoped but bigger** - collapse the
+   `QueryAccess` + `UpdateAgent` sequence into effectively one
+   round-trip. Two credible approaches, not yet decided between: (a)
+   fold the access/capacity check into `UpdateAgent` itself server-side,
+   returning a rejection reason on failure instead of a separate
+   pre-check (closer to WhiteCore's model); or (b) keep both calls but
+   move `QueryAccess` off the reactive critical path by running it
+   predictively as the avatar approaches a border (using the wider
+   lookahead from #2), refreshed periodically, so only `UpdateAgent`
+   remains synchronous at the actual crossing instant. Either removes a
+   full network round-trip from what the user experiences as "the
+   hitch." Needs care either way: `QueryAccess`'s failure `reason`
+   string is user-facing (`agent.ControllingClient.SendAlertMessage`)
+   and that path has to survive whichever approach is taken.
+4. **Hard, unsolved everywhere checked, real engineering, not a tuning
+   change** - vehicle/prim crossing continuity. Would need a genuinely
+   new mechanism (something like a pre-negotiated shadow/child copy of
+   an in-motion vehicle in bordering regions, the prim equivalent of an
+   avatar's child agent, so crossing becomes an activation instead of a
+   from-scratch recreation) rather than an adjustment to the existing
+   serialize/recreate/delete path. On the order of a new subsystem, not
+   a quick win - this is the piece that actually explains why SL's
+   vehicle crossings feel different, and closing that gap for real is
+   its own dedicated effort, not a follow-on to items 2-3.
+
+Not started - scoping only, per explicit request. Items 2 and 3 are
+concrete and buildable next; item 4 needs its own dedicated scoping pass
+before any code, not a quick add-on to this one.
+
+### Avatar border-crossing latency fix - built (items 2+3 from scoping)
+
+User asked to build both the crossing-prediction widening and the
+round-trip collapse together ("we can't do one without the other") -
+correct call, since a wider prediction window only pays off if there's
+also less synchronous work sitting in that window.
+
+**`ScenePresence.cs`** (`CheckForBorderCrossing()`): the commit-to-cross
+trigger's lookahead widened from one raw physics frame
+(`m_scene.FrameTime`, ~22ms at 45Hz) to an adaptive 0.1s/0.2s window
+(doubled below a ~2.5 m/s speed threshold) - values taken directly from
+WhiteCore-Dev's own crossing code rather than invented, since that's a
+real production reference point. Kept deliberately modest: this trigger
+still commits (`IsInTransit`/eventual `IsChildAgent`), so widening it
+further would risk crossing prematurely if an avatar changes direction
+right at a border. Added a second, separate, larger lookahead (1.0s,
+rate-limited to once per 500ms per avatar) purely to warm a new cache -
+`TryPreWarmCrossingAccess()` - with zero effect on transit state, so a
+wrong or stale prediction here has no correctness consequence.
+
+**`EntityTransferModule.cs`** (`GetDestination()`): added
+`PreApprovedCrossingCache`, a short-lived (4s TTL) positive cache
+mirroring the existing `BannedRegionCache`'s shape (same
+`ExpiringCacheOS`-backed pattern, same per-region-then-per-agent
+dictionary nesting) but for "access already granted," populated by both
+the predictive pre-warm above and by `GetDestination()`'s own successful
+checks. A cache hit skips the `SimulationService.QueryAccess` network
+round-trip entirely and returns the neighbour immediately - the actual
+crossing then only needs `SimulationService.UpdateAgent`, collapsing the
+two sequential synchronous calls that sat on the reactive critical path
+down to one, in the common case of a steady approach to a border. Cache
+miss (cold border, or the 4s TTL lapsed) falls back to the original
+synchronous `QueryAccess` call with no behaviour change - this is a
+latency optimisation layered on top of the existing check, not a
+replacement for it, matching the scoping doc's stated design constraint
+around `QueryAccess`'s live, position-specific checks.
+
+Deliberately did **not** copy `BannedRegionCache`'s exact comparison
+logic verbatim - close reading of it while writing the mirror-image
+positive cache turned up what looks like a real inverted-condition bug
+(`IfBanned` returns `true`/banned when the stored expiry is *earlier*
+than now, i.e. already expired, and silently drops what should still be
+a valid, unexpired ban in the untaken branch). Not fixed here - out of
+scope for this task, a pre-existing and unrelated subsystem - but worth
+a dedicated look separately; the new `PreApprovedCrossingCache` was
+written with the corresponding comparison the right way round
+(`exp > Util.GetTimeStamp()` grants access) rather than inheriting the
+same mistake.
+
+Build-verified clean (0 errors). Deployed: grid was already down, 186
+changed `.dll`/`.pdb` files copied via PowerShell `Copy-Item`,
+re-verified byte-for-byte after - zero mismatches. Runtime verification
+(a real avatar crossing a border on Casperia-Dev feeling smoother, and
+confirming the `PreApprovedCrossingCache` actually gets hit in practice -
+worth a debug-log check the first time, not just trusting the code path
+looks right) is still pending the user bringing the grid back up.
+
+### Vehicle/prim crossing - investigated further, not built
+
+User asked directly whether anything could be done for vehicle crossing
+too, on top of the avatar fix above. Traced two more things directly
+rather than assuming the scoping pass's "full recreate" framing meant
+velocity is simply lost:
+
+- **Velocity/angular velocity are NOT silently zeroed on crossing,
+  contrary to a common assumption.** `SceneObjectPart.Velocity`/
+  `AngularVelocity` are serialized as part of the object's XML
+  (`SceneObjectSerializer.cs:1589-1590`, restored on the receiving side
+  via `ProcessVelocity`/`ProcessAngularVelocity`,
+  `SceneObjectSerializer.cs:713-720`), and
+  `SceneObjectPart.AddToPhysics()` explicitly reapplies both to the
+  freshly created physics actor
+  (`SceneObjectPart.cs:5088-5092`,
+  `if (applyDynamics && LocalId == ParentGroup.RootPart.LocalId) {
+  Velocity = velocity; AngularVelocity = rotationalVelocity; ... }`,
+  gated on `applyDynamics` which traces back to the object's own
+  `isPhysical` flag). If a crossed vehicle still feels like it loses
+  momentum, the more likely cause is the timing gap itself - nothing is
+  simulating the vehicle's physics for however long the synchronous
+  `CreateObject` transfer takes - not a coded bug that discards the
+  velocity value.
+- **The prim-crossing trigger is worse than the avatar one, not just
+  differently-shaped.** Avatar crossing at least has a one-physics-frame
+  lookahead. Prim crossing has **none** - `SceneObjectGroup.AbsolutePosition`'s
+  setter (`SceneObjectGroup.cs:664-688`) only fires `CrossAsync` once
+  `!Scene.PositionIsInCurrentRegion(val)` is already true, i.e. strictly
+  *after* physics has already placed the object outside the region, not
+  one frame ahead of it. This is a genuinely new, concrete finding, not
+  something the earlier scoping pass surfaced.
+
+**Why this wasn't fixed in the same pass as the avatar trigger**: the
+avatar fix had one clean call site to widen (`ScenePresence.Update()`'s
+per-frame heartbat call to `CheckForBorderCrossing()`). Prim position
+changes have no equivalent single choke point - `AbsolutePosition`'s
+setter is invoked from many places (physics engine callbacks, scripted
+`llSetPos`/`llApplyImpulse`, sit-related repositioning, script-driven
+movement, etc.), all funnelling through the same extremely hot property
+setter used for every scene-object position change in the simulator, not
+just crossings. Adding a predictive pre-check there needs a real design
+pass of its own - matching a wrong prediction to "don't actually commit"
+is straightforward in `ScenePresence` (a single owning per-frame method)
+but isn't obviously so from inside a property setter with this many
+callers. Given the blast radius of getting this wrong (every object
+position update in the simulator, not a narrow crossing-only path),
+this needed more care than the time available in this pass, not a rushed
+copy of the avatar fix into unfamiliar territory.
+
+**Net assessment, updated from the original scoping pass**: the
+"full serialize/recreate/delete architecture" finding still stands as
+the real, hard, unclaimed-territory problem (unchanged - no fork checked
+has solved it, see above). But there are now two concrete, smaller,
+well-scoped next steps that weren't visible in the original pass: (a)
+give prim crossing the same kind of predictive lookahead avatar crossing
+just got, once a safe way to do that from inside `AbsolutePosition`'s
+setter (or by hooking a narrower, crossing-specific call site instead of
+the setter itself) is worked out; (b) verify with a live vehicle
+crossing test whether the timing-gap theory above actually explains the
+felt roughness, since that would mean the fix is about closing the gap
+(faster `CreateObject`, or a predictive pre-check analogous to (a)) more
+than it's about physics state, which changes the shape of any future fix
+attempt. Neither built this session - logged as concrete groundwork for
+whenever vehicle crossing gets its own dedicated pass.

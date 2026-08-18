@@ -4674,6 +4674,32 @@ namespace OpenSim.Region.Framework.Scenes
         /// <remarks>
         /// Also removes the avatar from the physical scene if transit has started.
         /// </remarks>
+        // A fixed single-physics-frame lookahead (the original m_scene.FrameTime
+        // check below) leaves no time for the crossing handshake's network calls
+        // to complete before the avatar is already at the line - this is the
+        // actual root cause of the classic OpenSim border-crossing hitch,
+        // confirmed by comparison against WhiteCore-Dev's more generous (still
+        // linear-prediction) crossing window. Kept modest and adaptive rather
+        // than a large fixed value: this trigger commits to the cross
+        // (IsInTransit/IsChildAgent get set), so widening it too far risks
+        // crossing prematurely if the avatar changes direction right at a
+        // border. Values match WhiteCore-Dev's own (0.1s base, doubled below a
+        // walking-adjacent speed threshold) rather than invented numbers.
+        private const float CROSSING_LOOKAHEAD_SECONDS = 0.1f;
+        private const float CROSSING_LOOKAHEAD_SECONDS_SLOW = 0.2f;
+        private const float CROSSING_LOOKAHEAD_SLOW_SPEED_SQ = 2.5f * 2.5f;
+
+        // Separate, larger, side-effect-free lookahead purely to warm
+        // EntityTransferModule's pre-approved-crossing cache (see
+        // GetDestination()) ahead of the actual crossing. Unlike the trigger
+        // above, this never touches IsInTransit/IsChildAgent, so there is no
+        // correctness risk from being "wrong" or from the avatar turning back
+        // before it actually reaches the border - worst case it warms a cache
+        // entry that simply expires unused.
+        private const float CROSSING_PRECHECK_LOOKAHEAD_SECONDS = 1.0f;
+        private const int CROSSING_PRECHECK_MIN_INTERVAL_MS = 500;
+        private int m_lastCrossingPreCheckTick;
+
         protected void CheckForBorderCrossing()
         {
             // Check that we we are not a child
@@ -4692,13 +4718,17 @@ namespace OpenSim.Region.Framework.Scenes
 
             RegionInfo rinfo = m_scene.RegionInfo;
 
-            float timeStep = m_scene.FrameTime;
+            float timeStep = (vel.LengthSquared() < CROSSING_LOOKAHEAD_SLOW_SPEED_SQ)
+                                ? CROSSING_LOOKAHEAD_SECONDS_SLOW : CROSSING_LOOKAHEAD_SECONDS;
             float t = pos2.X + vel.X * timeStep;
             if (t >= 0 && t < rinfo.RegionSizeX)
             {
                 t = pos2.Y + vel.Y * timeStep;
                 if (t >= 0 && t < rinfo.RegionSizeY)
+                {
+                    TryPreWarmCrossingAccess(pos2, vel, rinfo);
                     return;
+                }
             }
 
             //m_log.DebugFormat(
@@ -4726,6 +4756,54 @@ namespace OpenSim.Region.Framework.Scenes
                 m_AngularVelocity = Vector3.Zero;
                 AbsolutePosition = pos;
             }
+        }
+
+        // Warms EntityTransferModule's pre-approved-crossing cache well before
+        // the actual crossing commits, so the real crossing's GetDestination()
+        // call can skip its SimulationService.QueryAccess round-trip and go
+        // straight to UpdateAgent - collapsing two sequential synchronous
+        // network calls on the crossing critical path down to one in the
+        // common case (steady approach to a border). Purely read-only: never
+        // sets IsInTransit or touches IsChildAgent, so a wrong or stale
+        // prediction here has no correctness consequence, only a wasted (and
+        // rate-limited) network call.
+        private void TryPreWarmCrossingAccess(Vector3 pos2, Vector3 vel, RegionInfo rinfo)
+        {
+            if (vel.LengthSquared() < 0.01f)
+                return;
+
+            float t = pos2.X + vel.X * CROSSING_PRECHECK_LOOKAHEAD_SECONDS;
+            bool wouldLeave = t < 0 || t >= rinfo.RegionSizeX;
+            if (!wouldLeave)
+            {
+                t = pos2.Y + vel.Y * CROSSING_PRECHECK_LOOKAHEAD_SECONDS;
+                wouldLeave = t < 0 || t >= rinfo.RegionSizeY;
+            }
+            if (!wouldLeave)
+                return;
+
+            if (Util.EnvironmentTickCountSubtract(m_lastCrossingPreCheckTick) < CROSSING_PRECHECK_MIN_INTERVAL_MS)
+                return;
+            m_lastCrossingPreCheckTick = Util.EnvironmentTickCount();
+
+            IEntityTransferModule agentTransfer = m_scene.RequestModuleInterface<IEntityTransferModule>();
+            if (agentTransfer == null)
+                return;
+
+            UUID agentID = UUID;
+            Vector3 predictedPos = pos2 + vel * CROSSING_PRECHECK_LOOKAHEAD_SECONDS;
+            Util.FireAndForget(o =>
+            {
+                try
+                {
+                    EntityTransferContext ctx = new();
+                    agentTransfer.GetDestination(agentID, predictedPos, ctx, out _, out _);
+                }
+                catch
+                {
+                    // Best-effort cache warm only - the real crossing still runs its own full check.
+                }
+            }, null, "BorderCrossingPreCheck-" + agentID);
         }
 
         public void CrossToNewRegionFail()
