@@ -9868,3 +9868,65 @@ a grid restart to take effect. `DonorPerkSourceAgentID`/
 `DonorPerkItemID` documented in `RegionWeb.ini.example`, both unset by
 default - the Supporter badge always applies on a completed donation,
 the item gift only once an operator configures a source item.
+
+### OpenSimDefaults.ini drift reconciliation - safe/doc-only batch,
+### resolved autonomously; four consequential items held for review
+
+Diffed the repo-tracked `bin/OpenSimDefaults.ini` template against the
+live `Casperia-Dev` deployment's copy (which is not itself in git).
+Drift runs both directions: sections that exist live but were never
+folded back into the public template, and a handful of doc-only gaps
+where the live file is missing comments/settings the template already
+documents. 470 lines of diff in total, split into two buckets.
+
+**Safe/zero-behavior-change items, handled without further check-ins
+per direction to go through the rest unless something needs a
+decision:**
+
+- Repo gained four sections that existed live but not in the template:
+  `[RegionWeb]`, `[ScriptExperiences]`, `[Weather]`, `[GroupAutoInvite]`.
+  All copied verbatim except `GroupAutoInvite`, where the live file's
+  real `GroupID` and grid-branded invite text were scrubbed to a
+  placeholder UUID and generic wording before going into the public
+  repo - the rest of that section (`Enabled`, `InviterID`, `RoleID`,
+  `InviteDelaySeconds`, `InviteOncePerSession`) is genuinely
+  default-shaped and safe as-is.
+- Live gained three sections the template already carried:
+  `[AuctionModule]`, `[TeamCombatModule]`, `[TextBuild]`. Confirmed
+  zero behavior change before adding - each module's own C# default
+  already matches what the template specifies (`AuctionModule.Enabled
+  = true` is the module's existing hardcoded default; `TeamCombatModule`
+  and `TextBuild` both default to `Enabled = false`), so this is purely
+  making the live file's on-disk config match what was already running.
+- Live gained three doc-only additions matching the template:
+  `MinPoolThreads = 2` (verified against `OpenSim.cs`'s
+  `GetInt("MinPoolThreads", 2)` - adding the explicit value changes
+  nothing), the commented-out `MapTilesDirectory` example line, and the
+  `[Terrain]` comment documenting the `mainland`/`island` Perlin-noise
+  options alongside the existing `pinhead-island`/`flat` ones.
+
+Repo-side changes committed and pushed to `confluence/merge-experiment`
+(134 insertions, doc-only). Live-side changes are direct edits to
+`S:\Opensim\Casperia-Dev\OpenSimDefaults.ini` - since every one was
+confirmed to already match the running behavior, they don't need a
+grid restart to "take effect" in the sense of changing anything, but
+will be picked up naturally on the next restart either way.
+
+**Four items held back, each a genuine behavior/tuning question rather
+than a documentation gap - to be raised one at a time:**
+
+1. ubODE physics tuning: ~150 lines of solver/material/water/avatar
+   tuning present only in the repo template, absent from live - and
+   `world_stepsize`/`world_solver_iterations` differ outright between
+   the two (repo 0.01333/24, live 0.01818/10), meaning live is running
+   its own distinct tuning rather than just missing the template's.
+2. Map3D/map-tile rendering: `RenderMeshes` and
+   `Map3DDrawFlatTextureCardSprites` are `true` in the template,
+   `false` on live; `Map3DWaterDepthShading`/`Map3DWaterDepthOpacity`
+   exist only in the template.
+3. `[Experience] Enabled` - `false` in the template, `true` on live,
+   meaning Experience Tools were deliberately turned on in production
+   and that was never reflected back.
+4. `Cap_SetDisplayName` - blank in the template, `"localhost"` on
+   live, with a live-only comment crediting "Continuum" for the
+   grid-wide mutable-Display-Names persistence approach.
