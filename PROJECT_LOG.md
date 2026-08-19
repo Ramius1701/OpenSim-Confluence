@@ -10357,3 +10357,44 @@ hidden` on body, document does not need scrolling, only
 `.guide-viewport` does, header stays pinned, cards still render.
 
 Build-verified clean, committed and pushed.
+
+### Follow-up: take_copy_restricted turned on, closing the last open
+### item from the permission-weaknesses scoping pass
+
+User's decision on the one item left off by default: `take_copy_
+restricted = true` added to both live regions' own `[Permissions]`
+section (`Var_Test_Region\OpenSim.ini`, `Welcome_Center\OpenSim.ini`) -
+config-only, no code change (the feature itself was already built and
+deployed earlier this session). Deployed after warning the connected
+tester via `"region restart 30"` on both regions (they had presence in
+both - root in one, child/neighbor in the other), then a full process
+restart to actually pick up the ini edit (a console "region restart"
+resets the scene in-place but reuses the already-parsed in-memory
+config - it does not re-read the file from disk; only a full process
+restart does).
+
+Hit the same transient `ubode.dll` native-load race a second time
+(Var Test Region crashed with `DllNotFoundException` while Welcome
+Center loaded the identical file fine seconds later) - now twice in a
+row when both region processes are launched back-to-back with no gap,
+recovered both times by just relaunching the crashed one. Worth
+treating as a real, if minor, operational note going forward: stagger
+the two region launches with a few seconds' gap rather than firing
+them immediately back-to-back, since Windows native-DLL loading
+appears to race when two processes load the same unmanaged library
+from the same path at nearly the same instant.
+
+This restart cycle overlapped with the user independently testing the
+viewer's own "Restart Region" debug-tab action on Var Test Region at
+the same time - they observed restart warnings/actual restarts on both
+regions and a second restart shortly after, and reasonably suspected a
+cross-region routing bug. Traced the actual timeline and confirmed it
+was fully explained by this session's own concurrent restart sequence
+(the two `region restart 30` warnings this deploy sent to both regions,
+then the full process restart, then the ubode crash-and-relaunch) - not
+a genuine bug in `HandleEstateRestartSimRequest`/`EstateManagementModule`.
+No code investigation was needed once the timeline lined up, but worth
+remembering: testing something live in-world while also running a
+restart cycle from this side produces genuinely confusing, hard-to-
+disentangle symptoms - better to avoid doing both at once when it can
+be helped.
