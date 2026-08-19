@@ -9930,3 +9930,33 @@ than a documentation gap - to be raised one at a time:**
 4. `Cap_SetDisplayName` - blank in the template, `"localhost"` on
    live, with a live-only comment crediting "Continuum" for the
    grid-wide mutable-Display-Names persistence approach.
+
+**Resolution, one at a time per the user's direction:**
+
+1. ubODE tuning - left as intentional divergence. Live keeps its own
+   proven `world_stepsize`/`world_solver_iterations` (0.01818/10) and
+   the rest of its tuning as-is; the template keeps documenting a
+   different set of defaults for other deployments. No change either
+   side.
+2. Map3D rendering - deployed the template's settings to live:
+   `RenderMeshes` and `Map3DDrawFlatTextureCardSprites` flipped to
+   `true`, `Map3DWaterDepthShading`/`Map3DWaterDepthOpacity` added.
+   Unlike the doc-only batch above, this is a real behavior change
+   (richer map tiles, more time/CPU spent in background map
+   generation) - applied directly to
+   `S:\Opensim\Casperia-Dev\OpenSimDefaults.ini`, needs a grid restart
+   to take effect. Not yet restarted as of this writing.
+3. `[Experience] Enabled` - confirmed live has run with it `true`
+   without issue; flipped the template's shipped default from `false`
+   to `true` to match. Live unchanged (already `true`).
+4. `Cap_SetDisplayName` - verified the capability has a real backing
+   implementation (`DisplayNameModule.cs` handles the cap,
+   `UserAccountService.cs` persists the change grid-wide) before
+   flipping the template default, rather than assuming the live
+   comment's claim was accurate. Template updated to `"localhost"`
+   with the same Continuum-credit comment live carries. Live
+   unchanged (already `"localhost"`).
+
+Repo template changes (items 3-4) committed and pushed to
+`confluence/merge-experiment`. Item 2's live-only change still needs a
+grid restart before it's actually in effect.
