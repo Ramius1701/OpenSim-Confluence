@@ -8733,7 +8733,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<div class=\"sidebar-user-name\">").Append(Html(session.Name)).Append("</div>");
             sb.Append("<div class=\"sidebar-user-role\"><span class=\"pill ")
               .Append(session.IsAdmin ? "pill-yes" : "pill-no").Append("\">")
-              .Append(session.IsAdmin ? "Administrator" : "Member").Append("</span></div>");
+              .Append(session.IsAdmin ? "Administrator" : "Resident").Append("</span></div>");
             sb.Append("</div></div>");
 
             sb.Append("<nav class=\"sidebar-nav\">");
