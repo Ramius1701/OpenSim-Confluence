@@ -1093,34 +1093,218 @@ namespace OpenSim.Server.Handlers.WebInterface
         // Native Destination Guide - what a viewer's Help > Destinations
         // floater opens (wired via [GridInfoService] DestinationGuide, the
         // same mechanism "welcome" already uses for the login splash).
-        // Modeled directly on OpenSim-Grid-Interface's own guide.php
-        // (Popular/Featured/Discover tabs, teleport-on-click cards), but
-        // using Confluence's own widget-card/subnav styling instead of
-        // porting that page's separate CSS, and Confluence's own
-        // ISearchService/IGridService instead of a raw SQL query - bare
-        // chrome via WriteBarePage since this renders in the viewer's small
-        // embedded browser panel, same as Help/About/the login splash.
+        // Ported from OpenSim-Grid-Interface's own guide.php as-is (same
+        // header/nav-tabs/card layout, same hue-tinted card-img fallback,
+        // same meta-row badge+traffic treatment), per explicit direction to
+        // keep that page's actual design rather than reusing Confluence's
+        // generic widget-card styling - only the colors are swapped to this
+        // site's own theme tokens (guide.php's own CSS is porting-target,
+        // not this connector's PageCss). Data comes from Confluence's own
+        // ISearchService/IGridService instead of guide.php's raw SQL, same
+        // as /destinations already does. Deliberately NOT sharing
+        // AppendDestinationTabs with /destinations (see HandleDestinations)
+        // - guide.php and destinations.php are two genuinely different
+        // pages on the reference site (no search/filters/pagination here,
+        // just tabs+cards, sized for the viewer's small embedded browser
+        // panel), not one page in two wrappers. Bare chrome via
+        // WriteAdaptivePage/WriteBarePage since this renders inside that
+        // panel, same as Help/About/the login splash.
         private void HandleGuide(IOSHttpRequest request, IOSHttpResponse response)
         {
-            string gridName = GetSetting("GridName", m_gridName);
-            StringBuilder sb = new StringBuilder();
-            sb.Append("<h1>Destination Guide</h1>");
-            AppendDestinationTabs(sb);
-            WriteAdaptivePage(request, response, "Destination Guide - " + gridName, sb.ToString());
+            const int maxAccess = 13; // PG - same safe default HandleSearch uses with no explicit maturity preference.
+            StringBuilder sb = new StringBuilder(GuideCss);
+
+            sb.Append("<div class=\"guide-header\"><div class=\"guide-brand\"><i class=\"bi bi-compass\"></i> Guide</div>")
+              .Append("<div class=\"guide-nav-tabs\">")
+              .Append("<button type=\"button\" class=\"guide-nav-btn active\" id=\"guide-btn-popular\" onclick=\"return guideTab('popular',this)\">Popular</button>")
+              .Append("<button type=\"button\" class=\"guide-nav-btn\" id=\"guide-btn-featured\" onclick=\"return guideTab('featured',this)\">Featured</button>")
+              .Append("<button type=\"button\" class=\"guide-nav-btn\" id=\"guide-btn-discover\" onclick=\"return guideTab('discover',this)\">Discover</button>")
+              .Append("</div></div>");
+
+            sb.Append("<div id=\"guide-view-popular\" class=\"guide-view-section active\">");
+            if (m_SearchService == null)
+                sb.Append("<div class=\"guide-empty\">Search is not available.</div>");
+            else
+                AppendGuideDestinationCards(sb, m_SearchService.SearchPlaces(string.Empty, 0, 30, maxAccess), "No popular places found yet.", showTraffic: true);
+            sb.Append("</div>");
+
+            sb.Append("<div id=\"guide-view-featured\" class=\"guide-view-section\">");
+            if (m_SearchService == null)
+                sb.Append("<div class=\"guide-empty\">Search is not available.</div>");
+            else
+                AppendGuideDestinationCards(sb, m_SearchService.GetFeaturedPlaces(30, maxAccess), "No featured places found yet.", showTraffic: false);
+            sb.Append("</div>");
+
+            sb.Append("<div id=\"guide-view-discover\" class=\"guide-view-section\">");
+            AppendGuideDiscoverCards(sb);
+            sb.Append("</div>");
+
+            // Client-side tab switch only, matching guide.php's own script -
+            // no page reload, small-panel feel. Scoped to guide- prefixed
+            // ids/classes so it can't collide with the shared DropdownScript
+            // (not included by WriteBarePage anyway) or any other page.
+            sb.Append("<script>function guideTab(name,el){")
+              .Append("['popular','featured','discover'].forEach(function(n){")
+              .Append("document.getElementById('guide-view-'+n).classList.toggle('active',n===name);});")
+              .Append("document.querySelectorAll('.guide-nav-btn').forEach(function(b){b.classList.remove('active');});")
+              .Append("el.classList.add('active');return false;}</script>");
+
+            WriteAdaptivePage(request, response, "Destination Guide - " + GetSetting("GridName", m_gridName), sb.ToString());
         }
 
-        // Popular/Featured/Discover browse-with-teleport tabs - the same
-        // real shape as OpenSim-Grid-Interface's destinations.php (tabs +
-        // search_parcels-backed cards + Teleport button), reimplemented
-        // against this connector's own ISearchService/IGridService rather
-        // than raw SQL. Shared by both the viewer-embedded Destination
-        // Guide (/guide, bare chrome, for the Destinations floater) and the
-        // human-facing /destinations page (full chrome) - same content,
-        // same tab-switch script, different wrapper only. Previously
-        // /destinations wrongly held the Leaflet world map instead of this
-        // (see HandleWorldMap, now split out to its own /worldmap route -
-        // Destinations and World Map are two separate real features on the
-        // reference site, not one page).
+        // Scoped (guide- prefixed) so it can't collide with the site-wide
+        // .card WriteBarePage already wraps this content in, or with
+        // /destinations' own .widget-card styling. Colors come from this
+        // site's own CSS custom properties (PageCss's :root block, already
+        // in scope since WriteBarePage always includes PageCss) rather than
+        // guide.php's hardcoded dark grays/blue - same layout, this site's
+        // theme.
+        private const string GuideCss =
+                "<style>" +
+                ".guide-header{display:flex;justify-content:space-between;align-items:center;" +
+                "flex-wrap:wrap;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);}" +
+                ".guide-brand{font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px;}" +
+                ".guide-nav-tabs{display:flex;background:var(--input-bg);padding:2px;border-radius:6px;gap:2px;}" +
+                ".guide-nav-btn{background:transparent;border:none;color:var(--muted);padding:4px 10px;" +
+                "border-radius:4px;cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.5px;" +
+                "font-family:inherit;}" +
+                ".guide-nav-btn.active{background:var(--accent);color:#fff;font-weight:600;}" +
+                ".guide-view-section{display:none;}" +
+                ".guide-view-section.active{display:block;}" +
+                ".guide-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}" +
+                ".guide-card{background:var(--card-bg);border:1px solid var(--border);border-radius:6px;" +
+                "overflow:hidden;display:flex;flex-direction:column;transition:transform .1s,border-color .1s;}" +
+                ".guide-card:hover{border-color:var(--accent);transform:translateY(-1px);}" +
+                ".guide-card-img{height:85px;display:flex;align-items:center;justify-content:center;" +
+                "background-size:cover;background-position:center;font-weight:700;font-size:24px;" +
+                "text-shadow:0 2px 4px rgba(0,0,0,.5);}" +
+                ".guide-card-body{padding:8px;flex:1;display:flex;flex-direction:column;}" +
+                ".guide-card-title{font-weight:600;font-size:12px;margin-bottom:2px;white-space:nowrap;" +
+                "overflow:hidden;text-overflow:ellipsis;color:var(--text);}" +
+                ".guide-card-sub{font-size:10px;color:var(--muted);margin-bottom:6px;}" +
+                ".guide-meta-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}" +
+                ".guide-badge{background:var(--input-bg);color:var(--muted);padding:2px 5px;border-radius:3px;font-size:10px;}" +
+                ".guide-traffic{font-size:10px;color:var(--muted);display:flex;align-items:center;gap:3px;}" +
+                ".guide-card-desc{font-size:11px;color:var(--muted);margin-bottom:8px;height:2.4em;overflow:hidden;" +
+                "line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}" +
+                ".guide-btn-tp{margin-top:auto;display:block;text-align:center;background:var(--input-bg);" +
+                "color:var(--text);text-decoration:none;padding:5px;border-radius:4px;font-size:11px;" +
+                "border:1px solid var(--border);}" +
+                ".guide-btn-tp:hover{background:var(--accent);color:#fff;border-color:var(--accent);text-decoration:none;}" +
+                ".guide-empty{text-align:center;color:var(--muted);padding:40px;font-style:italic;}" +
+                "</style>";
+
+        // Same hue formula guide.php uses (a stable per-name color so the
+        // same place always gets the same card-img tint), but a hand-rolled
+        // stable hash instead of C#'s string.GetHashCode() - .NET randomizes
+        // string hash codes per process by default, which would make every
+        // place's color reshuffle on every region restart.
+        private static int StableHueFor(string name)
+        {
+            unchecked
+            {
+                int hash = 23;
+                foreach (char c in name)
+                    hash = hash * 31 + c;
+                return Math.Abs(hash) % 360;
+            }
+        }
+
+        private void AppendGuideDestinationCards(StringBuilder sb, List<LandSearchRecord> places, string emptyMessage, bool showTraffic)
+        {
+            if (places == null || places.Count == 0)
+            {
+                sb.Append("<div class=\"guide-empty\">").Append(Html(emptyMessage)).Append("</div>");
+                return;
+            }
+
+            sb.Append("<div class=\"guide-grid\">");
+            foreach (LandSearchRecord place in places)
+            {
+                string categoryLabel = ParcelCategories.TryGetValue(place.Category, out string label) ? label : "General";
+                bool hasLanding = place.LandingX != 0f || place.LandingY != 0f;
+                float tpX = hasLanding ? place.LandingX : 128f;
+                float tpY = hasLanding ? place.LandingY : 128f;
+                float tpZ = hasLanding ? place.LandingZ : 25f;
+                string tp = "secondlife:///app/teleport/" + Uri.EscapeDataString(place.RegionName ?? string.Empty)
+                        + "/" + (int)tpX + "/" + (int)tpY + "/" + (int)tpZ;
+                int hue = StableHueFor(place.RegionName ?? place.Name ?? string.Empty);
+                string initial = string.IsNullOrEmpty(place.Name) ? "?" : place.Name.Substring(0, 1);
+
+                sb.Append("<div class=\"guide-card\">")
+                  .Append("<div class=\"guide-card-img\" style=\"background-color:hsl(").Append(hue)
+                  .Append(",30%,25%);color:hsl(").Append(hue).Append(",80%,70%);\">")
+                  .Append(Html(initial)).Append("</div>")
+                  .Append("<div class=\"guide-card-body\">")
+                  .Append("<div class=\"guide-card-title\">").Append(Html(place.Name)).Append("</div>")
+                  .Append("<div class=\"guide-card-sub\">").Append(Html(place.RegionName)).Append("</div>")
+                  .Append("<div class=\"guide-meta-row\"><span class=\"guide-badge\">").Append(Html(categoryLabel)).Append("</span>");
+                if (showTraffic && place.Dwell > 0)
+                {
+                    sb.Append("<span class=\"guide-traffic\">&#9679; Traffic: ").Append(((int)place.Dwell).ToString("N0")).Append("</span>");
+                }
+                sb.Append("</div>");
+                if (!string.IsNullOrEmpty(place.Description))
+                {
+                    string description = place.Description.Length > 90 ? place.Description.Substring(0, 90) + "..." : place.Description;
+                    sb.Append("<div class=\"guide-card-desc\">").Append(Html(description)).Append("</div>");
+                }
+                sb.Append("<a href=\"").Append(Html(tp)).Append("\" class=\"guide-btn-tp\">Teleport</a>")
+                  .Append("</div></div>");
+            }
+            sb.Append("</div>");
+        }
+
+        private void AppendGuideDiscoverCards(StringBuilder sb)
+        {
+            if (m_GridService == null)
+            {
+                sb.Append("<div class=\"guide-empty\">Grid service is not available.</div>");
+                return;
+            }
+
+            List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
+            regions.Sort((a, b) => string.Compare(a.RegionName, b.RegionName, StringComparison.OrdinalIgnoreCase));
+            if (regions.Count == 0)
+            {
+                sb.Append("<div class=\"guide-empty\">No online regions found.</div>");
+                return;
+            }
+
+            sb.Append("<div class=\"guide-grid\">");
+            foreach (GridRegion region in regions.Take(50))
+            {
+                string tp = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                int hue = StableHueFor(region.RegionName);
+                string initial = string.IsNullOrEmpty(region.RegionName) ? "?" : region.RegionName.Substring(0, 1);
+
+                sb.Append("<div class=\"guide-card\">")
+                  .Append("<div class=\"guide-card-img\" style=\"background-color:hsl(").Append(hue)
+                  .Append(",30%,25%);color:hsl(").Append(hue).Append(",80%,70%);\">")
+                  .Append(Html(initial)).Append("</div>")
+                  .Append("<div class=\"guide-card-body\">")
+                  .Append("<div class=\"guide-card-title\">").Append(Html(region.RegionName)).Append("</div>")
+                  .Append("<div class=\"guide-card-sub\">Online Region</div>")
+                  .Append("<div class=\"guide-meta-row\"><span class=\"guide-badge\">Online</span></div>")
+                  .Append("<a href=\"").Append(Html(tp)).Append("\" class=\"guide-btn-tp\">Teleport</a>")
+                  .Append("</div></div>");
+            }
+            sb.Append("</div>");
+        }
+
+        // Popular/Featured/Discover browse-with-teleport tabs for the
+        // human-facing /destinations page (see HandleDestinations below) -
+        // reimplemented against this connector's own ISearchService/
+        // IGridService rather than raw SQL. NOT shared with /guide (see
+        // HandleGuide) - guide.php and destinations.php are two genuinely
+        // different pages on the reference site (destinations.php has
+        // search/filters/pagination this doesn't need to match, guide.php
+        // is the simple viewer-panel version), confirmed after this
+        // connector previously merged them into one shared implementation
+        // by mistake. Previously /destinations wrongly held the Leaflet
+        // world map instead of this (see HandleWorldMap, now split out to
+        // its own /worldmap route - Destinations and World Map are two
+        // separate real features on the reference site too, not one page).
         private void AppendDestinationTabs(StringBuilder sb)
         {
             const int maxAccess = 13; // PG - same safe default HandleSearch uses with no explicit maturity preference.
@@ -1235,10 +1419,9 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         // Real Destinations page - Popular/Featured/Discover browse-with-
-        // teleport, the same content AppendDestinationTabs already builds
-        // for the viewer-embedded /guide, just wrapped in full site chrome
-        // for human visitors. See AppendDestinationTabs for why this and
-        // /guide share one implementation rather than two copies.
+        // teleport, full site chrome for human visitors. See
+        // AppendDestinationTabs for why this is a separate implementation
+        // from the viewer-embedded /guide rather than a shared one.
         private void HandleDestinations(IOSHttpRequest request, IOSHttpResponse response)
         {
             StringBuilder sb = new StringBuilder();
