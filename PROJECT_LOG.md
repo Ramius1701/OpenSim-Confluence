@@ -10190,3 +10190,61 @@ which would've looked identical either way) that `.guide-card`/
 `.guide-nav-tabs`/hue-styled `.guide-card-img` are genuinely rendering,
 tab-switching works, and Discover correctly lists both real regions
 with working teleport links. Committed and pushed.
+
+### Follow-up: /myland self-service "Show in Search" toggle, and
+### warning residents on quit/shutdown, not just restart
+
+User's framing for both: "empower users to do as much as they can
+without the grid team's assistance - the grid team takes care of all
+the items users should not have access to."
+
+**"Show in Search" was only settable in-world.** Once the "Popular"
+root cause landed (ShowDirectory flag), the user asked whether that
+toggle should live on the resident's own web dashboard instead of
+requiring About Land in-world - consistent with the existing
+`/myregions`/`/myestates`/`/myclassifieds` self-service pattern, and
+there was no `/myland` yet. Built one: `GetParcelsByOwner(UUID)` added
+to `ISearchData`/`ISearchService`/`SearchService` and all three DB
+backends (MySQL/PGSQL/SQLite, no migration needed - reads existing
+`land.OwnerUUID`/`RegionUUID` columns), `LandSearchRecord` gained
+`RegionID`/`ShowInSearch`. The toggle itself is a new `"land search
+enable/disable <parcel-uuid>"` console command on
+`LandManagementModule`, applied via `RunRegionConsoleCommand` (same
+remote-console mechanism the GroupAutoInvite dashboard toggle already
+uses) rather than a direct DB write - keeps the live in-world parcel
+and the database in sync through the real
+`SendLandUpdateToAvatarsOverMe`/`TriggerLandObjectAdded` path instead
+of drifting until a restart. Ownership re-verified server-side on every
+toggle POST against `GetParcelsByOwner` - the parcel ID in the form is
+client-supplied, never trusted alone. Deployed with the tester warned
+first via `"region restart 30"` (not a hard kill) before the actual
+process restart needed to load the new code across all 9 touched
+assemblies. Verified live end-to-end: ran the new console command
+directly against a real parcel, confirmed the flag persisted in the
+database, confirmed Popular immediately started showing it with its
+real dwell value (412).
+
+**Quit/shutdown gave zero warning, unlike every restart path.** While
+using `"region restart 30"` to warn the tester above, user pointed out
+that `quit` from the console doesn't give that same warning. Checked -
+correct: `"region restart <seconds>"` (console, both web dashboard
+Restart buttons, and a viewer's own estate "Restart Region" request)
+all already route through `IRestartModule`, which does warn. `quit`/
+`shutdown`/Ctrl+C all funnel into the same virtual
+`ServerBase.Shutdown()` instead, with no warning at all -
+`IRestartModule` doesn't fit there either (`ScheduleRestart` is
+hardcoded to reset the scene, not exit the process). Fixed by
+overriding `Shutdown()` in `OpenSim.cs` (region console app only, not
+Robust - no residents there to warn): checks for connected root agents
+across local scenes first, broadcasts a warning via the same
+`SendNotificationToUsersInRegion` call `RestartModule`'s own warnings
+already use if anyone's connected, waits 30 seconds, then proceeds -
+an empty region still exits immediately, no artificial delay. Verified
+live: sent `quit` to an empty region over the same remote-console
+channel, confirmed it exited in under 5 seconds (the no-one-connected
+fast path). The "someone's connected" branch is code-verified but not
+live-tested against a real avatar, since nobody happened to be online
+during that specific deploy - noted honestly rather than claimed as
+fully verified.
+
+Both build-verified clean (0 errors, 0 warnings), committed and pushed.
