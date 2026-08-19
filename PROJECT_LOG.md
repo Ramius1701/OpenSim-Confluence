@@ -10917,3 +10917,123 @@ config. The underlying maptile-generation warning is still there,
 unfixed - real, but lower priority than "region won't start," and
 needs a proper look at the actual difference between the two
 `GridServerURI` call sites before touching this value again.
+
+## Cloning live Casperia's real data into Casperia-Dev (2026-08-20)
+
+User asked for the live grid's real accounts/prims/currency/groups/
+assets in Casperia-Dev, so testing exercises real-world conditions
+instead of the thin hand-built test fixture used all session -
+Confluence is meant to eventually replace live Casperia, and real-data
+testing in the isolated Dev grid first is the whole point of having
+one. Hard constraint honored throughout: `S:\Opensim\Casperia` and its
+`casperia` database were only ever read from, never written to.
+Planned via EnterPlanMode given the size/risk (see the approved plan,
+`sprightly-noodling-river.md`), backed up Casperia-Dev's own prior
+state first (`S:\Opensim\backups\`) in case anything went wrong on the
+Dev side.
+
+**What actually happened, in order:**
+
+1. `mysqldump` of live `casperia` (563.5MB), dropped and reimported
+   into `casperia_dev` - clean, 0 errors. Brings in essentially all of
+   accounts/prims/land/currency/groups/inventory metadata, since
+   OpenSim keeps almost all of that in the DB, not the filesystem.
+2. Confirmed both live and Dev use `FSAssetService` (file-based asset
+   binaries, not DB blobs) with the same `./fsassets/data` layout -
+   robocopied live's `fsassets/` into Dev's (14.1GB, 203,633 files, 0
+   failures).
+3. Copied all 13 live region folders Dev didn't already have
+   (Welcome_Center already existed with live's own RegionUUID - a
+   prior, unrelated clone). Fixed the same classes of drift already
+   found/fixed this session across all 13: `casperia.ddns.net` →
+   `holodeckgrid.ddns.net`, disabled the dead `DATA_SRV_CP` legacy PHP
+   path (same as the earlier DATASNAPSHOT fix, just not yet applied to
+   these files).
+4. Full top-level DLL/PDB resync from the repo's `bin/` (build
+   non-determinism from repeated `dotnet build` runs this session had
+   drifted several hashes again) - 0 mismatches after.
+5. Launched all 15 regions staggered - **7 silently vanished** with no
+   crash exception anywhere (not in OpenSim's own log, not Windows
+   Event Viewer), just going quiet mid-startup. Root-caused via the
+   user directly reporting the actual red console error text (my own
+   log-file forensics had hit a dead end): a flood of `WebException`
+   timeouts fetching assets/inventory from
+   `http://holodeckgrid.ddns.net:8003/...`.
+6. **First (wrong) theory**: `AssetServerURI`/`InventoryServerURI` in
+   the shared `config-include/GridCommon.ini` use
+   `${Const|PrivatePort}`, same pattern as the `GridServerURI` incident
+   above - changed both to `PublicPort`, tested on Farm alone (learned
+   that lesson). Zero asset timeouts on the retest - looked like
+   success, but turned out to be a false positive from most needed
+   assets already being cache-hit locally from the bulk `fsassets`
+   copy, not an actual fix.
+7. **Real root cause**, found by not trusting the false-positive and
+   checking Farm's own resolved port value directly: all 13
+   newly-copied regions carry **live's own `[Const]` values -
+   `PublicPort=8002, PrivatePort=8003`** - completely different from
+   Welcome_Center/Var_Test_Region's already-correct `9002/9003` (this
+   Dev grid's actual scheme, Robust genuinely listens on 9002). Not
+   random per-file drift - a clean, consistent split between "already
+   adapted for Dev" and "still carrying live's own port scheme."
+   Reverted the `GridCommon.ini` experiment back to its original,
+   proven state; fixed the actual bug instead - `PublicPort`/
+   `PrivatePort` corrected to `9002`/`9003` in each of the 13 regions'
+   own `[Const]` block. Verified on Farm alone again: **zero**
+   timeout/connection errors (down from dozens), clean `RegionReady`,
+   no registration failure. Rolled out to the remaining 12, relaunched
+   all 15 sequentially (each waiting for its own ready confirmation
+   rather than a blind stagger, learning from the overload that caused
+   the original 7-region silent-exit incident).
+8. User pointed out mid-launch that `Var_Test_Region` (a synthetic,
+   Dev-only region with no live counterpart) shouldn't be part of a
+   real-data grid - stopped it. Final state: **14 real-data regions
+   running** (Welcome_Center + all 13 copied live regions), zero
+   startup errors, zero registration failures, zero connection
+   timeouts.
+
+**Real findings surfaced by having actual content loaded** (not fixed
+in this pass, flagged for follow-up):
+
+- A genuine YEngine bug: `XMRInstQueue.Remove()` throws "not in a
+  list" when a script calls `llResetOtherScript()` on itself during
+  its own `state_entry` (seen on a real object in Section 31,
+  `[AV]sitB` script). Non-fatal (that one script gets disabled, region
+  keeps running) but a real engine bug worth its own investigation.
+- Asset-completeness gap, quantified: of 9,657 distinct assets
+  referenced by real prim inventory items (scripts, notecards, etc.),
+  **333 (~3.4%) have no matching row in the `fsassets` DB table at
+  all** - confirmed these UUIDs exist in the live dump (referenced by
+  prims) but were never registered as assets, meaning this is very
+  likely a pre-existing gap in live's own data (orphaned/lost assets
+  accumulated over time), not something this clone's mysqldump/
+  robocopy caused (both completed with 0 errors). Grid-wide the gap is
+  small (~3.4%), but concentrated - regions like Tangle reuse a small
+  set of common utility scripts across hundreds of objects, so a
+  handful of missing common assets produces a very visible flood of
+  "Couldn't start script ... asset ID ... could not be found" for that
+  one region specifically. Separately, some mesh assets that ARE
+  present fail to decode (`OSDException: Binary LLSD parsing: Unknown
+  type marker`) - a different symptom (corrupted/malformed content
+  found, not missing), same general theme. Worth a dedicated
+  asset-integrity audit later, not attempted in this pass.
+- Only `Welcome_Center` (and previously `Var_Test_Region`) ever
+  actually switch their logging over to a dedicated
+  `Simulators/<region>/OpenSim.log` - the 13 newly-copied regions
+  never do, staying on the shared root `OpenSim.log` for their entire
+  lifetime. That shared file also appears to get reset/truncated by
+  each newly-launched region process, meaning evidence from
+  earlier-launched regions (like the Tangle asset-flood, directly
+  observed by the user in real time) can no longer be re-derived from
+  the log file after later regions start - a real observability gap
+  worth understanding, not chased down in this pass.
+- `AuctionService` warns as unconfigured on the copied regions ("Web-
+  bidding cannot function without it") - a real, pre-existing gap in
+  live's own config, not something this session introduced.
+
+**Verified**: 14/14 real regions running with 0 startup errors: 9
+useraccounts (matches live), 14 regions currently registered (Dev now
+running more of live's own regions simultaneously than live itself
+was at dump time - live's own `regions` table only showed 5 registered
+at that moment), 72,223 real prims loaded, real cross-region neighbour
+communication confirmed working (e.g. "Sector 002 successfully
+informed neighbour Sector 001").
