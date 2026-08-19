@@ -10242,9 +10242,16 @@ already use if anyone's connected, waits 30 seconds, then proceeds -
 an empty region still exits immediately, no artificial delay. Verified
 live: sent `quit` to an empty region over the same remote-console
 channel, confirmed it exited in under 5 seconds (the no-one-connected
-fast path). The "someone's connected" branch is code-verified but not
-live-tested against a real avatar, since nobody happened to be online
-during that specific deploy - noted honestly rather than claimed as
-fully verified.
+fast path).
+
+Follow-up, once a real tester was actually connected: sent `quit` to
+their region and asked them to confirm what they saw. They reported
+seeing the warning message in-viewer in real time, then logged out
+themselves within the 30-second window rather than waiting for the
+forced disconnect. Log timeline matched exactly - `quit` sent, their
+voluntary logout ~7s later, then the region's real teardown sequence
+ran through to completion once the 30s wait elapsed. Both branches
+("someone's connected" and "region is empty") are now genuinely
+live-verified, not just code-reviewed.
 
 Both build-verified clean (0 errors, 0 warnings), committed and pushed.
