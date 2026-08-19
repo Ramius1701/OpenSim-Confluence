@@ -10486,3 +10486,107 @@ wasn't exercised this time, so it's deployed and ready but not yet
 proven firing successfully - worth a note if it's ever seen crashing
 again despite this fix being live, since that would mean the actual
 root cause is something other than what's diagnosed here.
+
+## Two real bugs found live-testing OnObjectBuy, both fixed (2026-08-19)
+
+Live-tested the OnObjectBuy currency charge added earlier this session
+(`ConfluenceCurrencyModule.ProcessObjectBuy`) by having a real avatar
+(Ramius) rez a for-sale object and buy it. First purchase succeeded.
+Repeat-buying the *same* object threw:
+
+```
+MySqlException: Duplicate entry '3b274c2b-7fcf-4d08-8f91-5112486e29b2'
+for key 'PRIMARY'
+```
+
+**Bug #1 - transaction ID reuse.** `ProcessObjectBuy`'s two `Transfer`
+calls (the charge and the delivery-failure refund) both passed
+`group.UUID` - the purchased object's own, stable UUID - as the
+`transactionID` parameter. `CurrencyTransfer.ID`/`currency_transactions
+.TransactionID` is a MySQL primary key, so any second purchase of the
+same object (a common case - a for-sale *copy*, bought by two different
+people, or the same person twice) collided on insert. Root-caused by
+reading `CurrencyService.Transfer` directly: `ID = transactionID ==
+UUID.Zero ? UUID.Random() : transactionID` - passing a real UUID
+disables the random-ID fallback every other transaction type already
+relies on. Fixed by passing `UUID.Zero` in both calls instead of
+`group.UUID`, matching every other transaction type in the codebase.
+
+**Bug #2 - non-atomic balance-plus-ledger update, found underneath
+bug #1.** Once the crash above hit, a direct DB query showed both
+`SetBalance` calls had already committed (seller and buyer balances
+both reflected the transfer) even though the `AddTransaction` ledger
+insert had failed and thrown - real currency moved with zero
+corresponding record. Read `CurrencyService.Transfer` line by line:
+`SetBalance(from)`, `SetBalance(to)`, `AddTransaction(...)` were three
+separate, uncoordinated DB calls with no wrapping transaction - any
+failure on the third call left the first two permanently committed.
+
+**Scope decision.** `ConfluenceCurrencyModule`/`CurrencyService` are
+Casperia's own built-in currency stack; `DTLNSLMoneyModule`/
+`OpenSim-Grid-MoneyServer` are the 3rd-party addon-modules Casperia
+also ships and maintains for opensim-master grids that don't run
+Confluence's built-in stack. User's explicit direction: fix real bugs
+in both where they actually exist, since shipping updated addons
+alongside a built-in replacement (not just deprecating them) is itself
+part of the trust Casperia is building with grids that don't use it -
+see [[casperia-project-mission]]. So before fixing anything, checked
+whether either bug actually reproduces in the addon-module stack:
+
+- Read `DTLNSLMoneyModule.OnObjectBuy`/`TransferMoney` in full - the
+  object's UUID is passed to MoneyServer purely as descriptive
+  metadata (`paramTable["objectID"]`), never as the transaction's own
+  ID. Bug #1 does not exist here; nothing to fix.
+- Read `MoneyDBService.DoTransfer` - a fundamentally different design
+  already in place: a PENDING-status gate before either balance moves,
+  and compensating-refund logic with explicit `FATAL`/`ERROR_STATUS`
+  logging if the refund itself fails. Traced one level deeper into
+  `MySQLMoneyManager.withdrawMoney`/`giveMoney`
+  (`OpenSim-Data-MySQL-MySQLMoneyDataWrapper`) - each already wraps its
+  own balance-update-plus-status-update in a single `BEGIN;...;COMMIT;`
+  batch, so each leg is atomic on its own, and the PENDING+refund
+  pattern above already covers a failure *between* the two legs. Bug
+  #2 does not exist here either - MoneyServer's original architecture
+  already avoided the gap `CurrencyService.Transfer` had. No addon
+  code changes were needed for either bug; verified by reading the
+  actual code, not assumed from either module's age or reputation.
+
+**Fix for bug #2 - `ApplyTransfer`.** Added a new `ICurrencyData`
+method, `ApplyTransfer(fromID, newFromBalance, toID, newToBalance,
+transfer)`, implemented in all three backends
+(`MySqlCurrencyData`/`SQLiteCurrencyData`/`PGSQLCurrencyData`) using
+that backend's own transaction type (`MySqlTransaction`/
+`SQLiteTransaction`/`NpgsqlTransaction`), wrapping both balance
+upserts and the ledger insert in one commit-or-rollback unit -
+mirroring the pattern already proven correct in MoneyServer's own
+`withdrawMoney`/`giveMoney`. `CurrencyService.Transfer` now computes
+the two new balances up front and calls `ApplyTransfer` once instead
+of three separate uncoordinated calls; a thrown exception (e.g. a
+reused transaction ID) now rolls back any balance change too, and
+`Transfer` returns `false` instead of leaving currency moved with
+nothing recorded.
+
+Full solution build clean, 0 warnings, 0 errors. Live redeploy: grid
+was up with nobody connected (`SELECT COUNT(*) FROM presence` = 0), so
+stopped Robust + both region processes (graceful `taskkill` didn't
+land within 20s - no shutdown activity in either log - escalated to
+`taskkill /F`, safe since nobody was connected), copied the 6 touched
+assemblies (`OpenSim.Data`, `OpenSim.Data.MySQL`,
+`OpenSim.Data.SQLite`, `OpenSim.Data.PGSQL`,
+`OpenSim.Services.CurrencyService`, `OpenSim.Region.CoreModules`),
+hash-verified all 6 against the fresh build before restarting, then
+relaunched using the exact `CasperiaDevControl.bat` invocation
+(`Robust.exe -inifile=Robust.HG.ini`, then `OpenSim.exe
+-inifile=Simulators\<name>\OpenSim.ini`, staggered) rather than
+guessing at launch args. Both regions reached `RegionReady` cleanly;
+the ubode.dll race didn't reproduce this launch (expected - it's
+intermittent, not deterministic).
+
+**Live-verified the actual fix**: Ramius bought the same test object
+three times in a row post-deploy. All three purchases succeeded with
+three distinct `TransactionID`s (`a345c215...`, `536bc673...`,
+`845bad72...`), zero duplicate-key errors, zero exceptions in either
+region's log - confirmed directly via `SELECT ... FROM
+currency_transactions ORDER BY Created DESC` against `casperia_dev`
+(note: currency tables live in `casperia_dev`, not `casperia_grid` -
+easy to typo). The original crash (`3b274c2b-...` reused) is gone.
