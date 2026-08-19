@@ -829,8 +829,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<div class=\"welcome-columns\">");
 
             sb.Append("<div class=\"welcome-col\">");
-            sb.Append(RenderRegionListWidget(regions.Take(5).ToList()));
-            if (regions.Count > 5)
+            sb.Append(RenderRegionListCompact(regions.Take(8).ToList()));
+            if (regions.Count > 8)
                 sb.Append("<p class=\"welcome-more-link\"><a href=\"").Append(BasePath).Append("/worldmap\">View all ")
                   .Append(regions.Count).Append(" regions &rarr;</a></p>");
             sb.Append("</div>");
@@ -918,6 +918,11 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "text-decoration:none;font-weight:700;padding:8px;border-radius:40px;margin:4px 0 12px;" +
                 "text-transform:uppercase;font-size:11.5px;letter-spacing:.3px;}" +
                 ".welcome-register-cta:hover{background:var(--accent-dark);color:#fff;text-decoration:none;}" +
+                ".welcome-region-list{list-style:none;margin:0;padding:0;}" +
+                ".welcome-region-list li{display:flex;justify-content:space-between;align-items:center;" +
+                "padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px;}" +
+                ".welcome-region-list li:last-child{border-bottom:none;}" +
+                ".welcome-region-coords{color:var(--muted);font-size:11px;}" +
                 "</style>";
 
         // Real counterpart to WhiteCore-Dev's welcomescreen/gridstatus.html
@@ -957,33 +962,28 @@ namespace OpenSim.Server.Handlers.WebInterface
             return sb.ToString();
         }
 
-        // Real counterpart to WhiteCore-Dev's welcomescreen/region_box.html -
-        // a thumbnail/name/position/teleport-link list of every region on
-        // the grid, shown directly on the splash rather than requiring a
-        // click through to /worldmap. Reuses the same map-tile URL
-        // convention and secondlife:///app/teleport/ link HandleWorldMap
-        // already established, and the same GetRegionRange call, rather than
-        // a third way of listing regions.
-        private string RenderRegionListWidget(List<GridRegion> regions)
+        // Plain name + coordinates + teleport link, no map-tile thumbnail -
+        // used on the login splash's region column. Started as a grid of
+        // thumbnail cards (RenderRegionListWidget, since removed - this
+        // replaced its only call site), but that was too heavy for a
+        // column this narrow (per explicit feedback after seeing it live);
+        // a list reads fine at that width and matches osloginscreen's own
+        // regionlist.php, which is plain text rows too, not thumbnails.
+        private string RenderRegionListCompact(List<GridRegion> regions)
         {
             if (regions.Count == 0)
                 return string.Empty;
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h2>Regions</h2><div class=\"widget-grid\">");
+            sb.Append("<h2>Regions</h2><ul class=\"welcome-region-list\">");
             foreach (GridRegion region in regions)
             {
-                string tileUrl = "/map/map-1-" + region.RegionCoordX + "-" + region.RegionCoordY + "-objects.jpg";
                 string tp = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
-
-                sb.Append("<div class=\"widget-card\">");
-                sb.Append("<img src=\"").Append(Html(tileUrl)).Append("\" alt=\"\" ")
-                  .Append("style=\"width:100%;border-radius:6px;margin-bottom:8px;\" onerror=\"this.style.display='none'\">");
-                sb.Append("<h3>").Append(Html(region.RegionName)).Append("</h3>");
-                sb.Append("<div class=\"widget-meta\">").Append(region.RegionCoordX).Append(", ").Append(region.RegionCoordY).Append("</div>");
-                sb.Append("<p><a href=\"").Append(Html(tp)).Append("\">Teleport &rarr;</a></p></div>");
+                sb.Append("<li><a href=\"").Append(Html(tp)).Append("\">").Append(Html(region.RegionName)).Append("</a>")
+                  .Append("<span class=\"welcome-region-coords\">").Append(region.RegionCoordX).Append(", ")
+                  .Append(region.RegionCoordY).Append("</span></li>");
             }
-            sb.Append("</div>");
+            sb.Append("</ul>");
             return sb.ToString();
         }
 
