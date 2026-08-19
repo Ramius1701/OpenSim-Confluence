@@ -1425,6 +1425,18 @@
     ; XmlRpcServiceWriteKey   = 1234
 
 
+; GroupAutoInvite is a per-region feature, not a grid-wide one - most grids
+; running it want a different group per region. OpenSimDefaults.ini's own
+; [GroupAutoInvite] section ships disabled and group-less on purpose; this
+; region's own OpenSim.ini is where you turn it on with this region's
+; specific group (Nini merges individual keys, so you only need to set the
+; keys you're overriding - Enabled/GroupID here, everything else still
+; inherits from OpenSimDefaults.ini).
+; [GroupAutoInvite]
+;     Enabled = true
+;     GroupID = 00000000-0000-0000-0000-000000000000
+
+
 [InterestManagement]
      ;; This section controls how state updates are prioritized for each client
      
