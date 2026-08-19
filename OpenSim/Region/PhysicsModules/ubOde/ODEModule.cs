@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using log4net;
 using Nini.Config;
 using Mono.Addins;
@@ -39,6 +40,48 @@ namespace OpenSim.Region.PhysicsModule.ubOde
             get { return null; }
         }
 
+        // Self-heals a real, observed startup race: when two region
+        // processes on the same host both load lib64/ubode.dll for the
+        // first time within the same second or two, one of them can hit a
+        // transient DllNotFoundException even though the file is present
+        // and correct - most likely Windows Defender (or another AV)
+        // briefly locking the file for on-access scanning. Since the two
+        // processes share no memory, the only thing that can make one
+        // process's native load fail because of the other is contention
+        // on the file itself; a short wait and retry is the appropriate
+        // fix for that specific failure mode. Confirmed live: relaunching
+        // the crashed process by hand, seconds later, always succeeded
+        // immediately - this automates exactly that recovery instead of
+        // needing a human to notice and relaunch it.
+        private const int InitOdeMaxAttempts = 3;
+        private const int InitOdeRetryDelayMs = 2000;
+
+        private void InitODEWithRetry()
+        {
+            for (int attempt = 1; attempt <= InitOdeMaxAttempts; attempt++)
+            {
+                try
+                {
+                    UBOdeNative.InitODE();
+                    return;
+                }
+                catch (DllNotFoundException e) when (attempt < InitOdeMaxAttempts)
+                {
+                    m_log.Warn(
+                        $"[ubODE] Native library failed to load on attempt {attempt}/{InitOdeMaxAttempts} " +
+                        $"({e.Message}) - likely transient (e.g. antivirus scanning the file on first access " +
+                        $"while another region process loads it at the same time). Retrying in {InitOdeRetryDelayMs}ms.");
+                    Thread.Sleep(InitOdeRetryDelayMs);
+                }
+            }
+
+            // Final attempt: let a genuine failure (missing/corrupt file,
+            // wrong architecture, etc.) throw and fail startup loudly, same
+            // as before this retry existed - only the transient case is
+            // masked, not a real missing dependency.
+            UBOdeNative.InitODE();
+        }
+
         public void Initialise(IConfigSource source)
         {
             IConfig config = source.Configs["Startup"];
@@ -58,7 +101,7 @@ namespace OpenSim.Region.PhysicsModule.ubOde
 
                     DllmapConfigHelper.RegisterAssembly(typeof(ubOdeModule).Assembly);
 
-                    UBOdeNative.InitODE();
+                    InitODEWithRetry();
 
                     string ode_config = UBOdeNative.GetConfiguration();
                     if (string.IsNullOrEmpty(ode_config))
