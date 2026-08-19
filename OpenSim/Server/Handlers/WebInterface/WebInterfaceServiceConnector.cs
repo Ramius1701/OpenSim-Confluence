@@ -1193,12 +1193,32 @@ namespace OpenSim.Server.Handlers.WebInterface
             const int maxAccess = 13; // PG - same safe default HandleSearch uses with no explicit maturity preference.
             StringBuilder sb = new StringBuilder(GuideCss);
 
+            // guide.php's own body is "height:100vh; overflow:hidden" with
+            // only its inner .viewport scrolling - the header/tabs never
+            // move, and at default floater size nothing needs to scroll at
+            // all. The first cut of this port dropped that: WriteBarePage's
+            // shared .page/.card padding (~150px combined) plus this page's
+            // own header/tabs/grid stacked in normal document flow made the
+            // whole page taller than the floater and left it scrolling from
+            // the very first card - not how the reference behaves. Fixed
+            // by reproducing the same fixed-viewport-height/inner-scroll
+            // split, but only inside the viewer's actual embedded panel
+            // (IsViewerRequest) - forcing height:100vh in a real browser
+            // tab would clip WritePage's own header/footer chrome, which
+            // guide.php never had to account for since it has no site chrome
+            // at all.
+            bool isViewerPanel = IsViewerRequest(request, response);
+            if (isViewerPanel)
+                sb.Append(GuideFixedHeightCss);
+
             sb.Append("<div class=\"guide-header\"><div class=\"guide-brand\"><i class=\"bi bi-compass\"></i> Guide</div>")
               .Append("<div class=\"guide-nav-tabs\">")
               .Append("<button type=\"button\" class=\"guide-nav-btn active\" id=\"guide-btn-popular\" onclick=\"return guideTab('popular',this)\">Popular</button>")
               .Append("<button type=\"button\" class=\"guide-nav-btn\" id=\"guide-btn-featured\" onclick=\"return guideTab('featured',this)\">Featured</button>")
               .Append("<button type=\"button\" class=\"guide-nav-btn\" id=\"guide-btn-discover\" onclick=\"return guideTab('discover',this)\">Discover</button>")
               .Append("</div></div>");
+
+            sb.Append("<div class=\"guide-viewport\">");
 
             sb.Append("<div id=\"guide-view-popular\" class=\"guide-view-section active\">");
             if (m_SearchService == null)
@@ -1218,6 +1238,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendGuideDiscoverCards(sb);
             sb.Append("</div>");
 
+            sb.Append("</div>"); // .guide-viewport
+
             // Client-side tab switch only, matching guide.php's own script -
             // no page reload, small-panel feel. Scoped to guide- prefixed
             // ids/classes so it can't collide with the shared DropdownScript
@@ -1230,6 +1252,24 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             WriteAdaptivePage(request, response, "Destination Guide - " + GetSetting("GridName", m_gridName), sb.ToString());
         }
+
+        // Only ever appended for a real viewer panel (see HandleGuide) -
+        // reuses body/.site-main/.page/.card, the exact same selectors
+        // PageCss already defines, so these win by document order (this
+        // <style> block ends up later in the document than PageCss's own,
+        // which lives in <head>) without touching PageCss itself or any
+        // other page that shares it.
+        private const string GuideFixedHeightCss =
+                "<style>" +
+                "html,body{height:100%;}" +
+                "body{height:100vh;overflow:hidden;display:flex;flex-direction:column;}" +
+                ".site-main{padding:0;flex:1;display:flex;flex-direction:column;min-height:0;}" +
+                ".page{max-width:100%;margin:0;padding:0;flex:1;display:flex;flex-direction:column;min-height:0;}" +
+                ".card{padding:10px;flex:1;display:flex;flex-direction:column;min-height:0;" +
+                "border-radius:0;border:none;box-shadow:none;}" +
+                ".guide-header{flex:0 0 auto;}" +
+                ".guide-viewport{flex:1 1 auto;overflow-y:auto;min-height:0;}" +
+                "</style>";
 
         // Scoped (guide- prefixed) so it can't collide with the site-wide
         // .card WriteBarePage already wraps this content in, or with
