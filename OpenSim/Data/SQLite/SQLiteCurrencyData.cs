@@ -95,6 +95,59 @@ namespace OpenSim.Data.SQLite
             }
         }
 
+        public void ApplyTransfer(UUID fromID, int? newFromBalance, UUID toID, int? newToBalance, CurrencyTransfer transfer)
+        {
+            lock (this)
+            {
+                using (SQLiteTransaction sqltx = m_conn.BeginTransaction())
+                {
+                    try
+                    {
+                        if (newFromBalance.HasValue)
+                            SetBalanceInTransaction(sqltx, fromID, newFromBalance.Value);
+
+                        if (newToBalance.HasValue)
+                            SetBalanceInTransaction(sqltx, toID, newToBalance.Value);
+
+                        using (SQLiteCommand cmd = new SQLiteCommand(
+                                "INSERT INTO currency_transactions (TransactionID, ToAgent, FromAgent, Amount, TransferType, " +
+                                "Description, Created, ToBalance, FromBalance) VALUES " +
+                                "(:txid, :to, :from, :amount, :type, :description, :created, :tobalance, :frombalance)", m_conn, sqltx))
+                        {
+                            cmd.Parameters.Add(new SQLiteParameter(":txid", transfer.ID.ToString()));
+                            cmd.Parameters.Add(new SQLiteParameter(":to", transfer.ToAgent.ToString()));
+                            cmd.Parameters.Add(new SQLiteParameter(":from", transfer.FromAgent.ToString()));
+                            cmd.Parameters.Add(new SQLiteParameter(":amount", transfer.Amount));
+                            cmd.Parameters.Add(new SQLiteParameter(":type", transfer.TransferType));
+                            cmd.Parameters.Add(new SQLiteParameter(":description", transfer.Description ?? string.Empty));
+                            cmd.Parameters.Add(new SQLiteParameter(":created", Utils.DateTimeToUnixTime(transfer.TransferDate)));
+                            cmd.Parameters.Add(new SQLiteParameter(":tobalance", transfer.ToBalance));
+                            cmd.Parameters.Add(new SQLiteParameter(":frombalance", transfer.FromBalance));
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        sqltx.Commit();
+                    }
+                    catch
+                    {
+                        sqltx.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        private void SetBalanceInTransaction(SQLiteTransaction sqltx, UUID agentID, int amount)
+        {
+            using (SQLiteCommand cmd = new SQLiteCommand(
+                    "INSERT OR REPLACE INTO currency_balances (PrincipalID, Balance) VALUES (:id, :balance)", m_conn, sqltx))
+            {
+                cmd.Parameters.Add(new SQLiteParameter(":id", agentID.ToString()));
+                cmd.Parameters.Add(new SQLiteParameter(":balance", amount));
+                cmd.ExecuteNonQuery();
+            }
+        }
+
         public uint NumberOfTransactions(UUID toAgentID, UUID fromAgentID)
         {
             StringBuilder where = new StringBuilder();

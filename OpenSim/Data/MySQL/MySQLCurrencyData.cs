@@ -98,6 +98,64 @@ namespace OpenSim.Data.MySQL
             }
         }
 
+        public void ApplyTransfer(UUID fromID, int? newFromBalance, UUID toID, int? newToBalance, CurrencyTransfer transfer)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlTransaction sqltx = dbcon.BeginTransaction())
+                {
+                    try
+                    {
+                        if (newFromBalance.HasValue)
+                            SetBalanceInTransaction(dbcon, sqltx, fromID, newFromBalance.Value);
+
+                        if (newToBalance.HasValue)
+                            SetBalanceInTransaction(dbcon, sqltx, toID, newToBalance.Value);
+
+                        using (MySqlCommand cmd = new MySqlCommand(
+                            "insert into `currency_transactions` "
+                            + "(`TransactionID`, `ToAgent`, `FromAgent`, `Amount`, `TransferType`, `Description`, "
+                            + "`Created`, `ToBalance`, `FromBalance`) values "
+                            + "(?TransactionID, ?ToAgent, ?FromAgent, ?Amount, ?TransferType, ?Description, "
+                            + "?Created, ?ToBalance, ?FromBalance)", dbcon, sqltx))
+                        {
+                            cmd.Parameters.AddWithValue("?TransactionID", transfer.ID.ToString());
+                            cmd.Parameters.AddWithValue("?ToAgent", transfer.ToAgent.ToString());
+                            cmd.Parameters.AddWithValue("?FromAgent", transfer.FromAgent.ToString());
+                            cmd.Parameters.AddWithValue("?Amount", transfer.Amount);
+                            cmd.Parameters.AddWithValue("?TransferType", transfer.TransferType);
+                            cmd.Parameters.AddWithValue("?Description", transfer.Description ?? string.Empty);
+                            cmd.Parameters.AddWithValue("?Created", Utils.DateTimeToUnixTime(transfer.TransferDate));
+                            cmd.Parameters.AddWithValue("?ToBalance", transfer.ToBalance);
+                            cmd.Parameters.AddWithValue("?FromBalance", transfer.FromBalance);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        sqltx.Commit();
+                    }
+                    catch
+                    {
+                        sqltx.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        private void SetBalanceInTransaction(MySqlConnection dbcon, MySqlTransaction sqltx, UUID agentID, int amount)
+        {
+            using (MySqlCommand cmd = new MySqlCommand(
+                "insert into `currency_balances` (`PrincipalID`, `Balance`) values (?PrincipalID, ?Balance) "
+                + "on duplicate key update `Balance` = ?Balance", dbcon, sqltx))
+            {
+                cmd.Parameters.AddWithValue("?PrincipalID", agentID.ToString());
+                cmd.Parameters.AddWithValue("?Balance", amount);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
         public uint NumberOfTransactions(UUID toAgentID, UUID fromAgentID)
         {
             StringBuilder where = new StringBuilder();

@@ -98,25 +98,21 @@ namespace OpenSim.Services.CurrencyService
             if (amount < 0)
                 return false;
 
-            int fromBalance = 0;
+            int? fromBalance = null;
             if (fromID != UUID.Zero)
             {
-                fromBalance = m_Database.GetBalance(fromID);
-                if (fromBalance < amount)
+                int currentFromBalance = m_Database.GetBalance(fromID);
+                if (currentFromBalance < amount)
                     return false; // insufficient funds
 
-                fromBalance -= amount;
-                m_Database.SetBalance(fromID, fromBalance);
+                fromBalance = currentFromBalance - amount;
             }
 
-            int toBalance = 0;
+            int? toBalance = null;
             if (toID != UUID.Zero)
-            {
                 toBalance = m_Database.GetBalance(toID) + amount;
-                m_Database.SetBalance(toID, toBalance);
-            }
 
-            m_Database.AddTransaction(new CurrencyTransfer
+            CurrencyTransfer transfer = new CurrencyTransfer
             {
                 ID = transactionID == UUID.Zero ? UUID.Random() : transactionID,
                 ToAgent = toID,
@@ -125,9 +121,27 @@ namespace OpenSim.Services.CurrencyService
                 TransferType = transactionType,
                 Description = description ?? string.Empty,
                 TransferDate = DateTime.UtcNow,
-                ToBalance = toBalance,
-                FromBalance = fromBalance
-            });
+                ToBalance = toBalance ?? 0,
+                FromBalance = fromBalance ?? 0
+            };
+
+            // Balance changes and the ledger record are applied together in
+            // one DB transaction (ApplyTransfer) - if the ledger insert
+            // fails (e.g. a reused transaction ID hitting the TransactionID
+            // primary key), the balance changes roll back too, instead of
+            // leaving currency moved with no corresponding record. Found
+            // live: ProcessObjectBuy reusing an object's own UUID as the
+            // transaction ID caused exactly this on a repeat purchase. See
+            // PROJECT_LOG.md.
+            try
+            {
+                m_Database.ApplyTransfer(fromID, fromBalance, toID, toBalance, transfer);
+            }
+            catch (Exception e)
+            {
+                m_log.Error($"[CURRENCY SERVICE]: Transfer failed and was rolled back ({e.Message})");
+                return false;
+            }
 
             return true;
         }

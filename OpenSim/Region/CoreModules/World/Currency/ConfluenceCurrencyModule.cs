@@ -355,8 +355,15 @@ namespace OpenSim.Region.CoreModules.World.Currency
                     return;
                 }
 
+                // transactionID is UUID.Zero, not group.UUID: the object's own UUID is
+                // stable across repeat purchases (e.g. a for-sale copy bought twice), but
+                // CurrencyTransfer.ID/TransactionID is a MySQL primary key - reusing it
+                // caused a duplicate-key failure on the second purchase of the same
+                // object. Zero lets CurrencyService.Transfer generate a fresh random ID
+                // per call, same as every other transaction type already does. See
+                // PROJECT_LOG.md.
                 if (!m_currency.Transfer(sellerID, agentID, salePrice, "Object purchase: " + rootPart.Name,
-                        (int)ConfluenceTransactionType.ObjectSale, group.UUID))
+                        (int)ConfluenceTransactionType.ObjectSale, UUID.Zero))
                 {
                     remoteClient.SendAgentAlertMessage("Unable to buy now. Payment failed", false);
                     return;
@@ -376,7 +383,7 @@ namespace OpenSim.Region.CoreModules.World.Currency
             {
                 if (m_currency.Transfer(agentID, sellerID, salePrice,
                         "Object purchase refund (delivery failed): " + rootPart.Name,
-                        (int)ConfluenceTransactionType.ObjectSale, group.UUID))
+                        (int)ConfluenceTransactionType.ObjectSale, UUID.Zero))
                 {
                     PushBalanceUpdate(agentID);
                     PushBalanceUpdate(sellerID);

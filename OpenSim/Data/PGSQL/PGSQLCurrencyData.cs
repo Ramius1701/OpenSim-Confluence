@@ -90,6 +90,62 @@ namespace OpenSim.Data.PGSQL
             }
         }
 
+        public void ApplyTransfer(UUID fromID, int? newFromBalance, UUID toID, int? newToBalance, CurrencyTransfer transfer)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            {
+                conn.Open();
+
+                using (NpgsqlTransaction sqltx = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        if (newFromBalance.HasValue)
+                            SetBalanceInTransaction(conn, sqltx, fromID, newFromBalance.Value);
+
+                        if (newToBalance.HasValue)
+                            SetBalanceInTransaction(conn, sqltx, toID, newToBalance.Value);
+
+                        using (NpgsqlCommand cmd = new NpgsqlCommand(
+                                "INSERT INTO currency_transactions (\"TransactionID\", \"ToAgent\", \"FromAgent\", \"Amount\", " +
+                                "\"TransferType\", \"Description\", \"Created\", \"ToBalance\", \"FromBalance\") VALUES " +
+                                "(:txid, :to, :from, :amount, :type, :description, :created, :tobalance, :frombalance)", conn, sqltx))
+                        {
+                            cmd.Parameters.AddWithValue(":txid", transfer.ID.ToString());
+                            cmd.Parameters.AddWithValue(":to", transfer.ToAgent.ToString());
+                            cmd.Parameters.AddWithValue(":from", transfer.FromAgent.ToString());
+                            cmd.Parameters.AddWithValue(":amount", transfer.Amount);
+                            cmd.Parameters.AddWithValue(":type", transfer.TransferType);
+                            cmd.Parameters.AddWithValue(":description", transfer.Description ?? string.Empty);
+                            cmd.Parameters.AddWithValue(":created", (int)Utils.DateTimeToUnixTime(transfer.TransferDate));
+                            cmd.Parameters.AddWithValue(":tobalance", transfer.ToBalance);
+                            cmd.Parameters.AddWithValue(":frombalance", transfer.FromBalance);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        sqltx.Commit();
+                    }
+                    catch
+                    {
+                        sqltx.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        private void SetBalanceInTransaction(NpgsqlConnection conn, NpgsqlTransaction sqltx, UUID agentID, int amount)
+        {
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                    "INSERT INTO currency_balances (\"PrincipalID\", \"Balance\") VALUES (:id, :balance) " +
+                    "ON CONFLICT (\"PrincipalID\") DO UPDATE SET \"Balance\" = :balance", conn, sqltx))
+            {
+                cmd.Parameters.AddWithValue(":id", agentID.ToString());
+                cmd.Parameters.AddWithValue(":balance", amount);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
         public uint NumberOfTransactions(UUID toAgentID, UUID fromAgentID)
         {
             StringBuilder where = new StringBuilder();

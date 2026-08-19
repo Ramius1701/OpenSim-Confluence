@@ -15,6 +15,14 @@ namespace OpenSim.Data
 
         void AddTransaction(CurrencyTransfer transfer);
 
+        // Atomically applies up to two balance changes and the ledger record
+        // for a transfer in a single DB transaction, so a failure partway
+        // through (e.g. a duplicate TransactionID primary key) rolls back
+        // the balance changes too, instead of leaving currency moved with no
+        // corresponding ledger entry. Pass null for a side that shouldn't be
+        // touched (e.g. a system credit with no "from" account).
+        void ApplyTransfer(UUID fromID, int? newFromBalance, UUID toID, int? newToBalance, CurrencyTransfer transfer);
+
         uint NumberOfTransactions(UUID toAgentID, UUID fromAgentID);
 
         List<CurrencyTransfer> GetTransactionHistory(UUID toAgentID, UUID fromAgentID, DateTime dateStart, DateTime dateEnd, uint? start, uint? count);
