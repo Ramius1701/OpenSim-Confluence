@@ -10790,3 +10790,62 @@ exactly what caused it to almost get rebuilt as if it were a brand-new
 ask - the fix going forward is checking README.md/PROJECT_LOG.md for a
 prior design conversation before concluding a codebase grep coming up
 empty means something was never planned.
+
+Added a "sweep trial members" console command (`UserAccountService`)
+that calls `PromoteExpiredTrialMembers()` on demand and reports how
+many accounts it promoted, matching every other admin action already
+having a console command - useful both for real admin use and for
+testing the sweep without waiting out the hourly timer.
+
+## Firestorm's Websearch tab going to casperia.ddns.net - not a Confluence bug
+
+User reported the in-world "Search" (Firestorm's own Search floater,
+Websearch tab) still 404ing, and separately raised the concern that
+`casperia.ddns.net` (the real, frozen live grid - see
+[[casperia-dev-live-grid-boundary]]) and `holodeckgrid.ddns.net` (this
+Casperia-Dev test grid) might be getting mixed. Traced every possible
+server-side source of a search URL, with real evidence at each step
+rather than assuming any one was the culprit:
+
+- `Robust.HG.ini` / both region `OpenSim.ini`s: grepped the entire
+  live deployment tree for `casperia.ddns.net` - zero hits outside log
+  files. `[Const]` correctly resolves `BaseHostname` to
+  `holodeckgrid.ddns.net` everywhere.
+- `get_grid_info` (curled directly): `<search>` correctly reads
+  `http://holodeckgrid.ddns.net/search`.
+- The *real* login response, not just `get_grid_info` - registered a
+  disposable throwaway account and did an actual XML-RPC
+  `login_to_simulator` call by hand to see exactly what a viewer
+  receives: `search` field is
+  `http://holodeckgrid.ddns.net:9002/search?q=[QUERY]`, correct.
+- "Test User"'s own `ServiceURLs` (Hypergrid identity, the field that
+  gets baked in at account-creation time and doesn't auto-update) -
+  already correctly `holodeckgrid.ddns.net` throughout, not stale.
+- Both live regions' own registration rows in the `regions` table -
+  also correctly `holodeckgrid.ddns.net` (found in `casperia_dev`, not
+  `casperia_grid` - same wrong-database mixup as earlier in this
+  session, caught and corrected).
+- Old `Robust.log` entries from 2026-08-09 *did* show this exact grid
+  self-identifying as `http://casperia.ddns.net:9002/` at the time
+  (`BaseHostname` was apparently changed since) - a real historical
+  fact, but everything downstream of that (account ServiceURLs, region
+  registrations) has since been corrected, confirmed by direct query
+  rather than assumed.
+
+With every server-side value proven correct, had the user check
+Firestorm's actual `SearchURL` debug setting directly (Advanced > Show
+Debug Settings). It showed the literal, unresolved template
+`https://search.[GRID]/viewer/?query_term=[QUERY]&...&sid=[SESSION_ID]`
+- Firestorm/SL's own hardcoded default for real Second Life's search
+infrastructure, not anything populated from OpenSim's login response
+(which sends a completely different, correct value that this setting
+was demonstrably not using). User confirmed this is a recent change in
+Firestorm's Nightly (and likely Beta) builds with unclear rationale -
+not a regression in anything this session touched, and not fixable
+from the grid/server side at all. The actual fix is a client-side
+debug-setting override
+(`http://holodeckgrid.ddns.net:9002/search?q=[QUERY]`), which is
+outside this repo's scope. Worth remembering if this resurfaces:
+**checked and ruled out**, not unexplained - don't re-spend time
+re-deriving this chain if "search still doesn't work" comes up again
+without new evidence pointing at the server side specifically.

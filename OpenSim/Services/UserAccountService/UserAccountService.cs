@@ -190,6 +190,12 @@ namespace OpenSim.Services.UserAccountService
                             "set display name",
                             "set display name <first> <last> <new display name>",
                             "Sets the display name for the given user", HandleSetDisplayName);
+
+                    MainConsole.Instance.Commands.AddCommand("Users", false,
+                            "sweep trial members",
+                            "sweep trial members",
+                            "Runs the Trial Member -> Resident promotion sweep immediately, instead of waiting for its hourly timer.",
+                            HandleSweepTrialMembers);
                 }
 
                 m_NewAccountThresholdDays = userConfig.GetInt("NewAccountThresholdDays", 30);
@@ -206,7 +212,10 @@ namespace OpenSim.Services.UserAccountService
         // "where" fragment is built entirely from values this method computes
         // itself (never from user input), so the lack of parameterization on
         // that fragment isn't a SQL-injection concern here.
-        private void PromoteExpiredTrialMembers()
+        // Returns the number promoted, or -1 on failure - lets the console
+        // command (HandleSweepTrialMembers) report a real result instead of
+        // just "check the log", while the timer's own caller ignores it.
+        private int PromoteExpiredTrialMembers()
         {
             try
             {
@@ -233,11 +242,23 @@ namespace OpenSim.Services.UserAccountService
                     m_log.InfoFormat("[USER ACCOUNT SERVICE]: Promoted {0} trial member(s) to Resident after {1} day(s)",
                             expired.Length, m_NewAccountThresholdDays);
                 }
+
+                return expired.Length;
             }
             catch (Exception e)
             {
                 m_log.Error($"[USER ACCOUNT SERVICE]: Trial member promotion sweep failed: {e.Message}");
+                return -1;
             }
+        }
+
+        private void HandleSweepTrialMembers(string module, string[] cmdparams)
+        {
+            int promoted = PromoteExpiredTrialMembers();
+            MainConsole.Instance.Output(promoted < 0
+                    ? "Trial member sweep failed - check the log for details."
+                    : $"Trial member sweep complete: {promoted} account(s) promoted to Resident "
+                            + $"(threshold: {m_NewAccountThresholdDays} day(s)).");
         }
 
         #region IUserAccountService
