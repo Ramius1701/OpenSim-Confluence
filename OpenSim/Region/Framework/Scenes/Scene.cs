@@ -4581,6 +4581,28 @@ namespace OpenSim.Region.Framework.Scenes
                     return false;
                 }
 
+                // Trial Member Adult-content gate: same throwaway-account-protection
+                // idea as DenyNewAccounts above, but keyed off the account's own
+                // membership-type badge rather than raw age - real SL restricts
+                // unverified/trial accounts from Adult content until they're
+                // established, and this is the region-entry half of that. Unlike
+                // DenyNewAccounts, this isn't a per-estate opt-in: an Adult-rated
+                // region is already a deliberate choice by its owner, so gating
+                // Trial Members out of it is consistent everywhere rather than
+                // needing a second checkbox. An admin promoting the account to
+                // Resident early (Admin > Users > edit details) lifts this
+                // immediately, since it's re-checked fresh on every connection.
+                if (RegionInfo.RegionSettings.Maturity == 2
+                        && AccountMembershipHelper.GetMembershipType(flags) == AccountMembershipHelper.TrialMember)
+                {
+                    m_log.WarnFormat("[CONNECTION BEGIN]: Denied access to: {0} ({1} {2}) at {3} because Trial Member accounts can't enter Adult-rated regions",
+                            agent.AgentID, agent.firstname, agent.lastname, RegionInfo.RegionName);
+                    reason = string.Format(
+                            "Denied access to region {0}: this region is Adult-rated and Trial Member accounts can't enter it yet.",
+                            RegionInfo.RegionName);
+                    return false;
+                }
+
                 // public access
                 if (RegionInfo.EstateSettings.PublicAccess)
                     return true;

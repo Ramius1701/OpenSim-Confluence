@@ -1138,6 +1138,21 @@ namespace OpenSim.Groups
             if (m_debugEnabled) m_log.DebugFormat("[Groups]: {0} called", System.Reflection.MethodBase.GetCurrentMethod().Name);
 
             GroupRecord groupRecord = GetGroupRecord(groupID);
+
+            // Trial Member Adult-content gate, same idea as Scene.cs's region-entry
+            // check: groups don't have a real PG/Mature/Adult tier in this schema,
+            // only the boolean MaturePublish flag used for the group directory
+            // listing, so that's the best available signal for "this is adult
+            // content" here. An admin promoting the account to Resident early
+            // (Admin > Users > edit details) lifts this immediately.
+            if (groupRecord.MaturePublish && remoteClient.Scene is Scene joinScene
+                    && AccountMembershipHelper.GetMembershipType(joinScene.GetUserFlags(remoteClient.AgentId)) == AccountMembershipHelper.TrialMember)
+            {
+                remoteClient.SendAlertMessage("Trial Member accounts can't join Mature/Adult groups yet.");
+                remoteClient.SendJoinGroupReply(groupID, false);
+                return;
+            }
+
             IMoneyModule money = remoteClient.Scene.RequestModuleInterface<IMoneyModule>();
 
             // Should check to see if there's an outstanding invitation

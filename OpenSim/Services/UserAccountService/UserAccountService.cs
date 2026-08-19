@@ -30,6 +30,7 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
+using System.Timers;
 using log4net;
 using Nini.Config;
 using OpenMetaverse;
@@ -58,6 +59,31 @@ namespace OpenSim.Services.UserAccountService
         protected IGridUserService m_GridUserService;
         protected IInventoryService m_InventoryService;
         protected IAvatarService m_AvatarService;
+
+        // Promotes self-registered Trial Members (see HandleRegister in
+        // WebInterfaceServiceConnector.cs) to Resident once their account is
+        // old enough - the second half of the throwaway-account protection
+        // pair that started with DenyNewAccounts (Scene.cs/EstateSettings.cs):
+        // that feature already gates a *new* account (age < threshold) out of
+        // opted-in estates and land purchases purely from UserAccount.Created,
+        // completely independent of this badge. Deliberately reads the same
+        // config key name, "NewAccountThresholdDays" (default 30, matching
+        // Scene.cs's own m_newAccountThresholdDays default), even though it
+        // lives in a different section of a different process's ini (Robust's
+        // [UserAccountService] here vs each region's own [Startup]) - there's
+        // no way to share one literal setting across separate config files,
+        // but using the identical key name keeps the two thresholds
+        // conceptually and operationally the same number for an operator who
+        // sets both, rather than inventing a second differently-named knob
+        // that could silently drift out of sync with DenyNewAccounts's own.
+        // Same expiry-sweep-timer shape as EventsService's own
+        // m_expirySweepTimer. An hour between sweeps is plenty responsive for
+        // a threshold measured in days; only the root instance runs it (same
+        // guard as the console commands above), so multiple UserAccountService
+        // instances in one process don't all hammer the DB with the same query.
+        private const int TrialPromotionSweepIntervalMs = 3600000;
+        private int m_NewAccountThresholdDays;
+        private Timer m_trialPromotionTimer;
 
         public UserAccountService(IConfigSource config)
             : base(config)
@@ -165,6 +191,52 @@ namespace OpenSim.Services.UserAccountService
                             "set display name <first> <last> <new display name>",
                             "Sets the display name for the given user", HandleSetDisplayName);
                 }
+
+                m_NewAccountThresholdDays = userConfig.GetInt("NewAccountThresholdDays", 30);
+                m_trialPromotionTimer = new Timer(TrialPromotionSweepIntervalMs);
+                m_trialPromotionTimer.Elapsed += (sender, e) => PromoteExpiredTrialMembers();
+                m_trialPromotionTimer.AutoReset = true;
+                m_trialPromotionTimer.Start();
+            }
+        }
+
+        // Bits 8-11 of UserFlags, same layout AccountMembershipHelper documents -
+        // find every account still flagged Trial Member whose Created timestamp
+        // is old enough, and flip just that nibble to Resident. GetUsersWhere's
+        // "where" fragment is built entirely from values this method computes
+        // itself (never from user input), so the lack of parameterization on
+        // that fragment isn't a SQL-injection concern here.
+        private void PromoteExpiredTrialMembers()
+        {
+            try
+            {
+                int trialBits = AccountMembershipHelper.TrialMember << 8;
+                int cutoff = Util.UnixTimeSinceEpoch() - (m_NewAccountThresholdDays * 86400);
+                // 3840 == 0x0f00 (the membership-type nibble mask) - written as
+                // decimal rather than a hex literal since Postgres doesn't accept
+                // 0x-prefixed integers in plain SQL the way MySQL/SQLite do.
+                UserAccountData[] expired = m_Database.GetUsersWhere(UUID.Zero,
+                        $"(UserFlags & 3840) = {trialBits} and Created <= {cutoff}");
+
+                foreach (UserAccountData d in expired)
+                {
+                    int flags = 0;
+                    if (d.Data.TryGetValue("UserFlags", out string valueuf) && valueuf != null)
+                        int.TryParse(valueuf, out flags);
+
+                    d.Data["UserFlags"] = AccountMembershipHelper.SetMembershipType(flags, AccountMembershipHelper.Resident).ToString();
+                    m_Database.Store(d);
+                }
+
+                if (expired.Length > 0)
+                {
+                    m_log.InfoFormat("[USER ACCOUNT SERVICE]: Promoted {0} trial member(s) to Resident after {1} day(s)",
+                            expired.Length, m_NewAccountThresholdDays);
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.Error($"[USER ACCOUNT SERVICE]: Trial member promotion sweep failed: {e.Message}");
             }
         }
 

@@ -8260,7 +8260,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            // Public self-registrations start as Trial Member, not Resident -
+            // UserAccountService's own background sweep promotes them once the
+            // account is old enough (see PromoteExpiredTrialMembers). Admin-created
+            // accounts (HandleAdminUsersCreate) are unaffected and still default to
+            // Resident directly, since an admin manually creating an account is
+            // already vetting it.
             UserAccount account = new UserAccount(UUID.Zero, firstName, lastName, email);
+            account.UserFlags = AccountMembershipHelper.SetMembershipType(account.UserFlags, AccountMembershipHelper.TrialMember);
             if (!m_UserAccountService.StoreUserAccount(account))
             {
                 WritePage(request, response, "Confluence Grid - Sign Up", RegisterForm(firstName, lastName, email, "Could not create that account. Please try again."));
