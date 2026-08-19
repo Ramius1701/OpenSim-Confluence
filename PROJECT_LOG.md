@@ -10398,3 +10398,67 @@ remembering: testing something live in-world while also running a
 restart cycle from this side produces genuinely confusing, hard-to-
 disentangle symptoms - better to avoid doing both at once when it can
 be helped.
+
+### Follow-up: take_copy_restricted live-tested end to end, with a
+### real detour into why "Take Copy" stayed greyed out along the way
+
+User live-tested the feature with a genuine second, unrelated (non-
+friend) avatar attempting Take Copy on a full-perm object. The option
+stayed greyed out through several rounds of troubleshooting, which
+turned into a real investigation rather than a quick "just relog" -
+each step grounded in actual evidence, not assumption:
+
+1. **First object tested was the wrong one.** A live DB query
+   (`SELECT ... FROM prims WHERE Name='Object'`) found four different
+   objects all named "Object" on the grid; only one had the intended
+   `EveryoneMask`. Confirmed the user really was testing the correct
+   object once they provided its exact UUID via Copy Keys - this
+   wasn't the actual cause once verified.
+2. **"Anyone: Move" was suspected next** (some viewers gate "Take
+   Copy" on Move as well as Copy) - checked both, still greyed out.
+   Ruled out.
+3. **Traced the real permission computation, not just the raw stored
+   bits.** `GetObjectPermissions(ScenePresence, ...)` in
+   `PermissionsModule.cs` falls through to
+   `group.EffectiveEveryOnePerms` for a genuine stranger - a *computed*
+   value (`SceneObjectGroup.Inventory.cs`'s `AggregatePerms()`), not
+   the raw `EveryoneMask` column. That computation intersects the
+   object's own everyone-permissions with an aggregate of everything
+   inside its contents (`owner &= part.AggregatedInnerOwnerPerms`,
+   `everyone & owner`) - a real, deliberate SL/OpenSim "weakest link"
+   security mechanic: you can't make an object copyable-by-strangers
+   while a no-copy/no-transfer item hides inside it and bypasses its
+   own restriction via the container.
+4. **Direct DB query of `primitems` confirmed it**: the test cube had
+   a "New Script" inside it with `everyonePermissions = 0` - zero
+   permissions granted to non-owners, capping the whole object's
+   effective everyone-permission regardless of the cube's own Anyone:
+   Copy checkbox.
+5. **Wrong claim, corrected.** Initially said most viewers don't
+   expose a way to set a content item's own "Everyone" permission at
+   all. User proved this wrong with a live screenshot: Firestorm does
+   expose it, via the item's own **Properties** floater (opened from
+   inside the object's Contents tab, separate from the containing
+   object's own Edit panel) - a real, genuine correction to own on
+   this, not something to gloss over. Checked the actual server-side
+   `UpdateTaskInventory` handler (`Scene.Inventory.cs:1783`) to confirm
+   there was never a friend-requirement bug blocking the owner from
+   setting it either - the owner path has always supported this freely.
+
+**Once both the object's own Anyone:Move+Copy and the script's own
+Anyone:Copy were set, Take Copy became enabled - and the actual
+attempt was then correctly refused**, producing `"No permission to
+take copy object Object"` in local chat. Traced that exact string to
+`Scene.Inventory.cs`'s `DeRezAction.TakeCopy` case, which calls
+`Permissions.CanTakeCopyObject(grp, sp)` - the precise method
+`take_copy_restricted` lives in - and adds the object to
+`noPermtakeCopyGroups` when it returns false. No other code path
+produces that message. This is a complete, genuine, live confirmation
+that the feature works correctly end to end, not a build-and-assume.
+
+Real lesson worth keeping for future testing on this grid: making an
+object genuinely copyable by a stranger requires setting Anyone
+permissions in **two separate places** - the object itself, and every
+item inside its own contents individually - not obvious, and a real
+source of "it's still greyed out" confusion distinct from any actual
+feature bug.
