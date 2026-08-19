@@ -593,6 +593,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/regions/restart":
                         HandleAdminRegionRestart(request, response);
                         break;
+                    case BasePath + "/admin/regions/group-auto-invite":
+                        HandleAdminRegionGroupAutoInvite(request, response);
+                        break;
                     case BasePath + "/admin/regions":
                         HandleAdminRegions(request, response);
                         break;
@@ -4610,7 +4613,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 {
                     rows.Append("<p class=\"news-meta\">").Append(regions.Count).Append(regions.Count == 1 ? " region" : " regions")
                       .Append(query.Length > 0 ? " matched" : " on this grid").Append("</p>");
-                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Hypergrid</th><th></th><th></th><th></th><th></th></tr>");
+                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Hypergrid</th><th></th><th></th><th></th><th></th><th>Group Auto-Invite</th></tr>");
                     foreach (GridRegion region in pageRegions)
                     {
                         bool open = m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID);
@@ -4637,6 +4640,20 @@ namespace OpenSim.Server.Handlers.WebInterface
                                 .Append(Html(region.RegionName).Replace("'", "\\'")).Append("? Everyone in the region will be disconnected.');\">");
                         rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                         rows.Append("<button type=\"submit\">Restart</button>");
+                        rows.Append("</form></td>");
+                        // Live toggle, no restart - runs "group-auto-invite
+                        // enable/disable" on the target region via the same
+                        // remote-console channel Restart above uses. Off by
+                        // default per-region (see OpenSimDefaults.ini); this
+                        // is meant for turning it on for a specific sim while
+                        // testing, not a permanent setting - a region
+                        // restart reverts to whatever's in that region's own
+                        // OpenSim.ini.
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/regions/group-auto-invite\">");
+                        rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                        rows.Append("<input type=\"text\" name=\"group_id\" placeholder=\"group uuid\" size=\"20\" style=\"font-size:0.85em\"> ");
+                        rows.Append("<button type=\"submit\" name=\"action\" value=\"enable\" style=\"font-size:0.85em\"").Append(string.IsNullOrEmpty(m_webConsoleSecret) ? " disabled" : "").Append(">Enable</button> ");
+                        rows.Append("<button type=\"submit\" name=\"action\" value=\"disable\" style=\"font-size:0.85em\"").Append(string.IsNullOrEmpty(m_webConsoleSecret) ? " disabled" : "").Append(">Disable</button>");
                         rows.Append("</form></td></tr>");
                     }
                     rows.Append("</table>");
@@ -5531,6 +5548,59 @@ namespace OpenSim.Server.Handlers.WebInterface
             response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("Restart command sent to " + region.RegionName + "."), HttpStatusCode.Redirect);
         }
 
+        // Same RunRegionConsoleCommand/shared-secret mechanism as Restart
+        // above, calling GroupAutoInviteModule's own console commands
+        // (GroupAutoInviteModule.cs) instead. This is a live, in-memory
+        // toggle only - it does not persist to that region's OpenSim.ini,
+        // so a region restart/crash reverts to whatever's on disk there.
+        // That's deliberate: GroupAutoInvite is meant to be turned on for a
+        // specific sim while testing, not as a standing grid-wide setting -
+        // see OpenSimDefaults.ini's own [GroupAutoInvite] section (disabled,
+        // group-less by design) and PROJECT_LOG.md for the two-week silent
+        // failure that came from it having been grid-wide before this.
+        private void HandleAdminRegionGroupAutoInvite(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || string.IsNullOrEmpty(m_webConsoleSecret) || m_GridService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            if (!UUID.TryParse(FormValue(form, "region_id"), out UUID regionID))
+            {
+                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("No region selected."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, regionID);
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+            {
+                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("That region's server address is not known to the grid service."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            string action = FormValue(form, "action");
+            string message;
+            if (action == "disable")
+            {
+                RunRegionConsoleCommand(region, "group-auto-invite disable");
+                message = "Group Auto-Invite disabled in " + region.RegionName + ".";
+            }
+            else if (action == "enable" && UUID.TryParse(FormValue(form, "group_id"), out UUID groupID) && !groupID.IsZero())
+            {
+                RunRegionConsoleCommand(region, "group-auto-invite enable " + groupID);
+                message = "Group Auto-Invite enabled in " + region.RegionName + " with target group " + groupID + ".";
+            }
+            else
+            {
+                message = "Enter a valid group UUID to enable Group Auto-Invite.";
+            }
+
+            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
         // Shared by HandleAdminConsoleRun (free-form console page) and the
         // dedicated Kick/Message buttons on the user detail page - both send
         // a command string to the same region-side /consoleweb endpoint over
@@ -5884,9 +5954,19 @@ namespace OpenSim.Server.Handlers.WebInterface
         // soft-delete are UserLevel-sentinel based (BannedUserLevel/
         // DeletedUserLevel below) rather than the DB's own `active` column -
         // see HandleAdminUsersSoftDelete's comment for why a true hard delete
-        // remains out of scope. Still missing here: admin-editable email/name,
-        // admin-set (not scrambled) password reset, and admin-side account
-        // creation - real gaps, not yet built.
+        // remains out of scope.
+        private static string BuildMembershipTypeOptions(int selectedType)
+        {
+            StringBuilder options = new StringBuilder();
+            foreach (KeyValuePair<int, string> type in AccountMembershipHelper.AllTypes)
+            {
+                options.Append("<option value=\"" + type.Key + "\""
+                        + (type.Key == selectedType ? " selected" : "")
+                        + ">" + Html(type.Value) + "</option>");
+            }
+            return options.ToString();
+        }
+
         private void HandleAdminUsers(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -5968,13 +6048,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     }
 
                     int currentMembershipType = AccountMembershipHelper.GetMembershipType(account.UserFlags);
-                    StringBuilder membershipOptions = new StringBuilder();
-                    foreach (KeyValuePair<int, string> type in AccountMembershipHelper.AllTypes)
-                    {
-                        membershipOptions.Append("<option value=\"" + type.Key + "\""
-                                + (type.Key == currentMembershipType ? " selected" : "")
-                                + ">" + Html(type.Value) + "</option>");
-                    }
+                    string membershipOptions = BuildMembershipTypeOptions(currentMembershipType);
 
                     body = "<h1>" + Html(account.Name) + "</h1>"
                             + "<p><a href=\"" + BasePath + "/admin/users\">Back to search</a></p>"
@@ -6114,6 +6188,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         + "<label>Email: <input type=\"email\" name=\"email\"></label>"
                         + "<label>Password: <input type=\"password\" name=\"password\" minlength=\"5\" required></label>"
                         + "<label>Confirm password: <input type=\"password\" name=\"confirm_password\" minlength=\"5\" required></label>"
+                        + "<label>Account type: <select name=\"membership_type\">" + BuildMembershipTypeOptions(AccountMembershipHelper.Resident) + "</select></label>"
                         + "<button type=\"submit\">Create account</button>"
                         + "</form>";
             }
@@ -6349,7 +6424,18 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            int.TryParse(FormValue(form, "membership_type"), out int membershipType);
+            if (!AccountMembershipHelper.AllTypes.ContainsKey(membershipType))
+                membershipType = AccountMembershipHelper.Resident;
+
             UserAccount account = new UserAccount(UUID.Zero, firstName, lastName, email);
+            account.UserFlags = AccountMembershipHelper.SetMembershipType(account.UserFlags, membershipType);
+            // Same visibility safeguard as the edit-details form: a type
+            // past CharterMember has no built-in viewer badge and needs
+            // UserTitle set to actually show in the resident's profile.
+            if (AccountMembershipHelper.NeedsTitleToDisplay(membershipType))
+                account.UserTitle = AccountMembershipHelper.GetName(membershipType);
+
             if (!m_UserAccountService.StoreUserAccount(account))
             {
                 response.Redirect(BasePath + "/admin/users?message=" + Uri.EscapeDataString("Could not create that account."), HttpStatusCode.Redirect);

@@ -82,16 +82,38 @@ namespace OpenSim.Region.OptionalModules.Avatar.GroupAutoInvite
 
         public void AddRegion(Scene scene)
         {
-            if (!m_enabled)
-                return;
-
+            // Always wire up, regardless of the ini's Enabled default - the
+            // "group-auto-invite enable/disable" console commands below (and
+            // the admin dashboard, which calls them remotely the same way it
+            // already does "region restart") toggle m_enabled live without a
+            // restart, and that only works if OnMakeRootAgent is already
+            // hooked up. The actual behavioural gate is the m_enabled check
+            // at the top of OnMakeRootAgent/TryInvite, not this method.
             m_scene = scene;
             m_scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
+
+            m_scene.AddCommand(
+                "Groups", this, "group-auto-invite status",
+                "group-auto-invite status",
+                "Show whether GroupAutoInvite is enabled and which group it targets in this region.",
+                HandleStatusCommand);
+
+            m_scene.AddCommand(
+                "Groups", this, "group-auto-invite enable",
+                "group-auto-invite enable <group uuid>",
+                "Enable GroupAutoInvite in this region and set its target group, live (no restart).",
+                HandleEnableCommand);
+
+            m_scene.AddCommand(
+                "Groups", this, "group-auto-invite disable",
+                "group-auto-invite disable",
+                "Disable GroupAutoInvite in this region, live (no restart).",
+                HandleDisableCommand);
         }
 
         public void RemoveRegion(Scene scene)
         {
-            if (!m_enabled || m_scene == null)
+            if (m_scene == null)
                 return;
 
             m_scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
@@ -101,12 +123,48 @@ namespace OpenSim.Region.OptionalModules.Avatar.GroupAutoInvite
 
         public void RegionLoaded(Scene scene)
         {
-            if (!m_enabled)
-                return;
-
             m_groupsModule = scene.RequestModuleInterface<IGroupsModule>();
             if (m_groupsModule == null)
                 m_log.WarnFormat("[GROUP AUTO INVITE]: Groups module is not available in {0}.", scene.RegionInfo.RegionName);
+        }
+
+        private void HandleStatusCommand(string module, string[] cmdparams)
+        {
+            string regionName = m_scene == null ? "(no region)" : m_scene.RegionInfo.RegionName;
+            string target = !m_groupID.IsZero() ? m_groupID.ToString()
+                    : !string.IsNullOrEmpty(m_groupName) ? m_groupName
+                    : "(none configured)";
+            MainConsole.Instance.Output(
+                "GroupAutoInvite in {0}: {1}, target group {2}",
+                regionName, m_enabled ? "enabled" : "disabled", target);
+        }
+
+        private void HandleEnableCommand(string module, string[] cmdparams)
+        {
+            // cmdparams carries the full matched command path too ("group-
+            // auto-invite", "enable" at indices 0-1), not just the args
+            // after it - matching the same indexing already documented in
+            // TeamCombatModule's console handlers.
+            if (cmdparams.Length < 3 || !UUID.TryParse(cmdparams[2], out UUID groupID) || groupID.IsZero())
+            {
+                MainConsole.Instance.Output("Usage: group-auto-invite enable <group uuid>");
+                return;
+            }
+
+            m_groupID = groupID;
+            m_groupName = string.Empty;
+            m_enabled = true;
+            MainConsole.Instance.Output(
+                "GroupAutoInvite enabled in {0}, target group {1}.",
+                m_scene == null ? "(no region)" : m_scene.RegionInfo.RegionName, groupID);
+        }
+
+        private void HandleDisableCommand(string module, string[] cmdparams)
+        {
+            m_enabled = false;
+            MainConsole.Instance.Output(
+                "GroupAutoInvite disabled in {0}.",
+                m_scene == null ? "(no region)" : m_scene.RegionInfo.RegionName);
         }
 
         public void Close()
