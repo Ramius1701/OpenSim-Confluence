@@ -10014,3 +10014,62 @@ it'll simply have the feature off until the user supplies its own
 group, rather than continuing to share Var Test Region's test group by
 accident. Needs a grid restart to take effect (module only reads
 config at region startup); not yet restarted as of this writing.
+
+### Follow-up: GroupAutoInvite got a live dashboard toggle, and account
+### creation got the account-type field the edit page already had
+
+Two more asks that came out of the fix above. First: "By default that
+would be turned off (only turned on for testing). And that toggle
+would need to be added to the users dashboard for each sim and future
+sims." Checked what the admin dashboard already had for controlling a
+live region remotely - `RunRegionConsoleCommand` (WebInterfaceService
+Connector.cs), the same generic "POST a console command string to
+region.ServerURI/consoleweb with a shared secret" mechanism the
+existing Restart button already uses. That's the right fit: works
+automatically for any region, current or future, no per-region code
+needed on the dashboard side.
+
+Added three console commands to `GroupAutoInviteModule.cs` -
+`group-auto-invite status/enable/disable` - and a form on the Region
+Management page (`/admin/regions`) that calls them the same way
+Restart does. One structural fix was required for this to actually
+work: `AddRegion`/`RegionLoaded` previously skipped wiring up the
+`OnMakeRootAgent` hook entirely whenever the ini's `Enabled` default
+was `false`, so a region that started disabled had no live path to
+enabling it - `m_scene` stayed null, the event was never subscribed.
+Fixed by always wiring up the hook and moving the actual on/off gate
+to the `m_enabled` check that already existed inside `OnMakeRootAgent`/
+`TryInvite`. Confirmed via the user's own explicit choice between two
+designs offered: a live in-memory toggle (instant, no restart, but
+reverts to the ini's value if the region restarts/crashes) over a
+DB-backed persisted one (survives restarts, but needs new
+`region_settings` migrations across all three DB backends plus a new
+service connector in Robust) - picked the live toggle as the better
+fit for "only turned on for testing."
+
+Second: "We also need to add the changes we did for the account flags
+in the admin area for each user and future users." Checked the actual
+code rather than trusting the earlier session summary's claim - the
+per-user edit page (`/admin/users?principal=...`) genuinely already
+has the Account Type dropdown, real and working. But the "Create
+Account" form on that same page had no such field at all - new
+accounts always came in hardcoded to Resident with no admin override
+at creation time. Fixed by factoring the options-list building (was
+inlined twice, once for the edit page, now needed for create too) into
+a shared `BuildMembershipTypeOptions` helper, adding the dropdown to
+the Create Account form, and wiring `HandleAdminUsersCreate` to apply
+it to the new account's `UserFlags`/`UserTitle` the same way the edit
+path already does (same auto-title safeguard for types past
+CharterMember). In the same area, deleted a stale comment above
+`HandleAdminUsers` claiming admin-side account creation, editable
+email/name, and admin password reset were still-missing gaps - all
+three were confirmed already built elsewhere in this file.
+
+Build-verified clean (0 errors, 0 warnings) for both files. Deployed:
+grid was down at the time (safe window, nobody to disconnect),
+`OpenSim.Addons.GroupAutoInvite.dll`/`.pdb` and
+`OpenSim.Server.Handlers.dll`/`.pdb` copied via PowerShell `Copy-Item`,
+each verified byte-for-byte via `Get-FileHash` MD5 match against the
+freshly built source. Committed and pushed to
+`confluence/merge-experiment`. Grid not yet restarted as of this
+writing - needed before either change is actually live.
