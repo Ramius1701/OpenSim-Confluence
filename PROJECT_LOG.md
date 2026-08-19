@@ -11131,7 +11131,80 @@ again.
 002 and Tangle specifically showed 724 and 1879 "asset ID could not be
 found" script-load errors respectively in the last full check before
 this audit began - worth rechecking now that logging is reliable
-per-region); a DB audit for unused tables/columns (user-requested,
-explicitly deferred as destructive/hard-to-undo pending a clear scoped
-plan, unlike everything else in this entry which was safe config-only
-work).
+per-region).
+
+## DB cleanup: 27 unused tables removed from casperia_dev (2026-08-20)
+
+The live-data clone brought over live Casperia's entire accumulated
+schema, including tables that predate Confluence's current codebase.
+User asked for these identified and removed, explicitly flagging it as
+destructive/hard-to-undo - planned via `EnterPlanMode` first rather
+than diving in.
+
+**Classification methodology** (real evidence, not assumption):
+extracted every table name Confluence's current codebase actually
+creates from all 34 `.migrations` files under
+`OpenSim/Data/MySQL/Resources/` plus addon-modules' own migrations
+(confirmed Gloebit ships its own MySQL migrations for
+`gloebitsubscriptions`/`gloebittransactions`/`gloebitusers`). That
+accounted for ~75 of the ~104-106 tables cleanly. For each of the
+remaining ~31, individually grepped the table name as a quoted string
+literal across both `OpenSim/` and `addon-modules/` - not just a
+first-pass spot check, every one confirmed or ruled out on its own,
+since a couple of early "hits" (`npc`, `users`) turned out to be false
+positives from common English words in unrelated contexts (an XML doc
+comment, an XML-RPC hashtable key) rather than real SQL table
+references, caught by reading the actual match context rather than
+trusting a nonzero grep count.
+
+**Kept** - `balances`, `totalsales`, `transactions`, `userinfo`:
+confirmed still real, in `addon-modules/OpenSim-Data-MySQL-
+MySQLMoneyDataWrapper/.../MySQLMoneyManager.cs` referencing these
+exact table names in actual SQL (`Table_of_Transactions =
+"transactions"`, etc.) - the legacy `OpenSim-Grid-MoneyServer`
+addon's own schema. Per this session's earlier direction on fixing
+addon-module bugs alongside built-in ones (other grids depend on these
+addons even with Confluence's native equivalent available), these
+were left untouched even though nothing on *this* grid currently uses
+them.
+
+**Dropped** - 27 tables with zero real references anywhere in the
+repo: `npc`, `users`, `userpartner`, `osguide_destinations`,
+`osnpc_terminals`, `osvisitors_inworld`, `oswhoisonline_settings`, all
+8 `search_*` tables except `search_log` (which a current migration
+creates), and all 12 `ws_*` tables. Very likely orphaned from the old
+PHP-based web interface Confluence's native WebInterface already
+replaced, matching the "was the old PHP site, replaced natively"
+pattern found repeatedly in this session's ini-drift work.
+
+User raised whether any of the `search_*`/`ws_*` tables might connect
+to Metaverse Ink (`metaverseink.com`, the classic third-party OpenSim
+search/directory service also behind the dead `DATA_SRV_CP` default
+found earlier) before approving the drop - considered and explicitly
+set aside: nothing in the current codebase writes to or reads from
+these tables regardless of what an external service might expect, so
+even a real Metaverse Ink integration wouldn't be using this database
+schema to do it.
+
+**Staged, reversible execution** (per the approved plan, not a single
+DROP pass): fresh `mysqldump` of `casperia_dev` first (independent of
+the earlier live-clone backup, which predated all of today's ini
+fixes); `RENAME TABLE <name> TO zz_unused_<name>` for all 27 as the
+first real action (fully reversible); full grid restart (Robust + all
+14 regions) to verify nothing referenced any renamed table in
+practice, not just in a static grep - clean, zero hits anywhere in any
+region's log or Robust's own log; only then `DROP TABLE` each
+`zz_unused_*` table for real, followed by one more full restart to
+confirm.
+
+**Verified**: 14/14 regions running, 0 SQL errors of any kind across
+every region's log and Robust's own, table count now 79 (down from
+~104-106), and real data confirmed intact post-drop (`useraccounts`
+still 9, `prims` still 72,223 - unchanged from before the cleanup).
+
+**Still out of scope, deferred explicitly per the approved plan**: a
+column-level audit (comparing each in-use table's live schema against
+its cumulative migration history to find columns no current
+migration/version defines) - a materially larger effort than the
+table-level pass, proposed as its own later effort rather than folded
+into this one.
