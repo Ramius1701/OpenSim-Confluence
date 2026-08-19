@@ -10255,3 +10255,36 @@ ran through to completion once the 30s wait elapsed. Both branches
 live-verified, not just code-reviewed.
 
 Both build-verified clean (0 errors, 0 warnings), committed and pushed.
+
+### Follow-up: login splash redesign, closing the osloginscreen scoping
+### from earlier this session
+
+Rebuilt `/welcome.php` (the viewer's login splash) to match the real
+layout shape of djphil's osloginscreen scoped earlier - background
+photo slideshow banner + 3-column split (regions | welcome/register |
+grid status) - instead of the previous single-column stat-card stack,
+in this site's own theme rather than osloginscreen's Bootstrap-slate
+one. Wired in `RenderRegionListWidget`, which existed but was never
+actually called from anywhere. Added a "Register - it's free" CTA.
+Deliberately kept this connector's own real DB-driven news/events/
+stats rather than downgrading to osloginscreen's hardcoded static
+news-ticker list.
+
+Slideshow images are config-free by design - a `WebSplash/` folder next
+to Robust.exe, same convention as RegionWeb's `region_images/`/
+carousel folders (drop files in, no ini key needed). New
+`HandleWelcomePhoto` route serves them, `Path.GetFileName` stripping
+any directory traversal the same way `RegionWebModule.SendMedia`
+already does. No folder/no images = no banner, not an error.
+
+Deploy hit a real snag worth remembering: `OpenSim.Server.Handlers.dll`
+turned out to be locked by both region processes too, not just Robust
+(shared assembly) - a first attempt that only stopped Robust failed
+with a file-in-use error. Caught it rather than deploying a stale DLL
+silently, stopped all three processes, redeployed, hash-verified.
+Verified live via DOM inspection (3 columns, register CTA with correct
+href, slideshow element correctly absent with no photos configured)
+and network requests (region map-tile thumbnails loading 200 OK), not
+just that the page returned 200.
+
+Build-verified clean (0 errors, 0 warnings). Committed and pushed.
