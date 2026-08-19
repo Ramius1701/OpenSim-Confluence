@@ -10121,3 +10121,72 @@ Committed and pushed. Grid is up and this session's full stack of
 changes - currency/permission fixes, account-type work, ini
 reconciliation, GroupAutoInvite per-region rearchitecture, and this
 merge-order fix - are all confirmed live as of this writing.
+
+### Destinations/guide.php scoping, "Popular" root-caused, and a real
+### guide.php port for the viewer's Destination Guide
+
+User pointed at the reference OGI-based website
+(`S:\laragon\www\casperia\`, a separate PHP site from this C# server)
+and flagged that its `destinations.php` and `guide.php` are genuinely
+two different implementations, and that the login splash should look
+like that site's `os_temp/osloginscreen` module. Scoped both fully
+before building anything, per explicit direction:
+
+- **Destinations vs guide.php**: confirmed on the reference site these
+  really are separate pages - `destinations.php` has a sidebar
+  keyword/category/rating filter, pagination, and a 3-tier image
+  fallback (local file -> DB asset snapshot UUID -> live map tile);
+  `guide.php` (what a viewer's Destinations floater opens) is
+  deliberately simple - 3 tabs, cards, no filters. This connector had
+  merged them into one shared `AppendDestinationTabs` implementation
+  with none of `destinations.php`'s extra depth.
+- **Login splash vs osloginscreen**: confirmed the reference is a
+  full-bleed background photo slideshow + 3-column layout (logo+region-
+  list | flash-info+news-ticker+register-CTA | grid-status with
+  prims/objects/assets counts), vs this connector's current
+  single-column stat-card stack. Noted our news feed is real
+  DB/admin-managed content vs the reference's hardcoded static list -
+  not something to downgrade.
+
+User then narrowed scope: `/destinations` is fine as it stands (no
+rebuild needed) except that "Popular" wasn't populating by activity;
+`/guide` should be `guide.php` ported as-is, just in this site's theme
+colors, since that's confirmed to be what the viewer's Destinations
+button actually opens (`[GridInfoService] DestinationGuide = ".../guide"`,
+verified in both `Robust.HG.ini` and the repo's `.example`).
+
+**"Popular" root cause** - queried the real `land` table directly
+(MySQL, read-only) rather than guessing: 0 of 2 parcels on this grid
+have the `ShowDirectory` ("Show in Search") flag set, so `SearchPlaces`/
+`GetFeaturedPlaces` correctly return nothing - not a bug in the query
+or a broken `ORDER BY Dwell DESC`. Also directly verified dwell tracking
+itself genuinely works: `DefaultDwellModule`/`LandObject.OnFrame`'s
+decay-weighted dwell algorithm has accumulated 798 total dwell across
+the 2 existing parcels. The fix here isn't code - it's flagging a
+parcel for search in-world (About Land > Options > Show Place in
+Search).
+
+**guide.php port** - rebuilt `HandleGuide` (`/guide`) to match
+guide.php's actual layout directly: header+nav-tabs, compact card grid,
+hue-tinted `card-img` (stable per-name hash, not `string.GetHashCode()`
+since .NET randomizes that per process) with first-letter fallback,
+meta-row badge+traffic. Colors come from this site's own `:root` CSS
+custom properties (already in scope via `WriteBarePage`'s `PageCss`)
+instead of guide.php's hardcoded dark grays/blue. All classes prefixed
+`guide-` to avoid colliding with the site-wide `.card` `WriteBarePage`
+already wraps this content in. Data still comes from this connector's
+own `ISearchService`/`IGridService`, not raw SQL. `AppendDestinationTabs`
+no longer feeds `/guide` - confirmed `/destinations` still uses it
+unchanged, updated its stale "shared by both" comment.
+
+Build-verified clean (0 errors, 0 warnings). Deployed and actually
+verified live in a browser (not just build success) - first attempt
+tested against a stale DLL still loaded in the running Robust process
+(caught this because a naive `Copy-Item` failed with a file-in-use
+error, not because the test looked wrong), so stopped the whole grid,
+redeployed with a fresh `Get-FileHash` MD5 check, and restarted before
+re-testing. Confirmed via direct DOM inspection (not just page text,
+which would've looked identical either way) that `.guide-card`/
+`.guide-nav-tabs`/hue-styled `.guide-card-img` are genuinely rendering,
+tab-switching works, and Discover correctly lists both real regions
+with working teleport links. Committed and pushed.
