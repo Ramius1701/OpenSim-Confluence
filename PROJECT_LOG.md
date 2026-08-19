@@ -10288,3 +10288,25 @@ and network requests (region map-tile thumbnails loading 200 OK), not
 just that the page returned 200.
 
 Build-verified clean (0 errors, 0 warnings). Committed and pushed.
+
+### Follow-up: slideshow live-tested with real images, region column
+### simplified to a plain list
+
+Dropped the two live regions' own current map tiles into `WebSplash/`
+as test images (real content already on disk, not fabricated) and
+verified live in a browser that the banner cycles between them
+correctly on the 6-second timer - a fresh navigation + timed wait,
+after an initial round of confusion caused by testing against a
+long-lived tab with several of my own manually-injected test timers
+still running in it, not a real bug in the shipped code.
+
+Once seeing the redesign live, user felt the region column's map-tile
+thumbnail cards were too heavy for a column that narrow - swapped for
+`RenderRegionListCompact` (name + coordinates + teleport link, no
+image), matching osloginscreen's own `regionlist.php`, which is plain
+text rows too. Removed `RenderRegionListWidget` - this was its only
+call site, so it's genuinely dead code now rather than an unused
+second implementation left sitting in the file.
+
+Build-verified clean, deployed (full stop/redeploy/restart, same
+shared-DLL lock as before), verified live via DOM inspection.
