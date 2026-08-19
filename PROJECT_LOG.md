@@ -11037,3 +11037,101 @@ was at dump time - live's own `regions` table only showed 5 registered
 at that moment), 72,223 real prims loaded, real cross-region neighbour
 communication confirmed working (e.g. "Sector 002 successfully
 informed neighbour Sector 001").
+
+## Full ini audit of the 13 cloned regions (2026-08-20)
+
+User asked for a systematic audit of all 15 region ini files against
+Confluence's current setup, not just reacting to whatever broke next
+in testing. Diffed each of the 13 cloned regions against
+Welcome_Center (already correctly tuned), cross-checking anything
+ambiguous against the repo's own `bin/*.ini.example` templates as
+ground truth (Welcome_Center itself can carry its own drift/staleness,
+so it's a useful reference but not infallible) - per the user's
+explicit correction mid-audit. Found and fixed real, previously-
+undiscovered bugs, several requiring the fix to be verified against
+the actual live log output, not just the config file or the DB, since
+one of them looked fixed from the DB alone and wasn't:
+
+- **`regionload_regionsdir`** pointed at `S:\Opensim\Casperia\Simulators\
+  <region>\Regions` - **live's own directory**, not Casperia-Dev's
+  copy - in all 13 regions. This meant every region was silently
+  loading its real `Regions.ini` (including `RegionUUID` and
+  `ExternalHostName`) from live, completely bypassing the earlier
+  hostname fix made to the Casperia-Dev copy of that file. Confirmed
+  with real evidence: `SELECT serverIP FROM regions` showed
+  `casperia.ddns.net` for Farm/Sector 002/Tangle even *after* the
+  earlier per-region hostname fixes - because those fixes were never
+  actually being read. Fixed by pointing `regionload_regionsdir` at
+  each region's own Casperia-Dev path; confirmed by requery -
+  `serverIP` now correctly shows `holodeckgrid.ddns.net` for all.
+- **Port scheme mismatch, two separate settings, one visible fix
+  wasn't enough.** Live and Casperia-Dev deliberately use different
+  port ranges (live: 8000s, Dev: 9000s, the OpenSimulator-documented
+  grid vs. standalone defaults respectively, borrowed here purely so
+  both grids can run on the same box at once without colliding - Dev
+  itself is still a full grid deployment, not standalone). All 13
+  copied regions still carried live's own 8000-range values in *two*
+  separate places: `InternalPort` (`Regions/Regions.ini`) and
+  `http_listener_port` (`OpenSim.ini` `[Network]`) - fixing only the
+  first looked like nothing happened (DB still showed the old port),
+  which turned out to be correct and unsurprising: `http_listener_port`
+  is the one that's actually authoritative for what port the process
+  binds to, confirmed directly via the live log line `[BASE HTTP
+  SERVER]: Starting HTTP server on port 9014` (Farm) after fixing
+  both. Remapped all 13 regions to a fresh, collision-free 9000-range
+  (9006-9018, avoiding the 9004/9005 Welcome_Center/Var_Test_Region
+  already use).
+- **`[Search] Module`** was `"OpenSimSearch"` (live's old default, a
+  legacy addon depending on an external backend not configured here -
+  "Unable to search at this time") in all 13, instead of
+  `"ConfluenceSearchModule"` (confirmed live-tested working on
+  Welcome_Center earlier this session). Switching the module name
+  alone isn't sufficient - also added the `[EventsService]`/
+  `[UserProfilesService]`/`[GroupsSearchService]` sections
+  `ConfluenceSearchModule` needs for the Directory floater's People/
+  Events/Classifieds/Groups tabs to have real data, matching
+  Welcome_Center's config exactly.
+- **`[SimProtection]`** was missing entirely from all 13 - not a
+  live-vs-dev correction, a genuine current Confluence feature
+  (confirmed present in the repo's own `bin/OpenSim.ini.example`) that
+  simply predates these regions ever being part of this Dev grid.
+  Added with the same conservative defaults already proven on
+  Welcome_Center/Var_Test_Region.
+- **Per-region logging** - only Welcome_Center (and previously
+  Var_Test_Region) had a `[Startup] logfile`/`StatsLogFile` override;
+  the 13 copied regions had none, so they were all sharing (and
+  overwriting each other's history in) the root `OpenSim.log` - this
+  is what made the earlier Tangle asset-error flood impossible to
+  re-derive from logs after later regions launched. Added distinct
+  `Simulators/<region>/OpenSim.log` paths to all 13, matching
+  Welcome_Center's existing pattern. This alone made every subsequent
+  verification pass dramatically more reliable - real per-region ready
+  confirmations instead of a shared, unreliable log.
+
+Required three full sequential relaunches of all 14 regions to land
+and verify each fix in turn (regionload_regionsdir → SimProtection,
+then the port remap once http_listener_port was found, each verified
+against real log/DB evidence before moving on). **Final state,
+directly verified**: 14/14 regions running, 14/14 `RegionReady`, 0
+connection-timeout errors, 0 search errors, 0 "aborting startup"
+errors, correct `holodeckgrid.ddns.net` hostname and correct
+9000-range port for every checked region, confirmed via both the
+database and the actual live log output (not just one or the other,
+after the http_listener_port lesson).
+
+Wrote two memory files
+(`casperia-dev-live-port-scheme`,
+`casperia-live-data-clone-copy-artifacts`) capturing the port-range
+rationale and the full checklist of live-copy artifact classes found,
+so a future cloned/added region can be checked against this list
+directly instead of rediscovering each class of bug one at a time
+again.
+
+**Still pending, not started**: an asset-completeness audit (Sector
+002 and Tangle specifically showed 724 and 1879 "asset ID could not be
+found" script-load errors respectively in the last full check before
+this audit began - worth rechecking now that logging is reliable
+per-region); a DB audit for unused tables/columns (user-requested,
+explicitly deferred as destructive/hard-to-undo pending a clear scoped
+plan, unlike everything else in this entry which was safe config-only
+work).
