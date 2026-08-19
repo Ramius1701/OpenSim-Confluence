@@ -31,5 +31,14 @@ namespace OpenSim.Framework
         public float LandingX;
         public float LandingY;
         public float LandingZ;
+
+        // Populated by GetParcelsByOwner (the /myland self-service source)
+        // and, as a side effect of sharing ReadRecord/ReadEnrichedRecord,
+        // by every other enriched query too - RegionID specifically is what
+        // lets a caller route a remote console command (see
+        // LandManagementModule's "land search enable/disable") to the right
+        // region without a second lookup by name.
+        public UUID RegionID;
+        public bool ShowInSearch;
     }
 }

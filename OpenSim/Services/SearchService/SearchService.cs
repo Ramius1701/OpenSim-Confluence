@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Nini.Config;
 using log4net;
+using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
 
@@ -50,6 +51,11 @@ namespace OpenSim.Services.SearchService
         public List<string> GetSuggestions(string prefix, int count)
         {
             return m_Database.GetSuggestions(prefix, count);
+        }
+
+        public List<LandSearchRecord> GetParcelsByOwner(UUID ownerID)
+        {
+            return m_Database.GetParcelsByOwner(ownerID);
         }
     }
 }

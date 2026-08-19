@@ -2623,6 +2623,68 @@ namespace OpenSim.Region.CoreModules.World.Land
                 "If no local land ID is given, then summary information about all the parcels is shown.\n"
                     + "If a local land ID is given then full information about that parcel is shown.",
                 HandleShowCommand);
+
+            // Remote-console counterpart to the viewer's own About Land >
+            // Options > "Show Place in Search" checkbox - lets the /myland
+            // web dashboard (WebInterfaceServiceConnector) toggle this live
+            // via the same RunRegionConsoleCommand mechanism the
+            // GroupAutoInvite dashboard toggle and Restart button already
+            // use, so the live parcel and the database stay in sync through
+            // the normal SendLandUpdateToAvatarsOverMe/TriggerLandObjectAdded
+            // path instead of a direct DB write that would leave the live
+            // in-world state stale until a restart.
+            commands.AddCommand(
+                "Land", false, "land search enable",
+                "land search enable <parcel-uuid>",
+                "Enable \"Show in Search\" for a parcel by its global UUID, live (no restart).",
+                HandleSearchEnableCommand);
+
+            commands.AddCommand(
+                "Land", false, "land search disable",
+                "land search disable <parcel-uuid>",
+                "Disable \"Show in Search\" for a parcel by its global UUID, live (no restart).",
+                HandleSearchDisableCommand);
+        }
+
+        protected void HandleSearchEnableCommand(string module, string[] args)
+        {
+            SetParcelShowInSearch(args, true);
+        }
+
+        protected void HandleSearchDisableCommand(string module, string[] args)
+        {
+            SetParcelShowInSearch(args, false);
+        }
+
+        private void SetParcelShowInSearch(string[] args, bool show)
+        {
+            if (!(MainConsole.Instance.ConsoleScene is null || MainConsole.Instance.ConsoleScene == m_scene))
+                return;
+
+            if (args.Length < 4 || !UUID.TryParse(args[3], out UUID parcelID))
+            {
+                MainConsole.Instance.Output("Usage: land search enable|disable <parcel-uuid>");
+                return;
+            }
+
+            ILandObject land = m_scene.LandChannel.GetLandObject(parcelID);
+            if (land == null)
+            {
+                MainConsole.Instance.Output("Parcel {0} not found in {1}.", parcelID, m_scene.Name);
+                return;
+            }
+
+            if (show)
+                land.LandData.Flags |= (uint)ParcelFlags.ShowDirectory;
+            else
+                land.LandData.Flags &= ~(uint)ParcelFlags.ShowDirectory;
+
+            land.SendLandUpdateToAvatarsOverMe();
+            m_scene.EventManager.TriggerLandObjectAdded(land);
+
+            MainConsole.Instance.Output(
+                "Show in Search {0} for parcel \"{1}\" in {2}.",
+                show ? "enabled" : "disabled", land.LandData.Name, m_scene.Name);
         }
 
         protected void HandleClearCommand(string module, string[] args)

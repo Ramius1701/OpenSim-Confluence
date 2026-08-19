@@ -219,6 +219,34 @@ namespace OpenSim.Data.SQLite
             return results;
         }
 
+        // /myland self-service source - see MySqlSearchData's copy of this
+        // method for the full rationale.
+        public List<LandSearchRecord> GetParcelsByOwner(UUID ownerID)
+        {
+            List<LandSearchRecord> results = new List<LandSearchRecord>();
+
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell, " +
+                        "land.RegionUUID, regions.regionName, land.Desc, land.Category, " +
+                        "land.UserLocationX, land.UserLocationY, land.UserLocationZ FROM land " +
+                        "LEFT JOIN regions ON land.RegionUUID = regions.uuid " +
+                        "WHERE land.OwnerUUID = :ownerid ORDER BY regions.regionName, land.Name", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":ownerid", ownerID.ToString()));
+
+                    using (IDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                            results.Add(ReadEnrichedRecord(reader));
+                    }
+                }
+            }
+
+            return results;
+        }
+
         private static LandSearchRecord ReadRecord(IDataReader reader)
         {
             uint flags = reader.IsDBNull(2) ? 0 : (uint)System.Convert.ToInt64(reader.GetValue(2));
@@ -229,6 +257,7 @@ namespace OpenSim.Data.SQLite
                 ParcelID = UUID.Parse(reader.GetString(0)),
                 Name = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
                 ForSale = (flags & ForSaleFlag) != 0,
+                ShowInSearch = (flags & ShowDirectoryFlag) != 0,
                 SalePrice = reader.IsDBNull(3) ? 0 : System.Convert.ToInt32(reader.GetValue(3)),
                 Auction = auctionId != 0,
                 Area = reader.IsDBNull(5) ? 0 : System.Convert.ToInt32(reader.GetValue(5)),
@@ -237,11 +266,12 @@ namespace OpenSim.Data.SQLite
         }
 
         // See MySqlSearchData's ReadEnrichedRecord for the rationale -
-        // same base columns (0-6) plus the Destination-Guide-only columns
-        // at 7-13.
+        // same base columns (0-6) plus RegionUUID and the Destination-
+        // Guide-only columns at 7-13.
         private static LandSearchRecord ReadEnrichedRecord(IDataReader reader)
         {
             LandSearchRecord record = ReadRecord(reader);
+            record.RegionID = reader.IsDBNull(7) ? UUID.Zero : UUID.Parse(reader.GetString(7));
             record.RegionName = reader.IsDBNull(8) ? string.Empty : reader.GetString(8);
             record.Description = reader.IsDBNull(9) ? string.Empty : reader.GetString(9);
             record.Category = reader.IsDBNull(10) ? 0 : System.Convert.ToInt32(reader.GetValue(10));

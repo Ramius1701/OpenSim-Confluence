@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using OpenMetaverse;
 using OpenSim.Framework;
 
 namespace OpenSim.Services.Interfaces
@@ -25,5 +26,8 @@ namespace OpenSim.Services.Interfaces
         void LogSearch(string query, string category, int resultCount);
         List<string> GetTrendingQueries(int count);
         List<string> GetSuggestions(string prefix, int count);
+
+        // /myland self-service source - see ISearchData for the rationale.
+        List<LandSearchRecord> GetParcelsByOwner(UUID ownerID);
     }
 }

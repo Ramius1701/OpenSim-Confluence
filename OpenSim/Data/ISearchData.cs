@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using OpenMetaverse;
 using OpenSim.Framework;
 
 namespace OpenSim.Data
@@ -48,5 +49,10 @@ namespace OpenSim.Data
         void LogSearch(string query, string category, int resultCount);
         List<string> GetTrendingQueries(int count);
         List<string> GetSuggestions(string prefix, int count);
+
+        // /myland self-service source - every parcel a resident owns,
+        // anywhere on the grid, regardless of ShowDirectory/maxAccess (this
+        // is the owner managing their own land, not a search result).
+        List<LandSearchRecord> GetParcelsByOwner(UUID ownerID);
     }
 }

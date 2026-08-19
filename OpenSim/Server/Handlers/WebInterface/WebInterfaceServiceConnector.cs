@@ -244,7 +244,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "/support", "/search", "/landsearch", "/admin", "/profile", "/friends",
                 "/change-password", "/change-email", "/transactions", "/myclassifieds",
                 "/myevents", "/forgot-password", "/reset-password", "/logout",
-                "/myregions", "/myinventory", "/page", "/partner", "/myestates", "/delete-account",
+                "/myregions", "/myland", "/myinventory", "/page", "/partner", "/myestates", "/delete-account",
                 "/offline-messages", "/messages",
                 "/help", "/guide", "/static", "/auctions"
             };
@@ -607,6 +607,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/myregions/restart":
                         HandleMyRegionsRestart(request, response);
+                        break;
+                    case BasePath + "/myland":
+                        HandleMyLand(request, response);
+                        break;
+                    case BasePath + "/myland/toggle":
+                        HandleMyLandToggle(request, response);
                         break;
                     case BasePath + "/myinventory":
                         HandleMyInventory(request, response);
@@ -7795,6 +7801,141 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         #endregion Self-service region owner OAR backup/restore
 
+        #region Self-service parcel "Show in Search" toggle
+
+        // Self-service, not a grid-admin action: any logged-in resident
+        // manages only their own parcels' visibility in the native
+        // Destination Guide/Search directory (ISearchService.SearchPlaces/
+        // GetFeaturedPlaces both gate on ParcelFlags.ShowDirectory, same as
+        // the viewer's own About Land > Options > "Show Place in Search"
+        // checkbox controls) - previously only settable in-world, which is
+        // exactly the kind of thing residents should be able to do for
+        // themselves rather than needing the grid team's help. Applies live
+        // via LandManagementModule's "land search enable/disable" console
+        // command (RunRegionConsoleCommand, same remote-console mechanism
+        // the GroupAutoInvite dashboard toggle already uses) so the live
+        // in-world parcel and the database stay in sync through the normal
+        // SendLandUpdateToAvatarsOverMe/TriggerLandObjectAdded path, not a
+        // direct DB write that would leave the live parcel showing stale
+        // state until a restart. Same ownership-verification discipline as
+        // /myregions: the parcel ID in a toggle POST is client-supplied and
+        // is always re-checked against GetParcelsByOwner before acting,
+        // never trusted on its own - a resident can only ever toggle a
+        // parcel that query actually returns for their own PrincipalID.
+        private void HandleMyLand(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            StringBuilder rows = new StringBuilder();
+
+            if (m_SearchService == null)
+            {
+                rows.Append("<p>Search service is not available.</p>");
+            }
+            else
+            {
+                List<LandSearchRecord> parcels = m_SearchService.GetParcelsByOwner(session.PrincipalID);
+                if (parcels.Count == 0)
+                {
+                    rows.Append("<p>You don't own any parcels on this grid.</p>");
+                }
+                else
+                {
+                    rows.Append("<table><tr><th>Parcel</th><th>Region</th><th>Traffic</th><th>Show in Search</th></tr>");
+                    foreach (LandSearchRecord parcel in parcels)
+                    {
+                        rows.Append("<tr><td>").Append(Html(parcel.Name)).Append("</td>");
+                        rows.Append("<td>").Append(Html(parcel.RegionName)).Append("</td>");
+                        rows.Append("<td>").Append(((int)parcel.Dwell).ToString("N0")).Append("</td>");
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/myland/toggle\">");
+                        rows.Append("<input type=\"hidden\" name=\"parcel_id\" value=\"").Append(parcel.ParcelID).Append("\">");
+                        rows.Append("<input type=\"hidden\" name=\"action\" value=\"").Append(parcel.ShowInSearch ? "disable" : "enable").Append("\">");
+                        rows.Append("<button type=\"submit\"").Append(string.IsNullOrEmpty(m_webConsoleSecret) ? " disabled" : "").Append(">")
+                              .Append(parcel.ShowInSearch ? "Showing - click to hide" : "Hidden - click to show").Append("</button>");
+                        rows.Append("</form></td></tr>");
+                    }
+                    rows.Append("</table>");
+                    if (string.IsNullOrEmpty(m_webConsoleSecret))
+                        rows.Append("<p class=\"news-meta\">The web console is not configured, so this toggle can't be applied remotely. Set [WebConsole] SharedSecret to enable it.</p>");
+                }
+            }
+
+            string message = string.Empty;
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                message = "<p>" + Html(queryMessage) + "</p>";
+
+            string body = "<h1><i class=\"bi bi-signpost-split\"></i> My Land</h1>"
+                    + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
+                    + "<p>Control whether your own parcels show up in the grid's Destination Guide and Search "
+                    + "(Popular/Featured tabs). Once shown, ranking there is based on real traffic (dwell), not this page.</p>"
+                    + message
+                    + rows.ToString();
+
+            WritePage(request, response, "Confluence Grid - My Land", body);
+        }
+
+        private void HandleMyLandToggle(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Parcel not found or not owned by you.";
+
+            if (request.HttpMethod == "POST" && m_SearchService != null && m_GridService != null)
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                if (UUID.TryParse(FormValue(form, "parcel_id"), out UUID parcelID))
+                {
+                    LandSearchRecord parcel = null;
+                    foreach (LandSearchRecord candidate in m_SearchService.GetParcelsByOwner(session.PrincipalID))
+                    {
+                        if (candidate.ParcelID == parcelID)
+                        {
+                            parcel = candidate;
+                            break;
+                        }
+                    }
+
+                    if (parcel == null)
+                    {
+                        message = "Parcel not found or not owned by you.";
+                    }
+                    else
+                    {
+                        GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, parcel.RegionID);
+                        if (region == null || string.IsNullOrEmpty(region.ServerURI))
+                        {
+                            message = "That parcel's region server address is not known to the grid service.";
+                        }
+                        else if (string.IsNullOrEmpty(m_webConsoleSecret))
+                        {
+                            message = "The web console is not configured, so this can't be applied remotely. Set [WebConsole] SharedSecret to enable this.";
+                        }
+                        else
+                        {
+                            bool show = FormValue(form, "action") != "disable";
+                            RunRegionConsoleCommand(region, "land search " + (show ? "enable" : "disable") + " " + parcelID);
+                            message = "\"Show in Search\" " + (show ? "enabled" : "disabled") + " for " + parcel.Name + ".";
+                        }
+                    }
+                }
+            }
+
+            response.Redirect(BasePath + "/myland?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        #endregion Self-service parcel "Show in Search" toggle
+
         #region Self-service inventory owner IAR backup/restore
 
         // Unlike OAR (region/estate scoped), IAR is scoped to the logged-in
@@ -8453,6 +8594,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             ("/myevents", "bi-calendar-event", "Events"),
             ("/auctions", "bi-hammer", "Auctions"),
             ("/myregions", "bi-map", "My Regions"),
+            ("/myland", "bi-signpost-split", "My Land"),
             ("/myestates", "bi-building", "My Estate"),
             ("/myinventory", "bi-box-seam", "Inventory"),
         };

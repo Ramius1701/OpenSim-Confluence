@@ -264,6 +264,37 @@ namespace OpenSim.Data.MySQL
             return results;
         }
 
+        // /myland self-service source - every parcel this owner has,
+        // anywhere on the grid, no ShowDirectory/maxAccess gate (the owner
+        // managing their own land, not browsing a search result).
+        public List<LandSearchRecord> GetParcelsByOwner(UUID ownerID)
+        {
+            List<LandSearchRecord> results = new List<LandSearchRecord>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell, " +
+                        "land.RegionUUID, regions.regionName, land.Description, land.Category, " +
+                        "land.UserLocationX, land.UserLocationY, land.UserLocationZ FROM land " +
+                        "LEFT JOIN regions ON land.RegionUUID = regions.uuid " +
+                        "WHERE land.OwnerUUID = ?ownerID ORDER BY regions.regionName, land.Name", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?ownerID", ownerID.ToString());
+
+                    using (IDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                            results.Add(ReadEnrichedRecord(reader));
+                    }
+                }
+            }
+
+            return results;
+        }
+
         private static LandSearchRecord ReadRecord(IDataReader reader)
         {
             uint flags = reader.IsDBNull(2) ? 0 : (uint)reader.GetInt64(2);
@@ -274,6 +305,7 @@ namespace OpenSim.Data.MySQL
                 ParcelID = UUID.Parse(reader.GetString(0)),
                 Name = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
                 ForSale = (flags & ForSaleFlag) != 0,
+                ShowInSearch = (flags & ShowDirectoryFlag) != 0,
                 SalePrice = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
                 Auction = auctionId != 0,
                 Area = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
@@ -281,14 +313,19 @@ namespace OpenSim.Data.MySQL
             };
         }
 
-        // Same base columns as ReadRecord (ordinals 0-6) plus RegionName/
-        // Description/Category/Landing position at ordinals 7-13 - shared
-        // by SearchPlaces, GetFeaturedPlaces and SearchLandForSale, all of
-        // which now need RegionName+Landing to build a real viewer-facing
-        // parcel ID (see SearchLandForSale's own comment).
+        // Same base columns as ReadRecord (ordinals 0-6) plus RegionUUID/
+        // RegionName/Description/Category/Landing position at ordinals
+        // 7-13 - shared by SearchPlaces, GetFeaturedPlaces,
+        // SearchLandForSale and GetParcelsByOwner, all of which now need
+        // RegionName+Landing to build a real viewer-facing parcel ID (see
+        // SearchLandForSale's own comment), and GetParcelsByOwner
+        // specifically also needs RegionID to route a remote console
+        // command to the right region (see LandManagementModule's "land
+        // search enable/disable").
         private static LandSearchRecord ReadEnrichedRecord(IDataReader reader)
         {
             LandSearchRecord record = ReadRecord(reader);
+            record.RegionID = reader.IsDBNull(7) ? UUID.Zero : UUID.Parse(reader.GetString(7));
             record.RegionName = reader.IsDBNull(8) ? string.Empty : reader.GetString(8);
             record.Description = reader.IsDBNull(9) ? string.Empty : reader.GetString(9);
             record.Category = reader.IsDBNull(10) ? 0 : reader.GetInt32(10);
