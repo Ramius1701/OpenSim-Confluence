@@ -10073,3 +10073,51 @@ each verified byte-for-byte via `Get-FileHash` MD5 match against the
 freshly built source. Committed and pushed to
 `confluence/merge-experiment`. Grid not yet restarted as of this
 writing - needed before either change is actually live.
+
+### Follow-up: live-verifying the new toggle found a real config-merge
+### bug - the per-region override was being silently clobbered
+
+User asked to restart the grid to bring all of today's work live. Before
+declaring it done, tested the new dashboard toggle end-to-end by hitting
+the same `/consoleweb` endpoint the dashboard itself calls (`curl -X POST`
+with the `X-Console-Secret` header, same as `RunRegionConsoleCommand`).
+`group-auto-invite status` came back `enabled` (correct) but `target
+group (none configured)` (wrong - Var Test Region's own `OpenSim.ini`
+clearly sets a real GroupID). `group-auto-invite enable <uuid>` fixed it
+live in-memory, proving the console-command plumbing itself was correct
+- so the bug was specifically in how the *boot-time* config got read.
+
+Root-caused with an isolated Nini reproduction (small scratch console
+app referencing `bin/Nini.dll` directly, merging the same files in the
+same order `ConfigurationLoader.cs` does) rather than guessing:
+`ConfigurationLoader.LoadConfigSettings` processes `Include-*` directives
+via `AddIncludes`, called right after each source in the main loop -
+critically, newly-discovered include files get *appended* to the same
+growing `sources` list the loop is iterating, so a glob directive found
+in `OpenSimDefaults.ini` (source index 0) gets expanded and appended
+*after* the region's own `-inifile` (source index 1) is already in the
+list, meaning glob-matched files are merged in dead last, overriding
+even the region's own explicit settings. `addon-modules/GroupAutoInvite/
+config/GroupAutoInvite.ini` - a bundled default-config file for the
+addon, pulled in via that exact glob - still defined every key including
+a blank `GroupID`, so it silently won over any per-region override,
+every time, regardless of what the region ini said. Confirmed the same
+file exists identically in the repo template, live, and the `.example`
+source.
+
+Fixed by removing the addon's bundled settings entirely (redundant with
+OpenSimDefaults.ini's own `[GroupAutoInvite]` section from earlier today)
+across all three copies - repo `bin/`, live, and `.example` - leaving
+just documentation of why the settings block is deliberately absent, so
+a future edit doesn't reintroduce the same clobbering. Re-ran the
+isolated Nini repro with the fixed file first (confirmed the override
+now survives the full three-source merge), then did a real end-to-end
+verification: stopped all three grid processes cleanly (confirmed no
+avatars connected first), relaunched Robust + both regions, and hit
+`group-auto-invite status` again - Var Test Region now correctly reports
+its real GroupID straight from boot, no manual console command needed;
+Welcome Center correctly stays disabled (no per-region override there).
+Committed and pushed. Grid is up and this session's full stack of
+changes - currency/permission fixes, account-type work, ini
+reconciliation, GroupAutoInvite per-region rearchitecture, and this
+merge-order fix - are all confirmed live as of this writing.
