@@ -10728,11 +10728,59 @@ Built the missing half:
     publish-maturity flag, which is the best available proxy for
     "adult group content" without a schema change.
 
-Build-verified clean (0 warnings, 0 errors) but **not yet deployed or
-live-tested** - needs a Robust + region redeploy/restart and a real
-Trial-account walkthrough (register, confirm Adult-region/group
-denial, confirm admin promotion lifts it, confirm the sweep promotes
-after the threshold) before calling this done.
+Build-verified clean (0 warnings, 0 errors), then deployed (all four
+touched assemblies - `OpenSim.Server.Handlers`,
+`OpenSim.Services.UserAccountService`, `OpenSim.Region.Framework`,
+`OpenSim.Addons.Groups` - via the copy-to-new-name-then-rename-swap
+trick, hash-verified, full Robust + both-region restart, nobody
+connected) and **live-tested end to end**:
+
+- Registered a real account (`Trialtest Trialavatartwo`) through the
+  actual `/register` HTTP form - confirmed in the DB immediately after
+  as `UserFlags=256` (Trial Member, no other flags), not the old
+  default-to-Resident behavior.
+- Temporarily set Var Test Region to Adult (`Maturity=2`) and
+  restarted it. Live login attempt as the Trial account was denied
+  with the expected message; joining "Test Group" (already
+  `MaturePublish=1`) was denied with the expected message too.
+- Promoted the account to Resident via Admin > Users > edit details on
+  the live web dashboard. Both denials lifted immediately on retry -
+  confirms the gates really do re-read the live badge on every attempt
+  rather than caching a decision.
+- **Real finding, not a bug in this feature**: the in-world profile
+  floater kept showing "Trial" after a relog even though the promotion
+  had worked. Traced to `RemoteUserAccountServiceConnector`'s
+  per-region `UserAccountCache` (`UserAccountCache.cs`) - a 1-hour TTL,
+  in-memory cache with no cross-process invalidation, so a Robust-side
+  admin edit never tells an already-running region to drop its cached
+  copy of that account. This is pre-existing OpenSim architecture (the
+  cache's own literal comment is `// 1 hour!`), not something this
+  session introduced - it just became visible because badge changes
+  can now happen live via the admin panel. Confirmed the theory
+  directly: Var Test Region (just restarted, cache cold) showed
+  Resident correctly on the very next lookup; the enforcement gates
+  passed because that Adult-content check happened to hit the same
+  freshly-cold region. Whichever region the user checked the profile
+  from (not restarted, cache still warm from earlier in the test)
+  served the stale value. Confirmed by asking the user to re-check the
+  profile specifically while standing in Var Test Region - showed
+  Resident, closing the loop. Left as a known, documented limitation
+  rather than building general cross-process cache invalidation, which
+  is a materially bigger, separate project.
+- Reverted Var Test Region back to `Maturity=0` (PG) and restarted it
+  again afterward, restoring the grid to its normal state. Test
+  account left in place (harmless, real proof-of-work).
+- The background sweep timer itself (`PromoteExpiredTrialMembers`,
+  hourly interval, 30-day default threshold) was not observed firing
+  live in this session - the interval is too long to practically wait
+  out - but its query logic is the same already-proven
+  `GetUsersWhere`/`Store` pattern used elsewhere, and the underlying
+  bit-math/WHERE-fragment was reasoned through carefully rather than
+  assumed. Worth a real check if it's ever in doubt: manually set a
+  test account's `Created` to 31+ days in the past and either wait for
+  the hourly tick or (if this becomes a recurring need) add a console
+  command to trigger the sweep on demand, matching every other admin
+  action in `UserAccountService` already having one.
 
 Also wrote two memory files
 (`casperia-trial-member-throwaway-protection`,

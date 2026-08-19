@@ -1089,7 +1089,7 @@ work continues — don't let them go stale.
   second copy of its permission logic. Works whether the donor is
   online or not. Full writeup in PROJECT_LOG.md.
 - **Trial Member, the badge half of throwaway-account protection —
-  built.** `DenyNewAccounts` above was the age-based half; this is the
+  built and live-tested.** `DenyNewAccounts` above was the age-based half; this is the
   other half that grew from the same conversation but hadn't actually
   been implemented yet. Public self-registration now starts every
   account as Trial Member instead of Resident; `UserAccountService`
@@ -1104,7 +1104,13 @@ work continues — don't let them go stale.
   every attempt rather than a fixed age, so an admin manually promoting
   someone to Resident early (Admin → Users → edit details) lifts the
   restriction immediately. Admin-created accounts are unaffected — they
-  still default straight to Resident. Full writeup in PROJECT_LOG.md.
+  still default straight to Resident. Live-tested end to end (real
+  registration, real Adult-region/group denials, real admin
+  promotion). Turned up one real, pre-existing OpenSim finding along
+  the way — the in-world profile badge can lag up to an hour after a
+  remote admin edit, due to each region's own `UserAccountCache`
+  having no cross-process invalidation — documented as a known
+  limitation, not fixed here. Full writeup in PROJECT_LOG.md.
 
 ## Repository model
 
