@@ -246,7 +246,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "/myevents", "/forgot-password", "/reset-password", "/logout",
                 "/myregions", "/myland", "/myinventory", "/page", "/partner", "/myestates", "/delete-account",
                 "/offline-messages", "/messages",
-                "/help", "/guide", "/static", "/auctions"
+                "/help", "/guide", "/static", "/auctions", "/welcome-photos"
             };
             foreach (string route in topLevelRoutes)
             {
@@ -629,6 +629,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                             HandleStaticPage(request, response, path.Substring((BasePath + "/page/").Length));
                         else if (path.StartsWith(BasePath + "/static/", StringComparison.Ordinal))
                             HandleStaticAsset(request, response, path.Substring((BasePath + "/static/").Length));
+                        else if (path.StartsWith(BasePath + "/welcome-photos/", StringComparison.Ordinal))
+                            HandleWelcomePhoto(request, response, path.Substring((BasePath + "/welcome-photos/").Length));
                         else
                             response.StatusCode = (int)HttpStatusCode.NotFound;
                         break;
@@ -793,6 +795,17 @@ namespace OpenSim.Server.Handlers.WebInterface
         // already has an account - task #23 from the WhiteCore-Dev re-audit's
         // "all of it" list, a grid-operator announcements feed originally
         // shared with the home page, now specific to this one.
+        //
+        // Redesigned (2026-08-19) to match the real layout shape of
+        // djphil's osloginscreen (background photo slideshow + a 3-column
+        // logo/regions | announcements/register | grid-status split) rather
+        // than the earlier single-column stat-card stack, per explicit
+        // direction - in this site's own theme, not osloginscreen's
+        // Bootstrap-slate one. Kept this connector's own real DB-driven
+        // news/events/stats rather than downgrading to osloginscreen's
+        // hardcoded static news-ticker list - those are genuinely better
+        // (admin-managed, not baked into a template) and not something to
+        // regress just to match the reference more closely.
         private void HandleWelcome(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
@@ -803,28 +816,79 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             List<GridRegion> regions = m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>();
 
-            // Compact on purpose - this renders inside the viewer's own
-            // small, fixed-size, non-resizable login panel (WriteAdaptivePage
-            // picks the bare-chrome branch here, no nav/footer to scroll
-            // past), not a full browser window. The full-thumbnail region
-            // list (every region on the grid, one map-tile card each) was
-            // the single biggest offender - already summarized by the
-            // "Regions" stat above, so it's cut here in favor of a one-line
-            // link to the real World Map page. Events/News are capped
-            // tighter than the full-chrome home page uses, and
-            // WelcomeCompactCss shrinks heading/card spacing specifically
-            // for this view without touching the shared site-wide PageCss.
-            string body = WelcomeCompactCss
-                    + "<h1>" + Html(gridName) + "</h1>"
-                    + RenderAnnouncement()
-                    + "<p>" + welcome + "</p>"
-                    + RenderGridStatusWidget(regions)
-                    + RenderEconomyStats()
-                    + RenderUpcomingEvents(3)
-                    + RenderNewsFeed(2)
-                    + "<p class=\"welcome-more-link\"><a href=\"" + BasePath + "/worldmap\">View the World Map &rarr;</a></p>";
+            StringBuilder sb = new StringBuilder(WelcomeCompactCss);
+            sb.Append(RenderWelcomeSlideshow());
+            sb.Append("<h1>").Append(Html(gridName)).Append("</h1>");
+            sb.Append(RenderAnnouncement());
 
-            WriteAdaptivePage(request, response, gridName, body);
+            // Column caps are still deliberate - this renders inside the
+            // viewer's own small, fixed-size, non-resizable login panel
+            // (WriteAdaptivePage picks the bare-chrome branch here), not a
+            // full browser window, so each column stays to the point rather
+            // than showing everything /worldmap or /dashboard would.
+            sb.Append("<div class=\"welcome-columns\">");
+
+            sb.Append("<div class=\"welcome-col\">");
+            sb.Append(RenderRegionListWidget(regions.Take(5).ToList()));
+            if (regions.Count > 5)
+                sb.Append("<p class=\"welcome-more-link\"><a href=\"").Append(BasePath).Append("/worldmap\">View all ")
+                  .Append(regions.Count).Append(" regions &rarr;</a></p>");
+            sb.Append("</div>");
+
+            sb.Append("<div class=\"welcome-col\">");
+            sb.Append("<h2>Welcome</h2><p>").Append(welcome).Append("</p>");
+            sb.Append("<a class=\"welcome-register-cta\" href=\"").Append(BasePath).Append("/register\">Register - it's free &rarr;</a>");
+            sb.Append(RenderNewsFeed(3));
+            sb.Append("</div>");
+
+            sb.Append("<div class=\"welcome-col\">");
+            sb.Append(RenderGridStatusWidget(regions));
+            sb.Append(RenderEconomyStats());
+            sb.Append(RenderUpcomingEvents(3));
+            sb.Append("</div>");
+
+            sb.Append("</div>");
+
+            WriteAdaptivePage(request, response, gridName, sb.ToString());
+        }
+
+        // Cycles through whatever's in WebSplash/ (see HandleWelcomePhoto) a
+        // few seconds apart - a plain background-image swap on a timer, not
+        // a cross-fade (CSS can't interpolate between two different
+        // background-image values, and layering two divs just to fade
+        // between them isn't worth it for what's a nice-to-have banner).
+        // Renders nothing at all when the folder is empty/missing, so an
+        // operator who doesn't care about this gets exactly the old
+        // no-banner layout back.
+        private string RenderWelcomeSlideshow()
+        {
+            List<string> photos = GetWelcomePhotoFiles();
+            if (photos.Count == 0)
+                return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<div class=\"welcome-slideshow\" id=\"welcome-slideshow\" style=\"background-image:url('")
+              .Append(Html(BasePath)).Append("/welcome-photos/").Append(Html(Uri.EscapeDataString(photos[0]))).Append("')\"></div>");
+
+            if (photos.Count > 1)
+            {
+                StringBuilder urls = new StringBuilder("[");
+                for (int i = 0; i < photos.Count; i++)
+                {
+                    if (i > 0)
+                        urls.Append(',');
+                    urls.Append('\'').Append(Html(BasePath)).Append("/welcome-photos/")
+                        .Append(Html(Uri.EscapeDataString(photos[i]))).Append('\'');
+                }
+                urls.Append(']');
+
+                sb.Append("<script>(function(){var photos=").Append(urls)
+                  .Append(";var i=0;setInterval(function(){i=(i+1)%photos.length;")
+                  .Append("document.getElementById('welcome-slideshow').style.backgroundImage=")
+                  .Append("\"url(\"+JSON.stringify(photos[i])+\")\";},6000);})();</script>");
+            }
+
+            return sb.ToString();
         }
 
         // Scoped to just this page (id selector, not a global rule) so it
@@ -845,6 +909,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".widget-card{padding:10px 12px;}" +
                 ".widget-card h3{font-size:13px;margin:0 0 4px;}" +
                 ".widget-meta{font-size:11px;}" +
+                ".welcome-slideshow{height:150px;border-radius:8px;background-size:cover;" +
+                "background-position:center;margin-bottom:12px;}" +
+                ".welcome-columns{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start;margin-top:10px;}" +
+                "@media (max-width:700px){.welcome-columns{grid-template-columns:1fr;}}" +
+                ".welcome-col h2:first-child{margin-top:0;}" +
+                ".welcome-register-cta{display:block;text-align:center;background:var(--accent);color:#fff;" +
+                "text-decoration:none;font-weight:700;padding:8px;border-radius:40px;margin:4px 0 12px;" +
+                "text-transform:uppercase;font-size:11.5px;letter-spacing:.3px;}" +
+                ".welcome-register-cta:hover{background:var(--accent-dark);color:#fff;text-decoration:none;}" +
                 "</style>";
 
         // Real counterpart to WhiteCore-Dev's welcomescreen/gridstatus.html
@@ -8818,6 +8891,67 @@ namespace OpenSim.Server.Handlers.WebInterface
             // aggressively, same reasoning any static-asset pipeline uses.
             response.AddHeader("Cache-Control", "public, max-age=31536000, immutable");
             response.RawBuffer = bytes;
+        }
+
+        // Login-splash background slideshow (HandleWelcome) - a fixed
+        // WebSplash/ folder next to Robust.exe, same "drop files in a
+        // conventionally-named folder, no config key needed" pattern
+        // RegionWeb's own region_images/carousel already use, rather than
+        // wiring up a new ini section just for a directory path. Empty
+        // by default (no folder = no slideshow, not an error) so this is
+        // purely additive for an operator who wants it.
+        private static readonly string[] WelcomePhotoExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
+
+        private static string WelcomePhotoDirectory =>
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WebSplash");
+
+        private static List<string> GetWelcomePhotoFiles()
+        {
+            List<string> files = new List<string>();
+            string dir = WelcomePhotoDirectory;
+            if (!Directory.Exists(dir))
+                return files;
+
+            foreach (string path in Directory.GetFiles(dir))
+            {
+                if (Array.IndexOf(WelcomePhotoExtensions, Path.GetExtension(path).ToLowerInvariant()) >= 0)
+                    files.Add(Path.GetFileName(path));
+            }
+            files.Sort(StringComparer.OrdinalIgnoreCase);
+            return files;
+        }
+
+        // Path.GetFileName strips any directory traversal from the
+        // client-supplied segment before it ever touches the filesystem -
+        // same discipline RegionWebModule's SendMedia/SendEstateMedia use
+        // for the same kind of "serve a file an operator dropped in a
+        // folder" route.
+        private void HandleWelcomePhoto(IOSHttpRequest request, IOSHttpResponse response, string unsafeName)
+        {
+            string fileName = Path.GetFileName(unsafeName);
+            if (string.IsNullOrEmpty(fileName) ||
+                    Array.IndexOf(WelcomePhotoExtensions, Path.GetExtension(fileName).ToLowerInvariant()) < 0)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            string path = Path.Combine(WelcomePhotoDirectory, fileName);
+            if (!File.Exists(path))
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            response.ContentType = Path.GetExtension(fileName).ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream",
+            };
+            response.AddHeader("Cache-Control", "public, max-age=3600");
+            response.RawBuffer = File.ReadAllBytes(path);
         }
 
         // Real viewer-vs-browser detection, ported from the same mechanism
