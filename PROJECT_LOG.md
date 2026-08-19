@@ -9960,3 +9960,57 @@ than a documentation gap - to be raised one at a time:**
 Repo template changes (items 3-4) committed and pushed to
 `confluence/merge-experiment`. Item 2's live-only change still needs a
 grid restart before it's actually in effect.
+
+### Follow-up: GroupAutoInvite was silently broken grid-wide since Aug 4,
+### and the fix turned into making it per-region instead of grid-wide
+
+Flagged in passing while reading logs during the Map3D in-world test
+above: `[GROUP AUTO INVITE]: Target group not found in <region>.`
+Checked both regions' full log history - this warning goes back to
+2026-08-04 in Welcome Center too, not just Var Test Region. The
+grid-wide `GroupID` (`ed49a5b7-844f-4d24-bc62-b6ff0605de06`) configured
+in `OpenSimDefaults.ini`'s `[GroupAutoInvite]` section had never
+resolved to a real group in either region - the feature has been
+silently doing nothing, in both places, for two weeks.
+
+`GroupAutoInviteModule.CreateGroup` requires a live `IClientAPI`
+(the viewer's own Create Group panel), so there's no admin/console path
+to create one headlessly - confirmed `PriceGroupCreate = 0` and
+`LevelGroupCreate = 0` on this grid, so the user created a real test
+group in-world via Firestorm at no cost (`ec7122f2-ad39-4442-a18f-
+1b5334db0e54`, confirmed via its `hop://casperia.ddns.net:9002/app/
+group/.../about` URI).
+
+While wiring the new GroupID in, the user pointed out the actual
+architecture problem: this should never have been one grid-wide value
+in the first place - different regions want different target groups.
+`GroupAutoInviteModule` is already an `INonSharedRegionModule` (a
+separate instance per region), but the config it reads was only ever
+supplied by the shared `OpenSimDefaults.ini`, with no per-region
+override in place - so both `OpenSim.exe` processes (same working
+directory, same base ini) ended up sharing the one broken value by
+accident, not by design.
+
+No code change needed - Nini's config layering already merges
+individual keys, not just whole sections, so a region's own `OpenSim.ini`
+can override just `Enabled`/`GroupID` while everything else still
+inherits from `OpenSimDefaults.ini`. Fixed by:
+
+1. `OpenSimDefaults.ini`'s `[GroupAutoInvite]` (live and repo template)
+   flipped back to `Enabled = false`, `GroupID =` blank - a safe,
+   inert grid-wide default now, not a silently-shared group.
+2. Added a `[GroupAutoInvite]` override to
+   `Simulators\Var_Test_Region\OpenSim.ini` (live only, not
+   repo-tracked) with `Enabled = true` and the real test GroupID -
+   dated/documented in the same style as the file's existing
+   `[WebConsole]`/`[TeamCombatModule]` override entries.
+3. Documented the pattern in `OpenSim.ini.example` (commented-out
+   example block, placeholder GroupID) so future operators know the
+   per-region override exists without needing to rediscover it from a
+   two-week-old silent failure.
+
+Welcome Center intentionally left without its own override for now -
+it'll simply have the feature off until the user supplies its own
+group, rather than continuing to share Var Test Region's test group by
+accident. Needs a grid restart to take effect (module only reads
+config at region startup); not yet restarted as of this writing.
