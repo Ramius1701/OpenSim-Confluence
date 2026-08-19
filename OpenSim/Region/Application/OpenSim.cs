@@ -487,6 +487,56 @@ namespace OpenSim
                                           RemoveEstateManagerCommand);
         }
 
+        // "quit"/"shutdown" and Ctrl+C all funnel into this one virtual
+        // Shutdown() (ServerBase.Shutdown -> ShutdownSpecific), unlike the
+        // restart paths (console "region restart <seconds>", the web
+        // dashboard's Restart buttons, and a viewer's own estate/region
+        // "Restart Region" request) which already warn connected residents
+        // through IRestartModule before acting. Quitting the process
+        // bypassed that entirely - residents got no warning at all, just an
+        // instant disconnect. IRestartModule itself doesn't fit here (its
+        // ScheduleRestart is hardcoded to reset the scene, not exit the
+        // process), so this reuses the same SendNotificationToUsersInRegion
+        // broadcast RestartModule itself uses for its own warnings, then
+        // blocks briefly before the real shutdown proceeds - only when
+        // someone's actually connected, so an unattended/empty region still
+        // exits immediately like before.
+        public override void Shutdown()
+        {
+            WarnConnectedResidentsBeforeShutdown();
+            base.Shutdown();
+        }
+
+        private const int ShutdownWarningSeconds = 30;
+
+        private void WarnConnectedResidentsBeforeShutdown()
+        {
+            if (SceneManager == null)
+                return;
+
+            bool anyConnected = false;
+            SceneManager.ForEachScene(scene =>
+            {
+                int rootCount = 0;
+                scene.ForEachRootScenePresence(sp => { if (!sp.IsNPC) rootCount++; });
+                if (rootCount == 0)
+                    return;
+
+                anyConnected = true;
+                IDialogModule dialogModule = scene.RequestModuleInterface<IDialogModule>();
+                dialogModule?.SendNotificationToUsersInRegion(UUID.Zero, "System",
+                        scene.Name + " is shutting down in " + ShutdownWarningSeconds + " seconds.");
+            });
+
+            if (anyConnected)
+            {
+                MainConsole.Instance.Output(
+                        "Residents are connected - waiting {0} seconds so they're warned before shutdown.",
+                        ShutdownWarningSeconds);
+                Thread.Sleep(ShutdownWarningSeconds * 1000);
+            }
+        }
+
         protected override void ShutdownSpecific()
         {
             if (m_shutdownCommandsFile != String.Empty)
