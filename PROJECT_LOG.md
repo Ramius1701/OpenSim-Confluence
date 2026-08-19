@@ -10590,3 +10590,79 @@ region's log - confirmed directly via `SELECT ... FROM
 currency_transactions ORDER BY Created DESC` against `casperia_dev`
 (note: currency tables live in `casperia_dev`, not `casperia_grid` -
 easy to typo). The original crash (`3b274c2b-...` reused) is gone.
+
+## Websearch 404, a stale duplicate GridInfoService override, and a dashboard label mismatch (2026-08-19)
+
+Same live-testing pass surfaced three more reports from Ramius: (1) the
+web dashboard's sidebar showed "Member" while the in-world profile
+showed "Resident" for the same account, (2) Firestorm's own Search
+floater's Websearch tab returned a raw "Not Found" for every query,
+(3) the Groups floater's "Learn about groups" link opens
+`community.secondlife.com`'s real knowledgebase instead of anything
+grid-specific.
+
+**#1 - not actually a bug.** Read `RenderSidebar` in
+`WebInterfaceServiceConnector.cs`: the dashboard's "Member"/
+"Administrator" pill is the *web session's own role* (regular login
+vs admin), a completely different field from the in-world
+`AccountMembershipHelper` account-type badge (Resident/Trial
+Member/Charter Member/Grid Team/Supporter). Two unrelated concepts
+that happened to both answer "what kind of account is this," which
+reads as inconsistent data even though it isn't. Renamed the
+dashboard's non-admin label to "Resident" to match the terminology
+used everywhere else, since introducing a second word for the same
+audience only adds confusion.
+
+**#2 - real bug, root-caused to a duplicate key inside a single
+`[GridInfoService]` section.** Curled the exact URL the login
+response sends as `search` (`${Const|BaseURL}:${Const|PublicPort}
+/search?q=[QUERY]`) directly - it worked fine, full styled results
+page. So the 404 had to be coming from a *different* URL than the one
+the working code path sends. Found it: `Robust.HG.ini`'s
+`[GridInfoService]` section (used for `get_grid_info`, which is what
+a viewer's dedicated Search floater actually reads, not the
+login-response field) has a long dead "New webinterface" template
+block near the bottom, almost entirely commented out except for two
+lines that weren't: `search = ${Const|BaseURL}/helper/query.php` and
+`message = ${Const|BaseURL}/messages.php`. Since it's the same
+section as the correct `search = ${Const|BaseURL}/search` /
+`message = ${Const|BaseURL}/messages` lines earlier, and Nini applies
+same-section keys in file order (last one wins), these two stray
+lines silently overrode both correct values - exact same failure
+shape as the Include-modules merge-order bug found earlier this
+session, just within one file instead of across includes. Commented
+out both stray lines with an explanatory note. This edit is
+live-deployment-only (`S:\Opensim\Casperia-Dev\Robust.HG.ini`) - the
+repo's own `bin/Robust.HG.ini.example` template never had this dead
+block, so there was nothing to fix on the repo side. Live-verified via
+`curl .../get_grid_info`: `<search>` and `<message>` now read
+`/search` and `/messages` correctly.
+
+**#3 - not fixable from the grid side.** Firestorm's "Learn about
+groups" link is baked into the viewer's own compiled UI, unrelated to
+anything a grid serves. Unlike Destination Guide/Search/Help/
+Register/Password, which are real `get_grid_info` fields a grid
+operator controls, there's no equivalent OpenSim protocol field for
+"where to learn about groups." Would need a custom-branded viewer
+build to change - a different scope of work, not a Confluence
+config/code gap.
+
+**Deploy note - a second, different lock signature from the ubode.dll
+race.** Deploying #1's DLL fix (`OpenSim.Server.Handlers.dll`) hit a
+"Device or resource busy" on a plain overwrite copy that persisted
+for 45+ seconds *even with Robust.exe fully stopped* (confirmed via
+`Get-CimInstance Win32_Process` - no Robust process existed). Tested
+whether the file could be renamed instead of overwritten - it could,
+both directions - which narrows the lock to something holding an open
+*read* handle (blocks truncate-on-write, not rename) rather than a
+genuine exclusive lock. The two still-running `OpenSim.exe` region
+processes are the likely holder: Mono.Addins scans every DLL in the
+shared `bin` folder for `[Extension]`-decorated types regardless of
+whether the process actually needs that assembly, so a region process
+plausibly holds a read handle open on this Robust-only connector DLL
+for its own process lifetime. Worked around it with copy-to-new-name
+then rename-swap (copy fresh DLL as `.new`, rename live file to
+`.old`, rename `.new` into place) instead of an in-place overwrite,
+which succeeded immediately on the first try. Worth remembering if a
+live redeploy of any Robust-only assembly ever hits the same "busy
+with nothing obviously holding it" wall again.
