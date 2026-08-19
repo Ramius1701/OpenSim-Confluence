@@ -10462,3 +10462,27 @@ permissions in **two separate places** - the object itself, and every
 item inside its own contents individually - not obvious, and a real
 source of "it's still greyed out" confusion distinct from any actual
 feature bug.
+
+### Follow-up: self-healing retry for the ubode.dll startup race
+
+Closed the operational item flagged earlier: wrapped
+`UBOdeNative.InitODE()` (`ODEModule.cs`) in a bounded retry (3
+attempts, 2 seconds apart), catching specifically
+`DllNotFoundException` and logging a `Warn` before each retry. This is
+the exact manual recovery already being done by hand twice this
+session (relaunch the crashed process, which always succeeded
+immediately) - now automated instead of needing a human to notice and
+relaunch. A genuine failure (missing file, wrong architecture) still
+throws and fails startup loudly on the final attempt, unchanged from
+before.
+
+Build-verified clean. Deployed, then deliberately launched both region
+processes with zero gap (no staggering) to try to reproduce the race
+under the fix - it didn't reproduce this particular attempt, since the
+race is intermittent rather than guaranteed on every back-to-back
+launch (consistent with the "AV briefly locks the file on first
+access" theory). Both regions came up clean; the retry path itself
+wasn't exercised this time, so it's deployed and ready but not yet
+proven firing successfully - worth a note if it's ever seen crashing
+again despite this fix being live, since that would mean the actual
+root cause is something other than what's diagnosed here.
