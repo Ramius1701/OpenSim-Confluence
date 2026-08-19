@@ -10666,3 +10666,79 @@ then rename-swap (copy fresh DLL as `.new`, rename live file to
 which succeeded immediately on the first try. Worth remembering if a
 live redeploy of any Robust-only assembly ever hits the same "busy
 with nothing obviously holding it" wall again.
+
+## Trial Member: the second half of throwaway-account protection (2026-08-19)
+
+User asked why new self-registrations weren't starting as Trial Member
+and getting auto-promoted after 30 days, referencing an earlier
+conversation and this repo's own README. Checked README.md/
+PROJECT_LOG.md before concluding anything - confirmed `DenyNewAccounts`
+(the age-based half, keyed purely off `UserAccount.Created` vs
+`NewAccountThresholdDays`, independent of the membership badge) was
+already built and documented, but the badge half (self-registration
+defaulting to Trial Member, plus a promotion timer) was never actually
+implemented - grepped for `TrialMember` assignment and a promotion
+sweep and found neither, confirming the gap rather than assuming it
+from the grep alone.
+
+Built the missing half:
+
+- `WebInterfaceServiceConnector.HandleRegister` now sets new
+  self-registered accounts to `AccountMembershipHelper.TrialMember`
+  instead of leaving `UserFlags` at its default (which decoded to
+  Resident). Admin-created accounts (`HandleAdminUsersCreate`) are
+  unchanged - still default straight to Resident, since an admin
+  creating an account is already vetting it.
+- `UserAccountService` runs a new hourly background sweep
+  (`PromoteExpiredTrialMembers`, root-instance-only, same
+  expiry-sweep-timer shape as `EventsService`'s own) that finds every
+  account still flagged Trial Member whose `Created` is old enough and
+  flips the badge to Resident, using `IUserAccountData.GetUsersWhere`
+  (already implemented across all three DB backends, previously
+  unused for anything like this) with a hand-built WHERE fragment -
+  safe from injection since every value in it is computed by the
+  method itself, never from user input.
+- Deliberately reads the threshold from a config key named
+  `NewAccountThresholdDays`, matching `DenyNewAccounts`'s own key name
+  exactly, even though it lives in a different file/process (Robust's
+  `[UserAccountService]` here vs. each region's own `[Startup]`) and
+  can't literally share one value - naming it the same is the best
+  available guard against an operator setting the two thresholds to
+  different numbers by accident.
+- Asked before adding anything beyond the promotion timer: confirmed
+  the user wanted Trial Members additionally blocked from Adult
+  content, mirroring real SL's unverified-account restrictions ("Trial
+  accounts can visit adult sims, join adult groups" was flagged as the
+  gap, not the desired state). Added two gates, both keyed off the
+  *live membership-type badge* rather than account age - deliberately
+  different from `DenyNewAccounts`'s age-based check, since the user
+  confirmed the intended escape hatch is an admin manually promoting
+  someone to Resident early via `/admin/users/edit-details`, which
+  only works if the gate re-reads the badge on every check rather than
+  a fixed age computed once:
+  - `Scene.cs`'s `NewUserConnection` (same method as `DenyNewAccounts`,
+    right after it) denies entry to Adult-rated regions
+    (`RegionInfo.RegionSettings.Maturity == 2`) for Trial Members. Not
+    a per-estate opt-in like `DenyNewAccounts` - an Adult-rated region
+    is already a deliberate owner choice, so the gate applies
+    everywhere rather than needing a second checkbox.
+  - `GroupsModule.JoinGroupRequest` denies joining any group with
+    `MaturePublish == true` for Trial Members. Groups have no real
+    PG/Mature/Adult tier in this schema, only that one boolean
+    publish-maturity flag, which is the best available proxy for
+    "adult group content" without a schema change.
+
+Build-verified clean (0 warnings, 0 errors) but **not yet deployed or
+live-tested** - needs a Robust + region redeploy/restart and a real
+Trial-account walkthrough (register, confirm Adult-region/group
+denial, confirm admin promotion lifts it, confirm the sweep promotes
+after the threshold) before calling this done.
+
+Also wrote two memory files
+(`casperia-trial-member-throwaway-protection`,
+`casperia-check-readme-before-declaring-unbuilt`) after the user
+pointed out directly that not having this design captured in memory is
+exactly what caused it to almost get rebuilt as if it were a brand-new
+ask - the fix going forward is checking README.md/PROJECT_LOG.md for a
+prior design conversation before concluding a codebase grep coming up
+empty means something was never planned.

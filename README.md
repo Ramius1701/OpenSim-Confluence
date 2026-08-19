@@ -1088,6 +1088,23 @@ work continues — don't let them go stale.
   other OpenSim gifting path already uses, rather than hand-rolling a
   second copy of its permission logic. Works whether the donor is
   online or not. Full writeup in PROJECT_LOG.md.
+- **Trial Member, the badge half of throwaway-account protection —
+  built.** `DenyNewAccounts` above was the age-based half; this is the
+  other half that grew from the same conversation but hadn't actually
+  been implemented yet. Public self-registration now starts every
+  account as Trial Member instead of Resident; `UserAccountService`
+  runs a background sweep that promotes them to Resident once old
+  enough (reads `NewAccountThresholdDays`, same key name as
+  `DenyNewAccounts` uses, from its own config, to keep the two
+  thresholds from drifting apart by convention even though they live
+  in different processes' ini files). Trial Members are additionally
+  blocked from Adult-rated regions and from joining
+  `MaturePublish`-flagged groups, mirroring real SL's unverified-
+  account restrictions — both gates check the live membership badge on
+  every attempt rather than a fixed age, so an admin manually promoting
+  someone to Resident early (Admin → Users → edit details) lifts the
+  restriction immediately. Admin-created accounts are unaffected — they
+  still default straight to Resident. Full writeup in PROJECT_LOG.md.
 
 ## Repository model
 
