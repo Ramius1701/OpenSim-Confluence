@@ -10310,3 +10310,50 @@ second implementation left sitting in the file.
 
 Build-verified clean, deployed (full stop/redeploy/restart, same
 shared-DLL lock as before), verified live via DOM inspection.
+
+Real branded photos swapped into `WebSplash/` for the login splash
+(replacing the earlier map-tile test images) - pulled from
+`S:\laragon\www\casperia\images\`, the atmosphere/marketing art already
+used on the live site, not generic map tiles. Deliberately skipped the
+`301-305` series (looked like real in-world screenshots, possibly of
+an unrelated Star-Trek-themed region) since there was no way to confirm
+those represent general Casperia branding rather than one specific
+region - left for the user to pick explicitly if wanted. No restart
+needed; the photo folder is scanned fresh on every request.
+
+### Follow-up: /guide required scrolling in the viewer's fixed-height
+### Destinations floater - not how guide.php originally behaved
+
+Direct feedback: the viewer's Destination Guide floater is fixed-height
+(not fixed-width), and even at default size the port required scrolling
+to see content - guide.php itself never did. Root cause: guide.php's
+own `body` is `height:100vh` + `overflow:hidden`, with only its inner
+`.viewport` actually scrolling; the ported version inherited
+`WriteBarePage`'s shared `.page`/`.card` padding (~150px combined) on
+top of this page's own header/tabs/grid in normal document flow,
+making the whole page taller than the floater.
+
+Fixed by reproducing the same fixed-viewport-height/inner-scroll split
+via a new `GuideFixedHeightCss` block (overrides `body`/`.site-main`/
+`.page`/`.card` - wins by document order over `PageCss` without editing
+it or touching any other page), wrapped the three tab sections in a new
+`.guide-viewport` that does the actual scrolling, kept `.guide-header`
+pinned. Applied only inside a real viewer's embedded panel
+(`IsViewerRequest`) - forcing `height:100vh` in an actual browser tab
+would clip `WritePage`'s own header/footer chrome, which guide.php
+never had to account for since it has no site chrome at all.
+
+Deploy hit an unrelated transient failure worth remembering: one
+region crashed on `DllNotFoundException` for the ubOde physics native
+library during the restart cycle, while the other region loaded the
+exact same DLL fine at the same moment - treated as a one-off race
+(antivirus/file-lock contention from the rapid stop/copy/restart
+cycle), not a real missing dependency, and a second launch attempt
+started clean. Verified the actual fix live via `?view=viewer` (forces
+the same code branch a real viewer hits, since this browser's own
+requests weren't reliably distinguishable as viewer/non-viewer):
+confirmed body height exactly equals the window height, `overflow:
+hidden` on body, document does not need scrolling, only
+`.guide-viewport` does, header stays pinned, cards still render.
+
+Build-verified clean, committed and pushed.
