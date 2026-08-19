@@ -109,6 +109,18 @@
     ;
     ; Change this to your grid-wide grid server
     ;
+    ; 2026-08-20: tried changing this from PrivatePort to PublicPort to
+    ; silence a background-maptile-generation warning when PrivatePort has
+    ; no listener - REVERTED after live-testing broke something worse:
+    ; RegisterRegionWithGrid itself reads this same GridServerURI, and
+    ; pointing it at PublicPort made region registration fail with
+    ; "RegisterRegion received null reply", fatally aborting startup.
+    ; PrivatePort (unreachable) is apparently tolerated gracefully by
+    ; registration specifically, even though it does still fail the
+    ; separate, lower-severity background maptile job. Left as stock
+    ; upstream OpenSim's own default - don't change this without
+    ; understanding why registration and the maptile job behave
+    ; differently against the same URI first. See PROJECT_LOG.md.
     GridServerURI = "${Const|PrivURL}:${Const|PrivatePort}"
     ;AllowHypergridMapSearch = true
 

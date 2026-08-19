@@ -10849,3 +10849,71 @@ outside this repo's scope. Worth remembering if this resurfaces:
 **checked and ruled out**, not unexplained - don't re-spend time
 re-deriving this chain if "search still doesn't work" comes up again
 without new evidence pointing at the server side specifically.
+
+## Grid stability pass: one real fix, one fix that broke startup and was reverted (2026-08-20)
+
+User asked directly if there was anything to address for grid
+stability. Scanned recent logs across all three processes for real
+WARN/ERROR entries rather than guessing, and found two candidates
+worth fixing.
+
+**Fixed - `DATA_SRV_CP` dead legacy PHP path.** Both regions logged
+`[DATASNAPSHOT]: Ignoring unknown exception Object reference not set
+to an instance of an object` on every single startup. Traced to
+`DataSnapshotManager.NotifyDataServices` (line ~416):
+`cli.Request(null)` against a URL that 404s can leave `reply` null
+without throwing `HttpRequestException`, and the following
+`reply.Read(...)` then NREs - caught by the generic `catch
+(Exception)` and logged as "unknown," which is why the actual cause
+had never surfaced before. The URL in question:
+`[DataSnapshot]`'s `DATA_SRV_CP = "http://holodeckgrid.ddns.net
+/helper/register.php"` in both regions' `OpenSim.ini` - confirmed dead
+with a direct curl (real 404, this repo's own OSWebServer default page
+for an unregistered route), same "old PHP site, never replaced
+natively" pattern already found and fixed multiple times this session
+for search/messages/etc., just not previously noticed since it lived
+under a section nobody had reason to check. This is a third-party
+external search-crawler notification feature Confluence's own native
+`/search` doesn't need - disabled (commented out) in both regions'
+live `OpenSim.ini` rather than pointed at a new endpoint, since no
+native replacement is needed. Not present in this repo's own tracked
+`bin/OpenSim.ini.example` template - a manual addition to this live
+deployment only, so no repo-side fix was needed. **Live-verified**:
+restarted both regions, zero DATASNAPSHOT exceptions on either this
+startup.
+
+**Attempted and reverted - `GridServerURI` PrivatePort/PublicPort
+mismatch.** Also found `config-include/GridCommon.ini`'s
+`[GridService]` section pointing `GridServerURI` at
+`${Const|PrivatePort}` (9003), which this deployment's Robust never
+actually listens on - real `ERROR [GRID CONNECTOR]` log noise
+(`connected host has failed to respond`) and a failed background
+maptile-generation job on both regions. Reasoned that since nothing
+listens on 9003, pointing it at `${Const|PublicPort}` (9002, where
+Robust does listen) would fix it, and changed both the live deployment
+file and this repo's own tracked `GridCommon.ini.example` template to
+match.
+
+**This was wrong, found out the hard way via live-testing rather than
+assumed correct from reasoning alone**: restarting both regions with
+the changed value made region registration itself fail -
+`RegisterRegionWithGrid()` (`Scene.cs`) reads this same
+`GridServerURI`, and pointing it at PublicPort made Robust's grid
+connector return a null reply, which is fatal
+(`ERROR [STARTUP]: Registration of region with grid failed, aborting
+startup`) - both regions came up dead. PrivatePort, despite being
+unreachable, is apparently tolerated gracefully by the registration
+path specifically (something about a connection timeout/refusal vs. a
+live server returning an incompatible reply is handled differently
+between the two call sites), even though it does still fail the
+separate, much-lower-severity background maptile job. **Reverted
+immediately** - both the live deployment file and the repo's tracked
+`.example` template are back to the original `PrivatePort` value, with
+a comment explaining what was tried and why, so this doesn't get
+re-attempted without first understanding *why* registration and the
+maptile job behave differently against the same URI. Both regions
+confirmed back up clean (`RegionReady`, zero errors) on the reverted
+config. The underlying maptile-generation warning is still there,
+unfixed - real, but lower priority than "region won't start," and
+needs a proper look at the actual difference between the two
+`GridServerURI` call sites before touching this value again.
