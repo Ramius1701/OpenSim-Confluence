@@ -244,6 +244,7 @@ namespace OpenSim.Region.CoreModules.World.Currency
             client.OnMoneyTransferRequest += ProcessMoneyTransferRequest;
             client.OnObjectBuy += ProcessObjectBuy;
             client.OnRequestPayPrice += ProcessRequestPayPrice;
+            client.OnCompleteMovementToRegion += OnCompleteMovementToRegion;
             client.OnLogout += OnClientLoggedOut;
         }
 
@@ -254,7 +255,22 @@ namespace OpenSim.Region.CoreModules.World.Currency
             client.OnMoneyTransferRequest -= ProcessMoneyTransferRequest;
             client.OnObjectBuy -= ProcessObjectBuy;
             client.OnRequestPayPrice -= ProcessRequestPayPrice;
+            client.OnCompleteMovementToRegion -= OnCompleteMovementToRegion;
             client.OnLogout -= OnClientLoggedOut;
+        }
+
+        // GloebitMoneyModule pushes a fresh balance on every OnCompleteMovementToRegion
+        // (covers login AND crossing/teleport in from a region running a different
+        // economy module) specifically because the viewer otherwise only re-queries
+        // balance on login or a manual click - found live testing a mixed-economy grid
+        // (some regions on real Gloebit, others on this module): crossing from a Gloebit
+        // region into a ConfluenceCurrencyModule one kept showing the stale Gloebit
+        // balance until manually refreshed. This module never had the same push.
+        private void OnCompleteMovementToRegion(IClientAPI client, bool blah)
+        {
+            int balance = GetBalance(client.AgentId);
+            client.SendMoneyBalance(UUID.Zero, true, Utils.EmptyBytes, balance,
+                    0, UUID.Zero, false, UUID.Zero, false, 0, string.Empty);
         }
 
         // Answers the viewer's "what are this object's configured Pay-dialog quick-pick

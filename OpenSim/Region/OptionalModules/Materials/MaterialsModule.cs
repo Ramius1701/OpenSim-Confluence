@@ -398,8 +398,19 @@ namespace OpenSim.Region.OptionalModules.Materials
                 AssetBase matAsset = m_scene.AssetService.Get(id.ToString());
                 if (matAsset is null || matAsset.Data is null || matAsset.Data.Length == 0 )
                 {
-                    // grid may just be down...
-                    return false;
+                    // Could be a transient asset service outage, or the asset could be
+                    // genuinely, permanently gone (found live: prims whose Material
+                    // asset was never persisted at all, predating any known cause -
+                    // confirmed absent from both the assets and fsassets tables).
+                    // Either way, clear the stale reference so the viewer stops asking
+                    // for an ID that will never resolve - same "clear rather than keep
+                    // around" pattern already used below for an empty decoded material.
+                    // A transient outage would otherwise self-correct on the next
+                    // successful load; a permanently missing asset never will, so this
+                    // favors not re-logging the same dead ID forever over the rare case
+                    // of clearing a reference that was only briefly unreachable.
+                    face.MaterialID = UUID.Zero;
+                    return true;
                 }
 
                 byte[] data = matAsset.Data;

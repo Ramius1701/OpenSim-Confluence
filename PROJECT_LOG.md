@@ -11284,3 +11284,124 @@ confirmed smooth with no bounce-back by the user directly.
 errors, not a config issue). Restarts every crossing regardless of
 region; independent of the currency-module bug and not yet
 investigated further.
+
+## Real Gloebit regions found during currency testing, then a genuine
+## ConfluenceCurrencyModule code gap (2026-08-20)
+
+Live-testing `ConfluenceCurrencyModule` (a real L$ purchase, verified
+against `currency_transactions`/`currency_balances` directly) surfaced
+that three of the 13 live-cloned regions - SVC (SailorV Creations),
+Welcome_Center, and Starbase Andromeda - actually run **real production
+Gloebit**, not a legacy module to be replaced. Confirmed via
+`Gloebit.ini`'s `GLBEnabledOnlyInRegions` (three real region UUIDs,
+real `GLBKey`/`GLBSecret`, `GLBEnvironment = production`) and live's
+own per-region `economymodule = Gloebit` lines. Casperia-Dev's own
+`Gloebit.ini` had this list deliberately cleared earlier this session
+specifically to prevent activating real production transactions from
+a test copy - a safety measure, not a copy bug.
+
+Today's earlier blanket migration of all 13 cloned regions to
+`ConfluenceCurrencyModule` had silently dropped SVC's active Gloebit
+selection entirely (not even preserved as a commented revert option).
+Restored `economymodule = Gloebit` for all three confirmed regions
+(matching live), and - per explicit user direction, since real funds
+are involved - restored `GLBEnabledOnlyInRegions` to the real three
+UUIDs so Gloebit actually functions in Dev. `GLBEnabledOnlyInRegions`
+being populated only makes the *existing, already-configured*
+production integration functional again for its own real account;
+Confluence code changes elsewhere are still confined to `casperia_dev`.
+
+**Then**: crossing from a Gloebit region into a `ConfluenceCurrencyModule`
+region left the viewer showing the stale Gloebit balance until manually
+refreshed. Root-caused via a systematic diff of every `client`/
+`scene.EventManager` event `GloebitMoneyModule.cs` and
+`DTLNSLMoneyModule.cs` subscribe to, against `ConfluenceCurrencyModule.cs`'s
+own subscriptions (the same diff methodology a prior, in-file code
+comment shows was already used once before, for an earlier
+`OnRequestPayPrice` gap - both times found reactively, during live
+testing, rather than proactively). Gloebit hooks
+`client.OnCompleteMovementToRegion` specifically to push a fresh balance
+on every region entry, covering logins *and* crossings from a
+differently-configured region; `ConfluenceCurrencyModule` never had.
+`DTLNSLMoneyModule` turned out to already handle this correctly via
+`scene.EventManager.OnMakeRootAgent`, so no fix was needed there.
+
+Extended the same diff to `ConfluenceSearchModule` vs the legacy
+`OpenSimSearch` addon while at it (per the user's broader concern that
+native-module porting gaps might not be limited to currency): the one
+apparent difference, `client.OnMapItemRequest` (drives World Map
+markers - land-for-sale, events, popular places), turned out to already
+be fully covered by core `WorldMapModule.cs` regardless of which search
+backend is active. No real gap there.
+
+**Fix**: added `client.OnCompleteMovementToRegion` handling to
+`ConfluenceCurrencyModule.cs`, pushing `SendMoneyBalance` with a fresh
+balance on every region entry, mirroring Gloebit's approach. Built
+(`OpenSim.Region.CoreModules.csproj`), deployed the rebuilt DLL to
+Casperia-Dev (had to stop all 14 region processes + Robust first - the
+DLL was locked), full grid restart, zero new errors on any region.
+
+**Verified**: SVC/Welcome_Center/Starbase Andromeda all show
+`[GLOEBITMONEYMODULE] region loaded <UUID>` after enabling, user
+confirmed all three showing real Gloebit balances in-viewer.
+
+## "[Materials]: request for unknown material ID" spam - confirmed
+## upstream-identical, fixed with a targeted stale-reference cleanup (2026-08-20)
+
+User reported repeated `[Materials]: request for unknown material ID`
+warnings while standing on a "3 Way Sidewalk Edge" build in Sol Sector
+- Diffuse rendered correctly, but the material lookup itself failed.
+Nearly all instances of this warning across the whole grid (92 warning
+lines, 69 unique material IDs) were isolated to Sol Sector, with one
+stray hit in SVC and zero anywhere else.
+
+**Root-caused with real evidence, not assumption**: every reported
+material UUID was confirmed absent from both the `assets` and `fsassets`
+tables on **both** `casperia_dev` and live's own `casperia` database -
+this is genuine, pre-existing content loss on live itself, not
+introduced by the earlier clone. `MaterialsModule.cs` and
+`SOPMaterial.cs` (which defines `FaceMaterial`) diffed byte-for-byte
+identical against `opensim-master` - confirmed this is stock upstream
+behavior, not a Confluence regression. `FaceMaterial` holds
+`NormalMapID`/`SpecularMapID` but no `DiffuseMapID` - Diffuse always
+comes from the prim's base `TextureEntry.TextureID`, architecturally
+independent of the Materials system, which is why it kept rendering
+correctly while Normal/Specular silently fell back to a flat default
+(indistinguishable from "working" on flat concrete, but not actually
+the original custom material).
+
+User was explicit the original data wasn't recoverable and out of
+scope - the ask was purely to stop the warning recurring forever (every
+scene load and every avatar view re-requests the same dead IDs, since
+nothing ever cleared the stale reference).
+
+**Fix**: extended `GetStoredMaterialInFace` in `MaterialsModule.cs`
+(`OpenSim/Region/OptionalModules/Materials/`) - when the material
+asset fetch returns null, clear `face.MaterialID = UUID.Zero` and
+return `true` (signals a change), reusing the exact same pattern
+already present in the same method for a different case (an empty
+decoded material). The caller (`GetStoredMaterialsInPart`) already
+bakes a `true` return into `part.Shape.TextureEntry` and sets
+`HasGroupChanged`, so the fix persists permanently - once cleared, the
+face no longer carries the dead ID at all, so no future viewer session
+ever asks for it again. Tradeoff acknowledged and accepted per the
+user: the original code's own comment reads `// grid may just be
+down...`, meaning a transient asset-service outage during region
+startup could in principle get clearing treated the same as permanent
+loss. Favored stopping the permanent, indefinite warning spam over the
+rare/self-resolving risk of a temporary outage.
+
+**Build note**: `MaterialsModule.cs` lives in
+`OpenSim.Region.OptionalModules.csproj`, a separate project from
+`OpenSim.Region.CoreModules.csproj` (used for the currency fix earlier
+today) - first build attempt targeted the wrong project and produced a
+DLL that never touched this file. Both DLLs need their own
+build+deploy+restart cycle; they don't share output.
+
+**Verified**: full grid restart (Robust + all 14 regions) with the
+rebuilt `OpenSim.Region.OptionalModules.dll` deployed - zero
+`[Materials]` warnings anywhere in any region's log post-restart, vs.
+dozens within seconds of the first avatar view before the fix. User
+confirmed live in Sol Sector: no warning, and the sidewalk's materials
+render exactly as before (expected - the fix doesn't change rendering,
+only stops re-requesting a reference that could never resolve).
