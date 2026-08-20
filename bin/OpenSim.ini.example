@@ -1107,6 +1107,12 @@
     ; AbuseReportsService = "LocalAbuseReportsServicesConnector"
     ; AbuseReportsService = "RemoteAbuseReportsServicesConnector"
 
+    ;; Confluence's native currency/auction connectors - each region talks
+    ;; to the [CurrencyService]/[AuctionService] database directly. This is
+    ;; how Confluence is set up out of the box.
+    CurrencyService = "LocalCurrencyServiceConnector"
+    AuctionService = "LocalAuctionServiceConnector"
+
 [AbuseReportsService]
     ;; Only needed if [Modules] AbuseReportsService above is set to
     ;; LocalAbuseReportsServicesConnector.
@@ -1122,6 +1128,29 @@
 [AbuseReports]
     ;; Enables the in-viewer "Report Abuse" floater's CAPS endpoint.
     ;Enabled = true
+
+
+[CurrencyService]
+    ;; Backs ConfluenceCurrencyModule (see [Economy]/[Modules] above).
+    ;; Only needed if [Modules] CurrencyService is LocalCurrencyServiceConnector.
+    LocalServiceModule = "OpenSim.Services.CurrencyService.dll:CurrencyService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlCurrencyData"
+    ;; Edit this for your own database - this module talks directly to
+    ;; MySQL rather than through ROBUST, so it needs its own connection.
+    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+    ;; Real-money purchase caps (US dollars, rolling windows). 0 disables a
+    ;; given cap.
+    DailyPurchaseCapUSD = 500
+    WeeklyPurchaseCapUSD = 2000
+    MonthlyPurchaseCapUSD = 5000
+
+[AuctionService]
+    ;; Backs land-parcel web-bidding auctions.
+    ;; Only needed if [Modules] AuctionService is LocalAuctionServiceConnector.
+    LocalServiceModule = "OpenSim.Services.AuctionService.dll:AuctionService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAuctionData"
+    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
 
 [BulletSim]
@@ -1264,13 +1293,58 @@
     ;; New way of specifying data services, one per service
     ;DATA_SRV_MISearch = "http://metaverseink.com/cgi-bin/register.py"
 
+[Search]
+    ;; Confluence's native in-world search - a replacement for the legacy
+    ;; OpenSimSearch addon, which depends on an external crawler-fed
+    ;; backend most deployments never set up (produces "Unable to search
+    ;; at this time" in-viewer if left pointed at nothing).
+    ;; ConfluenceSearchModule talks to the [EventsService]/
+    ;; [GroupsSearchService] connectors below plus core inventory/land
+    ;; data directly - no external backend needed. This is how Confluence
+    ;; is set up out of the box.
+    Module = "ConfluenceSearchModule"
+    SearchURL = "${Const|BaseURL}/helper/query.php"
+
+    ; To revert to the legacy addon (not recommended - needs its own
+    ; external backend, see OpenSimSearch's own docs):
+    ; Module = "OpenSimSearch"
+
+[EventsService]
+    ;; Backs ConfluenceSearchModule's Events tab.
+    LocalServiceModule = "OpenSim.Services.EventsService.dll:EventsService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlEventsData"
+    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+[UserProfilesService]
+    ;; Region-local connector (bypasses ROBUST) backing profile picks/
+    ;; classifieds surfaced through ConfluenceSearchModule.
+    LocalServiceModule = "OpenSim.Services.UserProfilesService.dll:UserProfilesService"
+    Enabled = true
+    StorageProvider = "OpenSim.Data.MySQL.dll:UserProfilesData"
+    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+[GroupsSearchService]
+    ;; Backs ConfluenceSearchModule's Groups tab - reuses the same groups
+    ;; database core Groups already writes to.
+    LocalServiceModule = "OpenSim.Addons.Groups.dll:GroupsService"
+
 [Economy]
-    ; the economy module in use
-    ; To use other modules you need to override this setting
+    ;; Confluence's native currency module - talks directly to the
+    ;; [CurrencyService] connector below (see also [Modules] CurrencyService).
+    ;; This is how Confluence is set up out of the box.
+    economymodule = ConfluenceCurrencyModule
+    CurrencyRate = 250
+
+    ; To revert to the legacy DTLNSLMoneyModule (needs a separate
+    ; MoneyServer.exe process and its own ini file - not recommended, kept
+    ; only for grids that already depend on it) comment the two lines above
+    ; back out and uncomment these instead, plus the CurrencyServer/
+    ; UserServer/CheckServerCert lines further below:
+    ; economymodule = DTLNSLMoneyModule
     ; economymodule = BetaGridLikeMoneyModule
 
-    ; the url of the economy service.
-    ; this must match the grid economy setting (also known as helperURI or CurrencyServer, etc)
+    ; Only used by the legacy DTLNSLMoneyModule - ConfluenceCurrencyModule
+    ; reads [CurrencyService] instead and ignores this setting.
     ; economy = https://the.currency.machine.fdqn:port/folder/folder...
 
     ;# {SellEnabled} {} {Enable selling for 0?} {true false} true

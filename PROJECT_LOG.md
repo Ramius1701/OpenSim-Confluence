@@ -11208,3 +11208,79 @@ its cumulative migration history to find columns no current
 migration/version defines) - a materially larger effort than the
 table-level pass, proposed as its own later effort rather than folded
 into this one.
+
+## Region-crossing "bounce back to the border" - a stale currency-module
+## port, not a crossing bug at all (2026-08-20)
+
+First real-data-tested region crossing with attachments/HUDs worn
+surfaced a sharp, reproducible symptom: crossing Sector 002 -> Sector
+001, the avatar visibly continued into the new region then snapped
+back to the border a few seconds later.
+
+**Root cause, found from real log evidence, not guesswork**: on
+entering a new region, `CompleteMovement`/`OnMakeRootAgent` fires a
+synchronous currency-module call to establish the avatar's balance.
+Both crossing directions' logs showed `CompleteMovement end: 10031ms`
+/ `10125ms` - suspiciously exactly the WebException connect-timeout
+window - caused by `[MONEY NSL XMLRPC]: XmlRpcResponse certSend:
+connect to http://holodeckgrid.ddns.net:8000/` (live Casperia's own
+Robust port, carried over unchanged in all 13 live-cloned regions'
+`[Economy] CurrencyServer`/`UserServer` settings) timing out after 10
+seconds before the crossing could finish server-side. That 10-second
+stall during the root-agent handshake is exactly what makes a viewer
+give up and snap the avatar back to the border, even though the
+crossing eventually completes behind the scenes.
+
+**First fix attempt was the wrong one**: repointed `CurrencyServer`/
+`UserServer` from live's `8000`/`8002` to Dev's own `9000`/`9002`
+(matching `[Const] PublicPort`/`PrivatePort`'s own live-to-Dev port
+remap from the earlier clone work), started `MoneyServer.exe`,
+troubleshot a real port-9000 conflict with an unrelated mail server
+process. All of this was fixing the *legacy* `DTLNSLMoneyModule` path
+- user caught it: Welcome_Center (the one region never cloned from
+live) had already migrated to Confluence's own native
+`ConfluenceCurrencyModule` on 2026-08-09, with `MoneyServer.exe` not
+meant to run at all. Same "check for a native replacement before
+patching the carried-over value" miss as the earlier `[Search] Module`
+fix (OpenSimSearch -> ConfluenceSearchModule) - now the second time
+this exact pattern has cost a wasted round.
+
+**Real fix**: migrated all 13 cloned regions' `[Economy]` section to
+`economymodule = ConfluenceCurrencyModule` / `CurrencyRate = 250`
+(legacy `DTLNSLMoneyModule`/`Gloebit` - SVC had been running Gloebit,
+uniquely among the 13 - commented out for easy revert), and added the
+entirely-missing `[Modules] CurrencyService = LocalCurrencyServiceConnector`
+/ `AuctionService = LocalAuctionServiceConnector` plus `[CurrencyService]`
+and `[AuctionService]` sections (the latter also fixed a standing
+`[AUCTION MODULE]: No IAuctionService available` error present on
+every one of the 13 since the clone). Stopped `MoneyServer.exe` -
+not needed with the native module.
+
+**Gap this exposed, and the actual point of the fix**: the repo's own
+`bin/OpenSim.ini.example` template had the identical gap - `[Economy]`
+still only documented vanilla `BetaGridLikeMoneyModule`, and
+`[Search]`/`[EventsService]`/`[UserProfilesService]`/
+`[GroupsSearchService]`/`[CurrencyService]`/`[AuctionService]` didn't
+exist in it at all, while `[SimProtection]` did. Per the user's own
+framing: "the example ini files should be how they setup up confluence
+not opensim-master. thats the GAP. Confluence is a major upgrade."
+Fixed by making the native modules the live, uncommented default in
+the template (matching how the Robust-side templates already treat
+their own native features - `[UserProfilesService]`,
+`[AbuseReportsService]`, `[MuteListService]` are all active by
+default there), with the legacy vanilla options demoted to a commented
+revert path - not left as a buried alternative next to the vanilla
+default, which was the first, corrected attempt.
+
+**Verified**: full grid restart (Robust + all 14 regions, 7s stagger),
+zero currency/auction/search errors on any region, zero errors on
+Robust. Live re-test of the exact same Sector 002 -> Sector 001
+crossing: `CompleteMovement end: 110ms` (vs. 10031ms before),
+confirmed smooth with no bounce-back by the user directly.
+
+**Separate, unrelated finding along the way**: one attached script
+("GC Meter v6") fails to compile in YEngine on every region entry
+(`expecting label`, `looking for var name...` - genuine script syntax
+errors, not a config issue). Restarts every crossing regardless of
+region; independent of the currency-module bug and not yet
+investigated further.
