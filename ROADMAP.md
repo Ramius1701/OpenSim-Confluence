@@ -163,3 +163,17 @@ reimplementation, but well-documented design rationale):
 - Inventory thumbnails and profile-photo upload depend on AIS3, which
   some viewers/builds don't enable by default; there's no legacy-UDP
   fallback for those specific sub-flows.
+- **Upgrading an existing MySQL grid to a Confluence version with the
+  utf8mb4 fix (see `FEATURES.md` → Database) converts several text
+  columns' charset automatically on the next restart** — no admin
+  action needed, and it's a lossless conversion for real data in the
+  normal case. The one genuine edge case: a handful of the affected
+  columns (`useraccounts.DisplayName`/`FirstName`/`LastName`,
+  `mutelist.MuteName`) were `latin1`, not the more common `utf8mb3`.
+  If a grid already had corrupted ("mojibake") data in those columns
+  from some earlier, unrelated charset mismatch, the conversion
+  preserves whatever that corruption looked like rather than fixing or
+  worsening it. Grid owners with real accented or non-English names on
+  their roster should spot-check that table before and after
+  upgrading — a fresh install or a grid with plain-ASCII names has
+  nothing to check.

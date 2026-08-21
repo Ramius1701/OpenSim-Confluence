@@ -244,6 +244,26 @@ Sim FPS auto-mitigation and stuck-region auto-restart (`SimProtection`)
 is enabled on the live grid. Physics inputs are sanitized against
 NaN/Infinity before being applied.
 
+## Database
+
+- **Full Unicode/emoji support on MySQL.** Every user-authored
+  free-text column (prim names/hover text/descriptions, notecard and
+  inventory names, land/parcel names, group charters/notices/roles,
+  profile text, news, static pages, support tickets, events,
+  experience names, display names, and more) stores real `utf8mb4`,
+  not the legacy `utf8` (really 3-byte-max `utf8mb3`) or `latin1`
+  charsets the original schema used, which reject any 4-byte character
+  — emoji included. Applies automatically on upgrade: the migration
+  framework converts existing tables in place the next time Robust/a
+  region starts, no manual step required. PostgreSQL and SQLite never
+  had this limitation.
+- PostgreSQL's `UserAccounts` table carries the same `DisplayName`/
+  `NameChanged`/`TOSDate` columns MySQL has.
+- Asset name/description columns are widened (64→96 / 128 characters)
+  to match MySQL across all three backends.
+- Experience Tools has full PostgreSQL and SQLite implementations, not
+  MySQL-only.
+
 ## Included Add-on Modules
 
 Under `addon-modules`. Generated into the solution but not necessarily
