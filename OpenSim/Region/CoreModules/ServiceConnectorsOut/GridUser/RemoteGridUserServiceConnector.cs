@@ -210,6 +210,16 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.GridUser
             return m_RemoteConnector.GetOnlineUserCount();
         }
 
+        public int GetUniqueVisitorCount(int days)
+        {
+            return m_RemoteConnector.GetUniqueVisitorCount(days);
+        }
+
+        public int GetOnlineUserCount(HashSet<string> aliveRegionIDs)
+        {
+            return m_RemoteConnector.GetOnlineUserCount(aliveRegionIDs);
+        }
+
         #endregion
 
     }

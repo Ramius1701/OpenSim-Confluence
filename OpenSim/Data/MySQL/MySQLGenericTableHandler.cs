@@ -42,6 +42,22 @@ namespace OpenSim.Data.MySQL
         protected Dictionary<string, FieldInfo> m_Fields = [];
 
         protected List<string> m_ColumnNames = null;
+        // Confirmed byte-identical to opensim-master - a genuine, real
+        // upstream race condition, not something Confluence introduced.
+        // CheckColumnNames' original check-then-set ("if (m_ColumnNames
+        // != null) return; ... m_ColumnNames = columnNames;") has no
+        // synchronization at all, so two requests hitting the same
+        // freshly-constructed handler concurrently (the norm right after
+        // any Robust restart, when several pages/services all query for
+        // the first time within the same second) can both pass the null
+        // check and each build their own column list from whichever
+        // reader they happen to be holding. If those two source queries
+        // return different column sets for any reason, the reader that
+        // finishes last wins the write, and any *other* concurrently-running
+        // query on this same instance can end up iterating a column list
+        // that doesn't match its own reader's actual result set - surfaces
+        // live as "Could not find specified column in results: <name>".
+        private readonly object m_columnNamesLock = new();
         protected string m_Realm;
         protected FieldInfo m_DataField = null;
 
@@ -101,17 +117,25 @@ namespace OpenSim.Data.MySQL
             if (m_ColumnNames != null)
                 return;
 
-            List<string> columnNames = [];
-
-            DataTable schemaTable = reader.GetSchemaTable();
-            foreach (DataRow row in schemaTable.Rows)
+            lock (m_columnNamesLock)
             {
-                if (row["ColumnName"] != null &&
-                        (!m_Fields.ContainsKey(row["ColumnName"].ToString())))
-                    columnNames.Add(row["ColumnName"].ToString());
-            }
+                // Re-check inside the lock - another thread may have already
+                // built this while the current one was waiting.
+                if (m_ColumnNames != null)
+                    return;
 
-            m_ColumnNames = columnNames;
+                List<string> columnNames = [];
+
+                DataTable schemaTable = reader.GetSchemaTable();
+                foreach (DataRow row in schemaTable.Rows)
+                {
+                    if (row["ColumnName"] != null &&
+                            (!m_Fields.ContainsKey(row["ColumnName"].ToString())))
+                        columnNames.Add(row["ColumnName"].ToString());
+                }
+
+                m_ColumnNames = columnNames;
+            }
         }
 
         public virtual T[] Get(string field, string key)

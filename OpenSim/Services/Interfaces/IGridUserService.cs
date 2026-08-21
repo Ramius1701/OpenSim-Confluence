@@ -140,5 +140,21 @@ namespace OpenSim.Services.Interfaces
         // dashboard, which had no existing way to get this number without
         // reaching past the service interface into console-command code.
         int GetOnlineUserCount();
+
+        // Distinct visitors (local and hypergrid) whose last login falls within
+        // the given number of days, regardless of whether they're still online -
+        // backs a grid-status "unique visitors" figure, e.g. the 30-day number
+        // hypergrid directories look for when deciding whether to list a grid.
+        int GetUniqueVisitorCount(int days);
+
+        // Same "online now" figure as GetOnlineUserCount(), but only counting
+        // users whose LastRegionID is in the given set of genuinely-alive
+        // region UUIDs. GetOnlineUserCount() alone trusts the GridUser
+        // "Online" flag, which - like the regions table's own online flag -
+        // only ever gets cleared by a clean logout; a region process that
+        // crashes or is killed leaves every avatar who was on it stuck
+        // showing "online" forever, with nothing to ever correct it. Pass
+        // an empty/null set to mean "no regions are alive" (returns 0).
+        int GetOnlineUserCount(HashSet<string> aliveRegionIDs);
     }
 }

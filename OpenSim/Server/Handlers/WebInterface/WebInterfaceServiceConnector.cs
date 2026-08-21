@@ -193,7 +193,20 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             IConfig loginService = config.Configs["LoginService"];
             if (loginService != null)
-                m_welcomeMessage = loginService.GetString("WelcomeMessage", string.Empty).Replace("<USERNAME>", "");
+            {
+                // [LoginService] WelcomeMessage supports a <USERNAME> token,
+                // correctly substituted by LLLoginService's own post-login
+                // message once a real login attempt has happened. This
+                // pre-login field feeds the WebUI's own generic welcome text
+                // (rendered before any login attempt, where no username can
+                // ever be known) - strip the token AND its usual surrounding
+                // comma, not just the bare token, which used to leave a
+                // dangling ", !" visible instead of a clean sentence.
+                m_welcomeMessage = loginService.GetString("WelcomeMessage", string.Empty)
+                        .Replace(", <USERNAME>", string.Empty)
+                        .Replace("<USERNAME>, ", string.Empty)
+                        .Replace("<USERNAME>", string.Empty);
+            }
 
             // Reuses the exact same [SMTP] section/keys the region-side
             // EmailModule.cs (llEmail's backend) already reads - same config,
@@ -321,6 +334,27 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             string value = m_GridSettingsService.Get(key);
             return value ?? defaultValue;
+        }
+
+        // [LoginService] WelcomeMessage supports a <USERNAME> token, correctly
+        // substituted by LLLoginService's own post-login message
+        // (LLLoginService.cs's ProcessLogin, where the real username is
+        // already known - a login attempt has actually happened by then).
+        // These pre-login WebUI pages (the splash panel shown inside the
+        // viewer's own login screen, and its full-site equivalents) read the
+        // same shared setting for their own generic welcome text, rendered
+        // before any login attempt, where no username can ever be known -
+        // strip the token (and its usual surrounding comma) rather than
+        // showing it unresolved as a literal tag or a blank gap.
+        private string GetWebSafeWelcomeMessage()
+        {
+            string message = GetSetting("WelcomeMessage", m_welcomeMessage);
+            if (string.IsNullOrEmpty(message))
+                return message;
+
+            return message.Replace(", <USERNAME>", string.Empty)
+                    .Replace("<USERNAME>, ", string.Empty)
+                    .Replace("<USERNAME>", string.Empty);
         }
 
         private void HandleRequest(IOSHttpRequest request, IOSHttpResponse response)
@@ -640,6 +674,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 response.StatusCode = (int)HttpStatusCode.InternalServerError;
                 response.RawBuffer = Encoding.UTF8.GetBytes("Internal error: " + e.Message);
+                // Was previously silent - errors here never reached the log
+                // at all, only the raw exception message shown to whoever
+                // hit the broken page. Found live chasing a real bug this
+                // way once already (the DisplayName column race) - fixed
+                // so the next one doesn't need the same from-source trace.
+                m_log.WarnFormat("[WEBINTERFACE]: Unhandled exception handling {0}: {1}", path, e);
             }
         }
 
@@ -747,7 +787,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private void HandleHome(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
-            string welcomeMessage = GetSetting("WelcomeMessage", m_welcomeMessage);
+            string welcomeMessage = GetWebSafeWelcomeMessage();
             string tagline = string.IsNullOrEmpty(welcomeMessage)
                     ? "A free, open virtual world you can visit today."
                     : Html(welcomeMessage);
@@ -809,42 +849,57 @@ namespace OpenSim.Server.Handlers.WebInterface
         private void HandleWelcome(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
-            string welcomeMessage = GetSetting("WelcomeMessage", m_welcomeMessage);
+            string welcomeMessage = GetWebSafeWelcomeMessage();
             string welcome = string.IsNullOrEmpty(welcomeMessage)
                     ? "Welcome to " + Html(gridName) + "."
                     : Html(welcomeMessage);
 
-            List<GridRegion> regions = m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>();
+            List<GridRegion> regions = FilterOnlineRegions(
+                    m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>());
 
             StringBuilder sb = new StringBuilder(WelcomeCompactCss);
             sb.Append(RenderWelcomeSlideshow());
-            sb.Append("<h1>").Append(Html(gridName)).Append("</h1>");
+
+            sb.Append("<div class=\"welcome-title\"><h1>").Append(Html(gridName)).Append("</h1><p>")
+              .Append(welcome).Append("</p></div>");
+
             sb.Append(RenderAnnouncement());
 
-            // Column caps are still deliberate - this renders inside the
-            // viewer's own small, fixed-size, non-resizable login panel
-            // (WriteAdaptivePage picks the bare-chrome branch here), not a
-            // full browser window, so each column stays to the point rather
-            // than showing everything /worldmap or /dashboard would.
+            // Left/right split verified against WhiteCore-Dev's actual
+            // welcomescreen/index.html (#topleft: Region+News, #topright:
+            // GridStatus+InfoBox either side of open space) - Confluence's
+            // own "Welcome" text plays InfoBox's role on the right,
+            // Upcoming Events joins Regions/News on the left ("things
+            // happening on the grid"), matching the reference's real 2-item
+            // right column rather than stacking everything there. Economy
+            // dropped from this page entirely per explicit feedback -
+            // currency figures aren't useful on a first-impression splash;
+            // it stays on the full /economy page.
             sb.Append("<div class=\"welcome-columns\">");
 
-            sb.Append("<div class=\"welcome-col\">");
+            sb.Append("<div>");
+            sb.Append("<div class=\"welcome-box\">");
             sb.Append(RenderRegionListCompact(regions.Take(8).ToList()));
             if (regions.Count > 8)
                 sb.Append("<p class=\"welcome-more-link\"><a href=\"").Append(BasePath).Append("/worldmap\">View all ")
                   .Append(regions.Count).Append(" regions &rarr;</a></p>");
             sb.Append("</div>");
-
-            sb.Append("<div class=\"welcome-col\">");
-            sb.Append("<h2>Welcome</h2><p>").Append(welcome).Append("</p>");
-            sb.Append("<a class=\"welcome-register-cta\" href=\"").Append(BasePath).Append("/register\">Register - it's free &rarr;</a>");
-            sb.Append(RenderNewsFeed(3));
+            string newsFeed = RenderNewsFeed(3);
+            if (!string.IsNullOrEmpty(newsFeed))
+                sb.Append("<div class=\"welcome-box\">").Append(newsFeed).Append("</div>");
+            string events = RenderUpcomingEvents(3);
+            if (!string.IsNullOrEmpty(events))
+                sb.Append("<div class=\"welcome-box\">").Append(events).Append("</div>");
             sb.Append("</div>");
 
-            sb.Append("<div class=\"welcome-col\">");
+            sb.Append("<div>");
+            sb.Append("<div class=\"welcome-box\">");
             sb.Append(RenderGridStatusWidget(regions));
-            sb.Append(RenderEconomyStats());
-            sb.Append(RenderUpcomingEvents(3));
+            sb.Append("</div>");
+            sb.Append("<div class=\"welcome-box\">");
+            sb.Append("<h2>Welcome</h2><p>").Append(welcome).Append("</p>");
+            sb.Append("<a class=\"welcome-register-cta\" href=\"").Append(BasePath).Append("/register\">Register - it's free &rarr;</a>");
+            sb.Append("</div>");
             sb.Append("</div>");
 
             sb.Append("</div>");
@@ -857,9 +912,13 @@ namespace OpenSim.Server.Handlers.WebInterface
         // a cross-fade (CSS can't interpolate between two different
         // background-image values, and layering two divs just to fade
         // between them isn't worth it for what's a nice-to-have banner).
-        // Renders nothing at all when the folder is empty/missing, so an
-        // operator who doesn't care about this gets exactly the old
-        // no-banner layout back.
+        // Fixed full-viewport background behind everything (WhiteCore-Dev's
+        // own body.welcomescreen{background-image:...} pattern, confirmed
+        // against its real randomimageswitch.js - a plain div here instead
+        // of styling <body> directly, since <body> is shared page chrome
+        // this connector doesn't want to reach into). Renders nothing at
+        // all when the photo folder is empty/missing, so an operator who
+        // doesn't care about the banner gets the old plain-background page.
         private string RenderWelcomeSlideshow()
         {
             List<string> photos = GetWelcomePhotoFiles();
@@ -867,7 +926,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return string.Empty;
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<div class=\"welcome-slideshow\" id=\"welcome-slideshow\" style=\"background-image:url('")
+            sb.Append("<div class=\"welcome-bg\" id=\"welcome-slideshow\" style=\"background-image:url('")
               .Append(Html(BasePath)).Append("/welcome-photos/").Append(Html(Uri.EscapeDataString(photos[0]))).Append("')\"></div>");
 
             if (photos.Count > 1)
@@ -895,48 +954,108 @@ namespace OpenSim.Server.Handlers.WebInterface
         // can't leak into the full-chrome site pages that share PageCss.
         private const string WelcomeCompactCss =
                 "<style>" +
-                "body{font-size:13px;}" +
-                "h1{font-size:19px;margin:0 0 6px;}" +
-                "h2{font-size:14px;margin:14px 0 6px;}" +
-                "p{margin:0 0 8px;}" +
-                ".welcome-more-link{text-align:center;font-size:12.5px;margin-top:10px;}" +
-                ".stats-grid{gap:8px;margin:0 0 4px;}" +
-                ".stat-card{padding:8px 10px;}" +
-                ".stat-value{font-size:16px;}" +
-                ".stat-label{font-size:10.5px;}" +
-                ".stat-sub{font-size:10px;}" +
-                ".widget-grid{gap:8px;}" +
-                ".widget-card{padding:10px 12px;}" +
-                ".widget-card h3{font-size:13px;margin:0 0 4px;}" +
-                ".widget-meta{font-size:11px;}" +
-                ".welcome-slideshow{height:150px;border-radius:8px;background-size:cover;" +
-                "background-position:center;margin-bottom:12px;}" +
-                ".welcome-columns{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start;margin-top:10px;}" +
-                "@media (max-width:700px){.welcome-columns{grid-template-columns:1fr;}}" +
-                ".welcome-col h2:first-child{margin-top:0;}" +
+                "body{font-size:15px;}" +
+                "h2{font-size:17px;margin:0 0 10px;}" +
+                "p{margin:0 0 10px;}" +
+                ".welcome-more-link{text-align:center;font-size:13.5px;margin-top:12px;}" +
+                ".stats-grid{gap:12px;}" +
+                ".stat-card{padding:12px 14px;}" +
+                ".stat-value{font-size:20px;}" +
+                ".stat-label{font-size:12.5px;}" +
+                ".stat-sub{font-size:12px;}" +
+                ".widget-grid{gap:10px;}" +
+                ".widget-card{padding:12px 14px;}" +
+                ".widget-card h3{font-size:15px;margin:0 0 5px;}" +
+                ".widget-meta{font-size:13px;}" +
+                // True full-viewport background, not a small strip - matches
+                // both references directly (WhiteCore-Dev's welcomescreen
+                // screenshot: full-page photo with translucent boxes
+                // scattered on top; osloginscreen's own body.full/.fader +
+                // img#bgimage{position:fixed;z-index:-2}). html/body need
+                // height:100% and no scroll-cutoff for a fixed background to
+                // actually cover the whole viewport instead of just the
+                // content height.
+                "html,body{height:100%;}" +
+                // PageCss sets body{background:var(--bg)} - an opaque solid
+                // color, painted as part of body's own box regardless of
+                // this element's z-index. A negative z-index only pushes an
+                // element behind other *positioned* content, not behind its
+                // ancestor's own background paint - so with body's
+                // background left opaque, .welcome-bg's photo was hidden
+                // everywhere except the odd sliver where body's box didn't
+                // quite reach (found live: "you can only see the edges").
+                // Scoped to just this page, matching the rest of this block.
+                // The shared page-chrome template (WriteAdaptivePage) also
+                // wraps this page's content in PageCss's own .card - same
+                // opaque-background-over-negative-z-index problem one level
+                // deeper, found by walking .welcome-bg's actual ancestor
+                // chain live rather than assuming body was the only culprit.
+                "body{margin:0;background:transparent;}" +
+                // Also clears box-shadow (PageCss's .card casts a real
+                // drop shadow independent of its background/border, left
+                // visible as a stray outline around the whole page after
+                // just clearing background/border - found live: "the
+                // shadow, which used to be a container that held the
+                // cards") and padding (this page supplies its own via
+                // .welcome-columns instead).
+                ".card{background:transparent;border:none;box-shadow:none;padding:0;}" +
+                ".welcome-bg{position:fixed;inset:0;z-index:-2;background-size:cover;" +
+                "background-position:center;transition:background-image 1s linear;}" +
+                ".welcome-bg::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.28);}" +
+                // Centered title/tagline over the photo - the .title/.subtitle
+                // treatment both references use, not tucked into a column.
+                ".welcome-title{text-align:center;padding:36px 20px 10px;}" +
+                ".welcome-title h1{font-size:34px;font-weight:800;color:#fff;margin:0 0 8px;" +
+                "text-shadow:0 1px 6px rgba(0,0,0,.7);}" +
+                ".welcome-title p{font-size:16px;color:#f0f2f5;margin:0 auto;max-width:560px;" +
+                "text-shadow:0 1px 4px rgba(0,0,0,.7);}" +
+                // Verified against WhiteCore-Dev's actual current template
+                // (welcomescreen/index.html: #topleft{Region+News} and
+                // #topright{GridStatus+InfoBox} either side of an empty
+                // spacer column, not a full 3-column split) - left/right
+                // content pinned to the edges with the photo showing
+                // through the open space between and below them, matching
+                // the reference screenshot exactly rather than a guess at
+                // it. Confluence's own extra sections (Economy, Events)
+                // stack into the right column alongside Grid Status.
+                ".welcome-columns{display:flex;justify-content:space-between;gap:28px;" +
+                "flex-wrap:wrap;max-width:1300px;margin:0 auto;padding:20px 24px 60px;}" +
+                ".welcome-columns>div{flex:1 1 320px;max-width:380px;}" +
+                // The floating translucent box itself - WhiteCore's
+                // #regionbox/#infobox/#news/#gridstatus (semi-transparent,
+                // rounded, shadowed) and osloginscreen's .boxtext, adapted to
+                // this site's own dark palette instead of copying their
+                // literal colors.
+                ".welcome-box{background:rgba(21,24,29,.86);border:1px solid rgba(255,255,255,.08);" +
+                "border-radius:8px;padding:18px 20px;margin-bottom:20px;backdrop-filter:blur(3px);" +
+                "box-shadow:0 8px 24px rgba(0,0,0,.45);}" +
+                ".welcome-box:last-child{margin-bottom:0;}" +
+                ".welcome-box h2:first-child{margin-top:0;}" +
                 ".welcome-register-cta{display:block;text-align:center;background:var(--accent);color:#fff;" +
-                "text-decoration:none;font-weight:700;padding:8px;border-radius:40px;margin:4px 0 12px;" +
-                "text-transform:uppercase;font-size:11.5px;letter-spacing:.3px;}" +
+                "text-decoration:none;font-weight:700;padding:11px;border-radius:40px;margin:6px 0 14px;" +
+                "text-transform:uppercase;font-size:13px;letter-spacing:.3px;}" +
                 ".welcome-register-cta:hover{background:var(--accent-dark);color:#fff;text-decoration:none;}" +
                 ".welcome-region-list{list-style:none;margin:0;padding:0;}" +
                 ".welcome-region-list li{display:flex;justify-content:space-between;align-items:center;" +
-                "padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px;}" +
+                "padding:8px 0;border-bottom:1px solid var(--border);font-size:14px;}" +
                 ".welcome-region-list li:last-child{border-bottom:none;}" +
-                ".welcome-region-coords{color:var(--muted);font-size:11px;}" +
+                ".welcome-region-coords{color:var(--muted);font-size:12.5px;}" +
+                "@media (max-width:600px){.welcome-title h1{font-size:26px;}}" +
                 "</style>";
 
         // Real counterpart to WhiteCore-Dev's welcomescreen/gridstatus.html
-        // (total users/regions, online-now count, voice/currency active
-        // flags) - read directly this time rather than invented, after the
-        // splash was rewritten twice without checking it (see
-        // ADR/PROJECT_LOG). Reuses the exact same GetOnlineUserCount/
-        // GetUserAccountsWhere calls HandleAdminStats already established as
-        // the real data source for these numbers - not a second, divergent
-        // counting method. "Unique visitors" and "Voice active" are
-        // deliberately omitted rather than faked: this connector has no live
-        // presence-tracking beyond GetOnlineUserCount (itself just a
-        // recent-login-timestamp proxy, not true real-time presence) and no
-        // way to tell if voice is actually configured/working from Robust.
+        // (total users/regions, online-now count, unique visitors) - read
+        // directly this time rather than invented, after the splash was
+        // rewritten twice without checking it (see PROJECT_LOG). Reuses the
+        // exact same GetOnlineUserCount/GetUserAccountsWhere/
+        // GetUniqueVisitorCount calls HandleAdminStats/HandleGridStatus
+        // already established as the real data source for these numbers -
+        // not a second, divergent counting method. Currency dropped from
+        // this specific widget per explicit feedback - "Active/Not
+        // configured" isn't useful information for a first-time visitor
+        // deciding whether to sign up, unlike the full /gridstatus page
+        // where it stays. "Voice active" still omitted: no way to tell if
+        // voice is actually configured/working from Robust.
         private string RenderGridStatusWidget(List<GridRegion> regions)
         {
             StringBuilder sb = new StringBuilder();
@@ -952,11 +1071,18 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_GridUserService != null)
             {
-                int online = m_GridUserService.GetOnlineUserCount();
+                // `regions` here is already FilterOnlineRegions' output (see
+                // HandleWelcome), so this only counts someone as online if
+                // the region they were last on is confirmed alive right
+                // now - a crashed/killed region never clears the "Online"
+                // flag for whoever was on it otherwise.
+                HashSet<string> aliveRegionIDs = new HashSet<string>(regions.Select(r => r.RegionID.ToString()));
+                int online = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
                 AppendStat(sb, "Online Now", online.ToString("N0"), "residents");
-            }
 
-            AppendStat(sb, "Currency", m_CurrencyService != null ? "Active" : "Not configured", "grid economy");
+                int uniqueVisitors30d = m_GridUserService.GetUniqueVisitorCount(30);
+                AppendStat(sb, "Unique Visitors", uniqueVisitors30d.ToString("N0"), "last 30 days");
+            }
 
             sb.Append("</div>");
             return sb.ToString();
@@ -3060,7 +3186,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder categoryOptions = new StringBuilder();
-            for (int i = 0; i < ClassifiedCategories.Length; i++)
+            for (int i = 1; i < ClassifiedCategories.Length; i++)
             {
                 bool selected = editing != null && editing.Category == i;
                 categoryOptions.Append("<option value=\"").Append(i).Append("\"").Append(selected ? " selected" : string.Empty)
@@ -3403,7 +3529,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<h2><i class=\"bi bi-activity\"></i> Live Grid Snapshot</h2><div class=\"stats-grid\">");
             if (m_GridService != null)
             {
-                List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
+                List<GridRegion> regions = FilterOnlineRegions(
+                        m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000));
                 long totalAreaSqm = 0;
                 int hgOpenCount = 0;
                 int largestRegionSqm = 0;
@@ -4338,14 +4465,17 @@ namespace OpenSim.Server.Handlers.WebInterface
             string gridName = GetSetting("GridName", m_gridName);
             bool servicesOk = true;
             int totalRegions = 0, varRegions = 0, singleRegions = 0;
-            int totalAccounts = 0, newAccounts7d = 0, onlineNow = 0;
+            int totalAccounts = 0, newAccounts7d = 0, onlineNow = 0, uniqueVisitors30d = 0;
             long totalAreaSqm = 0;
+
+            HashSet<string> aliveRegionIDs = new HashSet<string>();
 
             try
             {
                 if (m_GridService != null)
                 {
-                    List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
+                    List<GridRegion> regions = FilterOnlineRegions(
+                            m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000));
                     totalRegions = regions.Count;
                     foreach (GridRegion region in regions)
                     {
@@ -4354,6 +4484,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             singleRegions++;
                         else
                             varRegions++;
+                        aliveRegionIDs.Add(region.RegionID.ToString());
                     }
                 }
                 if (m_UserAccountService != null)
@@ -4363,11 +4494,20 @@ namespace OpenSim.Server.Handlers.WebInterface
                     newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
                 }
                 if (m_GridUserService != null)
-                    onlineNow = m_GridUserService.GetOnlineUserCount();
+                {
+                    // A crashed/killed region never clears the "Online"
+                    // flag for whoever was on it - see FilterOnlineRegions'
+                    // own comment. Only count someone as genuinely online
+                    // if the region they were last on is confirmed alive
+                    // right now, not just flagged online in the DB.
+                    onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
+                    uniqueVisitors30d = m_GridUserService.GetUniqueVisitorCount(30);
+                }
             }
-            catch
+            catch (Exception e)
             {
                 servicesOk = false;
+                m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus caught an exception mid-query: {0}", e);
             }
 
             StringBuilder sb = new StringBuilder();
@@ -4379,6 +4519,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendStat(sb, "Online Now", onlineNow.ToString("N0"), "residents");
             AppendStat(sb, "Regions", totalRegions.ToString("N0"), varRegions + " VarRegion, " + singleRegions + " standard");
             AppendStat(sb, "Accounts", totalAccounts.ToString("N0"), "registered residents");
+            AppendStat(sb, "Unique Visitors", uniqueVisitors30d.ToString("N0"), "last 30 days, including hypergrid");
             AppendStat(sb, "New Accounts", newAccounts7d.ToString("N0"), "last 7 days");
             AppendStat(sb, "Land Area", (totalAreaSqm / 1000000.0).ToString("N2") + " km" + (char)0xB2, "total across all regions");
             AppendStat(sb, "OpenSimulator", global::OpenSim.VersionInfo.DisplayVersionNumber, "core version");
@@ -4606,9 +4747,22 @@ namespace OpenSim.Server.Handlers.WebInterface
         // the viewer itself uses in the Profile > Classifieds editor, so
         // these labels have to match what a user picked there, not
         // anything this connector invents.
+        // Index 0 is deliberately unused/reserved - the real SL/OpenSim
+        // classified-category protocol is 1-indexed (1=Shopping ... 9=Personal;
+        // 0 is "Any Category", a search-filter-only value, never a real
+        // classified's own category - confirmed against the viewer's own
+        // panel_dir_classified.xml combo_item values). This array previously
+        // started "Shopping" at index 0 with no adjustment anywhere in the
+        // save path (a raw int.TryParse straight into ad.Category), so every
+        // classified posted through this form was stored one category off
+        // from whatever was actually selected - e.g. selecting "Special
+        // Attraction" (this array's old index 3) stored category 3, which
+        // the real protocol reads as "Property Rental". Keeping this array's
+        // index aligned with the real protocol value fixes it at the source
+        // instead of needing an offset at every read/write site.
         private static readonly string[] ClassifiedCategories =
         {
-            "Shopping", "Land Rental", "Property Rental", "Special Attraction",
+            string.Empty, "Shopping", "Land Rental", "Property Rental", "Special Attraction",
             "New Products", "Employment", "Wanted", "Service", "Personal"
         };
 
@@ -4694,6 +4848,74 @@ namespace OpenSim.Server.Handlers.WebInterface
             foreach (CurrencyTransfer t in transfers)
                 volume += t.Amount;
             count = transfers.Count;
+        }
+
+        // The `regions` table's own online/offline state (flags, last_seen)
+        // only ever updates on a clean RegisterRegion/DeregisterRegion
+        // call - there is no periodic heartbeat anywhere in this codebase.
+        // A region that crashes or is killed (confirmed live: hard-killed
+        // for a WebUI restart cycle) leaves its "online" flag stuck
+        // forever, since nothing ever runs the deregister path for it -
+        // found live when Grid Status kept reporting all 14 regions and 2
+        // residents online with every single region process actually
+        // stopped. Genuine liveness needs an actual live check, not the
+        // DB's last-known state, so this probes each region's own HTTP
+        // port directly (a raw TCP connect, not a full request/response -
+        // the process either has its listener bound or it doesn't, which
+        // is exactly the signal wanted here) with a short timeout, all
+        // regions checked in parallel so total latency is one timeout
+        // period, not (timeout x region count).
+        private static List<GridRegion> FilterOnlineRegions(List<GridRegion> regions, int timeoutMs = 1500)
+        {
+            if (regions == null || regions.Count == 0)
+                return new List<GridRegion>();
+
+            System.Threading.Tasks.Task<bool>[] probes = new System.Threading.Tasks.Task<bool>[regions.Count];
+            for (int i = 0; i < regions.Count; i++)
+            {
+                // Capture a fresh local copy of the loop index - a `for`
+                // loop's variable is a single shared slot across every
+                // iteration (unlike `foreach`, which gets a new one each
+                // time), so the lambda below would otherwise close over
+                // whatever `i` happens to be by the time it actually runs
+                // on a thread pool thread, not the value at the point
+                // Task.Run was called. Found live: every single probe threw
+                // "Index was out of range" because by the time any of them
+                // executed, the loop had already finished and `i` equaled
+                // regions.Count.
+                int idx = i;
+                probes[idx] = System.Threading.Tasks.Task.Run(() => IsRegionAlive(regions[idx], timeoutMs));
+            }
+
+            System.Threading.Tasks.Task.WaitAll(probes, timeoutMs + 1000);
+
+            List<GridRegion> online = new List<GridRegion>();
+            for (int i = 0; i < regions.Count; i++)
+            {
+                if (probes[i].IsCompletedSuccessfully && probes[i].Result)
+                    online.Add(regions[i]);
+            }
+            return online;
+        }
+
+        private static bool IsRegionAlive(GridRegion region, int timeoutMs)
+        {
+            try
+            {
+                Uri uri = new Uri(region.ServerURI);
+                using (System.Net.Sockets.TcpClient client = new System.Net.Sockets.TcpClient())
+                {
+                    System.Threading.Tasks.Task connectTask = client.ConnectAsync(uri.Host, uri.Port);
+                    if (System.Threading.Tasks.Task.WhenAny(connectTask,
+                            System.Threading.Tasks.Task.Delay(timeoutMs)).Result != connectTask)
+                        return false;
+                    return client.Connected && connectTask.IsCompletedSuccessfully;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void AppendStat(StringBuilder sb, string label, string value, string sub)
@@ -5378,6 +5600,19 @@ namespace OpenSim.Server.Handlers.WebInterface
         // way. Found the escaping issue live: seeded real HTML content via
         // the admin API and saw literal `&lt;h1&gt;` in the response before
         // fixing this.
+        // Fresh install / newly-cloned grid has zero rows in static_pages -
+        // the site nav and footer used to link to /page/about, /page/tos,
+        // /page/dmca unconditionally, which meant every one of those was a
+        // dead 404 link until an admin created matching pages through
+        // Admin > Pages. Confluence itself doesn't ship any default About/
+        // ToS/DMCA text (that'd be one operator's copy baked into
+        // everyone's install), so the actual fix is hiding the link rather
+        // than inventing placeholder content.
+        private bool HasStaticPage(string slug)
+        {
+            return m_StaticPageService?.GetBySlug(slug) != null;
+        }
+
         private void HandleStaticPage(IOSHttpRequest request, IOSHttpResponse response, string slug)
         {
             StaticPage page = m_StaticPageService?.GetBySlug(slug);
@@ -5576,7 +5811,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             string gridName = GetSetting("GridName", m_gridName);
             string gridNick = GetSetting("GridNickname", m_gridNick);
-            string welcomeMessage = GetSetting("WelcomeMessage", m_welcomeMessage);
+            string welcomeMessage = GetWebSafeWelcomeMessage();
             bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
             bool announcementEnabled = GetSetting("AnnouncementEnabled", "false") == "true";
             string announcementTitle = GetSetting("AnnouncementTitle", string.Empty);
@@ -8640,12 +8875,17 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<link rel=\"stylesheet\" href=\"/static/bootstrap-icons.css\">"
                     + "<style>" + PageCss + "</style></head><body>";
 
+            string footerLinks = "";
+            if (HasStaticPage("tos"))
+                footerLinks += " &middot; <a href=\"" + BasePath + "/page/tos\">Terms of Service</a>";
+            if (HasStaticPage("dmca"))
+                footerLinks += " &middot; <a href=\"" + BasePath + "/page/dmca\">DMCA Policy</a>";
+
             string pageBody = "<section class=\"hero\"><div class=\"hero-inner\"><h1>" + heroTitle + "</h1></div></section>"
                     + "<main class=\"site-main\"><div class=\"page\"><div class=\"card\">" + remainder + "</div></div></main>"
                     + "<footer class=\"site-footer\"><div class=\"site-footer-inner\">"
                     + "&copy; " + DateTime.UtcNow.Year + " " + Html(gridName) + " &middot; Powered by Confluence"
-                    + " &middot; <a href=\"" + BasePath + "/page/tos\">Terms of Service</a>"
-                    + " &middot; <a href=\"" + BasePath + "/page/dmca\">DMCA Policy</a>"
+                    + footerLinks
                     + "</div></footer>";
 
             string html;
@@ -9158,7 +9398,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".site-nav .dropdown-toggle .bi:last-child{font-size:10px;margin-left:2px;color:var(--muted);}" +
                 ".hero{background:linear-gradient(135deg,#000000 0%,#0d1a30 100%);" +
                 "border-bottom:1px solid var(--border);padding:36px 24px;}" +
-                ".hero-inner{max-width:1100px;margin:0 auto;}" +
+                ".hero-inner{max-width:1600px;margin:0 auto;padding:0 24px;}" +
                 ".hero h1{font-size:30px;margin:0;color:#fff;}" +
                 // Home-page marketing CTA row - deliberately separate from
                 // .nav-cta (header sign-up link) since this needs a matching
@@ -9172,12 +9412,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "border-radius:40px;text-transform:uppercase;font-size:13px;font-weight:700;letter-spacing:.3px;}" +
                 ".cta-secondary:hover{border-color:var(--accent);color:var(--accent-bright);text-decoration:none;}" +
                 ".site-main{padding:0 24px;flex:1 0 auto;}" +
-                ".page{max-width:1100px;margin:0 auto;padding:32px 0 60px;}" +
+                ".page{max-width:1600px;margin:0 auto;padding:32px 24px 60px;}" +
                 ".card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);" +
                 "box-shadow:0 8px 24px rgba(0,0,0,.35);padding:32px 36px;}" +
                 ".site-footer{background:var(--dark);border-top:1px solid var(--border);padding:20px 24px;" +
                 "margin-top:40px;}" +
-                ".site-footer-inner{color:var(--muted);font-size:12.5px;}" +
+                ".site-footer-inner{color:var(--muted);font-size:13.5px;}" +
                 "h1{font-size:21px;margin:0 0 14px;color:var(--text);}" +
                 "h2{font-size:16px;margin:26px 0 12px;color:var(--text);border-top:1px solid var(--border);" +
                 "padding-top:20px;}" +
@@ -9209,7 +9449,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "text-transform:uppercase;letter-spacing:.3px;transition:background .15s ease,border-color .15s ease;}" +
                 "button:hover{background:var(--accent-dark);border-color:var(--accent-dark);}" +
                 "button:active{transform:translateY(1px);}" +
-                "td button{padding:6px 16px;font-size:11px;margin-top:0;background:transparent;color:var(--danger);" +
+                "td button{padding:6px 16px;font-size:12px;margin-top:0;background:transparent;color:var(--danger);" +
                 "border-color:var(--border);}" +
                 "td button:hover{background:var(--danger-bg);border-color:var(--danger);}" +
                 ".balance{display:inline-block;font-size:1.25em;font-weight:700;color:var(--accent-bright);" +
@@ -9223,16 +9463,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".news-item{padding:16px 0;border-top:1px solid var(--border);}" +
                 ".news-item:first-of-type{border-top:none;padding-top:0;}" +
                 ".news-item h3{margin-bottom:4px;}" +
-                ".news-meta{color:var(--muted);font-size:12px;margin:0 0 8px;}" +
-                ".stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 8px;}" +
+                ".news-meta{color:var(--muted);font-size:13px;margin:0 0 8px;}" +
+                ".stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:0 0 8px;}" +
                 ".stat-card{background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;}" +
-                ".stat-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin:0 0 6px;}" +
-                ".stat-value{color:var(--accent-bright);font-size:1.3em;font-weight:700;}" +
-                ".stat-sub{color:var(--muted);font-size:12px;margin-top:2px;}" +
-                ".widget-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:0 0 8px;}" +
+                ".stat-label{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.4px;margin:0 0 6px;}" +
+                ".stat-value{color:var(--accent-bright);font-size:1.5em;font-weight:700;}" +
+                ".stat-sub{color:var(--muted);font-size:13px;margin-top:2px;}" +
+                ".widget-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin:0 0 8px;}" +
                 ".widget-card{background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;}" +
                 ".widget-card h3{margin:0 0 4px;}" +
-                ".widget-meta{color:var(--muted);font-size:12px;margin:0 0 6px;}" +
+                ".widget-meta{color:var(--muted);font-size:13px;margin:0 0 6px;}" +
                 // Clickable variant of .widget-card (Dashboard's Quick Links) -
                 // same hover-lift/no-underline treatment as .bucket, since an
                 // entire card acting as one <a> looks broken if hover
@@ -9262,7 +9502,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;}" +
                 ".pill-yes{background:rgba(74,222,128,.15);color:var(--success);}" +
                 ".pill-no{background:rgba(153,158,166,.15);color:var(--muted);}" +
-                ".feature-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin:0 0 8px;}" +
+                ".feature-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:20px;margin:0 0 8px;}" +
                 ".powered-group-label{flex:0 0 100%;text-align:center;font-size:11px;letter-spacing:.12em;" +
                 "text-transform:uppercase;color:var(--muted);margin:14px 0 2px;}" +
                 ".powered-group-label:first-child{margin-top:0;}" +
@@ -9314,7 +9554,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "padding-top:18px;border-top:1px solid var(--border);}" +
                 ".stat-strip .stat{color:var(--muted);font-size:13px;}" +
                 ".stat-strip .stat strong{color:var(--accent-bright);font-size:15px;}" +
-                ".bucket-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;}" +
+                ".bucket-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;}" +
                 ".bucket{display:block;background:var(--input-bg);border:1px solid var(--border);" +
                 "border-radius:10px;padding:20px;text-decoration:none;" +
                 "transition:border-color .15s ease,transform .15s ease;}" +
@@ -9360,10 +9600,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "justify-content:center;flex-shrink:0;}" +
                 ".sidebar-user-name{color:var(--text);font-size:13.5px;font-weight:700;" +
                 "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
-                ".sidebar-user-role{color:var(--muted);font-size:11px;text-transform:uppercase;" +
+                ".sidebar-user-role{color:var(--muted);font-size:12px;text-transform:uppercase;" +
                 "letter-spacing:.3px;margin-top:2px;}" +
                 ".sidebar-nav{flex:1;padding:14px 12px;}" +
-                ".sidebar-nav-label{color:var(--muted);font-size:10.5px;font-weight:700;" +
+                ".sidebar-nav-label{color:var(--muted);font-size:11.5px;font-weight:700;" +
                 "text-transform:uppercase;letter-spacing:.5px;padding:14px 10px 6px;}" +
                 ".sidebar-nav-label:first-child{padding-top:4px;}" +
                 ".sidebar-nav a{display:flex;align-items:center;gap:10px;padding:10px 10px;" +
@@ -9427,8 +9667,9 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<a href=\"").Append(BasePath).Append("/help\"><i class=\"bi bi-question-circle ic-cyan\"></i> Help</a>");
             if (includeAboutSupport)
             {
-                sb.Append("<a href=\"").Append(BasePath).Append("/page/about\"><i class=\"bi bi-info-circle ic-purple\"></i> About</a>")
-                  .Append("<a href=\"").Append(BasePath).Append("/support\"><i class=\"bi bi-life-preserver ic-pink\"></i> Support</a>");
+                if (HasStaticPage("about"))
+                    sb.Append("<a href=\"").Append(BasePath).Append("/page/about\"><i class=\"bi bi-info-circle ic-purple\"></i> About</a>");
+                sb.Append("<a href=\"").Append(BasePath).Append("/support\"><i class=\"bi bi-life-preserver ic-pink\"></i> Support</a>");
             }
             sb.Append("</div></div>");
 

@@ -51,6 +51,10 @@ namespace OpenSim.Data.PGSQL
         protected Dictionary<string, string> m_FieldTypes = new Dictionary<string, string>();
 
         protected List<string> m_ColumnNames = null;
+        // Same unprotected check-then-set race fixed in
+        // MySQLGenericTableHandler.cs - see that file's comment for the
+        // full explanation.
+        private readonly object m_columnNamesLock = new();
         protected string m_Realm;
         protected FieldInfo m_DataField = null;
 
@@ -128,19 +132,27 @@ namespace OpenSim.Data.PGSQL
             if (m_ColumnNames != null)
                 return;
 
-            m_ColumnNames = new List<string>();
-
-            DataTable schemaTable = reader.GetSchemaTable();
-
-            foreach (DataRow row in schemaTable.Rows)
+            lock (m_columnNamesLock)
             {
-                if (row["ColumnName"] == null)
-                    continue;
+                if (m_ColumnNames != null)
+                    return;
 
-                string col = row["ColumnName"].ToString();
+                List<string> columnNames = new List<string>();
 
-                if (!m_Fields.ContainsKey(col))
-                    m_ColumnNames.Add(col);
+                DataTable schemaTable = reader.GetSchemaTable();
+
+                foreach (DataRow row in schemaTable.Rows)
+                {
+                    if (row["ColumnName"] == null)
+                        continue;
+
+                    string col = row["ColumnName"].ToString();
+
+                    if (!m_Fields.ContainsKey(col))
+                        columnNames.Add(col);
+                }
+
+                m_ColumnNames = columnNames;
             }
         }
 

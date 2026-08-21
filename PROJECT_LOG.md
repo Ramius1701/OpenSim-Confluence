@@ -11405,3 +11405,586 @@ dozens within seconds of the first avatar view before the fix. User
 confirmed live in Sol Sector: no warning, and the sidewalk's materials
 render exactly as before (expected - the fix doesn't change rendering,
 only stops re-requesting a reference that could never resolve).
+
+## Search had never actually worked all session - missing
+## `[SearchService]` section (2026-08-20)
+
+Preparing to live-test search (chosen as the next real-data test after
+currency and Materials) turned up a real, previously-unnoticed bug:
+every one of the 13 live-cloned regions logged `[CONFLUENCE SEARCH]:
+SearchService section missing from configuration - that category will
+return no results` followed by `ERROR [CONFLUENCE SEARCH]: Can't load
+search service`, on every single startup all session - including after
+today's earlier restarts. The original ini-audit fix (switching
+`[Search] Module` from `OpenSimSearch` to `ConfluenceSearchModule` and
+adding `[EventsService]`/`[UserProfilesService]`/`[GroupsSearchService]`)
+added every *dependent* service section except the actual core
+`[SearchService]` one search itself needs to load at all. Welcome_Center
+(never cloned from live) already had it and never hit this.
+
+**Fix**: added the missing `[SearchService]` section (matching
+Welcome_Center's exact config) to all 13 cloned regions, plus the same
+gap in the repo's own `bin/OpenSim.ini.example` template (added
+alongside `[Search]`/`[EventsService]` earlier today, same oversight).
+
+**Verified**: full grid restart, all 14 regions now log `[CONFLUENCE
+SEARCH]: Native search module is active` with zero errors, confirmed
+individually per-region's most recent log line, not just an aggregate
+count.
+
+## Built-in WebUI: fixed a real classified-category off-by-one bug, and
+## closed the gap for hypergrid directory listing (2026-08-20)
+
+Jeffery (US tester) reported two classified-posting issues through the
+built-in WebUI's "My Classifieds" self-service tool (a genuinely
+Confluence-native feature - not present in opensim-master at all, and
+distinct from the separate RegionWeb addon-module, a repeated point of
+confusion this session): selecting "Special Attraction" as a category
+saved as "New Products" instead, and a separate "unpublished
+classifieds" warning on exiting the profile.
+
+**Category bug, root-caused and fixed**: `ClassifiedCategories` (the
+array backing the web form's dropdown) started "Shopping" at index 0
+and submitted the raw array index as the stored `Category`, with zero
+adjustment anywhere in the save path (`int.TryParse` straight into
+`ad.Category`). Confirmed against the real protocol via Firestorm's own
+`panel_dir_classified.xml` combo_item values: the actual SL/OpenSim
+classified-category enum is 1-indexed (1=Shopping ... 9=Personal, 0
+reserved for "Any Category", a search-filter-only value never valid as
+a classified's own category). Every classified posted through this
+form was stored one category off from whatever was actually selected.
+Fixed by re-indexing the array to match the real protocol value
+directly (`ClassifiedCategories[0]` now an unused reserved placeholder)
+and starting the render loop at 1. Existing classifieds already posted
+through the buggy form keep their wrong stored category - only new/
+re-saved ones are correct going forward.
+
+**"Unpublished classifieds" warning**: no "published" status concept
+exists anywhere in the WebUI code or the `UserClassifiedAdd` data
+model (`Flags` is the only status-like field, unrelated). Most likely
+Firestorm's own client-side dirty-flag in the in-viewer Profile
+floater, not a server-side bug - nothing here to fix in this repo.
+
+## Closed the "unique 30-day visitors" gap for Hypergrid Business grid
+## directory listing (2026-08-20)
+
+User referenced Hypergrid Business's own published requirements for
+listing a grid: total land area, total registered users, and unique
+30-day visitors including hypergrid visitors. The existing `/gridstatus`
+page already had the first two; the third didn't exist anywhere in the
+codebase - `IGridUserService` only had `GetOnlineUserCount()` (current
+online only), nothing for "distinct users active in the last N days."
+
+User pointed at `djphil/osloginscreen` (a reference project pointed to
+earlier this session) as prior art. Fetched its `inc/gridstatus.php`
+directly from GitHub (WebFetch was blocked with a 403 on the
+Hypergrid Business FAQ page itself, worked around via the Browser tool
+instead) - its own query is exactly `SELECT UserID FROM GridUser WHERE
+Login > cutoff`, counted, with no local-vs-hypergrid distinction needed:
+`GridUser` rows already cover both (hypergrid visitors' `UserID` is the
+standard "uuid;homeURI;displayname" compound form), so a plain count
+naturally includes them.
+
+**Added `IGridUserService.GetUniqueVisitorCount(int days)`**, matching
+the existing `GetOnlineUserCount()` code shape but without the `Online`
+check (counts anyone whose last `Login` falls in the window, online or
+not). Implemented across every layer that already implements
+`GetOnlineUserCount()` for interface completeness: `GridUserService.cs`
+(the real logic), `LocalGridUserServiceConnector.cs`/
+`RemoteGridUserServiceConnector.cs` (simple delegation), and
+`GridUserServicesConnector.cs`/`GridUserServerPostHandler.cs` (the
+HTTP-based remote path, a new `getuniquevisitorcount` method + `DAYS`
+parameter) - this deployment's WebUI loads `IGridUserService` directly
+and doesn't exercise the remote path, but every implementer needs the
+full interface for the solution to compile at all.
+
+Added a "Unique Visitors" stat to `/gridstatus`, right after Accounts.
+
+**Verified live via the browser** (not just log-checking): `/gridstatus`
+shows `UNIQUE VISITORS: 6, last 30 days, including hypergrid` alongside
+the pre-existing `ACCOUNTS: 9` and `LAND AREA: 4.26 km²` - all three of
+Hypergrid Business's listing requirements now genuinely present on one
+page, populated with real data from actual testing activity, not a
+placeholder.
+
+Note: Hypergrid Business's own scraper is specifically built around the
+Diva Distro "Wifi" page format and pulls that automatically with no
+extra work on their end; this page uses Confluence's own custom layout
+instead, so getting listed still likely needs a one-time manual email
+per their own FAQ, even with all three numbers now present.
+
+## WebUI layout: wasn't using the screen, several caption fonts genuinely
+## too small (2026-08-20)
+
+User's complaint measured directly rather than guessed at: on a 1920px
+window, `.page`/`.hero-inner` were both hard-capped at `max-width:1100px`,
+leaving 410px of dead space on *each* side (820px, 43% of the window)
+- confirmed via the browser's own computed styles, not just reading the
+CSS. The `stats-grid`/`widget-grid`/etc. responsive grid patterns
+(`repeat(auto-fit,minmax(...))`) were already sound; they just had no
+room to work with, so stat cards sat at a fixed 161px regardless of
+window size.
+
+**Fix**: widened both width caps to 1600px (with matching horizontal
+padding so content doesn't touch the viewport edge before the cap
+kicks in), and widened every grid's `minmax()` floor
+(stats-grid 150->190px, widget-grid 200->250px, feature-grid-3
+240->290px, bucket-grid 180->220px) so cards actually grow with the
+extra space instead of just leaving bigger gaps. Bumped the smallest
+caption/label font sizes that were genuinely hard to read (site footer,
+table action buttons, stat labels/sub-text, widget/news meta, sidebar
+user role and nav-section labels) up roughly 1-1.5px each - left
+regular body/heading text alone since it was already a normal 13-21px
+range using the browser's real 16px base, not the small size it first
+appeared to share with a separate, deliberately compact "welcome splash"
+widget style block that's scoped away from the main site (confirmed via
+its own in-code comment) and was never actually the user's complaint.
+
+**Verified live via the browser's own computed styles** (not just
+re-reading the CSS source): at a 1920px window, dead space per side
+dropped from 410px to 160px (61% less), `.stats-grid` cards grew from
+161px to ~199px each, `.stat-label` grew from 11px to 12.5px.
+
+## "Welcome to Casperia Prime Dev, !" - a dangling comma from an
+## already-half-fixed <USERNAME> token, two layers deep (2026-08-20)
+
+Screenshot review of the viewer's login screen (the embedded WebUI
+splash panel) surfaced a visible blank: `[LoginService] WelcomeMessage`
+is genuinely, correctly configured as `"Welcome to Casperia Prime Dev,
+<USERNAME>!"`, and `<USERNAME>` substitution IS real, working code -
+just in `LLLoginService.cs:703` (`m_WelcomeMessage.Replace("<USERNAME>",
+username)`), which only runs on an actual login attempt, once the
+server knows who's logging in. The WebUI's own pre-login splash pages
+(`HandleWelcome`/`HandleHome`/the admin-side equivalent) read the exact
+same shared ini setting for their own generic welcome text, rendered
+before any login attempt where no username can ever exist - user
+confirmed directly: "the welcome.php cannot know who it is until they
+log in."
+
+First fix attempt (a new `GetWebSafeWelcomeMessage()` helper stripping
+the token before display) built and deployed clean but didn't change
+anything live - root cause was one layer deeper than expected: line 196
+of the same file *already* had a first attempt at this exact fix
+(`.Replace("<USERNAME>", "")`), just an incomplete one that stripped
+only the bare token and left the surrounding ", " comma dangling - by
+the time the new helper ran, the token was already gone, so its own
+comma-aware replace patterns had nothing left to match. Fixed by making
+the *existing* line 196 replacement comma-aware too, matching the new
+helper's patterns, so both the field-level fallback and the
+settings-service override path get the same clean result.
+
+**Verified live via the browser**: `/welcome.php` now reads "Welcome to
+Casperia Prime Dev!" with no dangling comma or blank gap.
+
+## welcome.php layout: two invented redesigns before finally reading the
+## real reference files (2026-08-20/21)
+
+User flagged the banner as too small and asked to "rethink the three
+column idea" since it looked scrunched together. First response was to
+invent a hero-band-with-gradient-scrim-plus-floating-stat-strip design
+from scratch - built, deployed, and functional, but not what was asked
+for. User called this out directly: "I have directed you to the
+WhiteCore-Dev WebUI for the html code, and you still wrote your own
+version" - a real, repeated miss (this page's own code comment already
+cited WhiteCore-Dev's `welcomescreen/gridstatus.html` and osloginscreen
+as its original references, and [[casperia-webui-content-parity-decision]]
+already establishes real-reference-file parity as the standing method
+for this whole WebUI, not something to relitigate per page).
+
+**What the real references actually show, read directly rather than
+assumed**: WhiteCore-Dev's `welcomescreen/index.html` (still present in
+this repo's own `WhiteCore-Dev` checkout) uses a 2-column split -
+`#topleft` (Region + News boxes) and `#topright` (GridStatus + InfoBox)
+- either side of open space, over a background image applied straight
+to `body.welcomescreen` (`randomimageswitch.js`:
+`$(".welcomescreen").css("background-image", ...)`), not a 3-column
+grid and not a small banner strip. `osloginscreen`'s own `index.php`
+independently confirms the same shape (a `.fader` full-page background
++ 3 Bootstrap columns of translucent `.boxtext` panels) - this page's
+comment citing "a 3-column split" was accurate to osloginscreen, just
+never actually built with a real full-page background or real box
+styling to match either reference.
+
+**Second, corrected implementation**: `.welcome-bg` is a real
+`position:fixed;inset:0` full-viewport background (verified via the
+browser's own computed styles: 1080px tall on a 1080px window, not a
+content-height strip). Grid name + welcome line render centered at the
+top (`.welcome-title`, matching both references' `.title`/`.subtitle`
+treatment) instead of buried in a column. Content follows WhiteCore's
+real 2-column split - left: Regions, News; right: Grid Status,
+Welcome/Register, and Confluence's own extra sections (Economy, Events)
+that WhiteCore's simpler reference doesn't have - each section its own
+translucent, shadowed `.welcome-box` panel (WhiteCore's
+`#regionbox`/`#infobox`/`#news`/`#gridstatus` and osloginscreen's
+`.boxtext`, adapted to this site's own dark palette rather than their
+literal colors). `WelcomeCompactCss` font sizes bumped across the board
+(13px body -> 15px, proportional increases throughout) per the
+repeated "too small" feedback.
+
+**Verified live via the browser**: full-viewport fixed background
+confirmed via computed styles, 2-column flex layout confirmed, all 5
+real content boxes render with correct data (Regions, Grid Status,
+Welcome+Register, Confluence Economy, Upcoming Events - News omitted
+this time since no news items are currently configured, matching the
+same "omit rather than show an empty box" pattern already used
+elsewhere on this page).
+
+**Real, unresolved scope surfaced by this**: user's message widened
+this from "fix welcome.php" to "not just gridstatus.html but all the
+html code to build the Confluence WEBUI, from WhiteCore-Dev." Surveyed
+the actual scope rather than guessing: **84** real WhiteCore-Dev HTML
+template files (`WhiteCore-Dev/WhiteCoreSim/bin/html/`, across
+admin/classifieds/events/regionprofile/user/webprofile/welcomescreen
+plus 22 top-level pages) against Confluence's own **~95** existing
+WebUI routes. Far too large to push through unprompted in one sitting -
+flagged for the user to prioritize/sequence rather than attempted
+wholesale. welcome.php is the first page actually completed this way;
+every other page in this connector likely has the same
+invented-instead-of-referenced gap until audited the same way.
+
+## Fidelity standard confirmed, then the background photo turned out
+## invisible - a two-layer opaque-background-over-negative-z-index bug (2026-08-21)
+
+Asked the user directly whether "structural match in Confluence's own
+theme" (what welcome.php actually got) or "literal WhiteCore-Dev markup
+port" was the right bar - confirmed the former. Recorded as the
+explicit standing fidelity standard in `WEBUI_PARITY_CHECKLIST.md`'s
+own header and in memory, so the remaining ~40 rows don't need this
+re-asked per page.
+
+User then reported the background "was implemented, but you can't see
+the images" - "you can only see the edges" of the overlay box. Real
+bug, found by walking `.welcome-bg`'s actual DOM ancestor chain live
+rather than guessing: `.welcome-bg` uses `position:fixed;z-index:-2`,
+but a negative z-index only pushes an element behind *positioned*
+siblings - it does nothing about an ancestor's own background paint,
+which is a separate step in the same stacking context. Two separate
+opaque ancestors were sitting in that chain: `<body>` (`PageCss`'s
+`background:var(--bg)`) and, one level further, the shared page-chrome
+template's own `.card` wrapper (`WriteAdaptivePage` wraps this page's
+content in it same as every other page) - `background:var(--card-bg)`.
+Both painted over the fixed background regardless of its negative
+z-index, leaving only the odd unpainted sliver at the very edges
+visible - matching the user's exact description.
+
+**Fix**: scoped `body{background:transparent;}` and
+`.card{background:transparent;border:none;}` overrides within
+`WelcomeCompactCss` (same "scoped to just this page" pattern already
+used for everything else in that block).
+
+**Verified live via the browser**, not assumed fixed from the CSS
+alone: walked the full ancestor chain from `.welcome-bg` to `<html>`
+post-fix - every single layer confirmed `rgba(0,0,0,0)` - and a direct
+`elementFromPoint()` check at a spot away from any content box
+confirmed no opaque element sits on top there either.
+
+**Follow-up, real screenshot review once the background was actually
+visible**: user pointed out the "Currency: Active" stat in the Grid
+Status box isn't useful information for a first-time visitor deciding
+whether to sign up. Swapped it for "Unique Visitors (30 days)" -
+reuses `GetUniqueVisitorCount(30)` (already built for `/gridstatus`
+this session), and matches WhiteCore-Dev's own `gridstatus.html`
+reference template, which includes `{UniqueVisitors}` as a real row
+there too. Verified live: Grid Status now shows Regions/Registered
+Accounts/Online Now/Unique Visitors, Currency gone.
+
+## /features page: Powered By, Membership Perks, Community Extras had
+## gone empty - another real casualty of the earlier live-data clone (2026-08-21)
+
+User reported these three sections, present when Casperia-Dev was
+tested earlier, missing now. Not a code bug - both render functions
+have an explicit `if (items.Length == 0) return;` guard, correctly
+omitting themselves when their backing settings are empty. Confirmed
+via direct DB query: `casperia_dev.grid_settings` had rows for
+`PoweredByItems`/`MembershipPerksFree`/`MembershipPerksExtra`, all with
+empty `SettingValue`. Live's own `casperia` database doesn't even have
+a `grid_settings` table at all - this is a Confluence-native
+WebInterface feature that never existed on live, confirming these
+values were genuinely configured on Casperia-Dev itself at some
+earlier point (matching the user's own memory of seeing them), not
+something that could have come from live.
+
+Root cause: the earlier live-Casperia -> Casperia-Dev database clone
+this session (see "Cloning live Casperia's real data into
+Casperia-Dev") replaced `casperia_dev` wholesale - wiping this table's
+real, Dev-native, pre-clone content down to empty defaults, since
+nothing about restoring live's data would have populated Dev-only
+settings live never had.
+
+**Fixed by restoring real data, not guessing replacement content**: the
+pre-clone backup taken specifically before that risky operation
+(`S:\Opensim\backups\casperia_dev_pre-clone_20260820_081605.sql`) still
+had the real, original values. Imported the backup's `grid_settings`
+table into a temporary table (`grid_settings_restore_tmp`, avoiding any
+manual string-escaping mistakes with the multi-line `\r\n`-separated
+content), then a targeted `UPDATE ... JOIN` copied over only the 3
+empty keys - confirmed via `SELECT SettingKey` first that every *other*
+key already had real, legitimately-updated content (e.g.
+`AnnouncementText`/`AnnouncementTitle` differ from the backup, updated
+since) that a wholesale table restore would have wrongly reverted.
+Temp table dropped after.
+
+**Verified**: hex-dumped the restored value's line-ending bytes
+(`0D0A` - real CRLF, matching the backup exactly) before trusting a
+terminal-rendering read that looked like literal `\n` text. Live page
+check confirmed all three sections render correctly with every real
+line item, including punctuation ("Let's Encrypt") surviving the
+round-trip intact. Pure data fix - no code change, no rebuild, no
+restart needed; `GetSetting` reads the DB fresh per request.
+
+**Worth flagging for later**: this confirms the live-data clone can
+silently wipe any Dev-native `grid_settings`-style configuration that
+predates it and was never present on live. Worth a deliberate check for
+other Dev-only settings/tables that might have the same gap, rather
+than only reacting to the next one a user happens to notice missing.
+
+## welcome.php: a real thread-safety bug found live, and cleanup on the
+## card-transparency fix (2026-08-21)
+
+User hit "Internal error: Could not find specified column in results:
+DisplayName" loading welcome.php. Not logged anywhere (the top-level
+route-dispatch catch-all just returns `e.Message` raw to the browser,
+never through `m_log`), so traced it from source instead of a stack
+trace. Root cause: `MySQLGenericTableHandler.CheckColumnNames` (used by
+every `IGridUserData`/`IUserAccountData`/etc. table handler, including
+the ones backing `GetOnlineUserCount`/`GetUniqueVisitorCount`/
+`GetUserAccountsWhere` this page calls) caches its column list with an
+unprotected check-then-set (`if (m_ColumnNames != null) return; ...
+m_ColumnNames = columnNames;`) - confirmed byte-identical to
+opensim-master, a genuine pre-existing upstream race condition, not
+something introduced this session. Two concurrent requests hitting the
+same freshly-restarted handler instance (the norm right after any
+Robust restart, which happened many times today) can both pass the
+null check and each build a column list from whichever reader they
+happen to be holding; if those results differ, one write wins and
+either query can end up iterating a stale/mismatched column list.
+
+**Fix**: added a real lock with a re-check inside it (standard
+double-checked locking) to `MySQLGenericTableHandler.cs`. Same
+unprotected pattern confirmed present in the PGSQL and SQLite
+equivalents too (`PGSQLGenericTableHandler.cs`/
+`SQLiteGenericTableHandler.cs`) - fixed identically in both for
+codebase consistency, even though this deployment only runs MySQL.
+Full solution build (touches core data-layer DLLs many services
+depend on), full grid restart to verify - zero errors across Robust
+and all 14 regions.
+
+**Follow-up from a real screenshot, not a description**: user pointed
+at a visible shadow with no fill floating over the background photo -
+`.card`'s scoped transparency override (from the earlier
+background-visibility fix) had cleared `background`/`border` but left
+`box-shadow:0 8px 24px rgba(0,0,0,.35)` and `padding:32px 36px` active,
+casting a shadow with nothing behind it. Cleared both. Also removed
+the "Confluence Economy" section from this page entirely per explicit
+feedback (currency figures aren't useful on a first-impression splash;
+`/economy` still has them) and moved "Upcoming Events" into the left
+column with Regions/News, rebalancing what had become a lopsided
+"long right list" (4 stacked boxes on the right vs. 1 on the left) -
+now 2-3 boxes each side, closer to WhiteCore-Dev's actual reference
+proportions. Verified live via computed styles: `box-shadow:none`,
+`padding:0px`, Economy section absent, Events present in its new
+column.
+
+**Workflow note**: confirmed with the user that only Robust actually
+serves the WebUI (`WebInterfaceServiceConnector` isn't loaded by
+region processes for its own sake) - regions only need to be *stopped*
+to release the shared `OpenSim.Server.Handlers.dll` file lock, not
+restarted with the new code. For WebUI-only iterations going forward:
+stop everything, deploy, restart Robust only, leave regions down until
+actually needed for in-world testing - saves a full 14-region relaunch
+per round.
+
+## Grid Status tiles claimed to be "live" but weren't - a real
+## architectural gap, plus two of my own bugs found fixing it (2026-08-21)
+
+User caught this directly: with all 14 regions genuinely stopped (the
+new WebUI-iteration workflow above), `/gridstatus` and welcome.php's
+Grid Status widget still reported "14 regions online" and "2 residents
+online" - stale, not live, despite `/gridstatus`'s own copy literally
+saying "Live snapshot."
+
+**Root cause, traced to the actual mechanism, not assumed**: neither
+the `regions` table's online flag nor `GridUser`'s "Online" flag has
+any periodic heartbeat behind them anywhere in this codebase - both
+only ever get set/cleared by a clean RegisterRegion/DeregisterRegion or
+login/logout call (`OpenSim/Services/GridService/GridService.cs`).
+Killing a region process (or a real crash on live) never runs the
+clean-shutdown path, so both flags stay stuck at "online" forever, with
+nothing to ever correct them - not specific to today's hard-kills,
+the same thing would happen from a genuine live crash.
+
+**User confirmed via AskUserQuestion**: live TCP probe per page load
+over a cached/heartbeat-based alternative, accepting the latency
+tradeoff for full accuracy.
+
+**Fix**: `FilterOnlineRegions`/`IsRegionAlive` in
+`WebInterfaceServiceConnector.cs` - a raw TCP connect (not a full HTTP
+round-trip) to each region's own `ServerURI` with a short timeout, all
+regions probed in parallel via `Task.Run` so total latency is one
+timeout period, not (timeout x region count). Applied to the three
+pages that actually claim live stat tiles: `/gridstatus`, welcome.php's
+Grid Status widget, and `/features`' "Live Grid Snapshot" (which is
+literally named that). Deliberately *not* applied to admin/management
+pages (region restart list, world map, classifieds region picker) -
+those legitimately need to show offline regions too, e.g. so an admin
+can actually see and restart one.
+
+Added the equivalent fix for "Online Now": a new
+`IGridUserService.GetOnlineUserCount(HashSet<string> aliveRegionIDs)`
+overload, only counting a user as online if their `LastRegionID` is in
+the confirmed-alive set - same interface-completeness plumbing as
+`GetUniqueVisitorCount` earlier today (`GridUserService.cs`,
+`LocalGridUserServiceConnector.cs`/`RemoteGridUserServiceConnector.cs`,
+`GridUserServicesConnector.cs`/`GridUserServerPostHandler.cs`'s HTTP
+`getonlineusercountforregions` method). `Accounts`/`Unique Visitors` are
+correctly left alone - a user account and their login history are real
+regardless of whether any region happens to be running right now.
+
+**Two real bugs found and fixed live in this same pass, not related to
+the region-liveness design itself**:
+1. Silent error handling made both invisible to begin with -
+   `HandleGridStatus`'s own try/catch and the top-level route-dispatch
+   catch-all both only ever returned the raw exception message to
+   whoever hit the page, never through `m_log`. Added real logging to
+   both; the fix below would have taken much longer to find blind.
+2. A classic C# closure-over-loop-variable bug in my own first pass at
+   `FilterOnlineRegions`: `for (int i...) probes[i] =
+   Task.Run(() => IsRegionAlive(regions[i], ...))` captures the *loop
+   variable* `i`, not its value at each iteration - by the time the
+   parallel tasks actually ran, the loop had already finished and `i`
+   equaled `regions.Count`, so every single probe threw "Index was out
+   of range," aborting `HandleGridStatus`'s entire try block partway
+   through and incorrectly zeroing out Accounts/Unique Visitors too
+   (unrelated data, just caught in the same try block). Fixed by
+   capturing a fresh local copy of the index inside the loop body
+   before it's captured by the lambda - user caught this immediately
+   ("umm unique visitors and registered account should still report!").
+
+**Verified live, with all 14 regions genuinely stopped throughout**:
+Regions 0, Land Area 0.00 km², Online Now 0 (previously stuck at 2),
+Accounts 9 and Unique Visitors 6 both still correctly reporting despite
+zero regions running, Service Status back to OPERATIONAL. Full solution
+build both passes (touches core interface/service DLLs), zero errors
+confirmed by timestamp-filtering the log rather than trusting a raw
+error count against a log file that appends across restarts.
+
+## Hard-killing regions ghosts connected users - graceful restart already
+## existed, just wasn't wired up on 13 of 14 regions (2026-08-21)
+
+User connected this session's testing methodology directly to the
+earlier stuck-online-flag bug: killing a region process with a real
+user connected ghosts them in `GridUser` exactly like a crash would
+(see the "Grid Status tiles" entry above), and their next login attempt
+gets rejected with "already logged in" - self-healing on retry, but a
+real, avoidable bad first impression.
+
+**Checked whether this needed a code fix - it didn't.** `Scene.Close()`
+already sends `Kick("The simulator is going down.")` +
+`SendShutdownConnectionNotice()` to connected residents on a graceful
+shutdown, and `RestartModule.cs` already broadcasts countdown warnings
+via `IDialogModule.SendNotificationToUsersInRegion` during a `region
+restart <seconds>` command - genuine, already-built OpenSim
+functionality giving residents real warning and time to relocate,
+not just an abrupt disconnect. Both of the WebUI's actual restart
+buttons (`/admin/regions/restart` for a grid admin, `/myregions/restart`
+for a region's own self-service owner) already call exactly this
+command via `RunRegionConsoleCommand`, which posts to the region's own
+`/consoleweb` endpoint.
+
+**What was actually broken**: `/consoleweb` only registers if
+`WebConsoleModule.Initialise` finds a `[WebConsole]` section on that
+*region's own* ini at all (`if (config == null) return;`) - none of
+the 13 live-cloned regions had one, only Welcome_Center did (same
+"cloned regions missing what Welcome_Center already had correctly"
+pattern as every other gap found this session). Meant both restart
+buttons would have silently failed to reach any of the 13 cloned
+regions - the graceful mechanism existed but couldn't actually run.
+
+**Fix**: added the missing `[WebConsole]` section (matching
+Welcome_Center's `Enabled = true` + the same `SharedSecret` Robust.HG.ini
+already uses, since the WebUI authenticates with that exact value when
+relaying to whichever region) to all 13 regions, and the same gap in
+`bin/OpenSim.ini.example` (placeholder secret, with a comment that it
+must match Robust.HG.ini's own value).
+
+**Verified**: all 13 regions now log `[WEB CONSOLE]: Enabled at
+/consoleweb` on startup (previously silent/absent). Live end-to-end
+test - a real POST to Sector_001's `/consoleweb` with the correct
+secret returned HTTP 200 (not 403 Forbidden or 400 Bad Command),
+confirming both authentication and command relay work; didn't send an
+actual disruptive restart command just to test this, since 200-vs-403
+already distinguishes "works" from "doesn't."
+
+**Going forward**: my own region-cycling during this WebUI iteration
+work will use a graceful `region restart <seconds>` via `/consoleweb`
+instead of `Stop-Process -Force` whenever a region is actually running
+with someone potentially connected, per explicit user direction.
+
+## World map showed no tiles at all - vendored Leaflet files never actually
+## shipped in the build (2026-08-22)
+
+User reported two live bugs from a real browser session: `/page/about`
+404ing, and `/worldmap` rendering with no map tiles at all.
+
+**World map root cause**: `HandleWorldMap` links `/static/leaflet.css`
+and `/static/leaflet.js` (see the earlier "Real Leaflet map" entry -
+these were vendored into `WebInterface/Resources/` specifically to
+avoid a CDN dependency). Both files genuinely exist on disk, but
+`HandleStaticAsset` serves them from the assembly's *embedded
+resources*, not the filesystem - and only `bootstrap-icons.*` was ever
+added to the `EmbeddedResource` `<Match>` pattern in `prebuild.xml`
+(and the generated `.csproj`, gitignored, that actually gets
+compiled). Leaflet's own files were never wired in at all, so
+`/static/leaflet.js` 404'd, `L` was undefined, and the map script threw
+immediately - confirmed via the browser's own console
+(`ReferenceError: L is not defined`) and network log (two real 404s),
+not just inferred from source. Fixed by adding a matching
+`leaflet.*` `<Match>` entry to `prebuild.xml` and the local `.csproj`
+directly (since csproj is generated/gitignored, only the `prebuild.xml`
+change is what a fresh clone actually needs). Verified live: both
+files now 200, `typeof L !== 'undefined'` in the rendered page, and
+both running regions' map tiles actually rendered in
+`.leaflet-image-layer`.
+
+**`/page/about` root cause - a tenth instance of the clone-wipe
+pattern**: not a code bug at all. `casperia_dev.static_pages` was
+completely empty - the real, previously-authored About/Terms/DMCA
+content from the "About page rewrite" work (task #44, 2026-08-12) had
+existed in Casperia-Dev before, and was wiped by the same live-database
+clone that already cost `grid_settings` once (see
+[[casperia-live-data-clone-copy-artifacts]], class 9) - confirmed via
+the pre-clone backup (`casperia_dev_pre-clone_20260820_081605.sql`)
+still holding all three rows, schema-identical to the live table.
+Restored directly (empty table, matching schema, no merge needed)
+rather than reconstructed by guessing content. All three slugs
+(`about`, `tos`, `dmca`) now 200.
+
+**Separate, real gap found investigating this**: the site nav's
+"About" link and the footer's "Terms of Service"/"DMCA Policy" links
+were unconditional - hardcoded regardless of whether that slug's page
+actually exists. Confluence itself ships zero default About/ToS/DMCA
+content (rightly - that'd be baking one operator's copy into every
+install), so a fresh grid gets three dead 404 links out of the box
+until an admin creates matching pages through Admin > Pages. Added a
+small `HasStaticPage(slug)` check (`WebInterfaceServiceConnector.cs`)
+and gated all three links on it - `RenderTopNavGroups` for About,
+`WritePage`'s shared footer for ToS/DMCA. Verified live with all three
+pages present (links render normally); the hidden-when-absent path is
+exercised by the exact same `GetBySlug` null-check `HandleStaticPage`
+already uses for the 404 case, so it's not new/unverified logic, just
+a new caller of it.
+
+**Full deploy sync while fixing this**: found 93 DLLs differing
+between the repo's build output and the live deployment (same
+build-non-determinism as the earlier "94 of each" full sync - GUIDs/
+metadata differ run to run even with no source changes). Rather than
+hand-picking just `OpenSim.Server.Handlers.dll`, did a full sync of
+every differing `.dll`/`.pdb` (186 files), matching this session's
+established precedent, and re-hashed everything afterward to confirm
+zero mismatches. Also noticed mid-session that both running regions
+(Welcome_Center, Sandbox) shut down cleanly on their own twice
+(`[CONSOLE] Quitting`, not a crash) while this work was in progress -
+never determined the cause (possibly the user's own parallel testing
+via `CasperiaDevControl.bat`), but confirmed via Robust.log that Robust
+itself was never affected and both regions came back up clean each
+time.

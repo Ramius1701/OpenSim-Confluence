@@ -46,6 +46,10 @@ namespace OpenSim.Data.SQLite
                 new Dictionary<string, FieldInfo>();
 
         protected List<string> m_ColumnNames = null;
+        // Same unprotected check-then-set race fixed in
+        // MySQLGenericTableHandler.cs - see that file's comment for the
+        // full explanation.
+        private readonly object m_columnNamesLock = new();
         protected string m_Realm;
         protected FieldInfo m_DataField = null;
 
@@ -106,14 +110,22 @@ namespace OpenSim.Data.SQLite
             if (m_ColumnNames != null)
                 return;
 
-            m_ColumnNames = new List<string>();
-
-            DataTable schemaTable = reader.GetSchemaTable();
-            foreach (DataRow row in schemaTable.Rows)
+            lock (m_columnNamesLock)
             {
-                if (row["ColumnName"] != null &&
-                        (!m_Fields.ContainsKey(row["ColumnName"].ToString())))
-                    m_ColumnNames.Add(row["ColumnName"].ToString());
+                if (m_ColumnNames != null)
+                    return;
+
+                List<string> columnNames = new List<string>();
+
+                DataTable schemaTable = reader.GetSchemaTable();
+                foreach (DataRow row in schemaTable.Rows)
+                {
+                    if (row["ColumnName"] != null &&
+                            (!m_Fields.ContainsKey(row["ColumnName"].ToString())))
+                        columnNames.Add(row["ColumnName"].ToString());
+                }
+
+                m_ColumnNames = columnNames;
             }
         }
 

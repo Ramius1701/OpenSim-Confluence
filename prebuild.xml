@@ -1423,6 +1423,7 @@
           <Exclude pattern="Tests"/>
         </Match>
         <Match buildAction="EmbeddedResource" path="WebInterface/Resources" pattern="bootstrap-icons.*"/>
+        <Match buildAction="EmbeddedResource" path="WebInterface/Resources" pattern="leaflet.*"/>
       </Files>
     </Project>
 

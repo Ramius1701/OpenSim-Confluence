@@ -93,6 +93,10 @@ namespace OpenSim.Server.Handlers.GridUser
                         return GetGridUserInfos(request);
                     case "getonlineusercount":
                         return GetOnlineUserCount();
+                    case "getuniquevisitorcount":
+                        return GetUniqueVisitorCount(request);
+                    case "getonlineusercountforregions":
+                        return GetOnlineUserCountForRegions(request);
                 }
                 m_log.DebugFormat("[GRID USER HANDLER]: unknown method request: {0}", method);
             }
@@ -245,6 +249,42 @@ namespace OpenSim.Server.Handlers.GridUser
         byte[] GetOnlineUserCount()
         {
             int count = m_GridUserService.GetOnlineUserCount();
+
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            result["result"] = count.ToString();
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] GetUniqueVisitorCount(Dictionary<string, object> request)
+        {
+            int days = 30;
+            if (request.TryGetValue("DAYS", out object daysObj))
+                int.TryParse(daysObj.ToString(), out days);
+
+            int count = m_GridUserService.GetUniqueVisitorCount(days);
+
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            result["result"] = count.ToString();
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] GetOnlineUserCountForRegions(Dictionary<string, object> request)
+        {
+            HashSet<string> aliveRegionIDs = new HashSet<string>();
+            if (request.TryGetValue("REGIONIDS", out object idsObj))
+            {
+                foreach (string id in idsObj.ToString().Split(','))
+                {
+                    if (!string.IsNullOrEmpty(id))
+                        aliveRegionIDs.Add(id);
+                }
+            }
+
+            int count = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
 
             Dictionary<string, object> result = new Dictionary<string, object>();
             result["result"] = count.ToString();

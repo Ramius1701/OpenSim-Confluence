@@ -122,6 +122,50 @@ namespace OpenSim.Services.UserAccountService
             return onlineRecentlyCount;
         }
 
+        // Distinct visitors whose last login falls within the window, regardless
+        // of whether they're still online now (unlike GetOnlineUserCount above,
+        // which only counts currently-online users). Deliberately no local-vs-HG
+        // distinction - GridUser rows already cover hypergrid visitors (their
+        // UserID is the standard "uuid;homeURI;displayname" compound form), so a
+        // plain count naturally includes them, same as djphil's osloginscreen's
+        // own "SELECT UserID FROM GridUser WHERE Login > cutoff" reference query
+        // this was matched against. Used to back a grid-status "unique visitors"
+        // stat (e.g. the 30-day figure hypergrid directories ask for).
+        public int GetUniqueVisitorCount(int days)
+        {
+            int count = 0;
+
+            DateTime now = DateTime.UtcNow;
+
+            foreach (GridUserData gu in m_Database.GetAll(""))
+            {
+                int unixLoginTime = int.Parse(gu.Data["Login"]);
+
+                if ((now - Util.ToDateTime(unixLoginTime)).TotalDays < days)
+                    count++;
+            }
+
+            return count;
+        }
+
+        public int GetOnlineUserCount(HashSet<string> aliveRegionIDs)
+        {
+            if (aliveRegionIDs == null || aliveRegionIDs.Count == 0)
+                return 0;
+
+            int count = 0;
+
+            foreach (GridUserData gu in m_Database.GetAll(""))
+            {
+                if (bool.Parse(gu.Data["Online"]) &&
+                        gu.Data.TryGetValue("LastRegionID", out string lastRegionID) &&
+                        aliveRegionIDs.Contains(lastRegionID))
+                    count++;
+            }
+
+            return count;
+        }
+
         private static ExpiringCacheOS<string, GridUserData> cache = new ExpiringCacheOS<string, GridUserData>(100000);
         private GridUserData GetGridUserData(string userID)
         {

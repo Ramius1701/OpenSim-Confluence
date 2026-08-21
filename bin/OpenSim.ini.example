@@ -1309,6 +1309,15 @@
     ; external backend, see OpenSimSearch's own docs):
     ; Module = "OpenSimSearch"
 
+[SearchService]
+    ;; Backs ConfluenceSearchModule's core Places/Land/Classifieds search -
+    ;; required for the module to load at all (without this section it logs
+    ;; "Can't load search service" and every search category returns
+    ;; nothing, even though Module above is correctly set).
+    LocalServiceModule = "OpenSim.Services.SearchService.dll:SearchService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlSearchData"
+    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
 [EventsService]
     ;; Backs ConfluenceSearchModule's Events tab.
     LocalServiceModule = "OpenSim.Services.EventsService.dll:EventsService"
@@ -1327,6 +1336,22 @@
     ;; Backs ConfluenceSearchModule's Groups tab - reuses the same groups
     ;; database core Groups already writes to.
     LocalServiceModule = "OpenSim.Addons.Groups.dll:GroupsService"
+
+[WebConsole]
+    ;; Backs the built-in WebUI's region-restart buttons (both the grid
+    ;; admin's and a region owner's self-service one) - they relay a real
+    ;; "region restart <seconds>" console command here rather than killing
+    ;; the process, so connected residents get OpenSim's own graceful
+    ;; restart warning (a countdown notification with time to relocate)
+    ;; instead of an unannounced disconnect. Without this section present
+    ;; and enabled, WebConsoleModule refuses to start at all - those
+    ;; buttons would silently fail to reach the region.
+    Enabled = true
+    ;; Generate a real per-deployment secret, not this placeholder - it
+    ;; must match [WebConsole] SharedSecret in Robust.HG.ini exactly,
+    ;; since that's what the WebUI itself authenticates with when it
+    ;; relays a command to this region.
+    SharedSecret = "*****"
 
 [Economy]
     ;; Confluence's native currency module - talks directly to the
