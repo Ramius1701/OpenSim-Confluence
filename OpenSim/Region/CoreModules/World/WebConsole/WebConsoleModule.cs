@@ -21,9 +21,8 @@ namespace OpenSim.Region.CoreModules.World.WebConsole
     // specific region from the WebInterface instead of needing shell/RDP
     // access to that region's own physical console. WhiteCore's own
     // equivalent page is a documented stub ("hardcodes 'not yet
-    // implemented' despite calling MainConsole.Instance.RunCommand()" - see
-    // FEATURES_VS_MASTER.md); this is a genuinely working implementation,
-    // not matching that gap.
+    // implemented' despite calling MainConsole.Instance.RunCommand()");
+    // this is a genuinely working implementation, not matching that gap.
     //
     // Security note - this is the single most sensitive endpoint added this
     // session: successful auth here means arbitrary console command

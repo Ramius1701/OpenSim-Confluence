@@ -7214,7 +7214,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         // Last page from the original WhiteCore-Dev comparison list
         // (region/user/estate/abuse-report/currency manager - see
-        // FEATURES_VS_MASTER.md's "Correction (2026-08-09)"). EstateSettings
+        // PROJECT_LOG.md's 2026-08-09 WebInterface correction). EstateSettings
         // has a very large surface (bans, groups, experience lists, terrain
         // flags, ...) - this page edits the fields an admin most commonly
         // needs day to day (name, owner, the most consequential access

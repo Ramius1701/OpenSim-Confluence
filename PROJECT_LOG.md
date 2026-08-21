@@ -763,9 +763,11 @@ Explicitly framed by the user as a preservation effort, not opportunistic
 feature-hunting: "some of those repos like Mobius, WhiteCore, LickX, and
 Halcyon have fallen by the wayside. Doesn't mean some of their code and
 features should be lost." Two more targets audited on that basis, both
-fetched as remotes (`halcyon`, `homeworldz`). Full findings summarized in
-FEATURES_VS_MASTER.md; this entry is the narrative record of what was
-found and why nothing was ported yet.
+fetched as remotes (`halcyon`, `homeworldz`). Full findings preserved in
+ROADMAP.md's "Design research from other projects" section (moved there
+2026-08-22, formerly in FEATURES_VS_MASTER.md before that file was
+retired); this entry is the narrative record of what was found and why
+nothing was ported yet.
 
 **Halcyon** (github.com/HalcyonGrid/halcyon) — InWorldz's server, forked
 from OpenSim in 2010, no shared git history with vanilla origin/master
@@ -796,9 +798,10 @@ source of preservable design rationale — the user explicitly confirmed
 after this one landed that an ideas-only audit is a legitimate, valued
 outcome on its own, not a lesser result just because nothing got ported:
 "for the ideas... that can help shape the future of Confluence and really
-worth looking into." See FEATURES_VS_MASTER.md for the physics (Jolt)
-and scripting (Falcon VM) findings in full — nothing here requires
-action, it's reference material for future architecture decisions.
+worth looking into." See ROADMAP.md's "Design research from other
+projects" for the physics (Jolt) and scripting (Falcon VM) findings in
+full — nothing here requires action, it's reference material for
+future architecture decisions.
 
 **Status:** audits complete, findings documented, nothing ported yet.
 The Halcyon Bot/NPC framework is the one concrete "worth doing" item
