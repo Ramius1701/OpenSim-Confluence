@@ -11988,3 +11988,51 @@ never determined the cause (possibly the user's own parallel testing
 via `CasperiaDevControl.bat`), but confirmed via Robust.log that Robust
 itself was never affected and both regions came back up clean each
 time.
+
+## Var region map tiles broken - same tile reused for every 256m cell
+## instead of one tile per cell (2026-08-22)
+
+User reported var-region tiles on `/worldmap` "not working properly"
+after the fix above. Root cause in `HandleWorldMap`'s own Leaflet
+script: `MapImageServiceModule.UploadMapTile` genuinely splits a var
+region's map image into one **separate** tile per 256m cell, each
+uploaded at its own grid coordinate (confirmed by reading the actual
+splitting code, not assumed) - so a 1024x1024 region like SailorV
+Creations really does have 16 distinct tile images on the map server,
+one per (x,y) cell. But the per-cell loop in `HandleWorldMap`
+(`for(ty...){for(tx...){...}}`) built each cell's `imgBounds` correctly
+from its own local `x`/`y`, then loaded every single cell's
+`L.imageOverlay` from the **same** `r.tileUrl` - a single URL computed
+once from the region's base `gridX`/`gridY` before the loop even
+started. Every var region on the grid was showing one corner tile
+stretched/repeated across its entire footprint instead of its real 16
+(or 4) distinct tiles.
+
+**Fix**: removed the precomputed `tileUrl` field entirely and build
+the URL inside the loop from the loop's own per-cell `x`/`y`
+(`'/map/map-1-'+x+'-'+y+'-objects.jpg'`) - the same fix in spirit as
+the earlier "byte-correct" `MapGetServerConnector` path fix, just one
+layer further out (client-side URL construction instead of
+server-side path parsing).
+
+**Verified live** against SailorV Creations (1024x1024, base
+1002,1001): curled all 16 expected sub-tile coordinates
+(1002-1005 x 1001-1004) directly - all HTTP 200, and every one a
+genuinely different byte size (6.8-15.6 KB, not 16 copies of the same
+file). Confirmed in the actual rendered page too via
+`document.querySelectorAll('.leaflet-image-layer')` - all 16 distinct
+`map-1-X-Y` filenames present as separate overlay layers, correctly
+positioned per the earlier `imgBounds` math (which was already right).
+
+**Real, unrelated blocker hit deploying this**: redeploying
+`OpenSim.Server.Handlers.dll` failed with "the process cannot access
+the file... being used by another process" even with Robust and both
+regions I'd launched stopped. Traced to a `Sol_Sector` `OpenSim.exe`
+process (PID 13068, started independently at 8:07 AM) holding the
+file open - not launched by this session at all. This is very likely
+what explains the earlier unexplained clean shutdowns of
+Welcome_Center/Sandbox too: the user has their own `CasperiaDevControl.bat`
+session running in parallel with this work, starting/stopping regions
+independently. Asked the user directly rather than killing their
+process unasked; they stopped it themselves, redeploy proceeded
+cleanly after.

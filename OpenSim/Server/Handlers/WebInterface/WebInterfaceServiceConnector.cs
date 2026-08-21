@@ -1742,7 +1742,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                 r["gridY"] = region.RegionCoordY;
                 r["sizeX"] = region.RegionSizeX;
                 r["sizeY"] = region.RegionSizeY;
-                r["tileUrl"] = "/map/map-1-" + region.RegionCoordX + "-" + region.RegionCoordY + "-objects.jpg";
                 r["teleportUrl"] = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
                 regionArray.Add(r);
             }
@@ -1768,7 +1767,15 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("for(var ty=0;ty<tilesY;ty++){for(var tx=0;tx<tilesX;tx++){");
             sb.Append("var x=r.gridX+tx,y=r.gridY+ty;");
             sb.Append("var imgBounds=[[y,x],[y+1,x+1]];bounds.extend(imgBounds[0]);bounds.extend(imgBounds[1]);");
-            sb.Append("var layer=L.imageOverlay(r.tileUrl,imgBounds,{opacity:1});");
+            // Each 256m cell of a var region gets its own map tile, uploaded
+            // separately at its own grid coordinate (see
+            // MapImageServiceModule.UploadMapTile's sub-tile splitting) - the
+            // tile URL has to be built per-cell from x/y here, not reused
+            // from a single region-wide URL, or every cell of a larger-than-
+            // 256m region shows the same one corner tile stretched/repeated
+            // across its whole footprint.
+            sb.Append("var tileUrl='/map/map-1-'+x+'-'+y+'-objects.jpg';");
+            sb.Append("var layer=L.imageOverlay(tileUrl,imgBounds,{opacity:1});");
             sb.Append("var popupHtml='<div class=\"region-popup\"><h3>'+r.name.replace(/</g,'&lt;')+'</h3>'+" +
                     "'<div class=\"wm-meta\">'+r.sizeX+'m &times; '+r.sizeY+'m &middot; ('+r.gridX+', '+r.gridY+')</div>'+" +
                     "'<a class=\"wm-tp\" href=\"'+r.teleportUrl+'\">Teleport &rarr;</a></div>';");
