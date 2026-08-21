@@ -32,9 +32,16 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS `experience_kv` (
 	`experience` VARCHAR(36) NOT NULL,
-	`key` VARCHAR(1011) NOT NULL COLLATE 'latin1_bin', 
-    `value` VARCHAR(4095) NOT NULL COLLATE 'utf8mb4_0900_ai_ci', 
+	`key` VARCHAR(1011) NOT NULL COLLATE 'latin1_bin',
+    `value` VARCHAR(4095) NOT NULL COLLATE 'utf8mb4_0900_ai_ci',
     PRIMARY KEY(`experience`, `key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+COMMIT;
+
+:VERSION 5         #----- experience name/description to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `experiences`
+	MODIFY COLUMN `name` varchar(42) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `description` varchar(128) CHARACTER SET utf8mb4 NOT NULL;
 COMMIT;

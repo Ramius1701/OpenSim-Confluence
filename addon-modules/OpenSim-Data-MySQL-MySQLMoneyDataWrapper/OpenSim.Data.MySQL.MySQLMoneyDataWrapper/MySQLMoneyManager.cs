@@ -217,6 +217,7 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 3: //Rev.3
                         UpdateTransactionsTable3();
@@ -228,6 +229,7 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 4: //Rev.4
                         UpdateTransactionsTable4();
@@ -238,6 +240,7 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 5: //Rev.5
                         UpdateTransactionsTable5();
@@ -247,6 +250,7 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 6: //Rev.6
                         UpdateTransactionsTable6();
@@ -255,6 +259,7 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 7: //Rev.7
                         UpdateTransactionsTable7();
@@ -262,24 +267,32 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 8: //Rev.8
                         UpdateTransactionsTable8();
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 9: //Rev.9
                         UpdateTransactionsTable9();
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 10: //Rev.10
                         UpdateTransactionsTable10();
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
                         break;
                     case 11: //Rev.11
                         UpdateTransactionsTable11();
+                        UpdateTransactionsTable12();
+                        break;
+                    case 12: //Rev.12
+                        UpdateTransactionsTable12();
                         break;
                 }
             }
@@ -878,6 +891,27 @@ namespace OpenSim.Data.MySQL.MySQLMoneyDataWrapper
             sql += "ALTER TABLE `" + Table_of_Transactions + "` ";
             sql += "ADD `regionUUID` varchar(36) NOT NULL AFTER `regionHandle`,";
             sql += "COMMENT = 'Rev.12';";
+            sql += "COMMIT;";
+            MySqlCommand cmd = new MySqlCommand(sql, dbcon);
+            cmd.ExecuteNonQuery();
+            cmd.Dispose();
+        }
+
+        // description/commonName/objectName to utf8mb4 - these are free text a
+        // resident or object script can set (transaction memos, object names),
+        // and MySQL's "utf8" is really the old 3-byte-max utf8mb3, which
+        // rejects any 4-byte character (emoji included). Same fix applied
+        // across the rest of the schema - see RegionStore.migrations VERSION 70.
+        private void UpdateTransactionsTable12()
+        {
+            string sql = string.Empty;
+
+            sql = "BEGIN;";
+            sql += "ALTER TABLE `" + Table_of_Transactions + "` ";
+            sql += "MODIFY COLUMN `description` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,";
+            sql += "MODIFY COLUMN `commonName` varchar(128) CHARACTER SET utf8mb4 NOT NULL,";
+            sql += "MODIFY COLUMN `objectName` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,";
+            sql += "COMMENT = 'Rev.13';";
             sql += "COMMIT;";
             MySqlCommand cmd = new MySqlCommand(sql, dbcon);
             cmd.ExecuteNonQuery();

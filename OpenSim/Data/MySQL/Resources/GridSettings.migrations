@@ -9,3 +9,9 @@ CREATE TABLE IF NOT EXISTS `grid_settings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 COMMIT;
+
+:VERSION 2         #----- grid_settings SettingValue to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `grid_settings`
+	MODIFY COLUMN `SettingValue` text CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

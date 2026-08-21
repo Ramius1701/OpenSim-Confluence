@@ -31,3 +31,10 @@ BEGIN;
 ALTER TABLE `events` ADD COLUMN `GlobalPos` VARCHAR(64) NOT NULL DEFAULT '';
 
 COMMIT;
+
+:VERSION 4         #----- events Title/Description to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `events`
+	MODIFY COLUMN `Title` varchar(255) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `Description` text CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

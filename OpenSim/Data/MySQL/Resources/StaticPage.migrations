@@ -25,3 +25,13 @@ ALTER TABLE `static_pages`
 	ADD COLUMN `RequiresAdmin` TINYINT(1) NOT NULL DEFAULT 0;
 
 COMMIT;
+
+:VERSION 3 # ----------------- Title/Body to utf8mb4 (emoji/full-Unicode support)
+
+BEGIN;
+
+ALTER TABLE `static_pages`
+	MODIFY COLUMN `Title` varchar(255) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `Body` text CHARACTER SET utf8mb4 NOT NULL;
+
+COMMIT;

@@ -14,3 +14,9 @@ CREATE TABLE IF NOT EXISTS `im_offline` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 COMMIT;
+
+:VERSION 6         #----- offline IM message text to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `im_offline`
+	MODIFY COLUMN `Message` text CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

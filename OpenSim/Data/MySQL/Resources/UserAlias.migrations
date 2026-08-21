@@ -13,3 +13,9 @@ CREATE TABLE IF NOT EXISTS `UserAlias` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 COMMIT;
+
+:VERSION 2         #----- useralias Description to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `useralias`
+	MODIFY COLUMN `Description` varchar(80) CHARACTER SET utf8mb4 DEFAULT NULL;
+COMMIT;

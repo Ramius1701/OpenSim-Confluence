@@ -84,3 +84,17 @@ CREATE TABLE IF NOT EXISTS `usersettings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 commit;
+
+:VERSION 6         #----- profile/picks free-text columns to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `userprofile`
+	MODIFY COLUMN `profileAboutText` mediumtext CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `profileFirstText` mediumtext CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `profileSkillsText` mediumtext CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `profileWantToText` mediumtext CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `profileLanguages` mediumtext CHARACTER SET utf8mb4 NOT NULL;
+ALTER TABLE `userpicks`
+	MODIFY COLUMN `name` varchar(255) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `description` mediumtext CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `originalname` varchar(255) CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

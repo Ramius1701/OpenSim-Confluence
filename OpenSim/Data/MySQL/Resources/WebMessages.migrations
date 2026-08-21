@@ -18,3 +18,10 @@ CREATE TABLE IF NOT EXISTS `webmessages` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 COMMIT;
+
+:VERSION 2         #----- webmessages Subject/Body to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `webmessages`
+	MODIFY COLUMN `Subject` varchar(150) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `Body` text CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

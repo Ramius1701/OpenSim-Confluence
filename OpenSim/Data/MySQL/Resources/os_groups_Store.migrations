@@ -135,3 +135,19 @@ CREATE TABLE `os_groups_bans` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 COMMIT;
+
+:VERSION 5         #----- group charter/notice/role free-text columns to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `os_groups_groups`
+	MODIFY COLUMN `Charter` text CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `Name` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';
+ALTER TABLE `os_groups_notices`
+	MODIFY COLUMN `Message` text CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `Subject` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+	MODIFY COLUMN `FromName` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+	MODIFY COLUMN `AttachmentName` varchar(128) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';
+ALTER TABLE `os_groups_roles`
+	MODIFY COLUMN `Name` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+	MODIFY COLUMN `Description` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+	MODIFY COLUMN `Title` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';
+COMMIT;

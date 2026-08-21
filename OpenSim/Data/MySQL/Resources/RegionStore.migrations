@@ -585,3 +585,24 @@ COMMIT;
 BEGIN;
 ALTER TABLE `regionsettings` ADD COLUMN `TerrainPBROverrides` text default NULL;
 COMMIT;
+
+:VERSION 70         #----- prims free-text columns to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `prims`
+	MODIFY COLUMN `Name` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `Text` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `Description` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `SitName` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `TouchName` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL;
+COMMIT;
+
+:VERSION 71         #----- land/primitems free-text columns to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `land`
+	MODIFY COLUMN `Name` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `Description` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `MediaDescription` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '';
+ALTER TABLE `primitems`
+	MODIFY COLUMN `name` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `description` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL;
+COMMIT;

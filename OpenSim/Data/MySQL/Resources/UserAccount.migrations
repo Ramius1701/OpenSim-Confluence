@@ -46,5 +46,13 @@ BEGIN;
 
 ALTER TABLE `UserAccounts`
 	ADD COLUMN `TOSDate` INT UNSIGNED NULL AFTER `NameChanged`;
-	
+
+COMMIT;
+
+:VERSION 10         #----- DisplayName/FirstName/LastName to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `UserAccounts`
+	MODIFY COLUMN `DisplayName` varchar(255) CHARACTER SET utf8mb4 NOT NULL DEFAULT '',
+	MODIFY COLUMN `FirstName` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `LastName` varchar(64) CHARACTER SET utf8mb4 NOT NULL;
 COMMIT;

@@ -35,3 +35,9 @@ CREATE TABLE IF NOT EXISTS `land_auction_bids` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 COMMIT;
+
+:VERSION 2         #----- land_auctions ParcelName to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `land_auctions`
+	MODIFY COLUMN `ParcelName` varchar(255) CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

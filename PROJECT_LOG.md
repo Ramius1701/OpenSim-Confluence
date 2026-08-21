@@ -12068,3 +12068,125 @@ title that was already grid-aware but in the opposite word order
 for consistency. Verified zero `"Confluence Grid` literals remain
 (grep), and live: `/worldmap`, `/login`, `/features`, `/destinations`
 all now render `<title>Casperia Prime Dev - X</title>`.
+
+## Version string rebranded from "Nessie" to "OpenSim-Confluence", build
+## number restored (2026-08-22)
+
+User flagged `VersionInfo.cs`'s `GetVersionString` still hardcoding
+"Nessie" - upstream OpenSim's codename for the 0.9.3.x series - into
+the string every viewer sees (Help > About, console banner, login
+response). Changed to `"OpenSim-Confluence {version} {flavour}"`,
+`VersionNumber` itself untouched (still wired into Mono.Addins'
+`AddinRoot` compatibility check). `VERSIONINFO_VERSION_LENGTH` bumped
+to match the new default string's real length (already cosmetic
+console-alignment padding, not a protocol width, per the existing
+comment on the constant).
+
+Follow-up: user recalled a prior format that also included a build
+number - `"OpenSim-Confluence {version} (Build N) {flavour}"`. Rather
+than a separately-maintained counter, reused
+`GitVersionInfo.CommitsAheadOfMaster` (the same value
+`DisplayVersionNumber` already relies on, generated at build time from
+real git state) so the number can't drift out of sync with reality.
+`VERSIONINFO_VERSION_LENGTH` bumped again (30 -> 42) to the new
+default's length at the time (build 341 - this will keep growing, and
+the constant is approximate/cosmetic by design, not exact for every
+flavour).
+
+Both changes build-verified (full solution) and live-verified against
+Robust's real startup log: `OpenSimulator version: OpenSim-Confluence
+0.9.3.1 (Build 341) Dev`.
+
+## MySQL utf8mb3/latin1 legacy charset bug - emoji rejected across ~28
+## free-text columns (2026-08-22)
+
+User hit a real live error: a resident's hover text containing an
+emoji (`💊`) failed to save on Section 31 -
+`Incorrect string value: '\xF0\x9F\x92\x8A: ...' for column
+'prims'.'Text'` - and correctly suspected this wasn't isolated.
+
+**Root cause**: MySQL's `utf8` charset (used throughout the original
+OpenSim schema, inherited unchanged) is actually the old 3-byte-max
+`utf8mb3` - it cannot store any 4-byte UTF-8 character, which is what
+every emoji is. Confirmed via `information_schema.COLUMNS`: `prims`.
+`Text` was `utf8mb3` despite the database's own default being
+`utf8mb4`, meaning the column was explicitly created with the legacy
+charset rather than inheriting a safe default. Traced to the migration
+files themselves - `RegionStore.migrations`' original `CREATE TABLE
+prims` hardcodes `CHARACTER SET utf8` on `Name`/`Text`/`Description`/
+`SitName`/`TouchName`. Confirmed this is genuine upstream OpenSim
+technical debt, not Confluence-introduced, and confirmed PGSQL/SQLite
+don't share the problem at all (Postgres defaults to UTF8 encoding,
+SQLite has no charset concept) - MySQL-only.
+
+**Full audit**: queried every column in `casperia_dev` for a non-
+utf8mb4 charset - 33 migration files affected, essentially the entire
+original schema. Scoped deliberately rather than converting
+everything: only genuinely user-authored free-text columns (names,
+descriptions, messages, notices, profile text) get converted;
+UUID/token/URI/enum/identifier columns are left alone since emoji in a
+UUID is meaningless and widening those adds index-size risk for zero
+benefit. User confirmed this targeted scope via a direct choice
+(vs. "just prims" or "convert entire tables wholesale").
+
+**Fixed, 28 columns across 21 files**:
+- Core `.migrations` files (new `:VERSION N` step per file, `ALTER
+  TABLE ... MODIFY COLUMN ... CHARACTER SET utf8mb4`): `RegionStore`
+  (prims Name/Text/Description/SitName/TouchName - the reported bug -
+  plus land Name/Description/MediaDescription and primitems name/
+  description), `InventoryStore` (inventoryitems inventoryName/
+  inventoryDescription, inventoryfolders folderName), `Auctions`
+  (land_auctions ParcelName), `os_groups_Store` (group Charter/Name,
+  notice Message/Subject/FromName/AttachmentName, role Name/
+  Description/Title), `IM_Store` (offline IM Message), `News` (Title/
+  Body/Author), `StaticPage` (Title/Body), `SupportTickets` (Subject/
+  Message/UserName), `Events` (Title/Description), `Experience` (name/
+  description), `UserProfiles` (profile About/First/Skills/WantTo/
+  Languages text, picks name/description/originalname), `UserAccount`
+  (DisplayName/FirstName/LastName), `WebMessages` (Subject/Body),
+  `GridSettings` (SettingValue), `EstateStore` (EstateName),
+  `GridStore` (regionName), `MuteListStore` (MuteName), `UserAlias`
+  (Description), `Currency` (currency_transactions Description).
+- Gloebit's own migrations (separate tree, same pattern):
+  `GloebitTransactionsMySQL` (PayerName/PayeeName/PartName/
+  PartDescription), `GloebitSubscriptionsMySQL` (ObjectName/
+  Description).
+- The legacy MoneyServer addon's `transactions` table
+  (`description`/`commonName`/`objectName`) doesn't use the standard
+  `.migrations` format at all - it's a hand-rolled cascading revision
+  system inside `MySQLMoneyManager.cs` (`UpdateTransactionsTableN()`,
+  `COMMENT='Rev.N'`). Added `UpdateTransactionsTable12()` following the
+  exact same pattern as the existing Rev.11 step, wired into every
+  fallthrough case plus a new `case 12` for databases already at
+  Rev.12.
+
+**Real finding along the way**: while cross-checking the live DB's
+`migrations` tracker table against actual schema state before writing
+`UPDATE migrations SET version=...`, found `UserProfiles` already
+claimed version 6 despite `userprofile.profileAboutText` still being
+utf8mb3 - a stale tracker value with no real migration behind it
+(likely another instance of the live-clone artifact pattern, see
+[[casperia-live-data-clone-copy-artifacts]]). Didn't trust the tracker
+number blindly - verified actual column charset for all 28 target
+columns directly before applying anything, which is what caught this.
+Worth remembering: a region/Robust startup checks the tracker, not the
+schema, to decide whether to run a migration - if a tracker is stale
+high, a real fix in the `.migrations` file for that same version number
+would silently never run automatically. Manual live application (as
+done here) is required to actually reach a correct state in that case,
+not just deploying the DLL and restarting.
+
+**Live-verified**: all 28 target columns confirmed `utf8mb4` via
+`information_schema.COLUMNS` (zero remaining non-utf8mb4 matches
+against the full target list). Reproduced the exact reported bug's
+byte sequence (`0xF0 0x9F 0x92 0x8A` = 💊) as a real `UPDATE ... Text =
+'💊: emoji test'` against live `prims` - wrote and read back correctly,
+cleaned up after. Full solution build clean. Deployed (full DLL/PDB
+sync, 186 files, zero mismatches after) once the user shut down their
+own 14-region session running in parallel. Robust and Welcome_Center
+both restarted clean - migration log confirms `RegionStore data tables
+already up to date at revision 71`, `InventoryStore ... revision 9`,
+`IM_Store ... revision 6`, `os_groups_Store ... revision 5`, matching
+every manually-set tracker value exactly, zero new errors (the two
+recurring ones - a missing script asset, a bad mesh on one specific
+prim - are pre-existing and unrelated).

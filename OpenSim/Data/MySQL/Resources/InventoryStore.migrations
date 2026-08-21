@@ -46,3 +46,12 @@ BEGIN;
 ALTER TABLE `inventoryitems` ADD COLUMN `thumbnail` varchar(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
 ALTER TABLE `inventoryfolders` ADD COLUMN `thumbnail` varchar(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
 COMMIT;
+
+:VERSION 9         #----- inventory item/folder names to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `inventoryitems`
+	MODIFY COLUMN `inventoryName` varchar(64) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `inventoryDescription` varchar(128) CHARACTER SET utf8mb4 DEFAULT NULL;
+ALTER TABLE `inventoryfolders`
+	MODIFY COLUMN `folderName` varchar(64) CHARACTER SET utf8mb4 DEFAULT NULL;
+COMMIT;

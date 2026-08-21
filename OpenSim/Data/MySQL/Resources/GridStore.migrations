@@ -50,3 +50,9 @@ CREATE TABLE IF NOT EXISTS `regions` (
 
 COMMIT;
 
+:VERSION 11         #----- regions regionName to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `regions`
+	MODIFY COLUMN `regionName` varchar(128) CHARACTER SET utf8mb4 DEFAULT NULL;
+COMMIT;
+

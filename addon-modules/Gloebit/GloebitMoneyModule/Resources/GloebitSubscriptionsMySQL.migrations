@@ -20,3 +20,13 @@ CREATE TABLE IF NOT EXISTS `GloebitSubscriptions` (
 
 COMMIT;
 
+:VERSION 2		#----- ObjectName/Description to utf8mb4 (emoji/full-Unicode support)
+
+BEGIN;
+
+ALTER TABLE `GloebitSubscriptions`
+	MODIFY COLUMN `ObjectName` VARCHAR(64) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `Description` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL;
+
+COMMIT;
+

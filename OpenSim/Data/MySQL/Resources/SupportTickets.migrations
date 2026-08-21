@@ -20,3 +20,11 @@ CREATE TABLE IF NOT EXISTS `support_tickets` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 COMMIT;
+
+:VERSION 2         #----- support ticket Subject/Message/UserName to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `support_tickets`
+	MODIFY COLUMN `Subject` varchar(255) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `Message` text CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `UserName` varchar(255) CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

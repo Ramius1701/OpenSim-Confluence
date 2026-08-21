@@ -37,3 +37,9 @@ CREATE TABLE IF NOT EXISTS `currency_purchases` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 COMMIT;
+
+:VERSION 2         #----- currency_transactions Description to utf8mb4 (emoji/full-Unicode support)
+BEGIN;
+ALTER TABLE `currency_transactions`
+	MODIFY COLUMN `Description` varchar(255) CHARACTER SET utf8mb4 NOT NULL;
+COMMIT;

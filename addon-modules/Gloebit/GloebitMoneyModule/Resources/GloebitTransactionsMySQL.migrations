@@ -50,3 +50,15 @@ BEGIN;
 ALTER TABLE `GloebitTransactions` DROP COLUMN `LocalID`;
 
 COMMIT;
+
+:VERSION 3		#----- PartName/PartDescription/PayeeName/PayerName to utf8mb4 (emoji/full-Unicode support)
+
+BEGIN;
+
+ALTER TABLE `GloebitTransactions`
+	MODIFY COLUMN `PayerName` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `PayeeName` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+	MODIFY COLUMN `PartName` VARCHAR(64) CHARACTER SET utf8mb4 DEFAULT NULL,
+	MODIFY COLUMN `PartDescription` VARCHAR(128) CHARACTER SET utf8mb4 DEFAULT NULL;
+
+COMMIT;
