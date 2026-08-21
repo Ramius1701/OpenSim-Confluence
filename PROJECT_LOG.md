@@ -12036,3 +12036,32 @@ session running in parallel with this work, starting/stopping regions
 independently. Asked the user directly rather than killing their
 process unasked; they stopped it themselves, redeploy proceeded
 cleanly after.
+
+## Every page title said "Confluence Grid" regardless of the real grid
+## name (2026-08-22)
+
+User asked directly why the site said "Confluence Grid" instead of the
+actual grid's name. Real bug, and a systemic one: every single
+`WritePage`/`WriteAdaptivePage` title call across the whole connector
+(116 call sites) hardcoded the literal string `"Confluence Grid - X"`
+instead of the operator's configured name - even though the correct,
+admin-configurable value (`GetSetting("GridName", m_gridName)`, backed
+by `GridSettingsService` with an ini fallback) was already used
+correctly in page *bodies* (footer copyright, welcome banner, etc.)
+throughout the same file. Every real deployment of this software, not
+just Casperia, would show "Confluence Grid" in the browser tab on
+every single page regardless of its actual name.
+
+**Fix**: added a `PageTitle(string suffix)` helper
+(`GetSetting("GridName", m_gridName) + " - " + suffix`) and replaced
+all 116 hardcoded `"Confluence Grid - X"` literals with `PageTitle("X")`
+via a scripted regex pass (`"Confluence Grid - ([^"]*)"` ->
+`PageTitle("$1")`) rather than 116 manual edits - verified the pattern
+correctly handled the 3 titles built by concatenation too (e.g.
+`"Confluence Grid - " + account.Name` -> `PageTitle("") + account.Name`,
+which evaluates to the same correct string). Also normalized the one
+title that was already grid-aware but in the opposite word order
+(`"Destination Guide - " + GridName` -> `PageTitle("Destination Guide")`)
+for consistency. Verified zero `"Confluence Grid` literals remain
+(grep), and live: `/worldmap`, `/login`, `/features`, `/destinations`
+all now render `<title>Casperia Prime Dev - X</title>`.

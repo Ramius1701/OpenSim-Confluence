@@ -336,6 +336,18 @@ namespace OpenSim.Server.Handlers.WebInterface
             return value ?? defaultValue;
         }
 
+        // Every WritePage/WriteAdaptivePage title across this connector used
+        // to hardcode the literal "Confluence Grid" instead of the
+        // operator's actual configured name - harmless-looking, but every
+        // browser tab on every real deployment (not just this one) said
+        // "Confluence Grid" regardless of what grid it actually was. Same
+        // GetSetting("GridName", m_gridName) lookup the page bodies
+        // themselves already used correctly.
+        private string PageTitle(string suffix)
+        {
+            return GetSetting("GridName", m_gridName) + " - " + suffix;
+        }
+
         // [LoginService] WelcomeMessage supports a <USERNAME> token, correctly
         // substituted by LLLoginService's own post-login message
         // (LLLoginService.cs's ProcessLogin, where the real username is
@@ -1199,7 +1211,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 AppendViewerCard(sb, name, url, note);
             sb.Append("</div>");
 
-            WritePage(request, response, "Confluence Grid - Get a Viewer", sb.ToString());
+            WritePage(request, response, PageTitle("Get a Viewer"), sb.ToString());
         }
 
         // Bare-chrome getting-started page, meant to be opened from a
@@ -1376,7 +1388,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("document.querySelectorAll('.guide-nav-btn').forEach(function(b){b.classList.remove('active');});")
               .Append("el.classList.add('active');return false;}</script>");
 
-            WriteAdaptivePage(request, response, "Destination Guide - " + GetSetting("GridName", m_gridName), sb.ToString());
+            WriteAdaptivePage(request, response, PageTitle("Destination Guide"), sb.ToString());
         }
 
         // Only ever appended for a real viewer panel (see HandleGuide) -
@@ -1673,7 +1685,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<h1><i class=\"bi bi-signpost-2\"></i> Destinations</h1>")
               .Append("<p>Discover places worth visiting across the grid.</p>");
             AppendDestinationTabs(sb);
-            WritePage(request, response, "Confluence Grid - Destinations", sb.ToString());
+            WritePage(request, response, PageTitle("Destinations"), sb.ToString());
         }
 
         // World Map - the "fill in blanks" counterpart to
@@ -1720,7 +1732,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_GridService == null)
             {
                 sb.Append("<p>Grid service is not available.</p>");
-                WritePage(request, response, "Confluence Grid - World Map", sb.ToString());
+                WritePage(request, response, PageTitle("World Map"), sb.ToString());
                 return;
             }
 
@@ -1728,7 +1740,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (regions.Count == 0)
             {
                 sb.Append("<p>No regions are online yet.</p>");
-                WritePage(request, response, "Confluence Grid - World Map", sb.ToString());
+                WritePage(request, response, PageTitle("World Map"), sb.ToString());
                 return;
             }
 
@@ -1794,7 +1806,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             sb.Append("</table>");
 
-            WritePage(request, response, "Confluence Grid - World Map", sb.ToString());
+            WritePage(request, response, PageTitle("World Map"), sb.ToString());
         }
 
         // Web Profile - the biggest single gap found in the full WhiteCore-Dev
@@ -1856,7 +1868,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (account == null)
             {
                 response.StatusCode = (int)HttpStatusCode.NotFound;
-                WritePage(request, response, "Confluence Grid - Profile", "<h1>Profile not found</h1><p>No resident matches that profile link.</p>");
+                WritePage(request, response, PageTitle("Profile"), "<h1>Profile not found</h1><p>No resident matches that profile link.</p>");
                 return;
             }
 
@@ -2063,7 +2075,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            WritePage(request, response, "Confluence Grid - " + account.Name, sb.ToString());
+            WritePage(request, response, PageTitle("") + account.Name, sb.ToString());
         }
 
         // Offline Messages - real counterpart to OpenSim-Grid-Interface's
@@ -2101,7 +2113,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_OfflineIMService == null)
             {
                 sb.Append("<p class=\"error\">Offline messaging is not available on this grid.</p>");
-                WritePage(request, response, "Confluence Grid - Offline Messages", sb.ToString());
+                WritePage(request, response, PageTitle("Offline Messages"), sb.ToString());
                 return;
             }
 
@@ -2125,7 +2137,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                   .Append("<button type=\"submit\" onclick=\"return confirm('Clear all offline messages?');\">Clear All</button></form>");
             }
 
-            WritePage(request, response, "Confluence Grid - Offline Messages", sb.ToString());
+            WritePage(request, response, PageTitle("Offline Messages"), sb.ToString());
         }
 
         // Resident-to-resident web mail (inbox/sent/compose) - real
@@ -2162,7 +2174,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_MessagingService == null)
             {
                 sb.Append("<p class=\"error\">Messaging is not available on this grid.</p>");
-                WritePage(request, response, "Confluence Grid - Inbox", sb.ToString());
+                WritePage(request, response, PageTitle("Inbox"), sb.ToString());
                 return;
             }
 
@@ -2189,7 +2201,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</table>");
             }
 
-            WritePage(request, response, "Confluence Grid - Inbox", sb.ToString());
+            WritePage(request, response, PageTitle("Inbox"), sb.ToString());
         }
 
         private void HandleMessagesSent(IOSHttpRequest request, IOSHttpResponse response)
@@ -2208,7 +2220,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_MessagingService == null)
             {
                 sb.Append("<p class=\"error\">Messaging is not available on this grid.</p>");
-                WritePage(request, response, "Confluence Grid - Sent", sb.ToString());
+                WritePage(request, response, PageTitle("Sent"), sb.ToString());
                 return;
             }
 
@@ -2235,7 +2247,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</table>");
             }
 
-            WritePage(request, response, "Confluence Grid - Sent", sb.ToString());
+            WritePage(request, response, PageTitle("Sent"), sb.ToString());
         }
 
         private void HandleMessagesCompose(IOSHttpRequest request, IOSHttpResponse response)
@@ -2259,7 +2271,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_MessagingService == null || m_UserAccountService == null)
             {
                 sb.Append("<p class=\"error\">Messaging is not available on this grid.</p>");
-                WritePage(request, response, "Confluence Grid - Compose", sb.ToString());
+                WritePage(request, response, PageTitle("Compose"), sb.ToString());
                 return;
             }
 
@@ -2302,7 +2314,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<button type=\"submit\"><i class=\"bi bi-send\"></i> Send Message</button>");
             sb.Append("</form>");
 
-            WritePage(request, response, "Confluence Grid - Compose", sb.ToString());
+            WritePage(request, response, PageTitle("Compose"), sb.ToString());
         }
 
         private void HandleMessagesSend(IOSHttpRequest request, IOSHttpResponse response)
@@ -2359,7 +2371,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_MessagingService == null || !UUID.TryParse(idParam, out UUID id))
             {
                 response.StatusCode = (int)HttpStatusCode.NotFound;
-                WritePage(request, response, "Confluence Grid - Message", "<h1>Message not found</h1>");
+                WritePage(request, response, PageTitle("Message"), "<h1>Message not found</h1>");
                 return;
             }
 
@@ -2367,7 +2379,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (message == null || (message.SenderID != session.PrincipalID && message.ReceiverID != session.PrincipalID))
             {
                 response.StatusCode = (int)HttpStatusCode.NotFound;
-                WritePage(request, response, "Confluence Grid - Message", "<h1>Message not found</h1>");
+                WritePage(request, response, PageTitle("Message"), "<h1>Message not found</h1>");
                 return;
             }
 
@@ -2389,7 +2401,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash\"></i> Delete</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/messages").Append(fromTab == "sent" ? "/sent" : string.Empty).Append("\">Back</a></p>");
 
-            WritePage(request, response, "Confluence Grid - Message", sb.ToString());
+            WritePage(request, response, PageTitle("Message"), sb.ToString());
         }
 
         private void HandleMessagesDelete(IOSHttpRequest request, IOSHttpResponse response)
@@ -2436,7 +2448,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_CurrencyService == null)
             {
                 sb.Append("<p class=\"error\">Currency service is not available on this grid.</p>");
-                WritePage(request, response, "Confluence Grid - Economy", sb.ToString());
+                WritePage(request, response, PageTitle("Economy"), sb.ToString());
                 return;
             }
 
@@ -2529,7 +2541,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</table>");
             }
 
-            WritePage(request, response, "Confluence Grid - Economy", sb.ToString());
+            WritePage(request, response, PageTitle("Economy"), sb.ToString());
         }
 
         // Friends list - the second "genuinely new ground" item from the
@@ -2559,7 +2571,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_FriendsService == null)
             {
                 sb.Append("<p>Friends service is not available.</p>");
-                WritePage(request, response, "Confluence Grid - Friends", sb.ToString());
+                WritePage(request, response, PageTitle("Friends"), sb.ToString());
                 return;
             }
 
@@ -2567,7 +2579,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (friends == null || friends.Length == 0)
             {
                 sb.Append("<p>You haven't added any friends yet. Use the Friends panel in your viewer to send a friend request.</p>");
-                WritePage(request, response, "Confluence Grid - Friends", sb.ToString());
+                WritePage(request, response, PageTitle("Friends"), sb.ToString());
                 return;
             }
 
@@ -2593,7 +2605,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             sb.Append("</table>");
 
-            WritePage(request, response, "Confluence Grid - Friends", sb.ToString());
+            WritePage(request, response, PageTitle("Friends"), sb.ToString());
         }
 
         // Self-service account pages - "genuinely new ground" items #3/#4
@@ -2616,7 +2628,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, "Confluence Grid - Change Password", ChangePasswordForm(null));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm(null));
                 return;
             }
 
@@ -2627,17 +2639,17 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword))
             {
-                WritePage(request, response, "Confluence Grid - Change Password", ChangePasswordForm("All fields are required."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("All fields are required."));
                 return;
             }
             if (newPassword != confirmPassword)
             {
-                WritePage(request, response, "Confluence Grid - Change Password", ChangePasswordForm("New passwords do not match."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("New passwords do not match."));
                 return;
             }
             if (newPassword.Length < 6)
             {
-                WritePage(request, response, "Confluence Grid - Change Password", ChangePasswordForm("New password must be at least 6 characters."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("New password must be at least 6 characters."));
                 return;
             }
 
@@ -2647,7 +2659,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string authToken = m_AuthenticationService?.Authenticate(session.PrincipalID, Util.Md5Hash(currentPassword), 30);
             if (string.IsNullOrEmpty(authToken))
             {
-                WritePage(request, response, "Confluence Grid - Change Password", ChangePasswordForm("Current password is incorrect."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("Current password is incorrect."));
                 return;
             }
 
@@ -2655,11 +2667,11 @@ namespace OpenSim.Server.Handlers.WebInterface
             // same convention HandleRegister/HandleResetPassword already use.
             if (m_AuthenticationService == null || !m_AuthenticationService.SetPassword(session.PrincipalID, newPassword))
             {
-                WritePage(request, response, "Confluence Grid - Change Password", ChangePasswordForm("Could not update your password. Please try again."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("Could not update your password. Please try again."));
                 return;
             }
 
-            WritePage(request, response, "Confluence Grid - Change Password",
+            WritePage(request, response, PageTitle("Change Password"),
                     "<h1>Change Password</h1><p>Your password has been updated.</p><p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>");
         }
 
@@ -2694,13 +2706,13 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, "Confluence Grid - Delete Account", DeleteAccountForm(null));
+                WritePage(request, response, PageTitle("Delete Account"), DeleteAccountForm(null));
                 return;
             }
 
             if (m_UserAccountService == null || m_AuthenticationService == null)
             {
-                WritePage(request, response, "Confluence Grid - Delete Account", DeleteAccountForm("Account deletion is not available right now."));
+                WritePage(request, response, PageTitle("Delete Account"), DeleteAccountForm("Account deletion is not available right now."));
                 return;
             }
 
@@ -2710,14 +2722,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             string authToken = m_AuthenticationService.Authenticate(session.PrincipalID, Util.Md5Hash(currentPassword), 30);
             if (string.IsNullOrEmpty(authToken))
             {
-                WritePage(request, response, "Confluence Grid - Delete Account", DeleteAccountForm("Current password is incorrect."));
+                WritePage(request, response, PageTitle("Delete Account"), DeleteAccountForm("Current password is incorrect."));
                 return;
             }
 
             UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, session.PrincipalID);
             if (account == null)
             {
-                WritePage(request, response, "Confluence Grid - Delete Account", DeleteAccountForm("Account not found."));
+                WritePage(request, response, PageTitle("Delete Account"), DeleteAccountForm("Account not found."));
                 return;
             }
 
@@ -2729,7 +2741,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 m_sessions.TryRemove(token, out _);
             ClearSessionCookie(response);
 
-            WritePage(request, response, "Confluence Grid - Delete Account",
+            WritePage(request, response, PageTitle("Delete Account"),
                     "<h1>Account Deleted</h1><p>" + Html(result) + " You have been logged out. "
                     + "If this was a mistake, contact a grid administrator - the account can be recovered before its data is otherwise cleaned up.</p>"
                     + "<p><a href=\"" + BasePath + "/login\">Back to login</a></p>");
@@ -2767,7 +2779,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, "Confluence Grid - Change Email", ChangeEmailForm(account.Email, null));
+                WritePage(request, response, PageTitle("Change Email"), ChangeEmailForm(account.Email, null));
                 return;
             }
 
@@ -2776,18 +2788,18 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (string.IsNullOrEmpty(newEmail) || !newEmail.Contains("@"))
             {
-                WritePage(request, response, "Confluence Grid - Change Email", ChangeEmailForm(newEmail, "Enter a valid email address."));
+                WritePage(request, response, PageTitle("Change Email"), ChangeEmailForm(newEmail, "Enter a valid email address."));
                 return;
             }
 
             account.Email = newEmail;
             if (!m_UserAccountService.StoreUserAccount(account))
             {
-                WritePage(request, response, "Confluence Grid - Change Email", ChangeEmailForm(newEmail, "Could not update your email. Please try again."));
+                WritePage(request, response, PageTitle("Change Email"), ChangeEmailForm(newEmail, "Could not update your email. Please try again."));
                 return;
             }
 
-            WritePage(request, response, "Confluence Grid - Change Email",
+            WritePage(request, response, PageTitle("Change Email"),
                     "<h1>Change Email</h1><p>Your email address has been updated.</p><p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>");
         }
 
@@ -2863,7 +2875,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_UserProfilesService == null || m_UserAccountService == null)
             {
-                WritePage(request, response, "Confluence Grid - Partner", "<h1>Partner</h1><p>Profiles service is not available.</p>");
+                WritePage(request, response, PageTitle("Partner"), "<h1>Partner</h1><p>Profiles service is not available.</p>");
                 return;
             }
 
@@ -2934,7 +2946,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a></p>");
 
-            WritePage(request, response, "Confluence Grid - Partner", sb.ToString());
+            WritePage(request, response, PageTitle("Partner"), sb.ToString());
         }
 
         private string ApplyPartnerAction(UUID myId, string action, string targetName)
@@ -3041,7 +3053,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_CurrencyService == null)
             {
-                WritePage(request, response, "Confluence Grid - My Transactions",
+                WritePage(request, response, PageTitle("My Transactions"),
                         "<h1>My Transactions</h1><p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p><p>Currency service is not available.</p>");
                 return;
             }
@@ -3117,7 +3129,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<p>" + tabLink("transfers", "Transfers") + " | " + tabLink("purchases", "Purchases") + "</p>"
                     + rows.ToString() + prevLink + nextLink;
 
-            WritePage(request, response, "Confluence Grid - My Transactions", body);
+            WritePage(request, response, PageTitle("My Transactions"), body);
         }
 
         // My Classifieds - resident self-service create/edit/delete,
@@ -3143,7 +3155,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_UserProfilesService == null)
             {
-                WritePage(request, response, "Confluence Grid - My Classifieds",
+                WritePage(request, response, PageTitle("My Classifieds"),
                         "<h1>My Classifieds</h1><p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p><p>Profiles service is not available.</p>");
                 return;
             }
@@ -3212,7 +3224,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append(editing != null ? " <a href=\"" + BasePath + "/myclassifieds\">Cancel</a>" : string.Empty)
               .Append("</form>");
 
-            WritePage(request, response, "Confluence Grid - My Classifieds", sb.ToString());
+            WritePage(request, response, PageTitle("My Classifieds"), sb.ToString());
         }
 
         private void HandleMyClassifiedsSave(IOSHttpRequest request, IOSHttpResponse response)
@@ -3317,7 +3329,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_EventsService == null)
             {
-                WritePage(request, response, "Confluence Grid - My Events",
+                WritePage(request, response, PageTitle("My Events"),
                         "<h1>My Events</h1><p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p><p>Events service is not available.</p>");
                 return;
             }
@@ -3389,7 +3401,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append(editing != null ? " <a href=\"" + BasePath + "/myevents\">Cancel</a>" : string.Empty)
               .Append("</form>");
 
-            WritePage(request, response, "Confluence Grid - My Events", sb.ToString());
+            WritePage(request, response, PageTitle("My Events"), sb.ToString());
         }
 
         private void HandleMyEventsSave(IOSHttpRequest request, IOSHttpResponse response)
@@ -3671,7 +3683,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<p><a href=\"").Append(BasePath).Append("/viewers\"><i class=\"bi bi-display\"></i> Get a viewer to explore</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-map\"></i> See where to go</a></p></div>");
 
-            WritePage(request, response, "Confluence Grid - Features", sb.ToString());
+            WritePage(request, response, PageTitle("Features"), sb.ToString());
         }
 
         // Both sections are entirely admin-authored (Grid Settings -> Features
@@ -3894,7 +3906,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</div>");
                 sb.Append("</div>");
 
-                WriteAdaptivePage(request, response, "Confluence Grid - Search", sb.ToString());
+                WriteAdaptivePage(request, response, PageTitle("Search"), sb.ToString());
                 return;
             }
 
@@ -4007,7 +4019,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             else
                 sb.Append(resultsSb);
 
-            WriteAdaptivePage(request, response, "Confluence Grid - Search: " + Html(query), sb.ToString());
+            WriteAdaptivePage(request, response, PageTitle("Search: ") + Html(query), sb.ToString());
         }
 
         // Debounced autocomplete against /search/suggest, backed by real
@@ -4180,7 +4192,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_SearchService == null)
             {
                 sb.Append("<p class=\"error\">Search service is not available right now.</p>");
-                WritePage(request, response, "Confluence Grid - Land for Sale", sb.ToString());
+                WritePage(request, response, PageTitle("Land for Sale"), sb.ToString());
                 return;
             }
 
@@ -4238,7 +4250,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            WritePage(request, response, "Confluence Grid - Land for Sale", sb.ToString());
+            WritePage(request, response, PageTitle("Land for Sale"), sb.ToString());
         }
 
         // Land auction web-bidding (2026-08-12) - the real viewer has no
@@ -4260,7 +4272,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_AuctionService == null)
             {
                 sb.Append("<p class=\"error\">Auctions are not available right now.</p>");
-                WritePage(request, response, "Confluence Grid - Land Auctions", sb.ToString());
+                WritePage(request, response, PageTitle("Land Auctions"), sb.ToString());
                 return;
             }
 
@@ -4290,7 +4302,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</div>");
             }
 
-            WritePage(request, response, "Confluence Grid - Land Auctions", sb.ToString());
+            WritePage(request, response, PageTitle("Land Auctions"), sb.ToString());
         }
 
         private void HandleAuctionBidPage(IOSHttpRequest request, IOSHttpResponse response)
@@ -4299,7 +4311,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (string.IsNullOrEmpty(idParam) || !UUID.TryParse(idParam, out UUID auctionId) || m_AuctionService == null)
             {
                 response.StatusCode = (int)HttpStatusCode.NotFound;
-                WritePage(request, response, "Confluence Grid - Auction", "<h1>Auction not found</h1>");
+                WritePage(request, response, PageTitle("Auction"), "<h1>Auction not found</h1>");
                 return;
             }
 
@@ -4362,7 +4374,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (auction == null)
             {
                 response.StatusCode = (int)HttpStatusCode.NotFound;
-                WritePage(request, response, "Confluence Grid - Auction", "<h1>Auction not found</h1>");
+                WritePage(request, response, PageTitle("Auction"), "<h1>Auction not found</h1>");
                 return;
             }
 
@@ -4417,7 +4429,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</table>");
             }
 
-            WritePage(request, response, "Confluence Grid - " + auction.ParcelName, sb.ToString());
+            WritePage(request, response, PageTitle("") + auction.ParcelName, sb.ToString());
         }
 
         private static void AppendLandBucket(StringBuilder sb, string icon, string label, string param, int count)
@@ -4548,7 +4560,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<a href=\"").Append(BasePath).Append("/search\"><i class=\"bi bi-search\"></i> Search the grid</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-signpost-2\"></i> Destinations</a></p></div>");
 
-            WritePage(request, response, "Confluence Grid - Status", sb.ToString());
+            WritePage(request, response, PageTitle("Status"), sb.ToString());
         }
 
         private void HandleSupport(IOSHttpRequest request, IOSHttpResponse response)
@@ -4667,7 +4679,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<p class=\"news-meta\">Log in to see your ticket history.</p>");
             }
 
-            WritePage(request, response, "Confluence Grid - Support", sb.ToString());
+            WritePage(request, response, PageTitle("Support"), sb.ToString());
         }
 
         private void HandleAdminSupport(IOSHttpRequest request, IOSHttpResponse response)
@@ -4681,13 +4693,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Support Queue", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Support Queue"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_SupportTicketService == null)
             {
-                WritePage(request, response, "Confluence Grid - Support Queue",
+                WritePage(request, response, PageTitle("Support Queue"),
                         "<h1>Support Queue</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Support ticket service is not available.</p>");
                 return;
             }
@@ -4722,7 +4734,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</table>");
             }
 
-            WritePage(request, response, "Confluence Grid - Support Queue", sb.ToString());
+            WritePage(request, response, PageTitle("Support Queue"), sb.ToString());
         }
 
         private void HandleAdminSupportStatus(IOSHttpRequest request, IOSHttpResponse response)
@@ -5020,7 +5032,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(sb, BasePath + "/search", "bi-search", "Search the Grid", "Find people, places, events and classifieds");
             sb.Append("</div>");
 
-            WritePage(request, response, "Confluence Grid - Dashboard", sb.ToString());
+            WritePage(request, response, PageTitle("Dashboard"), sb.ToString());
         }
 
         private static void AppendDashboardLink(StringBuilder sb, string href, string icon, string title, string description)
@@ -5045,7 +5057,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Admin", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Admin"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
@@ -5081,7 +5093,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + message
                     + adminNav.ToString();
 
-            WritePage(request, response, "Confluence Grid - Admin", body);
+            WritePage(request, response, PageTitle("Admin"), body);
         }
 
         // Region Management - split out of the Grid Administration overview
@@ -5103,7 +5115,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Region Management", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Region Management"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
@@ -5217,7 +5229,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + searchForm
                     + rows.ToString();
 
-            WritePage(request, response, "Confluence Grid - Region Management", body);
+            WritePage(request, response, PageTitle("Region Management"), body);
         }
 
         // Grid-wide totals for admins - task #21 from the WhiteCore-Dev
@@ -5246,7 +5258,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Statistics", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Statistics"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
@@ -5301,7 +5313,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
                     + rows.ToString();
 
-            WritePage(request, response, "Confluence Grid - Statistics", body);
+            WritePage(request, response, PageTitle("Statistics"), body);
         }
 
         // Login-screen/home-page news feed admin (task #23 from the
@@ -5320,13 +5332,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - News", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("News"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_NewsService == null)
             {
-                WritePage(request, response, "Confluence Grid - News",
+                WritePage(request, response, PageTitle("News"),
                         "<h1>News Feed</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>News service is not available.</p>");
                 return;
             }
@@ -5370,7 +5382,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + (editing != null ? " <a href=\"" + BasePath + "/admin/news\">Cancel</a>" : string.Empty)
                     + "</form>";
 
-            WritePage(request, response, "Confluence Grid - News", body);
+            WritePage(request, response, PageTitle("News"), body);
         }
 
         private void HandleAdminNewsSave(IOSHttpRequest request, IOSHttpResponse response)
@@ -5446,13 +5458,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Events", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Events"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_EventsService == null)
             {
-                WritePage(request, response, "Confluence Grid - Events",
+                WritePage(request, response, PageTitle("Events"),
                         "<h1>Events</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Events service is not available.</p>");
                 return;
             }
@@ -5514,7 +5526,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + (editing != null ? " <a href=\"" + BasePath + "/admin/events\">Cancel</a>" : string.Empty)
                     + "</form>";
 
-            WritePage(request, response, "Confluence Grid - Events", body);
+            WritePage(request, response, PageTitle("Events"), body);
         }
 
         private void HandleAdminEventsSave(IOSHttpRequest request, IOSHttpResponse response)
@@ -5655,13 +5667,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Pages", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Pages"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_StaticPageService == null)
             {
-                WritePage(request, response, "Confluence Grid - Pages",
+                WritePage(request, response, PageTitle("Pages"),
                         "<h1>Static Pages</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Static page service is not available.</p>");
                 return;
             }
@@ -5720,7 +5732,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + (editing != null ? " <a href=\"" + BasePath + "/admin/pages\">Cancel</a>" : string.Empty)
                     + "</form>";
 
-            WritePage(request, response, "Confluence Grid - Pages", body);
+            WritePage(request, response, PageTitle("Pages"), body);
         }
 
         private void HandleAdminPagesSave(IOSHttpRequest request, IOSHttpResponse response)
@@ -5805,13 +5817,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Settings", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Settings"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_GridSettingsService == null)
             {
-                WritePage(request, response, "Confluence Grid - Settings",
+                WritePage(request, response, PageTitle("Settings"),
                         "<h1>Grid Settings</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Grid settings service is not available.</p>");
                 return;
             }
@@ -5877,7 +5889,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "</form>"
                     + AnnouncementPresetScript;
 
-            WritePage(request, response, "Confluence Grid - Settings", body);
+            WritePage(request, response, PageTitle("Settings"), body);
         }
 
         // Client-side only - just pre-fills the two text fields below so an
@@ -5961,13 +5973,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Console", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Console"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (string.IsNullOrEmpty(m_webConsoleSecret))
             {
-                WritePage(request, response, "Confluence Grid - Console",
+                WritePage(request, response, PageTitle("Console"),
                         "<h1>Region Console</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
                         + "<p>Web console is not configured on this grid. Set <code>[WebConsole] SharedSecret</code> "
                         + "in Robust's config, and matching <code>[WebConsole] Enabled = true</code> / "
@@ -5977,7 +5989,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_GridService == null)
             {
-                WritePage(request, response, "Confluence Grid - Console",
+                WritePage(request, response, PageTitle("Console"),
                         "<h1>Region Console</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Grid service is not available.</p>");
                 return;
             }
@@ -6012,7 +6024,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "</form>"
                     + outputBlock;
 
-            WritePage(request, response, "Confluence Grid - Console", body);
+            WritePage(request, response, PageTitle("Console"), body);
         }
 
         private void HandleAdminConsoleRun(IOSHttpRequest request, IOSHttpResponse response)
@@ -6194,13 +6206,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Abuse Reports", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Abuse Reports"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_AbuseReportsService == null)
             {
-                WritePage(request, response, "Confluence Grid - Abuse Reports",
+                WritePage(request, response, PageTitle("Abuse Reports"),
                         "<h1>Abuse Reports</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Abuse Reports service is not available.</p>");
                 return;
             }
@@ -6284,7 +6296,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         + nextLink;
             }
 
-            WritePage(request, response, "Confluence Grid - Abuse Reports", body);
+            WritePage(request, response, PageTitle("Abuse Reports"), body);
         }
 
         // Abuse report screenshots arrive over the viewer's
@@ -6348,13 +6360,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Transactions", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Transactions"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_CurrencyService == null)
             {
-                WritePage(request, response, "Confluence Grid - Transactions",
+                WritePage(request, response, PageTitle("Transactions"),
                         "<h1>Purchases &amp; Transactions</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Currency service is not available.</p>");
                 return;
             }
@@ -6478,7 +6490,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + prevLink
                     + nextLink;
 
-            WritePage(request, response, "Confluence Grid - Transactions", body);
+            WritePage(request, response, PageTitle("Transactions"), body);
         }
 
         private string ResolveAgentName(UUID agentID)
@@ -6522,7 +6534,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - User Management", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("User Management"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
@@ -6737,7 +6749,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         + "</form>";
             }
 
-            WritePage(request, response, "Confluence Grid - User Management", body);
+            WritePage(request, response, PageTitle("User Management"), body);
         }
 
         private void HandleAdminUsersSetLevel(IOSHttpRequest request, IOSHttpResponse response)
@@ -7244,13 +7256,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!session.IsAdmin)
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
-                WritePage(request, response, "Confluence Grid - Groups Management", "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                WritePage(request, response, PageTitle("Groups Management"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
                 return;
             }
 
             if (m_GroupsSearchService == null)
             {
-                WritePage(request, response, "Confluence Grid - Groups Management",
+                WritePage(request, response, PageTitle("Groups Management"),
                         "<h1>Groups Management</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Groups service is not available.</p>");
                 return;
             }
@@ -7300,7 +7312,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + message
                     + rows.ToString();
 
-            WritePage(request, response, "Confluence Grid - Groups Management", body);
+            WritePage(request, response, PageTitle("Groups Management"), body);
         }
 
         private void HandleAdminGroupsUpdate(IOSHttpRequest request, IOSHttpResponse response)
@@ -7365,7 +7377,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_EstateDataService == null)
             {
-                WritePage(request, response, "Confluence Grid - Estate Management",
+                WritePage(request, response, PageTitle("Estate Management"),
                         "<h1>Estate Management</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Estate service is not available.</p>");
                 return;
             }
@@ -7390,7 +7402,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 else if (!CanManageEstate(session, estate))
                 {
                     response.StatusCode = (int)HttpStatusCode.Forbidden;
-                    WritePage(request, response, "Confluence Grid - Estate Management", "<h1>Not authorized</h1><p>You don't manage this estate.</p>");
+                    WritePage(request, response, PageTitle("Estate Management"), "<h1>Not authorized</h1><p>You don't manage this estate.</p>");
                     return;
                 }
                 else
@@ -7480,7 +7492,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             : string.Empty);
             }
 
-            WritePage(request, response, "Confluence Grid - Estate Management", body);
+            WritePage(request, response, PageTitle("Estate Management"), body);
         }
 
         private void HandleAdminEstatesUpdate(IOSHttpRequest request, IOSHttpResponse response)
@@ -8004,7 +8016,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + message
                     + rows.ToString();
 
-            WritePage(request, response, "Confluence Grid - My Regions", body);
+            WritePage(request, response, PageTitle("My Regions"), body);
         }
 
         // GetEstatesByOwner + GetRegions rather than iterating every region on
@@ -8232,7 +8244,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + message
                     + rows.ToString();
 
-            WritePage(request, response, "Confluence Grid - My Land", body);
+            WritePage(request, response, PageTitle("My Land"), body);
         }
 
         private void HandleMyLandToggle(IOSHttpRequest request, IOSHttpResponse response)
@@ -8325,7 +8337,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "</form>"
                     + "<p class=\"news-meta\">Saves to a configured folder on the server. Restoring from a browser-uploaded IAR isn't offered here - same reasoning as OAR restore above, see the My Regions page.</p>";
 
-            WritePage(request, response, "Confluence Grid - My Inventory", body);
+            WritePage(request, response, PageTitle("My Inventory"), body);
         }
 
         // IAR isn't tied to any specific region's content the way OAR is - any
@@ -8440,7 +8452,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     return;
                 }
 
-                WritePage(request, response, "Confluence Grid - Login", LoginForm(firstName, lastName, error));
+                WritePage(request, response, PageTitle("Login"), LoginForm(firstName, lastName, error));
                 return;
             }
 
@@ -8450,7 +8462,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            WritePage(request, response, "Confluence Grid - Login", LoginForm(string.Empty, string.Empty, null));
+            WritePage(request, response, PageTitle("Login"), LoginForm(string.Empty, string.Empty, null));
         }
 
         // Public self-service account creation, linked from the home page and
@@ -8476,7 +8488,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (GetSetting("AllowRegistration", "true") != "true")
             {
-                WritePage(request, response, "Confluence Grid - Sign Up",
+                WritePage(request, response, PageTitle("Sign Up"),
                         "<h1>Sign Up</h1><p>New account registration is currently closed on this grid.</p>"
                         + "<p><a href=\"" + BasePath + "/login\">Back to login</a></p>");
                 return;
@@ -8484,7 +8496,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, "Confluence Grid - Sign Up", RegisterForm(string.Empty, string.Empty, string.Empty, null));
+                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(string.Empty, string.Empty, string.Empty, null));
                 return;
             }
 
@@ -8498,7 +8510,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string error = ValidateRegistration(firstName, lastName, password, confirmPassword);
             if (error != null)
             {
-                WritePage(request, response, "Confluence Grid - Sign Up", RegisterForm(firstName, lastName, email, error));
+                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, error));
                 return;
             }
 
@@ -8512,7 +8524,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             account.UserFlags = AccountMembershipHelper.SetMembershipType(account.UserFlags, AccountMembershipHelper.TrialMember);
             if (!m_UserAccountService.StoreUserAccount(account))
             {
-                WritePage(request, response, "Confluence Grid - Sign Up", RegisterForm(firstName, lastName, email, "Could not create that account. Please try again."));
+                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, "Could not create that account. Please try again."));
                 return;
             }
 
@@ -8555,7 +8567,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, "Confluence Grid - Forgot Password", ForgotPasswordForm(null, null));
+                WritePage(request, response, PageTitle("Forgot Password"), ForgotPasswordForm(null, null));
                 return;
             }
 
@@ -8563,7 +8575,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (!m_smtpEnabled || m_UserAccountService == null || m_AuthenticationService == null)
             {
-                WritePage(request, response, "Confluence Grid - Forgot Password",
+                WritePage(request, response, PageTitle("Forgot Password"),
                         ForgotPasswordForm(null, "Password reset is not available on this grid right now."));
                 return;
             }
@@ -8592,7 +8604,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // No else branch - same generic message either way, see comment above.
             }
 
-            WritePage(request, response, "Confluence Grid - Forgot Password", "<h1>Forgot Password</h1><p>" + Html(genericMessage) + "</p>"
+            WritePage(request, response, PageTitle("Forgot Password"), "<h1>Forgot Password</h1><p>" + Html(genericMessage) + "</p>"
                     + "<p><a href=\"" + BasePath + "/login\">Back to login</a></p>");
         }
 
@@ -8613,7 +8625,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     || resetToken.Expires <= DateTime.UtcNow)
             {
                 m_resetTokens.TryRemove(token, out _);
-                WritePage(request, response, "Confluence Grid - Reset Password",
+                WritePage(request, response, PageTitle("Reset Password"),
                         "<h1>Reset Password</h1><p class=\"error\">This password reset link is invalid or has expired.</p>"
                         + "<p><a href=\"" + BasePath + "/forgot-password\">Request a new one</a></p>");
                 return;
@@ -8621,7 +8633,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, "Confluence Grid - Reset Password", ResetPasswordForm(token, null));
+                WritePage(request, response, PageTitle("Reset Password"), ResetPasswordForm(token, null));
                 return;
             }
 
@@ -8630,12 +8642,12 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (string.IsNullOrEmpty(password) || password.Length < 6)
             {
-                WritePage(request, response, "Confluence Grid - Reset Password", ResetPasswordForm(token, "Password must be at least 6 characters."));
+                WritePage(request, response, PageTitle("Reset Password"), ResetPasswordForm(token, "Password must be at least 6 characters."));
                 return;
             }
             if (password != confirmPassword)
             {
-                WritePage(request, response, "Confluence Grid - Reset Password", ResetPasswordForm(token, "Passwords do not match."));
+                WritePage(request, response, PageTitle("Reset Password"), ResetPasswordForm(token, "Passwords do not match."));
                 return;
             }
 
@@ -8643,7 +8655,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_AuthenticationService == null || !m_AuthenticationService.SetPassword(resetToken.PrincipalID, password))
             {
-                WritePage(request, response, "Confluence Grid - Reset Password",
+                WritePage(request, response, PageTitle("Reset Password"),
                         "<h1>Reset Password</h1><p class=\"error\">Could not update your password. Please request a new reset link.</p>");
                 return;
             }
