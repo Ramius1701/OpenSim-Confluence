@@ -77,17 +77,18 @@ namespace OpenSim
 
         public static string GetVersionString(string versionNumber, Flavour flavour)
         {
-            string versionString = $"OpenSim-Confluence {versionNumber} {flavour}";
+            string versionString = $"OpenSim-Confluence {versionNumber} (Build {GitVersionInfo.CommitsAheadOfMaster}) {flavour}";
             return versionString.PadRight(VERSIONINFO_VERSION_LENGTH);
         }
 
-        // Matches the default (Dev-flavour) string's actual length -
-        // "OpenSim-Confluence 0.9.3.1 Dev" is 30 chars. Not a wire-protocol
-        // width requirement (a Release/Post_Fixes build already exceeds
-        // it - PadRight only pads shorter strings, it doesn't truncate),
-        // just cosmetic alignment for console/log display, same role this
-        // constant played before the "Nessie" rename.
-        public const int VERSIONINFO_VERSION_LENGTH = 30;
+        // Matches the default (Dev-flavour) string's actual length at the
+        // time this was set (build number 341) - grows as the branch gains
+        // commits ahead of upstream master, so this will drift over time.
+        // Not a wire-protocol width requirement (a Release/Post_Fixes build,
+        // or simply a larger build number, already exceeds it - PadRight
+        // only pads shorter strings, it doesn't truncate), just cosmetic
+        // alignment for console/log display.
+        public const int VERSIONINFO_VERSION_LENGTH = 42;
 
         /// <value>
         /// This is the external interface version.  It is separate from the OpenSimulator project version.
