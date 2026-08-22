@@ -3065,6 +3065,17 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
             }
 
             sp.GotAttachmentsData = true;
+
+            // Real attachment data has now actually landed. For a Hypergrid
+            // visitor, CompleteMovement's own attachment-restart deliberately
+            // skipped queuing a restart if this hadn't happened yet (see the
+            // comment there) - fire it now that it genuinely has. Harmless to
+            // call for the local/already-restarted case too: QueueRestartAttachmentScripts'
+            // own generation counter means a redundant call here just gets
+            // superseded, not double-executed.
+            if (!sp.IsChildAgent && !m_sceneRegionInfo.RegionSettings.DisableScripts)
+                sp.QueueRestartAttachmentScripts();
+
             return true;
         }
 

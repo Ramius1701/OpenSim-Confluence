@@ -12278,3 +12278,102 @@ object with a real viewer** - that needs an actual resident test
 (grant on one object, confirm no re-prompt on a second object sharing
 the same Experience, ideally across a relog/region-crossing too) which
 is left for the user's own testing opportunity.
+
+## Systematic OpenSim Mantis audit, and a real Hypergrid attachment fix
+## (2026-08-22)
+
+User asked to systematically check "how many of the ~1965 open Mantis
+issues has Confluence addressed" - rather than guess a number, scoped
+it down first: issues updated in the last 12 months are actually only
+~100 of the 1965 (the rest are old/stale), and the crash/block/major
+subset of those is ~15-20 tickets, a real checkable list.
+
+**Key discovery that reframed the whole pass**: `git merge-base HEAD
+origin/master` shows Confluence's last real upstream sync was
+2026-08-16 - five days before this session. That explains a strong,
+consistent pattern across nearly every ticket checked: anything fixed
+upstream before that date is already automatically inherited. Verified
+directly (not assumed) for three separate tickets - PR #52 ("Mark
+scripts as HasRun on every run", fixes empty script state on
+teleport - byte-identical in `XMRInstRun.cs` including the comment),
+the Postgres UUID type-handling patch (byte-identical in
+`PGSQLEstateData.cs`/`PGSQLXInventoryData.cs`), and `llSetHoverHeight`
+regression (fixed well before the sync point). This means checking
+Mantis tickets one at a time for "does Confluence have this" is mostly
+redundant going forward - the only tickets worth real individual
+verification are ones still open upstream, or resolved after
+2026-08-16.
+
+Worked through ~13 tickets from the scoped list with real
+verification (not headline-matching) - most were disposed of quickly:
+already-inherited fixes (3, as above), deliberate upstream design
+decisions correctly declined as bugs (HG asset-drop-on-prim copy,
+citing spam/disk-space risk - matches Confluence's own
+`take_copy_restricted` reasoning), a maintainer-dismissed
+"not fixable" architectural limitation (var-region landing
+coordinates), a gap Confluence's own `ROADMAP.md` already honestly
+discloses (GLTF base-material scale persistence), an ancient/niche
+parser edge case (2014, `cpp`-macro expansion syntax), a
+long-standing-but-unowned BulletSim gap (`llMoveToTarget`, since 2021,
+even upstream's own team defers to an absent maintainer), and one
+"good validation" - upstream confirmed **still has no plans** to build
+inventory thumbnails at all, while Confluence already shipped a real
+`InventoryThumbnailUploadModule.cs`.
+
+**One real, actionable finding**: 0008366, "Attached scripts lose all
+state on first hypergrid jump" - an 8-year-old (2018), still-open,
+major-severity bug (all HUDs/AOs/attachments going dead on first HG
+jump, only recovering after a full state loss on a *second* crossing).
+Root cause, confirmed by the thread's own multi-year investigation: HG
+attachment assets are fetched asynchronously and can take up to
+several minutes on a slow grid, but scripts were being started before
+that fetch actually completed - a one-shot timing race, not something
+that self-heals. Half the real fix (ensuring scripts that DO run
+serialize real state, not empty state) was merged upstream 2026-08-07
+and is already in Confluence via the sync. The other half - actually
+waiting for the asset fetch to finish before starting scripts - has a
+real, well-reasoned patch open upstream (PR #58, same author,
+`mergeable: true`, not yet formally reviewed) but doesn't apply
+cleanly: Confluence's own `CompleteMovement`/attachment-restart code
+has already diverged from vanilla upstream, via this project's own
+earlier attachment-reliability work (queued/debounced script restarts
+with a generation counter, rather than the raw inline loop the
+upstream patch targets).
+
+**Fixed, adapted to Confluence's actual architecture rather than
+copy-pasting the upstream patch**:
+- Traced the real mechanism: `ScenePresence.CompleteMovement`'s HG
+  branch (`else` when not a real login) calls
+  `QueueRestartAttachmentScripts()`, which waits a **fixed 2 seconds**
+  (`AttachmentScriptRestartDelayMS`) then starts scripts against
+  whatever `GetAttachments()` returns *right then* - correct for a
+  same-grid crossing (everything's already local), silently wrong for
+  an HG arrival whose real attachment objects might not exist in the
+  scene yet. Found a commented-out diagnostic block already sitting in
+  `ScenePresence.SendInitialData` (`GotAttachmentsData`/`ViaHGLogin`
+  logging, disabled) - real evidence this exact problem had already
+  been investigated here before, just never carried through to a fix.
+- `QueueRestartAttachmentScripts()` made `public` (was `private`).
+- `CompleteMovement`'s HG branch now skips queuing the fixed-delay
+  restart specifically when `(TeleportFlags & TeleportFlags.ViaHGLogin)
+  != 0 && !GotAttachmentsData` - i.e. only for the exact case where the
+  real data genuinely hasn't landed yet. Zero behavior change for
+  every other case (local crossing, teleport, or an HG arrival whose
+  data happened to already be gathered).
+- `EntityTransferModule.HandleIncomingAttachments` (confirmed via
+  `HGEntityTransferModule`'s override that this is called precisely
+  once the real async `HGUuidGatherer` fetch - the actual
+  slow-on-far-grids part - has finished) now calls
+  `sp.QueueRestartAttachmentScripts()` right after setting
+  `GotAttachmentsData = true`, so scripts start at the moment data
+  genuinely exists rather than on a guessed fixed timer. Harmless for
+  the redundant local-crossing case too, since the existing generation
+  counter already makes a second call supersede rather than
+  double-execute.
+
+Build-verified (full solution) and deployed. Live-verified only at the
+"doesn't break anything" level, same honesty as the Experience
+fix above - Robust and Welcome_Center both started clean, zero new
+errors. **Not yet live-tested against a real HG teleport with a
+scripted attachment** - that needs a real cross-grid HG jump with a
+real viewer, left for the user's own testing opportunity.

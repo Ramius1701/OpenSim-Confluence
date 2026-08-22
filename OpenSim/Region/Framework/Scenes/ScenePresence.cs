@@ -1634,7 +1634,11 @@ namespace OpenSim.Region.Framework.Scenes
             }
         }
 
-        private void QueueRestartAttachmentScripts()
+        // Public so EntityTransferModule.HandleIncomingAttachments can trigger
+        // this directly once a Hypergrid visitor's real attachment data has
+        // actually arrived - see CompleteMovement's HG branch below for why
+        // the normal fixed-delay path can't be trusted for that case.
+        public void QueueRestartAttachmentScripts()
         {
             int restartGeneration = Interlocked.Increment(ref m_attachmentScriptRestartGeneration);
 
@@ -2455,7 +2459,26 @@ namespace OpenSim.Region.Framework.Scenes
                 {
                     if (m_attachments.Count > 0)
                     {
-                        QueueRestartAttachmentScripts();
+                        // A foreign Hypergrid visitor's attachment assets are
+                        // fetched asynchronously by HGUuidGatherer and can take
+                        // anywhere from a moment to several minutes on a slow
+                        // grid - the fixed AttachmentScriptRestartDelayMS
+                        // (2s) below assumes a same-grid crossing, where
+                        // everything is already local. Firing it early here
+                        // for an HG arrival starts scripts against
+                        // attachments that haven't actually arrived yet, and
+                        // since this is a one-shot timer, they never get
+                        // another chance - the scripts end up permanently
+                        // dead until the resident manually reattaches or
+                        // relogs. If the real data hasn't landed yet
+                        // (GotAttachmentsData still false),
+                        // EntityTransferModule.HandleIncomingAttachments
+                        // triggers the restart itself once it actually has,
+                        // so skip queuing it here for that case.
+                        bool deferToAttachmentGather =
+                                (TeleportFlags & TeleportFlags.ViaHGLogin) != 0 && !GotAttachmentsData;
+                        if (!deferToAttachmentGather)
+                            QueueRestartAttachmentScripts();
 
                         foreach (ScenePresence p in allpresences)
                         {
