@@ -241,6 +241,13 @@ with persistent precipitation, correctly-positioned lightning, and four
 tuned weather profiles. Still reasonably described as experimental —
 not scientifically simulated weather.
 
+- A region-wide `"WEATHER|<Kind>"` broadcast on a configurable channel
+  lets independent scripted objects (fireplaces, seasonal clothing,
+  umbrellas) react to weather without being part of the module.
+- Optional pressure-driven auto-cycle pacing — weather can build and
+  ease via a simulated barometric trend instead of a flat random pick
+  on a fixed timer.
+
 ### Physics realism (ubODE)
 
 Buoyant floating-prim water physics, boat wave response, rubber bounce
