@@ -100,7 +100,7 @@ namespace OpenSim.Services.Interfaces
 
         public int Created;
 
-        public string DisplayName;
+        public string DisplayName = string.Empty;
         public uint NameChanged;
 
         public string Name

@@ -1,0 +1,36 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `web_accounts` (
+	`ID` VARCHAR(36) NOT NULL,
+	`Email` VARCHAR(255) NOT NULL,
+	`Created` INT NOT NULL,
+	`Updated` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	UNIQUE INDEX `Email` (`Email`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `web_account_avatars` (
+	`WebAccountID` VARCHAR(36) NOT NULL,
+	`AvatarPrincipalID` VARCHAR(36) NOT NULL,
+	`LinkedDate` INT NOT NULL,
+	`LinkType` VARCHAR(20) NOT NULL,
+	`IsDefault` TINYINT(1) NOT NULL DEFAULT 0,
+	PRIMARY KEY (`AvatarPrincipalID`) USING BTREE,
+	INDEX `WebAccountID` (`WebAccountID`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `web_activity_log` (
+	`ID` VARCHAR(36) NOT NULL,
+	`WebAccountID` VARCHAR(36) NOT NULL,
+	`AvatarPrincipalID` VARCHAR(36) NOT NULL,
+	`EventType` VARCHAR(64) NOT NULL,
+	`Description` VARCHAR(500) NOT NULL,
+	`IPAddress` VARCHAR(45) NOT NULL,
+	`Created` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `WebAccountID_Created` (`WebAccountID`, `Created`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+COMMIT;

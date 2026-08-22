@@ -8,8 +8,14 @@ planned or still missing, see `ROADMAP.md`.
 
 A native, Robust-hosted grid portal — not an addon-module, and not a
 replacement for the optional `OpenSim-Grid-Interface` PHP site, which
-remains available as a swappable alternative. Session-based auth
-against real grid accounts.
+remains available as a swappable alternative. Login is unchanged
+since day one — avatar name + in-world password — but the first
+avatar a resident registers or logs in with now becomes a master
+account behind the scenes, auto-linked the moment it has a real
+email, that can own and switch between multiple avatars. No separate
+portal credential — one login, one password, same as always. A
+resident-facing suggestion box, reviewed from the admin console, sits
+alongside the existing support-ticket system.
 
 **Public pages:** home/splash with live grid stats, self-service
 sign-up with a starting-region picker (defaults to the grid's
@@ -20,14 +26,21 @@ a world map, a viewer download page, a live grid-capability "Features"
 page, guest support tickets, admin-managed static pages (About/ToS/
 DMCA) and news/events feeds.
 
-**Resident self-service:** dashboard, public profile (with group
-memberships and regions-owned, both privacy-aware), friends list, a
-full partner proposal flow (propose/accept/decline/cancel/breakup),
-transaction history, classifieds/events management, region management
-for estate owners (OAR backup, full estate settings/access-list
-editing for any resident who owns one, not just admins), inventory
-backup (IAR), account changes (password/email), self-service account
-deletion. Backup (save) only, by design — see `ROADMAP.md`.
+**Resident self-service:** dashboard (stat cards, a Recent Activity
+audit log for the linked account, quick links), public profile (with
+group memberships and regions-owned, both privacy-aware), friends
+list, a full partner proposal flow (propose/accept/decline/cancel/
+breakup), transaction history, classifieds/events management, a
+combined My Land & Regions page (estate-owner region management —
+OAR backup, full estate settings/access-list editing for any resident
+who owns one, not just admins — alongside per-parcel search/
+Destination Guide visibility toggles), inventory backup (IAR),
+account changes (password/email), self-service account deletion.
+Create a brand-new avatar (email-verified, so an unclaimed request
+can't squat a name), import an existing avatar by proving its
+in-world password once (never stored), and switch between every
+avatar linked to the account. Backup (save) only, by design — see
+`ROADMAP.md`.
 
 **Admin console:** user management (search, create, edit, ban with
 optional auto-expiry, soft-delete, kick/message an online resident,

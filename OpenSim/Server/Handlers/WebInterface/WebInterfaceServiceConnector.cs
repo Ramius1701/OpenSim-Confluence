@@ -46,12 +46,21 @@ namespace OpenSim.Server.Handlers.WebInterface
         private const string SessionCookieName = "ConfluenceWebSession";
         private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(2);
 
+
         private class WebSession
         {
             public UUID PrincipalID;
             public string Name;
             public bool IsAdmin;
             public DateTime Expires;
+
+            // The linked portal account, if any (UUID.Zero = this avatar
+            // has no linked WebAccount yet). PrincipalID keeps meaning
+            // exactly what it always has - "the currently active avatar" -
+            // this is the one new field the multi-avatar model needed;
+            // every existing PrincipalID-scoped page stays correct as long
+            // as login/switching keep it pointed at the right avatar.
+            public UUID WebAccountID;
         }
 
         private readonly ConcurrentDictionary<string, WebSession> m_sessions = new ConcurrentDictionary<string, WebSession>();
@@ -68,6 +77,29 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private static readonly TimeSpan ResetTokenLifetime = TimeSpan.FromHours(1);
         private readonly ConcurrentDictionary<string, ResetToken> m_resetTokens = new ConcurrentDictionary<string, ResetToken>();
+
+        // Create Avatar's pending-signup token. Deliberately holds the
+        // plaintext password (needed to become the real hashed avatar
+        // password via IAuthenticationService.SetPassword once the link is
+        // clicked, same as HandleRegister does today) - in-memory only,
+        // never written to disk, lost on a Robust restart during the
+        // window. Same accepted tradeoff as WebSession/ResetToken above,
+        // just a longer window (48h, matching the reference) and a riskier
+        // payload, which is why it's called out explicitly here rather than
+        // left implicit.
+        private class AvatarSignupToken
+        {
+            public UUID WebAccountID;
+            public string FirstName;
+            public string LastName;
+            public string Email;
+            public string Password;
+            public UUID HomeRegionID;
+            public DateTime Expires;
+        }
+
+        private static readonly TimeSpan AvatarSignupTokenLifetime = TimeSpan.FromHours(48);
+        private readonly ConcurrentDictionary<string, AvatarSignupToken> m_avatarSignupTokens = new ConcurrentDictionary<string, AvatarSignupToken>();
 
         private bool m_smtpEnabled;
         private string m_smtpHost = string.Empty;
@@ -90,6 +122,8 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IEventsService m_EventsService;
         private ISupportTicketService m_SupportTicketService;
         private IStaticPageService m_StaticPageService;
+        private IWebAccountService m_WebAccountService;
+        private ISuggestionService m_SuggestionService;
         private IGridSettingsService m_GridSettingsService;
         private IUserProfilesService m_UserProfilesService;
         private IFriendsService m_FriendsService;
@@ -142,6 +176,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_MessagingService = LoadReusedPlugin<IMessagingService>(config, "MessagingService", args);
             m_SupportTicketService = LoadReusedPlugin<ISupportTicketService>(config, "SupportTicketService", args);
             m_StaticPageService = LoadReusedPlugin<IStaticPageService>(config, "StaticPageService", args);
+            m_WebAccountService = LoadReusedPlugin<IWebAccountService>(config, "WebAccountService", args);
+            m_SuggestionService = LoadReusedPlugin<ISuggestionService>(config, "SuggestionService", args);
             m_GridSettingsService = LoadReusedPlugin<IGridSettingsService>(config, "GridSettingsService", args);
             // Same [UserProfilesService] LocalServiceModule the region-side
             // LocalUserProfilesServiceConnector already reuses - backs the
@@ -259,7 +295,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "/myevents", "/forgot-password", "/reset-password", "/logout",
                 "/myregions", "/myland", "/myinventory", "/page", "/partner", "/myestates", "/delete-account",
                 "/offline-messages", "/messages",
-                "/help", "/guide", "/static", "/auctions", "/welcome-photos"
+                "/help", "/guide", "/static", "/auctions", "/welcome-photos",
+                // Multi-avatar accounts (see WebSession.WebAccountID) - the
+                // first avatar you register/log in with IS the master
+                // account, no separate portal credential.
+                "/create-avatar", "/verify-avatar", "/import-avatar", "/my-avatars", "/switch-avatar",
+                "/suggestion-box"
             };
             foreach (string route in topLevelRoutes)
             {
@@ -397,6 +438,27 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/register":
                         HandleRegister(request, response);
+                        break;
+                    case BasePath + "/create-avatar":
+                        HandleCreateAvatar(request, response);
+                        break;
+                    case BasePath + "/verify-avatar":
+                        HandleVerifyAvatar(request, response);
+                        break;
+                    case BasePath + "/import-avatar":
+                        HandleImportAvatar(request, response);
+                        break;
+                    case BasePath + "/my-avatars":
+                        HandleMyAvatars(request, response);
+                        break;
+                    case BasePath + "/switch-avatar":
+                        HandleSwitchAvatar(request, response);
+                        break;
+                    case BasePath + "/suggestion-box":
+                        HandleSuggestionBox(request, response);
+                        break;
+                    case BasePath + "/admin/suggestions":
+                        HandleAdminSuggestions(request, response);
                         break;
                     case BasePath + "/viewers":
                         HandleViewers(request, response);
@@ -754,7 +816,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             return null;
         }
 
-        private string CreateSession(UUID principalID, string name, bool isAdmin)
+        private string CreateSession(UUID principalID, string name, bool isAdmin, UUID webAccountId)
         {
             string token = UUID.Random().ToString();
             m_sessions[token] = new WebSession
@@ -762,9 +824,18 @@ namespace OpenSim.Server.Handlers.WebInterface
                 PrincipalID = principalID,
                 Name = name,
                 IsAdmin = isAdmin,
-                Expires = DateTime.UtcNow.Add(SessionLifetime)
+                Expires = DateTime.UtcNow.Add(SessionLifetime),
+                WebAccountID = webAccountId
             };
             return token;
+        }
+
+        // request.RemoteIPEndPoint can be null in some hosting setups
+        // (never observed on this deployment, but not worth a null-ref
+        // crashing a login just for an activity-log cosmetic field).
+        private static string GetClientIP(IOSHttpRequest request)
+        {
+            return request.RemoteIPEndPoint?.Address?.ToString() ?? "unknown";
         }
 
         private static string ReadCookie(IOSHttpRequest request, string name)
@@ -2878,6 +2949,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                 WritePage(request, response, PageTitle("Change Email"), ChangeEmailForm(newEmail, "Could not update your email. Please try again."));
                 return;
             }
+
+            // A resident who logged in classically with no email set (so
+            // TryLogin's auto-provision had nothing to work with) gets
+            // linked to a portal account immediately, rather than needing
+            // to log out and back in.
+            EnsureWebAccountLinked(request, session, account);
 
             WritePage(request, response, PageTitle("Change Email"),
                     "<h1>Change Email</h1><p>Your email address has been updated.</p><p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>");
@@ -5098,17 +5175,17 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         // Real landing page, not a link list - matches the 3RD Rock Grid
-        // Panel reference the user pointed at directly (stat row, Account
-        // Information card, Quick Links card with real descriptions).
-        // "My Avatars"/"My Estates" don't map to a real Confluence/OpenSim
-        // concept (no multi-avatar-per-account linking, and "estate" here is
-        // really "regions I'm the estate owner of" - already its own stat)
-        // so the stat row uses four things that are real and already
-        // computed elsewhere on this connector: Balance (HandleDashboard's
-        // own prior only feature), My Regions (GetRegionsOwnedBy, same call
-        // HandleMyRegions uses), Friends (IFriendsService.GetFriends, same
-        // call HandleFriends uses), My Events (IEventsService.GetUpcoming
-        // filtered by CreatorId, same filter HandleMyEvents uses).
+        // Panel reference the user pointed at directly: a 4-card stat row
+        // (My Avatars/My Regions/My Estates/My Events), an Account
+        // Information card, a Recent Activity audit log, and a Quick Links
+        // card. Balance/Friends moved from the stat row into Account
+        // Information (see the reference's own layout) rather than being
+        // dropped - My Estates (m_EstateDataService.GetEstatesByOwner) is a
+        // real, distinct count from My Regions, confirmed by reading
+        // GetRegionsOwnedBy's own implementation below. No separate
+        // "portal email" - the avatar you register/log in with IS the
+        // master account (see AutoProvisionWebAccount), so there's only
+        // ever one real email to show.
         private void HandleDashboard(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -5120,10 +5197,14 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             int balance = m_CurrencyService != null ? m_CurrencyService.GetBalance(session.PrincipalID) : 0;
             int regionsCount = GetRegionsOwnedBy(session.PrincipalID).Count;
+            int estatesCount = m_EstateDataService != null ? m_EstateDataService.GetEstatesByOwner(session.PrincipalID).Count : 0;
             int friendsCount = m_FriendsService != null ? (m_FriendsService.GetFriends(session.PrincipalID)?.Length ?? 0) : 0;
             int eventsCount = m_EventsService != null
                     ? m_EventsService.GetUpcoming(0, 100).Count(e => e.CreatorId == session.PrincipalID)
                     : 0;
+            int avatarsCount = session.WebAccountID != UUID.Zero && m_WebAccountService != null
+                    ? m_WebAccountService.GetLinkedAvatars(session.WebAccountID).Count
+                    : 1;
 
             UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, session.PrincipalID);
             string memberSince = account != null
@@ -5131,9 +5212,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     : "Unknown";
 
             // Reference's userhome.html shows Home Region and Last Login on
-            // its own account-summary card - real fields this page was
-            // missing, both cheaply available off the same GridUserInfo
-            // lookup HandleProfile already uses for "Online Location".
+            // its own account-summary card - both cheaply available off the
+            // same GridUserInfo lookup HandleProfile already uses for
+            // "Online Location".
             string homeRegionName = null;
             string lastLogin = null;
             if (m_GridUserService != null)
@@ -5153,19 +5234,25 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<p style=\"color:var(--muted);margin:-8px 0 20px;\">Welcome back, ").Append(Html(session.Name)).Append("</p>");
 
             sb.Append("<div class=\"stats-grid\">");
-            AppendStat(sb, "Balance", "FC$" + balance.ToString("N0"), "current balance");
+            AppendStat(sb, "My Avatars", avatarsCount.ToString("N0"), "linked to your account");
             AppendStat(sb, "My Regions", regionsCount.ToString("N0"), "estate-owned");
-            AppendStat(sb, "Friends", friendsCount.ToString("N0"), "connections");
+            AppendStat(sb, "My Estates", estatesCount.ToString("N0"), "you own");
             AppendStat(sb, "My Events", eventsCount.ToString("N0"), "upcoming");
             sb.Append("</div>");
 
             sb.Append("<h2>Account Information</h2>");
             sb.Append("<table>");
-            sb.Append("<tr><th>Username</th><td>").Append(Html(session.Name)).Append("</td></tr>");
+            sb.Append("<tr><th>Active Avatar</th><td>").Append(Html(session.Name));
+            if (avatarsCount > 1)
+                sb.Append(" &middot; <a href=\"").Append(BasePath).Append("/my-avatars\">Switch</a>");
+            sb.Append("</td></tr>");
             if (account != null && !string.IsNullOrEmpty(account.Email))
                 sb.Append("<tr><th>Email</th><td>").Append(Html(account.Email)).Append("</td></tr>");
+            sb.Append("<tr><th>Balance</th><td>FC$").Append(balance.ToString("N0")).Append("</td></tr>");
+            sb.Append("<tr><th>Friends</th><td>").Append(friendsCount.ToString("N0")).Append("</td></tr>");
             sb.Append("<tr><th>Role</th><td><span class=\"pill ").Append(session.IsAdmin ? "pill-yes\">Administrator" : "pill-no\">Member").Append("</span></td></tr>");
-            sb.Append("<tr><th>Member Since</th><td>").Append(Html(memberSince)).Append("</td></tr>");
+            if (account != null)
+                sb.Append("<tr><th>Member Since</th><td>").Append(Html(memberSince)).Append("</td></tr>");
             if (!string.IsNullOrEmpty(homeRegionName))
                 sb.Append("<tr><th>Home Region</th><td>").Append(Html(homeRegionName)).Append("</td></tr>");
             if (!string.IsNullOrEmpty(lastLogin))
@@ -5174,16 +5261,61 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<p><a href=\"").Append(BasePath).Append("/profile?id=").Append(session.PrincipalID).Append("\">Edit Profile</a>")
               .Append(" &middot; <a href=\"").Append(BasePath).Append("/change-password\">Settings</a></p>");
 
+            sb.Append("<h2>Recent Activity</h2>");
+            if (session.WebAccountID == UUID.Zero || m_WebAccountService == null)
+            {
+                sb.Append("<p class=\"news-meta\">Activity tracking starts once you've added an email to your account.</p>");
+            }
+            else
+            {
+                List<WebActivityEntry> activity = m_WebAccountService.GetRecentActivity(session.WebAccountID, 10);
+                if (activity.Count == 0)
+                {
+                    sb.Append("<p class=\"news-meta\">No activity recorded yet.</p>");
+                }
+                else
+                {
+                    sb.Append("<table><tr><th>Action</th><th>Description</th><th>IP Address</th><th>Date &amp; Time</th></tr>");
+                    foreach (WebActivityEntry entry in activity)
+                    {
+                        sb.Append("<tr><td>").Append(Html(HumanizeActivityEvent(entry.EventType))).Append("</td>")
+                          .Append("<td>").Append(Html(entry.Description)).Append("</td>")
+                          .Append("<td>").Append(Html(entry.IPAddress)).Append("</td>")
+                          .Append("<td>").Append(Html(entry.Created.ToString("MMM d, yyyy HH:mm"))).Append(" UTC</td></tr>");
+                    }
+                    sb.Append("</table>");
+                }
+            }
+
             sb.Append("<h2>Quick Links</h2><div class=\"widget-grid\">");
+            AppendDashboardLink(sb, BasePath + "/create-avatar", "bi-person-plus", "Create Avatar", "Add a new avatar to your account");
+            AppendDashboardLink(sb, BasePath + "/import-avatar", "bi-box-arrow-in-right", "Import Avatar", "Link an existing avatar to your account");
             AppendDashboardLink(sb, BasePath + "/myclassifieds", "bi-megaphone", "Post a Classified", "Advertise your business, shop or event grid-wide");
             AppendDashboardLink(sb, BasePath + "/myevents", "bi-calendar-plus", "Post an Event", "Add an event to the grid calendar");
-            AppendDashboardLink(sb, BasePath + "/myregions", "bi-hdd-rack", "Manage My Regions", "Back up or restore a region you own");
+            AppendDashboardLink(sb, BasePath + "/myregions", "bi-hdd-rack", "Restart Region", "Back up or restart a region you own");
             AppendDashboardLink(sb, BasePath + "/transactions", "bi-cash-stack", "View Transactions", "See your recent currency activity");
             AppendDashboardLink(sb, BasePath + "/support", "bi-headset", "Submit a Ticket", "Get help from the grid support team");
             AppendDashboardLink(sb, BasePath + "/search", "bi-search", "Search the Grid", "Find people, places, events and classifieds");
             sb.Append("</div>");
 
             WritePage(request, response, PageTitle("Dashboard"), sb.ToString());
+        }
+
+        private static readonly Dictionary<string, string> ActivityEventLabels = new Dictionary<string, string>
+        {
+            { "user_login", "Logged In" },
+            { "user_registered", "Account Created" },
+            { "avatar_request_created", "Avatar Requested" },
+            { "email_verified", "Email Verified" },
+            { "avatar_imported", "Avatar Imported" },
+            { "avatar_linked", "Avatar Linked" },
+            { "active_avatar_switched", "Avatar Switched" },
+            { "suggestion_submitted", "Suggestion Submitted" }
+        };
+
+        private static string HumanizeActivityEvent(string eventType)
+        {
+            return ActivityEventLabels.TryGetValue(eventType, out string label) ? label : eventType;
         }
 
         private static void AppendDashboardLink(StringBuilder sb, string href, string icon, string title, string description)
@@ -7274,7 +7406,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_log.InfoFormat("[WEB INTERFACE]: Admin {0} ({1}) logged in as {2} ({3})",
                     session.Name, session.PrincipalID, target.Name, target.PrincipalID);
 
-            string token = CreateSession(target.PrincipalID, target.Name, target.UserLevel >= 200);
+            // The TARGET avatar's own WebAccountID, not the impersonating
+            // admin's - otherwise the resulting session would show the
+            // admin's own avatar list/activity log while wearing a
+            // resident's identity, a real data leak between accounts.
+            WebAccountAvatarLink targetLink = m_WebAccountService?.GetLinkForAvatar(target.PrincipalID);
+            UUID targetWebAccountId = targetLink?.WebAccountID ?? UUID.Zero;
+
+            string token = CreateSession(target.PrincipalID, target.Name, target.UserLevel >= 200, targetWebAccountId);
             SetSessionCookie(response, token);
             response.Redirect(BasePath + "/dashboard", HttpStatusCode.Redirect);
         }
@@ -8146,6 +8285,14 @@ namespace OpenSim.Server.Handlers.WebInterface
         // OpenSim already has its own scheduled AutoBackupModule for operator-
         // side backups; this is specifically for a user to back up or restore
         // their own content on demand.
+        // Merged with the former standalone My Land page (2026-08-23, at
+        // the user's direction) - "My Regions" (sims you're the ESTATE
+        // OWNER of, with backup/restart access) and "My Land" (individual
+        // PARCELS you own, which you can have without owning any region,
+        // and vice versa) are genuinely different kinds of ownership, but
+        // having them as two separate sidebar entries read as redundant.
+        // One page, two sections; `/myland` still exists as a route but
+        // just redirects here now rather than duplicating content.
         private void HandleMyRegions(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -8158,6 +8305,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             StringBuilder rows = new StringBuilder();
             List<GridRegion> ownedRegions = GetRegionsOwnedBy(session.PrincipalID);
 
+            rows.Append("<h2><i class=\"bi bi-hdd-rack\"></i> Regions I Own</h2>");
             if (m_EstateDataService == null || m_GridService == null)
             {
                 rows.Append("<p>Estate/grid service is not available.</p>");
@@ -8175,8 +8323,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // this page named the region but gave no at-a-glance
                     // sense of where it is or whether it's actually up.
                     bool online = IsRegionAlive(region, 1500);
-                    rows.Append("<h2>").Append(Html(region.RegionName))
-                        .Append(" <span class=\"pill ").Append(online ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></h2>");
+                    rows.Append("<h3>").Append(Html(region.RegionName))
+                        .Append(" <span class=\"pill ").Append(online ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></h3>");
                     rows.Append("<p class=\"news-meta\">Location: (").Append(region.RegionCoordX).Append(", ")
                         .Append(region.RegionCoordY).Append(")</p>");
 
@@ -8194,17 +8342,52 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
+            rows.Append("<h2><i class=\"bi bi-signpost-split\"></i> Land I Own</h2>");
+            rows.Append("<p>Control whether your own parcels show up in the grid's Destination Guide and Search ")
+              .Append("(Popular/Featured tabs). Once shown, ranking there is based on real traffic (dwell), not this page.</p>");
+            if (m_SearchService == null)
+            {
+                rows.Append("<p>Search service is not available.</p>");
+            }
+            else
+            {
+                List<LandSearchRecord> parcels = m_SearchService.GetParcelsByOwner(session.PrincipalID);
+                if (parcels.Count == 0)
+                {
+                    rows.Append("<p>You don't own any parcels on this grid.</p>");
+                }
+                else
+                {
+                    rows.Append("<table><tr><th>Parcel</th><th>Region</th><th>Traffic</th><th>Show in Search</th></tr>");
+                    foreach (LandSearchRecord parcel in parcels)
+                    {
+                        rows.Append("<tr><td>").Append(Html(parcel.Name)).Append("</td>");
+                        rows.Append("<td>").Append(Html(parcel.RegionName)).Append("</td>");
+                        rows.Append("<td>").Append(((int)parcel.Dwell).ToString("N0")).Append("</td>");
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/myland/toggle\">");
+                        rows.Append("<input type=\"hidden\" name=\"parcel_id\" value=\"").Append(parcel.ParcelID).Append("\">");
+                        rows.Append("<input type=\"hidden\" name=\"action\" value=\"").Append(parcel.ShowInSearch ? "disable" : "enable").Append("\">");
+                        rows.Append("<button type=\"submit\"").Append(string.IsNullOrEmpty(m_webConsoleSecret) ? " disabled" : "").Append(">")
+                              .Append(parcel.ShowInSearch ? "Showing - click to hide" : "Hidden - click to show").Append("</button>");
+                        rows.Append("</form></td></tr>");
+                    }
+                    rows.Append("</table>");
+                    if (string.IsNullOrEmpty(m_webConsoleSecret))
+                        rows.Append("<p class=\"news-meta\">The web console is not configured, so this toggle can't be applied remotely. Set [WebConsole] SharedSecret to enable it.</p>");
+                }
+            }
+
             string message = string.Empty;
             string queryMessage = request.QueryString.Get("message");
             if (!string.IsNullOrEmpty(queryMessage))
                 message = "<p>" + Html(queryMessage) + "</p>";
 
-            string body = "<h1>My Regions</h1>"
+            string body = "<h1>My Land &amp; Regions</h1>"
                     + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
                     + message
                     + rows.ToString();
 
-            WritePage(request, response, PageTitle("My Regions"), body);
+            WritePage(request, response, PageTitle("My Land & Regions"), body);
         }
 
         // GetEstatesByOwner + GetRegions rather than iterating every region on
@@ -8377,62 +8560,12 @@ namespace OpenSim.Server.Handlers.WebInterface
         // is always re-checked against GetParcelsByOwner before acting,
         // never trusted on its own - a resident can only ever toggle a
         // parcel that query actually returns for their own PrincipalID.
+        // Merged into HandleMyRegions above (2026-08-23) - this route stays
+        // registered purely so any existing link/bookmark to /myland still
+        // lands somewhere real rather than 404ing.
         private void HandleMyLand(IOSHttpRequest request, IOSHttpResponse response)
         {
-            WebSession session = GetSession(request);
-            if (session == null)
-            {
-                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
-                return;
-            }
-
-            StringBuilder rows = new StringBuilder();
-
-            if (m_SearchService == null)
-            {
-                rows.Append("<p>Search service is not available.</p>");
-            }
-            else
-            {
-                List<LandSearchRecord> parcels = m_SearchService.GetParcelsByOwner(session.PrincipalID);
-                if (parcels.Count == 0)
-                {
-                    rows.Append("<p>You don't own any parcels on this grid.</p>");
-                }
-                else
-                {
-                    rows.Append("<table><tr><th>Parcel</th><th>Region</th><th>Traffic</th><th>Show in Search</th></tr>");
-                    foreach (LandSearchRecord parcel in parcels)
-                    {
-                        rows.Append("<tr><td>").Append(Html(parcel.Name)).Append("</td>");
-                        rows.Append("<td>").Append(Html(parcel.RegionName)).Append("</td>");
-                        rows.Append("<td>").Append(((int)parcel.Dwell).ToString("N0")).Append("</td>");
-                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/myland/toggle\">");
-                        rows.Append("<input type=\"hidden\" name=\"parcel_id\" value=\"").Append(parcel.ParcelID).Append("\">");
-                        rows.Append("<input type=\"hidden\" name=\"action\" value=\"").Append(parcel.ShowInSearch ? "disable" : "enable").Append("\">");
-                        rows.Append("<button type=\"submit\"").Append(string.IsNullOrEmpty(m_webConsoleSecret) ? " disabled" : "").Append(">")
-                              .Append(parcel.ShowInSearch ? "Showing - click to hide" : "Hidden - click to show").Append("</button>");
-                        rows.Append("</form></td></tr>");
-                    }
-                    rows.Append("</table>");
-                    if (string.IsNullOrEmpty(m_webConsoleSecret))
-                        rows.Append("<p class=\"news-meta\">The web console is not configured, so this toggle can't be applied remotely. Set [WebConsole] SharedSecret to enable it.</p>");
-                }
-            }
-
-            string message = string.Empty;
-            string queryMessage = request.QueryString.Get("message");
-            if (!string.IsNullOrEmpty(queryMessage))
-                message = "<p>" + Html(queryMessage) + "</p>";
-
-            string body = "<h1><i class=\"bi bi-signpost-split\"></i> My Land</h1>"
-                    + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
-                    + "<p>Control whether your own parcels show up in the grid's Destination Guide and Search "
-                    + "(Popular/Featured tabs). Once shown, ranking there is based on real traffic (dwell), not this page.</p>"
-                    + message
-                    + rows.ToString();
-
-            WritePage(request, response, PageTitle("My Land"), body);
+            response.Redirect(BasePath + "/myregions", HttpStatusCode.Redirect);
         }
 
         private void HandleMyLandToggle(IOSHttpRequest request, IOSHttpResponse response)
@@ -8486,7 +8619,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            response.Redirect(BasePath + "/myland?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+            response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
         #endregion Self-service parcel "Show in Search" toggle
@@ -8632,7 +8765,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 string lastName = FormValue(form, "last_name").Trim();
                 string password = FormValue(form, "password");
 
-                string error = TryLogin(firstName, lastName, password, out string token);
+                string error = TryLogin(request, firstName, lastName, password, out string token);
                 if (error == null)
                 {
                     SetSessionCookie(response, token);
@@ -8743,7 +8876,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             m_InventoryService?.CreateUserInventory(account.PrincipalID);
 
-            string loginError = TryLogin(firstName, lastName, password, out string token);
+            string loginError = TryLogin(request, firstName, lastName, password, out string token);
             if (loginError == null)
             {
                 SetSessionCookie(response, token);
@@ -8756,6 +8889,581 @@ namespace OpenSim.Server.Handlers.WebInterface
             // claiming registration failed.
             response.Redirect(BasePath + "/login?message=" + Uri.EscapeDataString("Account created. Please log in."), HttpStatusCode.Redirect);
         }
+
+        #region Multi-avatar portal accounts
+
+        // Create Avatar - deliberately does NOT create the UserAccount until
+        // the verification link is clicked (see AvatarSignupToken's own
+        // comment) - creating it immediately would let an unverified signup
+        // permanently squat an avatar name and instantly show up in
+        // /admin/users, search, and profile lookups.
+        private void HandleCreateAvatar(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (session.WebAccountID == UUID.Zero)
+            {
+                WritePage(request, response, PageTitle("Create Avatar"),
+                        "<h1>Create Avatar</h1><p>Add an email to your account first.</p>"
+                        + "<p><a href=\"" + BasePath + "/change-email\">Add an email</a></p>");
+                return;
+            }
+            // Without SMTP, the verification email that turns a pending
+            // signup into a real avatar can never arrive - a real dead end
+            // (48h then silent expiry), not just a cosmetic gap. Same
+            // explicit-unavailable messaging HandleForgotPassword already
+            // uses for the same underlying condition.
+            if (!m_smtpEnabled)
+            {
+                WritePage(request, response, PageTitle("Create Avatar"),
+                        "<h1>Create Avatar</h1><p>Avatar creation requires email verification, which is not available on this grid right now.</p>"
+                        + "<p><a href=\"" + BasePath + "/import-avatar\">Import an existing avatar instead</a></p>");
+                return;
+            }
+
+            List<GridRegion> homeRegionChoices = m_GridService?.GetDefaultRegions(UUID.Zero) ?? new List<GridRegion>();
+
+            if (request.HttpMethod != "POST")
+            {
+                WritePage(request, response, PageTitle("Create Avatar"), CreateAvatarForm(string.Empty, string.Empty, string.Empty, null, homeRegionChoices, UUID.Zero));
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string firstName = FormValue(form, "first_name").Trim();
+            string lastName = FormValue(form, "last_name").Trim();
+            string email = FormValue(form, "email").Trim();
+            string password = FormValue(form, "password");
+            string confirmPassword = FormValue(form, "confirm_password");
+            UUID.TryParse(FormValue(form, "home_region"), out UUID selectedHomeRegionId);
+
+            string error = ValidateRegistration(firstName, lastName, password, confirmPassword);
+            if (error == null && AvatarNamePending(firstName, lastName))
+                error = "That avatar name is already taken or pending verification.";
+            if (error != null)
+            {
+                WritePage(request, response, PageTitle("Create Avatar"), CreateAvatarForm(firstName, lastName, email, error, homeRegionChoices, selectedHomeRegionId));
+                return;
+            }
+
+            GridRegion home = homeRegionChoices.Find(r => r.RegionID.Equals(selectedHomeRegionId))
+                    ?? (homeRegionChoices.Count > 0 ? homeRegionChoices[0] : null);
+
+            string token = UUID.Random().ToString();
+            m_avatarSignupTokens[token] = new AvatarSignupToken
+            {
+                WebAccountID = session.WebAccountID,
+                FirstName = firstName,
+                LastName = lastName,
+                Email = email,
+                Password = password,
+                HomeRegionID = home?.RegionID ?? UUID.Zero,
+                Expires = DateTime.UtcNow.Add(AvatarSignupTokenLifetime)
+            };
+
+            string gridName = GetSetting("GridName", m_gridName);
+            string verifyUrl = m_publicBaseUrl + BasePath + "/verify-avatar?token=" + token;
+            SendEmail(email, gridName + " - Verify your new avatar",
+                    "Hello " + firstName + ",\n\nClick the link below within the next 48 hours to finish creating your avatar '" + firstName + " " + lastName + "' on " + gridName + ":\n\n"
+                    + verifyUrl + "\n\nIf you didn't request this, you can safely ignore this email.");
+
+            m_WebAccountService?.LogActivity(new WebActivityEntry
+            {
+                WebAccountID = session.WebAccountID,
+                EventType = "avatar_request_created",
+                Description = "Requested avatar '" + firstName + " " + lastName + "'",
+                IPAddress = GetClientIP(request)
+            });
+
+            WritePage(request, response, PageTitle("Create Avatar"),
+                    "<h1>Check Your Email</h1><p>A verification link has been sent to " + Html(email) + ". Click it within 48 hours to finish creating your avatar.</p>"
+                    + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>");
+        }
+
+        // Case-insensitive check against every other currently-pending
+        // (unexpired) Create Avatar request - a real UserAccount name
+        // collision is already covered by ValidateRegistration.
+        private bool AvatarNamePending(string firstName, string lastName)
+        {
+            foreach (AvatarSignupToken pending in m_avatarSignupTokens.Values)
+            {
+                if (pending.Expires > DateTime.UtcNow
+                        && string.Equals(pending.FirstName, firstName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(pending.LastName, lastName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        private static string CreateAvatarForm(string firstName, string lastName, string email, string error,
+                List<GridRegion> homeRegionChoices, UUID selectedHomeRegionId)
+        {
+            string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
+
+            string homeRegionField = string.Empty;
+            if (homeRegionChoices != null && homeRegionChoices.Count > 0)
+            {
+                StringBuilder options = new StringBuilder();
+                foreach (GridRegion region in homeRegionChoices)
+                {
+                    options.Append("<option value=\"").Append(region.RegionID).Append('"')
+                            .Append(region.RegionID.Equals(selectedHomeRegionId) ? " selected" : string.Empty)
+                            .Append('>').Append(Html(region.RegionName)).Append("</option>");
+                }
+                homeRegionField = "<label>Starting region<br/><select name=\"home_region\">" + options + "</select></label><br/>";
+            }
+
+            return "<h1>Create Avatar</h1>"
+                    + "<p>This creates a new avatar and links it to your portal account. A verification link will be sent to the email you enter.</p>"
+                    + errorHtml
+                    + "<form method=\"post\" action=\"" + BasePath + "/create-avatar\">"
+                    + "<label>First name<br/><input type=\"text\" name=\"first_name\" value=\"" + Html(firstName) + "\" required autofocus></label><br/>"
+                    + "<label>Last name<br/><input type=\"text\" name=\"last_name\" value=\"" + Html(lastName) + "\" required></label><br/>"
+                    + "<label>Email<br/><input type=\"email\" name=\"email\" value=\"" + Html(email) + "\" required></label><br/>"
+                    + "<label>Password (this avatar's in-world login password)<br/><input type=\"password\" name=\"password\" required></label><br/>"
+                    + "<label>Confirm password<br/><input type=\"password\" name=\"confirm_password\" required></label><br/>"
+                    + homeRegionField
+                    + "<button type=\"submit\">Create avatar</button>"
+                    + "</form>"
+                    + "<p><a href=\"" + BasePath + "/my-avatars\">Cancel</a></p>";
+        }
+
+        private void HandleVerifyAvatar(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            string token = request.QueryString.Get("token") ?? string.Empty;
+
+            if (string.IsNullOrEmpty(token) || !m_avatarSignupTokens.TryGetValue(token, out AvatarSignupToken signup)
+                    || signup.Expires <= DateTime.UtcNow || m_UserAccountService == null || m_AuthenticationService == null)
+            {
+                m_avatarSignupTokens.TryRemove(token, out _);
+                WritePage(request, response, PageTitle("Verify Avatar"),
+                        "<h1>Verify Avatar</h1><p class=\"error\">This verification link is invalid or has expired.</p>"
+                        + "<p><a href=\"" + BasePath + "/create-avatar\">Start over</a></p>");
+                return;
+            }
+
+            // Re-check the name is still free - someone else could have
+            // completed a different pending request for the same name
+            // while this one was waiting to be verified.
+            if (m_UserAccountService.GetUserAccount(UUID.Zero, signup.FirstName, signup.LastName) != null)
+            {
+                m_avatarSignupTokens.TryRemove(token, out _);
+                WritePage(request, response, PageTitle("Verify Avatar"),
+                        "<h1>Verify Avatar</h1><p class=\"error\">That name was taken while your verification was pending. Please start over.</p>"
+                        + "<p><a href=\"" + BasePath + "/create-avatar\">Start over</a></p>");
+                return;
+            }
+
+            m_avatarSignupTokens.TryRemove(token, out _);
+
+            UserAccount account = new UserAccount(UUID.Zero, signup.FirstName, signup.LastName, signup.Email);
+            account.UserFlags = AccountMembershipHelper.SetMembershipType(account.UserFlags, AccountMembershipHelper.TrialMember);
+            if (!m_UserAccountService.StoreUserAccount(account))
+            {
+                WritePage(request, response, PageTitle("Verify Avatar"),
+                        "<h1>Verify Avatar</h1><p class=\"error\">Could not create that avatar. Please try again.</p>"
+                        + "<p><a href=\"" + BasePath + "/create-avatar\">Start over</a></p>");
+                return;
+            }
+
+            m_AuthenticationService.SetPassword(account.PrincipalID, signup.Password);
+            if (m_GridUserService != null && signup.HomeRegionID != UUID.Zero)
+                m_GridUserService.SetHome(account.PrincipalID.ToString(), signup.HomeRegionID, new Vector3(128, 128, 0), new Vector3(0, 1, 0));
+            m_InventoryService?.CreateUserInventory(account.PrincipalID);
+
+            if (m_WebAccountService != null)
+            {
+                List<WebAccountAvatarLink> existingLinks = m_WebAccountService.GetLinkedAvatars(signup.WebAccountID);
+                m_WebAccountService.LinkAvatar(signup.WebAccountID, account.PrincipalID, "Created", existingLinks.Count == 0);
+                m_WebAccountService.LogActivity(new WebActivityEntry
+                {
+                    WebAccountID = signup.WebAccountID,
+                    AvatarPrincipalID = account.PrincipalID,
+                    EventType = "email_verified",
+                    Description = "Verified " + signup.Email + " and created avatar '" + account.Name + "'",
+                    IPAddress = GetClientIP(request)
+                });
+            }
+
+            response.Redirect(BasePath + "/dashboard?message=" + Uri.EscapeDataString("Avatar '" + account.Name + "' created."), HttpStatusCode.Redirect);
+        }
+
+        // Import Avatar - proves ownership of an EXISTING avatar via its
+        // real in-world password, then links it. Deliberately does NOT call
+        // CreateSession - this proves ownership, it doesn't log the
+        // resident into that avatar. The password is used for exactly one
+        // Authenticate call and goes out of scope immediately - never
+        // written to any new table/column/log.
+        private void HandleImportAvatar(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (session.WebAccountID == UUID.Zero)
+            {
+                WritePage(request, response, PageTitle("Import Avatar"),
+                        "<h1>Import Avatar</h1><p>Add an email to your account first.</p>"
+                        + "<p><a href=\"" + BasePath + "/change-email\">Add an email</a></p>");
+                return;
+            }
+
+            if (request.HttpMethod != "POST")
+            {
+                WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(string.Empty, string.Empty, null));
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string firstName = FormValue(form, "first_name").Trim();
+            string lastName = FormValue(form, "last_name").Trim();
+            string password = FormValue(form, "password");
+
+            if (m_UserAccountService == null || m_AuthenticationService == null || m_WebAccountService == null)
+            {
+                WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, "Import is not available right now."));
+                return;
+            }
+
+            UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, firstName, lastName);
+            if (account == null)
+            {
+                WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, "No avatar with that name exists."));
+                return;
+            }
+
+            WebAccountAvatarLink existingLink = m_WebAccountService.GetLinkForAvatar(account.PrincipalID);
+            if (existingLink != null)
+            {
+                string message = existingLink.WebAccountID == session.WebAccountID
+                        ? "This avatar is already linked to your account."
+                        : "This avatar is already linked to another portal account. Contact support if this is a mistake.";
+                WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, message));
+                return;
+            }
+
+            string authToken = m_AuthenticationService.Authenticate(account.PrincipalID, Util.Md5Hash(password), 30);
+            if (string.IsNullOrEmpty(authToken))
+            {
+                WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, "Incorrect password."));
+                return;
+            }
+
+            List<WebAccountAvatarLink> currentLinks = m_WebAccountService.GetLinkedAvatars(session.WebAccountID);
+            try
+            {
+                m_WebAccountService.LinkAvatar(session.WebAccountID, account.PrincipalID, "Imported", currentLinks.Count == 0);
+            }
+            catch (Exception)
+            {
+                WritePage(request, response, PageTitle("Import Avatar"),
+                        ImportAvatarForm(firstName, lastName, "This avatar is already linked to another portal account. Contact support if this is a mistake."));
+                return;
+            }
+
+            m_WebAccountService.LogActivity(new WebActivityEntry
+            {
+                WebAccountID = session.WebAccountID,
+                AvatarPrincipalID = account.PrincipalID,
+                EventType = "avatar_imported",
+                Description = "Imported avatar '" + account.Name + "'",
+                IPAddress = GetClientIP(request)
+            });
+
+            response.Redirect(BasePath + "/my-avatars?message=" + Uri.EscapeDataString("Avatar '" + account.Name + "' imported."), HttpStatusCode.Redirect);
+        }
+
+        private static string ImportAvatarForm(string firstName, string lastName, string error)
+        {
+            string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
+            return "<h1>Import Avatar</h1>"
+                    + "<p>Link an avatar that already exists on this grid to your portal account. Your in-world password is verified but never stored.</p>"
+                    + errorHtml
+                    + "<form method=\"post\" action=\"" + BasePath + "/import-avatar\">"
+                    + "<label>First name<br/><input type=\"text\" name=\"first_name\" value=\"" + Html(firstName) + "\" required autofocus></label><br/>"
+                    + "<label>Last name<br/><input type=\"text\" name=\"last_name\" value=\"" + Html(lastName) + "\" required></label><br/>"
+                    + "<label>Grid password<br/><input type=\"password\" name=\"password\" required></label><br/>"
+                    + "<button type=\"submit\">Import avatar</button>"
+                    + "</form>"
+                    + "<p><a href=\"" + BasePath + "/my-avatars\">Cancel</a></p>";
+        }
+
+        private void HandleMyAvatars(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            string message = string.Empty;
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                message = "<p>" + Html(queryMessage) + "</p>";
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>My Avatars</h1>").Append(message);
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/create-avatar\">Create a new avatar</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/import-avatar\">Import an existing avatar</a></p>");
+
+            if (session.WebAccountID == UUID.Zero || m_WebAccountService == null)
+            {
+                sb.Append("<p>Add an email to your account (<a href=\"").Append(BasePath).Append("/change-email\">Change Email</a>) to link a portal account first.</p>");
+                WritePage(request, response, PageTitle("My Avatars"), sb.ToString());
+                return;
+            }
+
+            List<WebAccountAvatarLink> links = m_WebAccountService.GetLinkedAvatars(session.WebAccountID);
+            if (links.Count == 0)
+            {
+                sb.Append("<p>You haven't linked any avatars yet.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>Avatar Name</th><th>Email</th><th>UUID</th><th>Status</th><th>Type</th><th>Created</th><th></th></tr>");
+                foreach (WebAccountAvatarLink link in links)
+                {
+                    UserAccount avatar = m_UserAccountService?.GetUserAccount(UUID.Zero, link.AvatarPrincipalID);
+                    string avatarName = avatar != null ? avatar.Name : link.AvatarPrincipalID.ToString();
+                    string status = avatar != null && avatar.UserLevel < 0 ? "Suspended" : "Active";
+                    bool isActive = link.AvatarPrincipalID == session.PrincipalID;
+
+                    sb.Append("<tr><td>").Append(Html(avatarName)).Append(isActive ? " <span class=\"pill pill-yes\">Active</span>" : string.Empty).Append("</td>");
+                    sb.Append("<td>").Append(Html(avatar?.Email ?? string.Empty)).Append("</td>");
+                    sb.Append("<td>").Append(link.AvatarPrincipalID).Append("</td>");
+                    sb.Append("<td><span class=\"pill ").Append(status == "Active" ? "pill-yes" : "pill-no").Append("\">").Append(status).Append("</span></td>");
+                    sb.Append("<td>").Append(Html(link.LinkType)).Append("</td>");
+                    sb.Append("<td>").Append(Html(link.LinkedDate.ToString("MMM d, yyyy"))).Append("</td>");
+                    sb.Append("<td>");
+                    if (!isActive)
+                    {
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/switch-avatar\">")
+                          .Append("<input type=\"hidden\" name=\"avatar_principal_id\" value=\"").Append(link.AvatarPrincipalID).Append("\">")
+                          .Append("<button type=\"submit\">Switch to</button></form>");
+                    }
+                    sb.Append("</td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, PageTitle("My Avatars"), sb.ToString());
+        }
+
+        // Only ever reachable for one of the session's OWN linked avatars -
+        // the client-supplied avatar_principal_id is never trusted on its
+        // own. Deliberately mutates the existing session in place rather
+        // than issuing a fresh CreateSession/cookie like
+        // HandleAdminUsersLoginAs does - that precedent exists for crossing
+        // between DIFFERENT people's identities (support tooling, where a
+        // fresh audit token/expiry matters); switching among your own
+        // avatars is lower-stakes and shouldn't reset the session clock.
+        private void HandleSwitchAvatar(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (session.WebAccountID == UUID.Zero || m_WebAccountService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            if (!UUID.TryParse(FormValue(form, "avatar_principal_id"), out UUID targetId))
+            {
+                response.Redirect(BasePath + "/dashboard", HttpStatusCode.Redirect);
+                return;
+            }
+
+            List<WebAccountAvatarLink> owned = m_WebAccountService.GetLinkedAvatars(session.WebAccountID);
+            if (!owned.Exists(a => a.AvatarPrincipalID == targetId))
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            UserAccount target = m_UserAccountService?.GetUserAccount(UUID.Zero, targetId);
+            if (target == null)
+            {
+                response.Redirect(BasePath + "/dashboard", HttpStatusCode.Redirect);
+                return;
+            }
+
+            session.PrincipalID = target.PrincipalID;
+            session.Name = target.FirstName + " " + target.LastName;
+            session.IsAdmin = target.UserLevel >= 200;
+
+            m_WebAccountService.LogActivity(new WebActivityEntry
+            {
+                WebAccountID = session.WebAccountID,
+                AvatarPrincipalID = target.PrincipalID,
+                EventType = "active_avatar_switched",
+                Description = "Switched active avatar to '" + target.Name + "'",
+                IPAddress = GetClientIP(request)
+            });
+
+            response.Redirect(BasePath + "/dashboard", HttpStatusCode.Redirect);
+        }
+
+        #endregion Multi-avatar portal accounts
+
+        #region Suggestion Box
+
+        private void HandleSuggestionBox(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+
+            if (m_SuggestionService == null)
+            {
+                WritePage(request, response, PageTitle("Suggestion Box"),
+                        "<h1>Suggestion Box</h1><p>Suggestions are not available on this grid right now.</p>");
+                return;
+            }
+
+            if (request.HttpMethod != "POST")
+            {
+                WritePage(request, response, PageTitle("Suggestion Box"), SuggestionBoxForm(null));
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string subject = FormValue(form, "subject").Trim();
+            string message = FormValue(form, "message").Trim();
+            bool anonymous = FormValue(form, "anonymous") == "on";
+
+            if (string.IsNullOrEmpty(subject) || string.IsNullOrEmpty(message))
+            {
+                WritePage(request, response, PageTitle("Suggestion Box"), SuggestionBoxForm("Enter both a subject and a message."));
+                return;
+            }
+
+            Suggestion suggestion = new Suggestion
+            {
+                ID = UUID.Random(),
+                SubmitterAvatarID = (session != null && !anonymous) ? session.PrincipalID : UUID.Zero,
+                SubmitterName = (session != null && !anonymous) ? session.Name : string.Empty,
+                Subject = subject,
+                Message = message,
+                Status = "new",
+                Created = DateTime.UtcNow
+            };
+
+            if (!m_SuggestionService.Store(suggestion))
+            {
+                WritePage(request, response, PageTitle("Suggestion Box"), SuggestionBoxForm("Could not submit your suggestion. Please try again."));
+                return;
+            }
+
+            if (session != null && session.WebAccountID != UUID.Zero)
+            {
+                m_WebAccountService?.LogActivity(new WebActivityEntry
+                {
+                    WebAccountID = session.WebAccountID,
+                    AvatarPrincipalID = session.PrincipalID,
+                    EventType = "suggestion_submitted",
+                    Description = "Submitted a suggestion: " + subject,
+                    IPAddress = GetClientIP(request)
+                });
+            }
+
+            WritePage(request, response, PageTitle("Suggestion Box"),
+                    "<h1>Suggestion Box</h1><p>Thanks for your suggestion!</p><p><a href=\"" + BasePath + "/suggestion-box\">Submit another</a></p>");
+        }
+
+        private static string SuggestionBoxForm(string error)
+        {
+            string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
+            return "<h1>Suggestion Box</h1>"
+                    + "<p>Have an idea for the grid? Let us know.</p>"
+                    + errorHtml
+                    + "<form method=\"post\" action=\"" + BasePath + "/suggestion-box\">"
+                    + "<label>Subject<br/><input type=\"text\" name=\"subject\" required autofocus></label><br/>"
+                    + "<label>Message<br/><textarea name=\"message\" rows=\"5\" required></textarea></label><br/>"
+                    + "<label><input type=\"checkbox\" name=\"anonymous\" style=\"width:auto;display:inline\"> Submit anonymously</label><br/>"
+                    + "<button type=\"submit\">Submit</button>"
+                    + "</form>";
+        }
+
+        private void HandleAdminSuggestions(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Suggestions"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+            if (m_SuggestionService == null)
+            {
+                WritePage(request, response, PageTitle("Suggestions"),
+                        "<h1>Suggestions</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Suggestion service is not available.</p>");
+                return;
+            }
+
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                if (UUID.TryParse(FormValue(form, "id"), out UUID suggestionId))
+                {
+                    Suggestion existing = m_SuggestionService.Get(suggestionId);
+                    if (existing != null)
+                    {
+                        existing.Status = FormValue(form, "status");
+                        m_SuggestionService.Store(existing);
+                    }
+                }
+                response.Redirect(BasePath + "/admin/suggestions", HttpStatusCode.Redirect);
+                return;
+            }
+
+            List<Suggestion> suggestions = m_SuggestionService.GetAll(0, 100);
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>Suggestions</h1><p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>");
+
+            if (suggestions.Count == 0)
+            {
+                sb.Append("<p>No suggestions yet.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>Date</th><th>From</th><th>Subject</th><th>Message</th><th>Status</th></tr>");
+                foreach (Suggestion suggestion in suggestions)
+                {
+                    string from = suggestion.SubmitterAvatarID == UUID.Zero ? "Anonymous" : Html(suggestion.SubmitterName);
+                    sb.Append("<tr><td>").Append(Html(suggestion.Created.ToString("yyyy-MM-dd"))).Append("</td>");
+                    sb.Append("<td>").Append(from).Append("</td>");
+                    sb.Append("<td>").Append(Html(suggestion.Subject)).Append("</td>");
+                    sb.Append("<td>").Append(Html(suggestion.Message)).Append("</td>");
+                    sb.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/suggestions\">")
+                      .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(suggestion.ID).Append("\">")
+                      .Append("<select name=\"status\" onchange=\"this.form.submit()\">")
+                      .Append("<option value=\"new\"").Append(suggestion.Status == "new" ? " selected" : "").Append(">New</option>")
+                      .Append("<option value=\"reviewed\"").Append(suggestion.Status == "reviewed" ? " selected" : "").Append(">Reviewed</option>")
+                      .Append("<option value=\"closed\"").Append(suggestion.Status == "closed" ? " selected" : "").Append(">Closed</option>")
+                      .Append("</select></form></td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, PageTitle("Suggestions"), sb.ToString());
+        }
+
+        #endregion Suggestion Box
 
         // Self-service password reset (task #22 from the WhiteCore-Dev
         // re-audit's "all of it" list). Always shows the same generic
@@ -8981,7 +9689,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         // own handling: a leading "$1$" means already-hashed, otherwise it MD5s
         // the input itself). A web form only ever has the raw plaintext, so this
         // must do the same hashing step LLLoginService does for that case.
-        private string TryLogin(string firstName, string lastName, string password, out string token)
+        private string TryLogin(IOSHttpRequest request, string firstName, string lastName, string password, out string token)
         {
             token = null;
 
@@ -9014,8 +9722,108 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (string.IsNullOrEmpty(authToken))
                 return "Invalid login.";
 
-            token = CreateSession(account.PrincipalID, account.FirstName + " " + account.LastName, account.UserLevel >= 200);
+            UUID webAccountId = AutoProvisionWebAccount(request, account);
+
+            token = CreateSession(account.PrincipalID, account.FirstName + " " + account.LastName, account.UserLevel >= 200, webAccountId);
             return null;
+        }
+
+        // Additive login model: classic avatar-name+password login (and
+        // /register, which calls TryLogin internally) keep working exactly
+        // as before - this just silently links a portal account (WebAccount)
+        // to whichever avatar just logged in, auto-creating one the first
+        // time an avatar with a real email logs in. Never blocks a login,
+        // never changes what TryLogin returns on failure.
+        private UUID AutoProvisionWebAccount(IOSHttpRequest request, UserAccount account)
+        {
+            if (m_WebAccountService == null)
+                return UUID.Zero;
+
+            string ip = GetClientIP(request);
+
+            WebAccountAvatarLink existing = m_WebAccountService.GetLinkForAvatar(account.PrincipalID);
+            if (existing != null)
+            {
+                m_WebAccountService.LogActivity(new WebActivityEntry
+                {
+                    WebAccountID = existing.WebAccountID,
+                    AvatarPrincipalID = account.PrincipalID,
+                    EventType = "user_login",
+                    Description = "Logged in as " + account.Name,
+                    IPAddress = ip
+                });
+                return existing.WebAccountID;
+            }
+
+            // Nothing to seed a WebAccount with - stays unlinked until the
+            // resident sets an email (see EnsureWebAccountLinked, called
+            // from HandleChangeEmail).
+            if (string.IsNullOrWhiteSpace(account.Email))
+                return UUID.Zero;
+
+            string normalizedEmail = account.Email.Trim().ToLowerInvariant();
+            WebAccount match = m_WebAccountService.GetByEmail(normalizedEmail);
+            if (match != null)
+            {
+                // Two avatars, same email - the same person. Link, don't
+                // error; a duplicate-link attempt for an already-linked
+                // avatar would already be a no-op here since we just
+                // confirmed `existing == null` above for THIS avatar.
+                try
+                {
+                    m_WebAccountService.LinkAvatar(match.ID, account.PrincipalID, "AutoProvisioned", false);
+                }
+                catch (Exception e)
+                {
+                    // Lost a race with another request linking this same
+                    // avatar between the GetLinkForAvatar check above and
+                    // here - re-read and use whatever actually won.
+                    m_log.DebugFormat("[WEB INTERFACE]: AutoProvisionWebAccount race linking {0}: {1}", account.PrincipalID, e.Message);
+                    WebAccountAvatarLink raced = m_WebAccountService.GetLinkForAvatar(account.PrincipalID);
+                    if (raced != null)
+                        return raced.WebAccountID;
+                }
+                m_WebAccountService.LogActivity(new WebActivityEntry { WebAccountID = match.ID, AvatarPrincipalID = account.PrincipalID, EventType = "avatar_linked", Description = "Avatar '" + account.Name + "' auto-linked (matching email)", IPAddress = ip });
+                m_WebAccountService.LogActivity(new WebActivityEntry { WebAccountID = match.ID, AvatarPrincipalID = account.PrincipalID, EventType = "user_login", Description = "Logged in as " + account.Name, IPAddress = ip });
+                return match.ID;
+            }
+
+            WebAccount newAccount = new WebAccount
+            {
+                ID = UUID.Random(),
+                Email = normalizedEmail,
+                Created = DateTime.UtcNow,
+                Updated = DateTime.UtcNow
+            };
+            if (!m_WebAccountService.Store(newAccount))
+                return UUID.Zero;
+
+            try
+            {
+                m_WebAccountService.LinkAvatar(newAccount.ID, account.PrincipalID, "AutoProvisioned", true);
+            }
+            catch (Exception e)
+            {
+                m_log.DebugFormat("[WEB INTERFACE]: AutoProvisionWebAccount race creating link for {0}: {1}", account.PrincipalID, e.Message);
+                WebAccountAvatarLink raced = m_WebAccountService.GetLinkForAvatar(account.PrincipalID);
+                if (raced != null)
+                    return raced.WebAccountID;
+            }
+            m_WebAccountService.LogActivity(new WebActivityEntry { WebAccountID = newAccount.ID, AvatarPrincipalID = account.PrincipalID, EventType = "user_registered", Description = "Portal account created", IPAddress = ip });
+            m_WebAccountService.LogActivity(new WebActivityEntry { WebAccountID = newAccount.ID, AvatarPrincipalID = account.PrincipalID, EventType = "user_login", Description = "Logged in as " + account.Name, IPAddress = ip });
+            return newAccount.ID;
+        }
+
+        // Lets a resident who logged in classically with no email set (so
+        // AutoProvisionWebAccount had nothing to work with) get linked
+        // immediately once they add one via /change-email, rather than
+        // needing to log out and back in.
+        private void EnsureWebAccountLinked(IOSHttpRequest request, WebSession session, UserAccount account)
+        {
+            if (session.WebAccountID != UUID.Zero || m_WebAccountService == null)
+                return;
+
+            session.WebAccountID = AutoProvisionWebAccount(request, account);
         }
 
         #endregion Pages
@@ -9050,6 +9858,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "</form>";
         }
 
+        // Single login form, unchanged since day one - no separate portal
+        // credential (see AutoProvisionWebAccount's own comment on the
+        // multi-avatar account model: the avatar you register/log in with
+        // first IS the master account, not a second email+password pair).
         private static string LoginForm(string firstName, string lastName, string error)
         {
             string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
@@ -9178,22 +9990,50 @@ namespace OpenSim.Server.Handlers.WebInterface
         // Sidebar link definitions, in display order - single source of truth
         // for both rendering and active-state matching, so a new sidebar
         // entry can't silently be added to one without the other.
+        // Kept flat/ungrouped - the small set of pages a resident lands on
+        // most often, so they're never more than one click away behind a
+        // collapsed group.
         private static readonly (string Path, string Icon, string Label)[] SidebarMainLinks =
         {
             ("/dashboard", "bi-speedometer2", "Dashboard"),
             ("/profile", "bi-person", "My Profile"),
+            ("/myinventory", "bi-box-seam", "Inventory"),
+        };
+
+        // Grouped under its own "Avatars" section, matching the reference's
+        // sidebar submenu - /partner and /transactions are MOVED here (nav
+        // placement only, their routes/handlers are unchanged) rather than
+        // duplicated between two sections.
+        private static readonly (string Path, string Icon, string Label)[] AvatarsSubmenu =
+        {
+            ("/my-avatars", "bi-people", "My Avatars"),
+            ("/create-avatar", "bi-person-plus", "Create Avatar"),
+            ("/import-avatar", "bi-box-arrow-in-right", "Import Avatar"),
+            ("/partner", "bi-heart", "Partnerships"),
+            ("/transactions", "bi-cash-stack", "Transactions"),
+        };
+
+        private static readonly (string Path, string Icon, string Label)[] SidebarSocialLinks =
+        {
             ("/friends", "bi-people", "Friends"),
             ("/messages", "bi-envelope", "Messages"),
             ("/offline-messages", "bi-envelope-open", "Offline Messages"),
-            ("/partner", "bi-heart", "Partner"),
-            ("/transactions", "bi-cash-stack", "Transactions"),
+        };
+
+        private static readonly (string Path, string Icon, string Label)[] SidebarCommunityLinks =
+        {
             ("/myclassifieds", "bi-megaphone", "Classifieds"),
             ("/myevents", "bi-calendar-event", "Events"),
             ("/auctions", "bi-hammer", "Auctions"),
-            ("/myregions", "bi-map", "My Regions"),
-            ("/myland", "bi-signpost-split", "My Land"),
+            ("/suggestion-box", "bi-lightbulb", "Suggestion Box"),
+        };
+
+        // /myland is a redirect to /myregions now (merged page) - only the
+        // merged entry appears in the nav.
+        private static readonly (string Path, string Icon, string Label)[] SidebarLandLinks =
+        {
+            ("/myregions", "bi-map", "My Land & Regions"),
             ("/myestates", "bi-building", "My Estate"),
-            ("/myinventory", "bi-box-seam", "Inventory"),
         };
 
         private static readonly (string Path, string Icon, string Label)[] SidebarAccountLinks =
@@ -9208,17 +10048,61 @@ namespace OpenSim.Server.Handlers.WebInterface
             string gridName = GetSetting("GridName", m_gridName);
             string initial = string.IsNullOrEmpty(session.Name) ? "?" : session.Name.Substring(0, 1).ToUpperInvariant();
 
+            List<WebAccountAvatarLink> linkedAvatars = session.WebAccountID != UUID.Zero && m_WebAccountService != null
+                    ? m_WebAccountService.GetLinkedAvatars(session.WebAccountID)
+                    : new List<WebAccountAvatarLink>();
+
             StringBuilder sb = new StringBuilder();
             sb.Append("<aside id=\"appSidebar\" class=\"app-sidebar\">");
             sb.Append("<a class=\"sidebar-brand\" href=\"/\"><span class=\"brand-mark\">C</span>").Append(Html(gridName)).Append("</a>");
 
-            sb.Append("<div class=\"sidebar-user\">");
-            sb.Append("<div class=\"sidebar-user-avatar\">").Append(Html(initial)).Append("</div><div>");
-            sb.Append("<div class=\"sidebar-user-name\">").Append(Html(session.Name)).Append("</div>");
-            sb.Append("<div class=\"sidebar-user-role\"><span class=\"pill ")
-              .Append(session.IsAdmin ? "pill-yes" : "pill-no").Append("\">")
-              .Append(session.IsAdmin ? "Administrator" : "Resident").Append("</span></div>");
-            sb.Append("</div></div>");
+            // Avatar switcher - a dropdown reusing the same .nav-dropdown/
+            // .dropdown-toggle/.dropdown-menu/DropdownScript mechanism the
+            // top nav's own Explore/Grid Info groups already use (a plain
+            // delegated document click handler, not scoped to the top nav -
+            // it works anywhere a .nav-dropdown appears). Only rendered
+            // when there's actually more than one avatar to switch between.
+            if (linkedAvatars.Count > 1)
+            {
+                sb.Append("<div class=\"sidebar-user nav-dropdown\">");
+                sb.Append("<a href=\"#\" class=\"dropdown-toggle\" style=\"display:flex;align-items:center;text-decoration:none;color:inherit\">");
+                sb.Append("<div class=\"sidebar-user-avatar\">").Append(Html(initial)).Append("</div><div>");
+                sb.Append("<div class=\"sidebar-user-name\">").Append(Html(session.Name)).Append(" <i class=\"bi bi-caret-down-fill\"></i></div>");
+                sb.Append("<div class=\"sidebar-user-role\"><span class=\"pill ")
+                  .Append(session.IsAdmin ? "pill-yes" : "pill-no").Append("\">")
+                  .Append(session.IsAdmin ? "Administrator" : "Resident").Append("</span></div>");
+                sb.Append("</div></a>");
+                sb.Append("<div class=\"dropdown-menu\">");
+                foreach (WebAccountAvatarLink link in linkedAvatars)
+                {
+                    UserAccount linkedAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, link.AvatarPrincipalID);
+                    string linkedName = linkedAccount != null ? linkedAccount.Name : link.AvatarPrincipalID.ToString();
+                    bool isActive = link.AvatarPrincipalID == session.PrincipalID;
+                    if (isActive)
+                    {
+                        sb.Append("<span><i class=\"bi bi-check2 ic-green\"></i> ").Append(Html(linkedName)).Append("</span>");
+                    }
+                    else
+                    {
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/switch-avatar\" style=\"margin:0\">")
+                          .Append("<input type=\"hidden\" name=\"avatar_principal_id\" value=\"").Append(link.AvatarPrincipalID).Append("\">")
+                          .Append("<button type=\"submit\" style=\"background:none;border:none;padding:0;width:100%;text-align:left;color:inherit;font:inherit;cursor:pointer\">")
+                          .Append(Html(linkedName)).Append("</button></form>");
+                    }
+                }
+                sb.Append("<a href=\"").Append(BasePath).Append("/my-avatars\"><i class=\"bi bi-gear\"></i> Manage Avatars</a>");
+                sb.Append("</div></div>");
+            }
+            else
+            {
+                sb.Append("<div class=\"sidebar-user\">");
+                sb.Append("<div class=\"sidebar-user-avatar\">").Append(Html(initial)).Append("</div><div>");
+                sb.Append("<div class=\"sidebar-user-name\">").Append(Html(session.Name)).Append("</div>");
+                sb.Append("<div class=\"sidebar-user-role\"><span class=\"pill ")
+                  .Append(session.IsAdmin ? "pill-yes" : "pill-no").Append("\">")
+                  .Append(session.IsAdmin ? "Administrator" : "Resident").Append("</span></div>");
+                sb.Append("</div></div>");
+            }
 
             sb.Append("<nav class=\"sidebar-nav\">");
             sb.Append("<div class=\"sidebar-nav-label\">My Panel</div>");
@@ -9230,12 +10114,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                 AppendSidebarLink(sb, href, icon, label, active, SidebarIconColors[colorIndex++ % SidebarIconColors.Length]);
             }
 
-            sb.Append("<div class=\"sidebar-nav-label\">Account</div>");
-            foreach ((string linkPath, string icon, string label) in SidebarAccountLinks)
-            {
-                bool active = currentPath.StartsWith(BasePath + linkPath, StringComparison.OrdinalIgnoreCase);
-                AppendSidebarLink(sb, BasePath + linkPath, icon, label, active, SidebarIconColors[colorIndex++ % SidebarIconColors.Length]);
-            }
+            // Collapsible groups - closed by default to save vertical space
+            // (the whole point of collapsing them), but auto-open when the
+            // current page is one of their own links, so the active-link
+            // highlight is never hidden behind a closed toggle.
+            AppendSidebarGroup(sb, "Avatars", AvatarsSubmenu, currentPath, ref colorIndex);
+            AppendSidebarGroup(sb, "Social", SidebarSocialLinks, currentPath, ref colorIndex);
+            AppendSidebarGroup(sb, "Community", SidebarCommunityLinks, currentPath, ref colorIndex);
+            AppendSidebarGroup(sb, "Land & Estate", SidebarLandLinks, currentPath, ref colorIndex);
+            AppendSidebarGroup(sb, "Account", SidebarAccountLinks, currentPath, ref colorIndex);
 
             // Admin gets exactly one extra sidebar entry, not the old
             // dropdown's full 13-item breakdown - /admin itself renders that
@@ -9272,6 +10159,22 @@ namespace OpenSim.Server.Handlers.WebInterface
             // accent highlight (matches .sidebar-nav a.active's existing
             // background/text tint) - the icon shouldn't clash with it.
             sb.Append("<i class=\"bi ").Append(icon).Append(active ? "" : " " + colorClass).Append("\"></i> ").Append(Html(label)).Append("</a>");
+        }
+
+        // Shared renderer for every collapsible sidebar section (Avatars,
+        // Social, Community, Land & Estate, Account) - auto-opens when the
+        // current page is one of its own links, closed otherwise.
+        private static void AppendSidebarGroup(StringBuilder sb, string groupLabel, (string Path, string Icon, string Label)[] links, string currentPath, ref int colorIndex)
+        {
+            bool groupActive = links.Any(l => currentPath.StartsWith(BasePath + l.Path, StringComparison.OrdinalIgnoreCase));
+            sb.Append("<details class=\"sidebar-nav-group\"").Append(groupActive ? " open" : "").Append(">");
+            sb.Append("<summary class=\"sidebar-nav-label\">").Append(Html(groupLabel)).Append(" <i class=\"bi bi-chevron-down\"></i></summary>");
+            foreach ((string linkPath, string icon, string label) in links)
+            {
+                bool active = currentPath.StartsWith(BasePath + linkPath, StringComparison.OrdinalIgnoreCase);
+                AppendSidebarLink(sb, BasePath + linkPath, icon, label, active, SidebarIconColors[colorIndex++ % SidebarIconColors.Length]);
+            }
+            sb.Append("</details>");
         }
 
         // Admin-managed nav entries - matches WhiteCore-Dev's real admin/
@@ -9843,6 +10746,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".sidebar-nav-label{color:var(--muted);font-size:11.5px;font-weight:700;" +
                 "text-transform:uppercase;letter-spacing:.5px;padding:14px 10px 6px;}" +
                 ".sidebar-nav-label:first-child{padding-top:4px;}" +
+                // Collapsible sidebar groups (Avatars/Account) - plain
+                // <details>/<summary>, same "no JS needed" approach as the
+                // login page's own portal-login toggle. ::marker hidden and
+                // replaced with a chevron that flips via the [open]
+                // attribute selector, no script required either way.
+                ".sidebar-nav-group summary.sidebar-nav-label{cursor:pointer;display:flex;" +
+                "align-items:center;justify-content:space-between;list-style:none;margin-bottom:2px;}" +
+                ".sidebar-nav-group summary.sidebar-nav-label::-webkit-details-marker{display:none;}" +
+                ".sidebar-nav-group summary .bi-chevron-down{font-size:11px;transition:transform .15s;}" +
+                ".sidebar-nav-group[open] summary .bi-chevron-down{transform:rotate(180deg);}" +
                 ".sidebar-nav a{display:flex;align-items:center;gap:10px;padding:10px 10px;" +
                 "border-radius:6px;font-size:15px;font-weight:600;color:var(--text);margin-bottom:2px;}" +
                 ".sidebar-nav a .bi{font-size:17px;width:18px;text-align:center;flex-shrink:0;}" +

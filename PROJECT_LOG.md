@@ -12630,3 +12630,370 @@ estates table columns) are code-reviewed and build-clean but **not
 live-verified** - doing so needs a real logged-in session, which
 wasn't done this pass since entering account credentials isn't
 something to do without the user present.
+
+## Multi-avatar portal accounts + 3rd-Rock-style dashboard + Suggestion Box (2026-08-23)
+
+Reworked the WebInterface toward a reference product the user pointed
+at directly - "3rd Rock Grid Panel" (mygridpanel.com) - based on
+screenshots of its Dashboard, sidebar, My Avatars list, Create Avatar,
+Import Avatar, Avatar Partnerships, and My Transactions pages. The
+core architectural shift: Confluence's web login has always been "one
+avatar = one login" (`WebSession.PrincipalID`, an avatar UUID, *is*
+the identity). The reference uses "one portal login can own/link
+multiple avatars," each with its own separate in-world password. User
+explicitly confirmed adopting that model, "down to the layout" - not
+just a visual reskin - and made three decisions up front: (1)
+additive, not a replacement - `/login` and `/register` keep working
+exactly as they always have, zero disruption to existing residents;
+(2) build a Suggestion Box now; (3) defer Billing entirely (no defined
+scope). Shipped as one pass rather than phased, per explicit direction,
+despite the higher risk of a foundational mistake surfacing late -
+planned carefully up front specifically to manage that risk (see the
+approved plan's "highest-leverage decision" reasoning below).
+
+### New backend: WebAccountService + SuggestionService
+
+Two brand-new services, following this codebase's own established
+"small dedicated service" recipe exactly (traced from
+`StaticPageService`/`SupportTicketService` as live templates - POCO in
+`OpenSim/Framework`, service+data interfaces, `*ServiceBase` config
+loader, thin passthrough service, one data-layer class per backend,
+`.migrations` files, csproj/sln registration):
+
+- **`WebAccountService`** - `web_accounts` (email, PBKDF2-SHA256
+  password hash/salt/iteration-count, `EmailVerified`), `web_account_avatars`
+  (the link table - `AvatarPrincipalID` is deliberately the *primary
+  key*, not a surrogate ID, so "an avatar can be linked to at most one
+  portal account, ever" is a database-enforced invariant, not a
+  service-layer check-then-hope race), `web_activity_log` (the Recent
+  Activity feed - `WebAccountID`+`Created` composite index, the only
+  query pattern it needs). All three utf8mb4 from `:VERSION 1` (not
+  the two-step utf8→utf8mb4 migration mistake this session's earlier
+  charset work already fixed elsewhere).
+- **`SuggestionService`** - a near-exact clone of `SupportTicketService`'s
+  shape (one table, submitter/subject/message/status), just without
+  required contact info - a suggestion can be fully anonymous.
+- Password hashing lives on `IWebAccountService` as instance methods
+  (`HashPassword`/`VerifyPassword`), not static helpers on the concrete
+  `WebAccountService` class - the first build attempt used the
+  concrete class directly and failed with `CS0234` because
+  `OpenSim.Server.Handlers.csproj` only references
+  `OpenSim.Services.Interfaces`, never concrete service implementations
+  (every other plugin in this codebase is loaded via reflection and
+  the connector only ever depends on its interface). Real, load-bearing
+  house-convention violation, worth documenting exactly why it's
+  wrong.
+- Both registered end-to-end: `OpenSim.sln` (new `Project` blocks +
+  GUIDs), every affected csproj's explicit `<Compile Include>`/
+  `<EmbeddedResource Include>` (`OpenSim.Framework.csproj`,
+  `OpenSim.Data.csproj`, and all three `OpenSim.Data.{MySQL,PGSQL,SQLite}.csproj`
+  set `EnableDefaultItems=false`, confirmed by grep - nothing in those
+  trees auto-includes), and `[WebAccountService]`/`[SuggestionService]`
+  sections in both the live `Robust.HG.ini` and the repo's own
+  `bin/Robust.HG.ini.example` - which turned out to be missing
+  `[StaticPageService]`/`[SupportTicketService]` entirely, a
+  pre-existing documentation gap, backfilled while this file was open
+  rather than left to compound further.
+
+### Session model - the one field that kept the blast radius small
+
+`WebSession` gained exactly one new field, `UUID WebAccountID`
+(`UUID.Zero` = this avatar has no linked portal account yet).
+`PrincipalID` keeps meaning exactly what it always has - "the
+currently active avatar." This was the single highest-leverage design
+decision in the whole plan: every one of the ~60 existing handlers
+that read `session.PrincipalID` directly (`HandleFriends`,
+`HandleProfile`, `HandleMyTransactions`, `HandleMyRegions`, etc.)
+needed **zero changes** - they're still correctly reading "which
+avatar am I acting as," and stay correct as long as login/switching
+keep `PrincipalID` pointed at the right one. Only code that needs to
+reason about the portal account as a whole (dashboard stats, My
+Avatars, the activity log, the switcher, Create/Import Avatar) touches
+the new field.
+
+`IsAdmin` stays per-avatar (recomputed from `UserLevel >= 200` on
+every login/switch, unchanged check) rather than becoming
+portal-account-wide - matches OpenSim's real security model
+(`UserLevel` lives on the avatar's own `UserAccount`) and avoids a
+real privilege-escalation shape: linking one admin alt to a WebAccount
+would otherwise leak admin rights onto every other avatar on that
+account.
+
+A session can legitimately have `PrincipalID == UUID.Zero` (a bare
+portal signup, before Create/Import Avatar). Rather than null-checking
+that in 60 places, added one centralized `AvatarOptionalRoutes`
+allowlist checked once in `HandleRequest` before the route switch -
+anything not on it redirects to `/dashboard`, which renders its own
+empty state for exactly this case. Confirmed working live: navigating
+a no-avatar test session to `/admin/suggestions` (not on the
+allowlist) correctly redirected to `/dashboard` before the admin check
+inside that handler ever ran.
+
+### Additive login/signup - real new flows, nothing existing touched
+
+`TryLogin` (the classic avatar-name+password core, called by both
+`/login` and `/register`) gained one thing at its success path: silent
+auto-provisioning. First avatar login with a real email either links
+to an existing WebAccount with the same email (two avatars, same
+person - link, don't error) or creates a new one. No email on the
+account = stays unlinked until the resident sets one via
+`/change-email` (`EnsureWebAccountLinked`, called from
+`HandleChangeEmail` after a successful save, so no log-out/back-in
+needed). Genuinely additive - the existing avatar-name+password form
+and its POST target are byte-for-byte unchanged.
+
+New, fully separate flows: `/login-portal` (email+portal-password, a
+second form appended to the existing `/login` page, not replacing
+it), `/portal-signup` (bare email+password signup, no avatar involved
+- auto-logs in immediately, matching `HandleRegister`'s existing
+"auto-login right after creating" pattern; `EmailVerified` only gates
+a *later* `/login-portal` attempt, not this initial moment),
+`/create-avatar` + `/verify-avatar` (deliberately does NOT create the
+real `UserAccount` until the 48-hour verification link is clicked -
+creating it immediately would let an unverified signup permanently
+squat an avatar name and instantly show up in `/admin/users`/search;
+the pending signup, including its plaintext password, lives in the
+same in-memory `ConcurrentDictionary` pattern as the existing
+`ResetToken` - an accepted, explicitly-documented tradeoff, not a new
+kind of exposure), `/import-avatar` (proves ownership of an *existing*
+avatar via its real in-world password - one `Authenticate` call, the
+password never stored anywhere new, no `CreateSession` since this
+proves ownership rather than logging you in as that avatar), and
+`/switch-avatar` (verifies the target is actually one of the session's
+own linked avatars before doing anything, then mutates the session in
+place rather than issuing a fresh cookie like the existing
+`HandleAdminUsersLoginAs` impersonation path does - that precedent is
+for crossing between *different* people's identities and needs a
+fresh audit trail; switching among your own avatars doesn't).
+
+### Dashboard restyle, sidebar, My Avatars list
+
+`HandleDashboard` now matches the reference's 4-card stat row (My
+Avatars/My Regions/**My Estates** - confirmed genuinely distinct from
+My Regions by reading `GetRegionsOwnedBy`'s own implementation, which
+already calls `GetEstatesByOwner` as an intermediate step -
+/My Events), an Account Information card showing both the active
+avatar's identity and the linked portal account, a real Recent
+Activity table, and expanded Quick Links. Balance/Friends moved from
+the old stat row into Account Information rather than being dropped.
+Sidebar gained a new "Avatars" section (My Avatars/Create
+Avatar/Import Avatar/Partnerships/Transactions - `/partner` and
+`/transactions` *moved* here, not duplicated) and a "Portal Password"
+entry under Account. The avatar switcher reuses the exact
+`.nav-dropdown`/`.dropdown-toggle`/`.dropdown-menu`/`DropdownScript`
+mechanism the top nav's Explore/Grid Info groups already use (a plain
+delegated document click handler, generic by design, just never
+applied inside the sidebar before) - only rendered when there's
+actually more than one avatar to switch between.
+
+### Live-verified end-to-end (real DB writes, not just page renders)
+
+Unlike earlier passes this session (which were credential-limited),
+`/portal-signup` and `/suggestion-box` needed no real resident
+password to test - a throwaway test account
+(`claude-verify-test@example.com`) was created and driven through the
+real flow in Casperia-Dev:
+- Portal signup: real `web_accounts` row created, auto-login succeeded
+  (`PrincipalID` correctly `UUID.Zero`, `WebAccountID` set), dashboard
+  rendered its "Add Your First Avatar" empty state correctly, stat
+  cards all correctly `0`.
+- Recent Activity table showed real rows - `user_registered` then
+  later `suggestion_submitted` - with real IP and timestamp, pulled
+  live from `web_activity_log`.
+- Sidebar confirmed structurally correct while logged in: new
+  "Avatars" section present with all 5 links, "Portal Password" under
+  Account, single-avatar (non-dropdown) user block correctly shown
+  since this account has 0 linked avatars.
+- `/suggestion-box` form genuinely posted to the server and got a real
+  "Thanks for your suggestion!" response (row written to `suggestions`,
+  confirmed via the activity log entry it triggered).
+- `/admin/suggestions` correctly redirected to `/dashboard` for this
+  avatar-less, non-admin session via the `AvatarOptionalRoutes` gate,
+  before ever reaching the handler's own admin check.
+- Deploy hit a real, if ultimately harmless, snag: DLLs in
+  Casperia-Dev were locked with no process visible in `tasklist` or
+  `Get-Process` (matching a "mystery" pattern noted earlier in this
+  session) - turned out to be a transient lock (retried and every file
+  copied clean on the second attempt), not an actual running Robust/
+  region instance. Server started clean, both new services' migrations
+  ran (`Creating WebAccount at version 1`, `Creating Suggestions at
+  version 1`), zero errors in the log.
+
+**Not yet built this pass, deliberately** (per the approved plan):
+unlinking an avatar from a WebAccount (flagged as a fast-follow -
+destructive, needs its own confirm-step design), Billing (no defined
+scope), and the "delete/rename a linked avatar" actions beyond
+Switch/Copy-UUID on `/my-avatars`. The test WebAccount
+(`claude-verify-test@example.com`) is still present in Casperia-Dev's
+`web_accounts` table - harmless throwaway data, left for the user to
+clean up if wanted rather than running a DELETE unprompted.
+
+### Real bug caught by the live test itself
+
+The user's own console window (not something this session was reading
+directly) surfaced a genuine crash mid-verification:
+`System.ArgumentNullException: Value cannot be null. (Parameter
+'address')` inside `MimeKit.InternetAddressList.Add`, from
+`SendEmail`. Root cause: `SendEmail` itself only null-guards `m_smtpFrom`
+internally via its own try/catch (logs and swallows) - it does **not**
+check `m_smtpEnabled` before use, unlike every *existing* caller
+(`HandleForgotPassword`, which gates on `!m_smtpEnabled` before ever
+calling it). `HandlePortalSignup` and `HandleCreateAvatar` called
+`SendEmail` unconditionally - on Casperia-Dev, where SMTP isn't
+configured, this meant a resident could "successfully" sign up for an
+account (or request an avatar) whose verification link could never
+arrive, a real dead end, not just a noisy log line (the request itself
+didn't crash - `SendEmail`'s own try/catch absorbed it - but the
+outcome was silently broken). Fixed by adding the same `!m_smtpEnabled`
+gate `HandleForgotPassword` already uses to both handlers, with
+explicit "not available on this grid right now" messaging instead of
+a doomed signup. Rebuilt, redeployed, re-verified live -
+`/portal-signup` now correctly refuses cleanly with no error logged,
+confirmed via a fresh Robust.log tail. This is exactly the value of
+testing with a real (if throwaway) account instead of stopping at
+"the page renders" - a build-clean, code-reviewed handler can still
+have a real behavioral bug that only a real submission surfaces.
+
+### prebuild.xml - registered the new projects, deliberately did NOT regenerate
+
+`OpenSim.sln` and every `*.csproj` are gitignored in this repo -
+they're meant to be generated from the git-tracked `prebuild.xml` via
+`runprebuild.bat`, not hand-maintained. Added `<Project>` entries for
+`OpenSim.Services.WebAccountService` and `OpenSim.Services.SuggestionService`
+there (matching `SupportTicketService`'s existing entry exactly - no
+`<Files>` block needed, these small-service projects rely on
+prebuild's implicit default glob same as their siblings). Confirmed by
+reading the actual `<Files><Match pattern="*.cs" recurse="true"/></Files>`
+blocks already in `OpenSim.Data`/`OpenSim.Data.MySQL`/`OpenSim.Data.PGSQL`/
+`OpenSim.Data.SQLite`/`OpenSim.Framework`'s own project entries that
+the new `.cs`/`.migrations` files this pass added are *already*
+auto-included by the existing glob patterns - no prebuild.xml change
+needed for those, only the two brand-new project directories
+themselves.
+
+**Deliberately did not actually run the regeneration**, despite fixing
+the CLI-invocation issue (Git Bash's MSYS layer was silently mangling
+the leading-`/` flags like `/target`; running the exact same command
+via PowerShell got past that). Two real, independent reasons surfaced
+while investigating:
+1. `prebuild.xml`'s own top-of-file comment (lines 3-19) - written by
+   an earlier session after being burned by this exact mistake
+   **twice** (2026-08-16 and 2026-08-18) - documents that regenerating
+   destroys the hand-added `GenerateGitVersionInfo` MSBuild `<Target>`
+   in `OpenSim.Framework.csproj` (the mechanism behind the grid's own
+   `(Build N)` version-string display), which then has to be manually
+   pasted back in from that same comment block. A real, working,
+   already-shipped feature, not worth risking for a build-tooling
+   nicety.
+2. `prebuild.xml` currently fails to parse at all - `An XML comment
+   cannot contain '--'` at line 22, because the embedded
+   `GenerateGitVersionInfo` reference snippet (inside that same
+   protective comment) contains literal `git rev-list --count` /
+   `git rev-parse --short=10` text. A real, pre-existing bug, unrelated
+   to this pass's changes, confirmed via a direct `dotnet bin/prebuild.dll`
+   run.
+
+Given the manually-edited `OpenSim.sln`/`.csproj` files already build
+clean (verified repeatedly via `dotnet build`) and are gitignored
+either way (so hand-editing them carries no git-hygiene cost), the
+pragmatic and lower-risk choice was: leave them as the working local
+build state, land the `prebuild.xml` source-of-truth addition (so a
+*future*, correctly-executed regeneration - after fixing the `--`
+parse bug and restoring the GitVersionInfo target - produces the right
+project list), and explicitly not chase the regeneration itself this
+pass. The `--` parse bug is real and worth fixing in its own right,
+but as a separate, scoped fix, not bundled into this already-large
+change.
+
+## Portal accounts simplified: no portal password, My Land & Regions merged, sidebar regrouped (2026-08-23)
+
+Follow-up to the multi-avatar portal-account build above, driven
+directly by user feedback after using it live. Four changes, all in
+the same pass:
+
+**Portal password removed entirely.** The user's framing: "Once a
+user creates an account thats the master account/avatar" - there is
+no separate portal credential, the first avatar you register or log
+in with *is* the master account, auto-linked exactly as
+`AutoProvisionWebAccount` already did. This meant deleting, not just
+hiding, a real subsystem: `HandleLoginPortal`/`TryPortalLogin`/
+`HandlePortalSignup`/`PortalSignupForm`/`HandleVerifyAccount`/
+`HandleChangePortalPassword`/`ChangePortalPasswordForm`, the
+`EmailVerifyToken` class/dictionary, the `AvatarOptionalRoutes` gate
+(now unreachable dead code once `PrincipalID` can never be
+`UUID.Zero` for a real session), the 4 routes in both
+`topLevelRoutes` and the `switch`, the login page's `<details>`
+portal-login toggle (reverted `LoginForm` to its original single
+3-arg form), the sidebar's "Portal Password" link, and the
+PBKDF2-SHA256 hashing entirely (`HashPassword`/`VerifyPassword` off
+`IWebAccountService`/`WebAccountService`, the
+`System.Security.Cryptography` using and `HashSizeBytes`/
+`SaltSizeBytes`/`Iterations` constants). `WebAccount` itself shrank to
+just `ID`/`Email`/`Created`/`Updated` - no `PasswordHash`/
+`PasswordSalt`/`PasswordIterations`/`EmailVerified`. That ripples
+through all 3 data backends (`MySql`/`PGSQL`/`SQLite` WebAccountData -
+`AccountColumns`, `Store`, `ReadAccount`) and all 3
+`WebAccount.migrations` files' `:VERSION 1` schema, rewritten in
+place rather than a `:VERSION 2` migration - this feature was only
+ever live on Casperia-Dev, never shipped anywhere else, so there was
+nothing to migrate *from*. Dashboard's separate "Portal Email"/
+`EmailVerified` pill collapsed into a single "Email" row (the active
+avatar's own email) per the user's explicit "Portal email is the same
+as the master account/Avatar."
+
+**My Land and My Regions merged into one "My Land & Regions" page**
+(`/myregions`) - `HandleMyRegions` now renders "Regions I Own" (the
+existing estate-owner backup/restart section, unchanged logic)
+followed by "Land I Own" (the existing parcel Show-in-Search toggle
+section, unchanged logic) under one page/title. `HandleMyLand` is now
+a pure redirect to `/myregions`; `HandleMyLandToggle`'s post-toggle
+redirect target updated to match.
+
+**Sidebar reorganized into 5 collapsible groups.** Previously only
+Avatars/Account were collapsible, with everything else (Friends,
+Messages, Offline Messages, Classifieds, Events, Auctions, My
+Regions, My Land, My Estate, Inventory, Suggestion Box) flat in
+`SidebarMainLinks`. Added `SidebarSocialLinks` (Friends/Messages/
+Offline Messages), `SidebarCommunityLinks` (Classifieds/Events/
+Auctions/Suggestion Box), and `SidebarLandLinks` (My Land & Regions/
+My Estate) as new collapsible `<details>` groups alongside the
+existing Avatars/Account ones. `SidebarMainLinks` now holds only
+Dashboard/My Profile/Inventory - the pages worth keeping one click
+away at all times. Extracted the previously-duplicated
+open/render-links logic (was copy-pasted per group) into one shared
+`AppendSidebarGroup` helper, called once per group with the group
+label and its link array.
+
+**Also fixed, found while live-verifying this round with a fresh
+throwaway avatar:** `UserAccounts.DisplayName` is `NOT NULL` on the
+live Casperia-Dev table, but the shared `UserAccount` class's
+`DisplayName` field had no default initializer (`public string
+DisplayName;` - null by default in C#), so every fresh
+`new UserAccount(scopeID, firstName, lastName, email)` (used by
+`HandleRegister`, Create Avatar's verify-click, and portal signup
+alike) tried to insert an explicit `NULL` into a `NOT NULL` column
+and failed with `Column 'DisplayName' cannot be null`. Not new -
+predates this session, and the file's own comment at line ~794
+references "the DisplayName column race" as a previously-chased bug -
+but this is the first time the actual root cause (missing default on
+the shared field, not a race) got fixed rather than worked around.
+Fixed with a field-level default initializer
+(`public string DisplayName = string.Empty;` in
+`IUserAccountService.cs`, matching the `LocalToGrid = true` pattern
+already on the line above it) rather than patching each of the 3
+call sites individually. Also brought the live table's own column
+default back in line with what `UserAccount.migrations` version 10
+already declares (`DEFAULT ''`) via a one-time `ALTER TABLE
+UserAccounts MODIFY COLUMN DisplayName ... DEFAULT ''` on
+Casperia-Dev only - confirmed via `SHOW FULL COLUMNS` that the
+`Default` field is now `''` instead of blank/null.
+
+Rebuilt clean (0 errors), redeployed, live-verified end-to-end with a
+fresh throwaway avatar (`ClaudeSidebar Verify2`): registration now
+succeeds post-fix, dashboard shows a single "Email" row and correct
+stat counts, all 5 sidebar groups render and the 3 top-level links
+are correct, `/myregions` shows both "Regions I Own" and "Land I Own"
+sections under the merged title, `/myland` redirects to `/myregions`,
+and `/login-portal`/`/portal-signup`/`/verify-account`/
+`/change-portal-password` all correctly 404. Confirmed via a
+`Robust.log` tail that startup is clean with no errors.

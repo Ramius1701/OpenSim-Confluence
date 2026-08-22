@@ -913,3 +913,38 @@
     ;; ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
     UserAccountService = "OpenSim.Services.UserAccountService.dll:UserAccountService"
+
+;; Admin-managed static pages (About/ToS/DMCA and custom pages) at
+;; /page/<slug>, editable from /admin/pages. Was missing from this
+;; example ini entirely despite being a real, shipped WebInterface
+;; feature - backfilled here rather than perpetuating the gap.
+[StaticPageService]
+    LocalServiceModule = "OpenSim.Services.StaticPageService.dll:StaticPageService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlStaticPageData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+;; Guest support tickets at /support (name+email required, no account
+;; needed to report "I can't log in"); admin queue at /admin/support.
+;; Same pre-existing documentation gap as StaticPageService above.
+[SupportTicketService]
+    LocalServiceModule = "OpenSim.Services.SupportTicketService.dll:SupportTicketService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlSupportTicketData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+;; Multi-avatar portal account system (2026-08-23) - one email+password
+;; login can own/link multiple avatars, each with its own separate
+;; in-world password. Additive: /login and /register keep working
+;; exactly as before; this only adds /login-portal, /portal-signup,
+;; /create-avatar, /import-avatar, /my-avatars, /switch-avatar.
+[WebAccountService]
+    LocalServiceModule = "OpenSim.Services.WebAccountService.dll:WebAccountService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlWebAccountData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+;; Resident feedback form at /suggestion-box, admin review at
+;; /admin/suggestions - same shape as SupportTicketService above, just
+;; without required contact info (anonymous submissions allowed).
+[SuggestionService]
+    LocalServiceModule = "OpenSim.Services.SuggestionService.dll:SuggestionService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlSuggestionData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"

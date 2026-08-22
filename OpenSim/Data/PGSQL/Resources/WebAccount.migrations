@@ -1,0 +1,32 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS web_accounts (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"Email" varchar(255) NOT NULL UNIQUE,
+	"Created" int NOT NULL,
+	"Updated" int NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS web_account_avatars (
+	"WebAccountID" varchar(36) NOT NULL,
+	"AvatarPrincipalID" varchar(36) NOT NULL PRIMARY KEY,
+	"LinkedDate" int NOT NULL,
+	"LinkType" varchar(20) NOT NULL,
+	"IsDefault" boolean NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS web_account_avatars_webaccountid ON web_account_avatars ("WebAccountID");
+
+CREATE TABLE IF NOT EXISTS web_activity_log (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"WebAccountID" varchar(36) NOT NULL,
+	"AvatarPrincipalID" varchar(36) NOT NULL,
+	"EventType" varchar(64) NOT NULL,
+	"Description" varchar(500) NOT NULL,
+	"IPAddress" varchar(45) NOT NULL,
+	"Created" int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS web_activity_log_account_created ON web_activity_log ("WebAccountID", "Created");
+
+COMMIT;

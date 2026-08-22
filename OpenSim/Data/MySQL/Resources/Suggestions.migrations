@@ -1,0 +1,19 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `suggestions` (
+	`ID` VARCHAR(36) NOT NULL,
+	`SubmitterAvatarID` VARCHAR(36) NOT NULL,
+	`SubmitterName` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+	`Subject` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+	`Message` TEXT CHARACTER SET utf8mb4 NOT NULL,
+	`Status` VARCHAR(20) NOT NULL DEFAULT 'new',
+	`Created` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `SubmitterAvatarID` (`SubmitterAvatarID`) USING BTREE,
+	INDEX `Status` (`Status`) USING BTREE,
+	INDEX `Created` (`Created`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+COMMIT;

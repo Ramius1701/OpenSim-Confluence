@@ -1,0 +1,18 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS suggestions (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"SubmitterAvatarID" varchar(36) NOT NULL,
+	"SubmitterName" varchar(255) NOT NULL,
+	"Subject" varchar(255) NOT NULL,
+	"Message" text NOT NULL,
+	"Status" varchar(20) NOT NULL DEFAULT 'new',
+	"Created" int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS suggestions_submitter ON suggestions ("SubmitterAvatarID");
+CREATE INDEX IF NOT EXISTS suggestions_status ON suggestions ("Status");
+CREATE INDEX IF NOT EXISTS suggestions_created ON suggestions ("Created");
+
+COMMIT;
