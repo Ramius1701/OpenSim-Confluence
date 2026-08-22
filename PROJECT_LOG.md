@@ -12997,3 +12997,77 @@ sections under the merged title, `/myland` redirects to `/myregions`,
 and `/login-portal`/`/portal-signup`/`/verify-account`/
 `/change-portal-password` all correctly 404. Confirmed via a
 `Robust.log` tail that startup is clean with no errors.
+
+## One-email-per-account enforced for real, plus self-service account merge (2026-08-23)
+
+Follow-up to the simplification above, prompted by walking through a
+real resident scenario: Jeffery has two avatars registered under two
+different emails, from before this feature existed. Wanting to
+consolidate them surfaced two things worth fixing.
+
+**Closed a real privacy hole, not just a policy gap.**
+`AutoProvisionWebAccount`'s old "two avatars, same email - the same
+person, link them" branch trusted a bare text match with zero proof
+of ownership. That meant: (1) at classic `/register`, anyone could
+type a stranger's already-registered email with no login at all, and
+the brand-new avatar they created would auto-link into that
+stranger's master account; (2) worse, at `/change-email`, a resident
+already logged into their OWN session could type someone else's known
+email and their own live session would silently gain visibility into
+the OTHER person's dashboard/avatar list/activity log - real
+unauthorized access, not just account clutter, since no password was
+ever checked. Removed the auto-link branch entirely from
+`AutoProvisionWebAccount` - a matching email now just leaves the
+avatar unlinked rather than merging on sight. Added explicit,
+early rejections with clear messaging at both entry points instead:
+`HandleRegister` now rejects signup outright if the email already
+belongs to an existing master account ("Log in, then use Create
+Avatar or Import Avatar..."), and `HandleChangeEmail` rejects a new
+email that already belongs to a DIFFERENT account (self-matches - the
+resident's own already-linked email - are still allowed). This is
+also just correct behavior to match: it's exactly the "one email, one
+account" rule SL enforces at signup, previously undermined by the
+auto-link path.
+
+**Self-service account merge**, for the actual "Jeffery has two
+already-established accounts" case. Live-testing surfaced that Import
+Avatar, as originally built, could only attach a never-before-linked
+avatar - trying to import an avatar that already had its own solo
+master account (the realistic case, since ANY avatar with an email
+becomes its own master account the moment it first logs in) hit a
+hard "already linked to another account, contact support" wall with
+no self-service path at all. Asked the user how far to take this
+before building anything (full merges vs. this one narrower case);
+they chose absorbing solo accounts only - if the avatar being
+imported is the ONLY avatar on its account, that account gets folded
+into the current one; if it already has other avatars too, it's still
+a "contact support" case, since reconciling two real multi-avatar
+accounts (whose activity history/avatar order wins) is a judgment
+call better made by a person, not a form.
+
+Implementation: three new primitives on `IWebAccountData`/backends
+(`ReassignAvatar` - re-points a `web_account_avatars` row's
+`WebAccountID` in place, since `AvatarPrincipalID` is that table's own
+primary key, not a delete+insert; `ReassignActivity` - re-points a
+solo account's `web_activity_log` rows so its audit trail survives
+the merge instead of becoming permanently orphaned; `DeleteAccount` -
+removes the now-empty `web_accounts` row), composed into one
+`IWebAccountService.AbsorbSoloAccount` the connector calls after the
+same real password check Import Avatar already required. `MySql`/
+`PGSQL`/`SQLite` all implemented in parallel, same pattern as every
+other WebAccountData addition this feature has needed.
+
+Live-verified the full loop with two independent throwaway avatars
+(`ClaudeSidebar Verify2`, `ClaudeSecond Verify3`, separate emails,
+separate in-world passwords, each auto-provisioned its own solo
+account on first login): confirmed the duplicate-email reject fires
+at both `/register` (with no orphan avatar created) and
+`/change-email` (session's own dashboard unaffected after the
+attempt); confirmed Import Avatar's merge absorbed the solo account,
+deleted its now-empty `web_accounts` row (checked directly via
+`SHOW`/`SELECT` against `casperia_dev`), and re-pointed its avatar
+link with `LinkType='Imported', IsDefault=0`; confirmed both avatars
+still log in independently with their own separate passwords
+afterward, both landing on the one shared master account with a
+correctly merged Recent Activity feed (interleaved entries from both
+avatars' pre-merge history, in the right chronological order).

@@ -13,7 +13,11 @@ since day one — avatar name + in-world password — but the first
 avatar a resident registers or logs in with now becomes a master
 account behind the scenes, auto-linked the moment it has a real
 email, that can own and switch between multiple avatars. No separate
-portal credential — one login, one password, same as always. A
+portal credential — one login, one password, same as always. One
+email per master account, enforced the same way SL enforces it at
+signup — a duplicate email is rejected outright, never silently
+merged on a text match, so no one can gain visibility into another
+resident's account just by knowing their email. A
 resident-facing suggestion box, reviewed from the admin console, sits
 alongside the existing support-ticket system.
 
@@ -38,7 +42,8 @@ Destination Guide visibility toggles), inventory backup (IAR),
 account changes (password/email), self-service account deletion.
 Create a brand-new avatar (email-verified, so an unclaimed request
 can't squat a name), import an existing avatar by proving its
-in-world password once (never stored), and switch between every
+in-world password once (never stored) — including absorbing that
+avatar's own solo account into yours if it already has one, self-service, no support ticket needed — and switch between every
 avatar linked to the account. Backup (save) only, by design — see
 `ROADMAP.md`.
 

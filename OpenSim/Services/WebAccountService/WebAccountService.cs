@@ -61,6 +61,16 @@ namespace OpenSim.Services.WebAccountService
             });
         }
 
+        public bool AbsorbSoloAccount(UUID avatarPrincipalId, UUID oldWebAccountId, UUID newWebAccountId)
+        {
+            if (!m_Database.ReassignAvatar(avatarPrincipalId, newWebAccountId, "Imported", false))
+                return false;
+
+            m_Database.ReassignActivity(oldWebAccountId, newWebAccountId);
+            m_Database.DeleteAccount(oldWebAccountId);
+            return true;
+        }
+
         public List<WebActivityEntry> GetRecentActivity(UUID webAccountId, int count)
         {
             return m_Database.GetRecentActivity(webAccountId, count);

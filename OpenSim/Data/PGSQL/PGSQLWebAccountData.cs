@@ -168,6 +168,51 @@ namespace OpenSim.Data.PGSQL
             }
         }
 
+        public bool ReassignAvatar(UUID avatarPrincipalId, UUID newWebAccountId, string linkType, bool isDefault)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                    "UPDATE web_account_avatars SET \"WebAccountID\" = :newid, \"LinkType\" = :linktype, \"IsDefault\" = :isdefault " +
+                    "WHERE \"AvatarPrincipalID\" = :avatarid", conn))
+            {
+                cmd.Parameters.AddWithValue(":newid", newWebAccountId.ToString());
+                cmd.Parameters.AddWithValue(":linktype", linkType);
+                cmd.Parameters.AddWithValue(":isdefault", isDefault);
+                cmd.Parameters.AddWithValue(":avatarid", avatarPrincipalId.ToString());
+                conn.Open();
+
+                return cmd.ExecuteNonQuery() > 0;
+            }
+        }
+
+        public bool ReassignActivity(UUID oldWebAccountId, UUID newWebAccountId)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                    "UPDATE web_activity_log SET \"WebAccountID\" = :newid WHERE \"WebAccountID\" = :oldid", conn))
+            {
+                cmd.Parameters.AddWithValue(":newid", newWebAccountId.ToString());
+                cmd.Parameters.AddWithValue(":oldid", oldWebAccountId.ToString());
+                conn.Open();
+
+                cmd.ExecuteNonQuery();
+                return true;
+            }
+        }
+
+        public bool DeleteAccount(UUID webAccountId)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                    "DELETE FROM web_accounts WHERE \"ID\" = :id", conn))
+            {
+                cmd.Parameters.AddWithValue(":id", webAccountId.ToString());
+                conn.Open();
+
+                return cmd.ExecuteNonQuery() > 0;
+            }
+        }
+
         private static WebAccountAvatarLink ReadLink(NpgsqlDataReader reader)
         {
             return new WebAccountAvatarLink

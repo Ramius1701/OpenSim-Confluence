@@ -2943,6 +2943,26 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            // One email, one master account. Without this check, typing in
+            // an email you don't own but merely know would silently link
+            // THIS already-logged-in session into whoever's master account
+            // actually owns it (via AutoProvisionWebAccount's own matching
+            // logic below) - real account-visibility exposure, not just a
+            // policy nicety. A match that's already your own account is
+            // fine (re-saving the same address, or a second linked avatar
+            // sharing it) - only a match belonging to someone else's
+            // account is rejected.
+            if (m_WebAccountService != null)
+            {
+                WebAccount ownedBy = m_WebAccountService.GetByEmail(newEmail);
+                if (ownedBy != null && ownedBy.ID != session.WebAccountID)
+                {
+                    WritePage(request, response, PageTitle("Change Email"),
+                            ChangeEmailForm(newEmail, "That email is already linked to another account. If it's yours, log in there and use Import Avatar to add this avatar to it instead."));
+                    return;
+                }
+            }
+
             account.Email = newEmail;
             if (!m_UserAccountService.StoreUserAccount(account))
             {
@@ -8839,6 +8859,15 @@ namespace OpenSim.Server.Handlers.WebInterface
             UUID.TryParse(FormValue(form, "home_region"), out UUID selectedHomeRegionId);
 
             string error = ValidateRegistration(firstName, lastName, password, confirmPassword);
+            // One email, one master account - same rule SL enforces at
+            // signup. Checked here (not just left to AutoProvisionWebAccount
+            // on the post-creation auto-login) so a resident who mistypes -
+            // or a stranger who already knows this email - gets a clear
+            // "log in instead" message rather than a brand-new orphaned
+            // avatar with no master account.
+            if (error == null && !string.IsNullOrWhiteSpace(email) && m_WebAccountService != null
+                    && m_WebAccountService.GetByEmail(email) != null)
+                error = "An account already exists for that email. Log in, then use Create Avatar or Import Avatar to add another avatar to it.";
             if (error != null)
             {
                 WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, error, homeRegionChoices, selectedHomeRegionId));
@@ -9139,19 +9168,57 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             WebAccountAvatarLink existingLink = m_WebAccountService.GetLinkForAvatar(account.PrincipalID);
-            if (existingLink != null)
+            if (existingLink != null && existingLink.WebAccountID == session.WebAccountID)
             {
-                string message = existingLink.WebAccountID == session.WebAccountID
-                        ? "This avatar is already linked to your account."
-                        : "This avatar is already linked to another portal account. Contact support if this is a mistake.";
-                WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, message));
+                WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, "This avatar is already linked to your account."));
                 return;
             }
 
+            // Password proof is required either way from here - both for a
+            // fresh, never-linked avatar, and (see below) before absorbing
+            // another account, since proving you know this avatar's real
+            // in-world password is exactly the same proof-of-ownership
+            // Import Avatar already relies on for the simple case.
             string authToken = m_AuthenticationService.Authenticate(account.PrincipalID, Util.Md5Hash(password), 30);
             if (string.IsNullOrEmpty(authToken))
             {
                 WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, "Incorrect password."));
+                return;
+            }
+
+            if (existingLink != null)
+            {
+                // This avatar already belongs to a DIFFERENT master account.
+                // Only safe to absorb as a one-click self-service action if
+                // that account is a solo account (this avatar is the only
+                // one on it) - merging two already-multi-avatar accounts
+                // raises harder questions (whose activity history/avatar
+                // order "wins") that a support person should make a call
+                // on, not this form.
+                List<WebAccountAvatarLink> otherAccountLinks = m_WebAccountService.GetLinkedAvatars(existingLink.WebAccountID);
+                if (otherAccountLinks.Count > 1)
+                {
+                    WritePage(request, response, PageTitle("Import Avatar"),
+                            ImportAvatarForm(firstName, lastName, "This avatar's account has other avatars linked to it. Contact support to merge multi-avatar accounts."));
+                    return;
+                }
+
+                if (!m_WebAccountService.AbsorbSoloAccount(account.PrincipalID, existingLink.WebAccountID, session.WebAccountID))
+                {
+                    WritePage(request, response, PageTitle("Import Avatar"), ImportAvatarForm(firstName, lastName, "Could not merge that account. Please try again."));
+                    return;
+                }
+
+                m_WebAccountService.LogActivity(new WebActivityEntry
+                {
+                    WebAccountID = session.WebAccountID,
+                    AvatarPrincipalID = account.PrincipalID,
+                    EventType = "avatar_imported",
+                    Description = "Merged avatar '" + account.Name + "' and its account in",
+                    IPAddress = GetClientIP(request)
+                });
+
+                response.Redirect(BasePath + "/my-avatars?message=" + Uri.EscapeDataString("Avatar '" + account.Name + "' and its account merged in."), HttpStatusCode.Redirect);
                 return;
             }
 
@@ -9761,32 +9828,20 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (string.IsNullOrWhiteSpace(account.Email))
                 return UUID.Zero;
 
+            // One email, one master account - enforced the same way SL
+            // enforces it at signup, not by silently trusting a text-match.
+            // If this email already belongs to a DIFFERENT avatar's master
+            // account, we do NOT auto-link this avatar into it - typing a
+            // matching email is not proof of ownership, and merging on
+            // sight here would let anyone gain visibility into a stranger's
+            // dashboard/avatar list just by knowing (or guessing) their
+            // email, with zero authentication. This avatar just stays
+            // unlinked; the resident can consolidate for real via Import
+            // Avatar (proves ownership through THIS avatar's own in-world
+            // password) from their actual master account's session.
             string normalizedEmail = account.Email.Trim().ToLowerInvariant();
-            WebAccount match = m_WebAccountService.GetByEmail(normalizedEmail);
-            if (match != null)
-            {
-                // Two avatars, same email - the same person. Link, don't
-                // error; a duplicate-link attempt for an already-linked
-                // avatar would already be a no-op here since we just
-                // confirmed `existing == null` above for THIS avatar.
-                try
-                {
-                    m_WebAccountService.LinkAvatar(match.ID, account.PrincipalID, "AutoProvisioned", false);
-                }
-                catch (Exception e)
-                {
-                    // Lost a race with another request linking this same
-                    // avatar between the GetLinkForAvatar check above and
-                    // here - re-read and use whatever actually won.
-                    m_log.DebugFormat("[WEB INTERFACE]: AutoProvisionWebAccount race linking {0}: {1}", account.PrincipalID, e.Message);
-                    WebAccountAvatarLink raced = m_WebAccountService.GetLinkForAvatar(account.PrincipalID);
-                    if (raced != null)
-                        return raced.WebAccountID;
-                }
-                m_WebAccountService.LogActivity(new WebActivityEntry { WebAccountID = match.ID, AvatarPrincipalID = account.PrincipalID, EventType = "avatar_linked", Description = "Avatar '" + account.Name + "' auto-linked (matching email)", IPAddress = ip });
-                m_WebAccountService.LogActivity(new WebActivityEntry { WebAccountID = match.ID, AvatarPrincipalID = account.PrincipalID, EventType = "user_login", Description = "Logged in as " + account.Name, IPAddress = ip });
-                return match.ID;
-            }
+            if (m_WebAccountService.GetByEmail(normalizedEmail) != null)
+                return UUID.Zero;
 
             WebAccount newAccount = new WebAccount
             {

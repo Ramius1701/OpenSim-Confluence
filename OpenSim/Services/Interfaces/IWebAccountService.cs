@@ -24,6 +24,14 @@ namespace OpenSim.Services.Interfaces
         // message rather than let it propagate as a raw DB error.
         bool LinkAvatar(UUID webAccountId, UUID avatarPrincipalId, string linkType, bool isDefault);
 
+        // Absorbs a solo master account (one with exactly this one avatar
+        // linked) into a different account - moves the avatar's link and
+        // its activity history over, then deletes the now-empty account
+        // row. Callers must have already proven ownership of the avatar
+        // (a real password check) before calling this - it does not
+        // re-verify anything itself.
+        bool AbsorbSoloAccount(UUID avatarPrincipalId, UUID oldWebAccountId, UUID newWebAccountId);
+
         // Most recent first.
         List<WebActivityEntry> GetRecentActivity(UUID webAccountId, int count);
         bool LogActivity(WebActivityEntry entry);

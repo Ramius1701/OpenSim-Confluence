@@ -185,6 +185,60 @@ namespace OpenSim.Data.MySQL
             }
         }
 
+        public bool ReassignAvatar(UUID avatarPrincipalId, UUID newWebAccountId, string linkType, bool isDefault)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "UPDATE web_account_avatars SET WebAccountID = ?WebAccountID, LinkType = ?LinkType, IsDefault = ?IsDefault " +
+                        "WHERE AvatarPrincipalID = ?AvatarPrincipalID", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?WebAccountID", newWebAccountId.ToString());
+                    cmd.Parameters.AddWithValue("?LinkType", linkType);
+                    cmd.Parameters.AddWithValue("?IsDefault", isDefault);
+                    cmd.Parameters.AddWithValue("?AvatarPrincipalID", avatarPrincipalId.ToString());
+
+                    return cmd.ExecuteNonQuery() > 0;
+                }
+            }
+        }
+
+        public bool ReassignActivity(UUID oldWebAccountId, UUID newWebAccountId)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "UPDATE web_activity_log SET WebAccountID = ?NewID WHERE WebAccountID = ?OldID", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?NewID", newWebAccountId.ToString());
+                    cmd.Parameters.AddWithValue("?OldID", oldWebAccountId.ToString());
+
+                    cmd.ExecuteNonQuery();
+                    return true;
+                }
+            }
+        }
+
+        public bool DeleteAccount(UUID webAccountId)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "DELETE FROM web_accounts WHERE ID = ?ID", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?ID", webAccountId.ToString());
+
+                    return cmd.ExecuteNonQuery() > 0;
+                }
+            }
+        }
+
         private static WebAccountAvatarLink ReadLink(IDataReader reader)
         {
             return new WebAccountAvatarLink

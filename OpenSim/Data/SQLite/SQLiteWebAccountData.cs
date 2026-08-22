@@ -174,6 +174,54 @@ namespace OpenSim.Data.SQLite
             }
         }
 
+        public bool ReassignAvatar(UUID avatarPrincipalId, UUID newWebAccountId, string linkType, bool isDefault)
+        {
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand(
+                        "UPDATE web_account_avatars SET WebAccountID = :newid, LinkType = :linktype, IsDefault = :isdefault " +
+                        "WHERE AvatarPrincipalID = :avatarid", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":newid", newWebAccountId.ToString()));
+                    cmd.Parameters.Add(new SQLiteParameter(":linktype", linkType));
+                    cmd.Parameters.Add(new SQLiteParameter(":isdefault", isDefault));
+                    cmd.Parameters.Add(new SQLiteParameter(":avatarid", avatarPrincipalId.ToString()));
+
+                    return cmd.ExecuteNonQuery() > 0;
+                }
+            }
+        }
+
+        public bool ReassignActivity(UUID oldWebAccountId, UUID newWebAccountId)
+        {
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand(
+                        "UPDATE web_activity_log SET WebAccountID = :newid WHERE WebAccountID = :oldid", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":newid", newWebAccountId.ToString()));
+                    cmd.Parameters.Add(new SQLiteParameter(":oldid", oldWebAccountId.ToString()));
+
+                    cmd.ExecuteNonQuery();
+                    return true;
+                }
+            }
+        }
+
+        public bool DeleteAccount(UUID webAccountId)
+        {
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand(
+                        "DELETE FROM web_accounts WHERE ID = :id", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":id", webAccountId.ToString()));
+
+                    return cmd.ExecuteNonQuery() > 0;
+                }
+            }
+        }
+
         private static WebAccountAvatarLink ReadLink(IDataReader reader)
         {
             return new WebAccountAvatarLink
