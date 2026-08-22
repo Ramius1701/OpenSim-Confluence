@@ -34,7 +34,7 @@ literal code."
 | Status | Confluence route | WhiteCore-Dev reference | Notes |
 |---|---|---|---|
 | ✅ | `/`, `/welcome.php` | `welcomescreen/index.html` + `region_box.html` + `news.html` + `gridstatus.html` + `info_box.html` | Done 2026-08-21: full-viewport background, real 2-column split, translucent boxes |
-| ☐ | `/login` | `login.html` | |
+| ✅ | `/login` | `login.html` | Done 2026-08-23: real reference is a minimal 2-field form (no illustration column needed - decorative, not structural). Found and fixed two real gaps: the visible H1 hardcoded "Confluence Grid Login" (a leftover the earlier title-only regex sweep missed, since it has no " - " separator), and missing auto-focus on the first field (reference does `$("#login_input").focus()`; used plain `autofocus` instead of adding a jQuery dependency). First/Last name (vs. reference's single username field) is a correct divergence, not a gap - OpenSim's real identity model needs both. |
 | ☐ | `/register` | `register.html`, `admin/user_register.html` | |
 | ☐ | `/forgot-password` | `forgot_pass.html` | |
 | ☐ | `/logout` | `logout.html` | |

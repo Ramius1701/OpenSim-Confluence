@@ -8836,10 +8836,10 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
 
-            return "<h1>Confluence Grid Login</h1>"
+            return "<h1>Login</h1>"
                     + errorHtml
                     + "<form method=\"post\" action=\"" + BasePath + "/login\">"
-                    + "<label>First name<br/><input type=\"text\" name=\"first_name\" value=\"" + Html(firstName) + "\"></label><br/>"
+                    + "<label>First name<br/><input type=\"text\" name=\"first_name\" value=\"" + Html(firstName) + "\" autofocus></label><br/>"
                     + "<label>Last name<br/><input type=\"text\" name=\"last_name\" value=\"" + Html(lastName) + "\"></label><br/>"
                     + "<label>Password<br/><input type=\"password\" name=\"password\"></label><br/>"
                     + "<button type=\"submit\">Log in</button>"

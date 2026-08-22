@@ -12457,3 +12457,40 @@ registered for it - confirmed by grep, not assumed), so triggering an
 actual weather change and confirming a receiver prim genuinely gets
 the broadcast needs a real viewer session, left for the user's own
 testing opportunity.
+
+## WEBUI_PARITY_CHECKLIST: /login audited (2026-08-23)
+
+Second page of the checklist (after welcome.php). Read WhiteCore-Dev's
+real `login.html` in full: a minimal 2-field (username/password) form,
+auto-focused on load, with a "Forgot Password" link. Compared field by
+field against Confluence's actual `LoginForm`/`HandleLogin` rather than
+assuming.
+
+Found two real gaps while doing this, one of them a genuine leftover
+from the earlier "Confluence Grid" branding sweep:
+- The page's visible `<h1>` said `"Confluence Grid Login"` - hardcoded,
+  literal, not reflecting the real configured grid name. The earlier
+  regex-based fix (`"Confluence Grid - ([^"]*)"` -> `PageTitle("$1")`)
+  only ever matched the `<title>` tag's dash-separated pattern; this
+  string has no dash, so it was never touched. Fixed by matching the
+  sibling `RegisterForm`'s own convention (`"<h1>Sign Up</h1>"`, no
+  grid-name branding at all, since `WritePage`'s own site-wide header
+  already shows the grid name consistently elsewhere) - changed to
+  `"<h1>Login</h1>"` rather than threading the grid name through a
+  currently-`static` helper method.
+- No auto-focus on the first field, unlike the reference's
+  `$("#login_input").focus()`. Used a plain HTML `autofocus` attribute
+  instead of adding a jQuery dependency this connector doesn't
+  otherwise have - same real behavior, no new dependency.
+
+Confluence's First/Last name fields (vs. the reference's single
+username field) are a correct divergence, not a gap - OpenSim's actual
+identity model needs both names, unlike whatever WhiteCore/Aurora-Sim's
+lineage uses. The extra "Sign up for a new account" link Confluence
+shows inline (WhiteCore's reference doesn't have one on this specific
+page) is an addition beyond the reference, not a gap to remove - the
+fidelity standard is about not missing real structure, not refusing to
+have more.
+
+Build-verified and live-verified: `<h1>Login</h1>` and `autofocus`
+both confirmed present in the real deployed page.
