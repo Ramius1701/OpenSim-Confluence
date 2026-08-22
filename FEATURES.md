@@ -171,12 +171,19 @@ service, and not the smaller "Experience-Lite" design some sibling
 forks use:
 
 - Self-service Experience creation from the viewer, with a configurable
-  one-time creation fee and per-resident cap.
+  one-time creation fee and per-resident cap. The full CAP surface the
+  viewer's native Experience profile/search/creation UI expects is
+  implemented, not just the LSL functions.
 - A real, backend-persisted key-value store (`llCreateKeyValue` and
   friends), not an in-memory dictionary.
 - Permission grants and trust checks
   (`llRequestExperiencePermissions`/`llAgentInExperience`/
-  `llGetExperienceDetails`/`llGetExperienceErrorMessage`).
+  `llGetExperienceDetails`/`llGetExperienceErrorMessage`). Grant once,
+  applies everywhere: an avatar who trusts an Experience on one object
+  is silently auto-granted on every other object sharing that
+  Experience — no repeated per-object prompts, whether a script calls
+  `llRequestExperiencePermissions` directly or the generic
+  `llRequestPermissions`.
 
 ### Bot/NPC framework
 
