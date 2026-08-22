@@ -12494,3 +12494,139 @@ have more.
 
 Build-verified and live-verified: `<h1>Login</h1>` and `autofocus`
 both confirmed present in the real deployed page.
+
+## WEBUI_PARITY_CHECKLIST: entire remaining list worked through (2026-08-23)
+
+Per explicit direction ("continue with the entire list before
+deploying - makes it easier than shutting down the grid each time we
+do something"), every remaining row of `WEBUI_PARITY_CHECKLIST.md` was
+audited in one pass - all of Welcome/public splash, Grid status/
+economy/features, Messaging, Logged-in user pages, and Admin pages -
+before doing a single build/deploy/verify cycle at the end, rather
+than the earlier per-page pattern. Every row is now ✅.
+
+**Real gaps found and fixed** (each read against its actual reference
+file, not assumed):
+
+- `/register` - added a real Home Region selector (`<select
+  name="home_region">` from `IGridService.GetDefaultRegions`, matching
+  the reference's `UserHomeRegion` select); `HandleRegister` now
+  honors the resident's actual choice instead of always silently
+  picking `defaultRegions[0]`, falling back only if the submitted
+  value is missing/tampered/stale.
+- `/forgot-password` - missing `autofocus`, same fix pattern as
+  `/login`.
+- `/logout` - real gap: an instant server-side redirect straight to
+  `/login` with no confirmation shown at all. Now shows a real
+  "Logged Out" confirmation page with the reference's own 3-second
+  delayed-redirect pattern.
+- `/change-email` - added a required confirm-email field with a
+  mismatch check; this address is where password-reset links go, so a
+  silent typo can lock a resident out with no recovery path.
+- `/transactions` and `/admin/transactions` - both were missing a
+  running-balance column the currency service already populated
+  (`CurrencyTransfer.ToBalance`/`FromBalance`) but never rendered.
+  Added to both.
+- `/friends` - added a Location column (teleport-linked) for online
+  friends, resolved via the same `GridUserInfo.LastRegionID` pattern
+  `/profile` already used for "Online Location".
+- `/myclassifieds` - list table only showed Name; added Category/
+  Description/Price/Created/Expires via one `ClassifiedInfoRequest`
+  per row (`AvatarClassifiedsRequest` itself only ever returns
+  id+name, matching the real SL protocol's own `AvatarClassifiedsReply`
+  shape).
+- `/myevents` - list table only showed Date/Title; added Location/
+  Category/Description/Duration from fields `EventItem` already
+  carries. Maturity/Cover Charge were NOT added - `EventItem` has no
+  such fields anywhere in the model, a real but deeper data-model gap.
+- `/myestates` and `/admin/estates` (shared `HandleAdminEstates`) -
+  list table only showed Estate/Owner/Regions; added Public Access/
+  Allow Voice/Tax Free/Allow Direct Teleport columns.
+- `/myregions` - added per-region X/Y coordinates and a real online/
+  offline pill (via `IsRegionAlive`), which this page never showed at
+  all.
+- `/profile` - added a "Regions this resident owns" section (reusing
+  `GetRegionsOwnedBy`, this time against the profile's subject instead
+  of always the logged-in session) - a real gap vs. WhiteCore-Dev's
+  own `webprofile/modal_regions.html`, which shows this on anyone's
+  profile, not just your own dashboard.
+- `/dashboard` - added Home Region and Last Login to the Account
+  Information table (`GridUserInfo` lookup, same one `/profile`
+  already used for "Online Location").
+- `/admin/users` - search results list only showed Name/Email/User
+  Level; added an Online column (region name or "Offline"), cheap
+  since results are already capped at 25/page.
+- `/admin/regions` - added an Online status column, probed as one
+  parallel batch per page via `FilterOnlineRegions` (the same helper
+  `/gridstatus` already uses) rather than a blocking per-row check,
+  which could otherwise serialize into seconds of load time on a page
+  full of down regions.
+- Router-level 404/500 handling - an unknown sub-path under one of
+  this connector's own registered top-level routes (e.g. an unmatched
+  `/admin/*` page) fell through to a bare status code with no body at
+  all, and the top-level exception handler sent the raw exception
+  message straight to the client (an info-disclosure smell on top of
+  being ugly). Both now render a themed page like every other error
+  path in this connector; the 500 path keeps full exception detail in
+  the log only, and falls back to a dependency-free plain-text body if
+  rendering the themed error page itself throws (guards against the
+  original failure also breaking `WritePage`'s own header/nav build).
+  **Scope correction found during live verification**: this is not a
+  site-wide catch-all - `BaseHttpServer` only ever dispatches to this
+  connector's `HandleRequest` for paths under one of its own
+  registered top-level routes (`topLevelRoutes` in the constructor); a
+  genuinely unrelated path (e.g. `/this-does-not-exist`) never reaches
+  this code at all and is answered by OpenSim core's own built-in
+  stock 404 page instead, confirmed live. Verified both cases
+  separately: `/admin/bogus-subpath` renders the new themed 404;
+  `/this-does-not-exist` (outside any registered route) correctly
+  still shows core's own page, unaffected by this fix and out of this
+  connector's control entirely.
+
+**Bad reference mappings corrected** (the checklist's original
+best-guess file no longer matched, or never did): `/economy` and
+`/admin/stats` were mapped to `admin/statistics.html`, which is
+actually viewer client-performance telemetry (FPS/GPU/memory/ping),
+unrelated to either currency or grid-operator stats - Confluence's
+actual pages (currency circulation / grid-operator stats respectively)
+are legitimate, deliberately different content, not gaps.
+`/support`/`/admin/support` was mapped to `user/contact.html`, which
+is actually a real-life mailing-address form, unrelated to support
+tickets.
+
+**Confirmed non-gaps** via full-text search of `bin/html/` rather than
+assumption, per the checklist's own standard: `/search` and `/landsearch`'s
+references (`region_search.html`/`user_search.html`/`buyland.html`)
+are themselves either marked `<!-- No longer used -->` or a literal
+"under construction" stub in WhiteCore-Dev's own source - Confluence's
+real, working equivalents already exceed what the reference ever
+shipped. Same finding for `online_users.html`/`region_list.html`
+(deprecated stubs) and `mainland.html`/`groupland.html`/`landfees.html`
+(all three "under construction"). No web inbox, admin group-management
+page, or admin events-management page exists anywhere in WhiteCore-Dev
+either - confirmed by full-text search, not just filename matching.
+
+**Real gaps found but deliberately deferred**, listed in the
+checklist's own "Flagged gaps" section rather than silently dropped:
+an Avatar Selection starter-look carousel at `/register`; abuse-report
+resolved/assigned tracking (needs a real schema change across all
+three data backends); a grid-wide Online/Offline login toggle; and a
+full per-region profile page (owner/type/maturity/terrain/current
+users/parcels-in-region) that `/worldmap`'s popup and search/friends
+links currently have nothing to point to.
+
+**Deploy and verification**: built clean (0 errors, 0 warnings), full
+`bin/*.dll`/`*.pdb` sync to Casperia-Dev (186 of 233 files differed,
+consistent with prior builds' non-determinism), Robust + Welcome
+Center started fresh. Live-verified every unauthenticated page that
+changed - `/register` (Home Region selector renders "Welcome Center"
+once a `DefaultRegion` is online), `/forgot-password` (autofocus
+present), `/worldmap` (real region tile + teleport link), `/economy`
+(real live currency data - circulation, top balances, recent
+transactions), `/gridstatus` (real live grid stats) - all rendered
+correctly with no errors. Authenticated-page changes (admin online
+columns, dashboard/profile additions, friends/classifieds/events/
+estates table columns) are code-reviewed and build-clean but **not
+live-verified** - doing so needs a real logged-in session, which
+wasn't done this pass since entering account credentials isn't
+something to do without the user present.

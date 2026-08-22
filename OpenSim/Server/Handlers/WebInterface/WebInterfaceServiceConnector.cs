@@ -678,14 +678,54 @@ namespace OpenSim.Server.Handlers.WebInterface
                         else if (path.StartsWith(BasePath + "/welcome-photos/", StringComparison.Ordinal))
                             HandleWelcomePhoto(request, response, path.Substring((BasePath + "/welcome-photos/").Length));
                         else
+                        {
+                            // Reference's http_404.html - real gap, a
+                            // sub-path under one of this connector's own
+                            // registered top-level routes (e.g. an unknown
+                            // /admin/* page) that matches no case here used
+                            // to fall through to a bare status code with no
+                            // body at all, where every other 404 in this
+                            // connector (HandleStaticPage, HandleWelcomePhoto,
+                            // etc.) at least gets a real rendered page.
+                            // NOTE: this is not a site-wide catch-all - a
+                            // path outside every registered top-level route
+                            // (see topLevelRoutes in the constructor) never
+                            // reaches HandleRequest at all; BaseHttpServer's
+                            // own built-in default 404 answers those,
+                            // upstream of this connector entirely (confirmed
+                            // live: hitting a genuinely unrelated path shows
+                            // OpenSim core's stock joke 404 page, not this one).
                             response.StatusCode = (int)HttpStatusCode.NotFound;
+                            WritePage(request, response, PageTitle("Page Not Found"),
+                                    "<h1>Page Not Found</h1><p>The page you're looking for doesn't exist.</p>"
+                                    + "<p><a href=\"" + BasePath + "/\">Back to home</a></p>");
+                        }
                         break;
                 }
             }
             catch (Exception e)
             {
+                // Reference's http_500.html - real gap alongside the 404 one
+                // above. The raw exception message used to go straight to
+                // the client (an info-disclosure smell on top of just being
+                // ugly) - full detail stays in the log only now, the client
+                // gets a themed page like every other error path here.
                 response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                response.RawBuffer = Encoding.UTF8.GetBytes("Internal error: " + e.Message);
+                try
+                {
+                    WritePage(request, response, PageTitle("Something Went Wrong"),
+                            "<h1>Something Went Wrong</h1><p>An unexpected error occurred handling this page. It's been logged.</p>"
+                            + "<p><a href=\"" + BasePath + "/\">Back to home</a></p>");
+                }
+                catch (Exception)
+                {
+                    // WritePage itself builds the shared header/nav from live
+                    // session/settings state - if whatever broke the original
+                    // request also breaks that, fall back to a body with no
+                    // dependencies at all rather than letting a second
+                    // exception escape this handler uncaught.
+                    response.RawBuffer = Encoding.UTF8.GetBytes("Something went wrong. Please try again later.");
+                }
                 // Was previously silent - errors here never reached the log
                 // at all, only the raw exception message shown to whoever
                 // hit the broken page. Found live chasing a real bug this
@@ -2043,6 +2083,23 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             }
 
+            // Regions this resident owns - real gap vs. WhiteCore-Dev's own
+            // webprofile/modal_regions.html, which shows this on anyone's
+            // profile (not just your own dashboard). Same GetRegionsOwnedBy
+            // helper HandleMyRegions already uses, just against the
+            // profile's subject instead of always the logged-in session.
+            List<GridRegion> profileRegions = GetRegionsOwnedBy(userId);
+            if (profileRegions.Count > 0)
+            {
+                sb.Append("<h2><i class=\"bi bi-hdd-rack\"></i> Regions</h2><table><tr><th>Region</th><th>Size</th></tr>");
+                foreach (GridRegion region in profileRegions)
+                {
+                    sb.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>")
+                      .Append("<td>").Append(region.RegionSizeX).Append("x").Append(region.RegionSizeY).Append("</td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
             // Group memberships - real WhiteCore-Dev gap (its user profile
             // page shows these, ours didn't). ListInProfile is the same
             // per-membership "show this on my profile" flag the viewer's own
@@ -2583,7 +2640,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            sb.Append("<table><tr><th>Name</th><th>Status</th></tr>");
+            sb.Append("<table><tr><th>Name</th><th>Status</th><th>Location</th></tr>");
             foreach (OpenSim.Services.Interfaces.FriendInfo friend in friends)
             {
                 if (!UUID.TryParse(friend.Friend, out UUID friendId))
@@ -2593,15 +2650,28 @@ namespace OpenSim.Server.Handlers.WebInterface
                 string name = account != null ? account.Name : friend.Friend;
 
                 string status = "Offline";
+                // Reference's Region + Online Location columns (teleport-
+                // linked) - real gap this table was missing, same
+                // LastRegionID-while-online pattern HandleProfile's own
+                // "Online Location" section already uses.
+                string locationCell = string.Empty;
                 if (m_GridUserService != null)
                 {
                     GridUserInfo info = m_GridUserService.GetGridUserInfo(friendId.ToString());
                     if (info != null && info.Online)
+                    {
                         status = "Online now";
+                        GridRegion currentRegion = m_GridService?.GetRegionByUUID(UUID.Zero, info.LastRegionID);
+                        if (currentRegion != null)
+                        {
+                            string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(currentRegion.RegionName) + "/128/128/25";
+                            locationCell = "<a href=\"" + Html(hopUrl) + "\">" + Html(currentRegion.RegionName) + "</a>";
+                        }
+                    }
                 }
 
                 sb.Append("<tr><td><a href=\"").Append(BasePath).Append("/profile?id=").Append(friendId).Append("\">")
-                  .Append(Html(name)).Append("</a></td><td>").Append(Html(status)).Append("</td></tr>");
+                  .Append(Html(name)).Append("</a></td><td>").Append(Html(status)).Append("</td><td>").Append(locationCell).Append("</td></tr>");
             }
             sb.Append("</table>");
 
@@ -2785,10 +2855,20 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             Dictionary<string, string> form = ReadForm(request);
             string newEmail = FormValue(form, "email").Trim();
+            string confirmEmail = FormValue(form, "confirm_email").Trim();
 
             if (string.IsNullOrEmpty(newEmail) || !newEmail.Contains("@"))
             {
                 WritePage(request, response, PageTitle("Change Email"), ChangeEmailForm(newEmail, "Enter a valid email address."));
+                return;
+            }
+            // Reference's dual email+confirmation fields - a real gap this
+            // form was missing. Matters more here than most confirm-fields:
+            // this address is where the forgot-password reset link goes, so
+            // a silent typo can lock a resident out with no recovery path.
+            if (!string.Equals(newEmail, confirmEmail, StringComparison.OrdinalIgnoreCase))
+            {
+                WritePage(request, response, PageTitle("Change Email"), ChangeEmailForm(newEmail, "Email addresses do not match."));
                 return;
             }
 
@@ -2810,6 +2890,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + errorHtml
                     + "<form method=\"post\" action=\"" + BasePath + "/change-email\">"
                     + "<label>Email address<br/><input type=\"email\" name=\"email\" value=\"" + Html(email) + "\" required></label><br/>"
+                    + "<label>Confirm email address<br/><input type=\"email\" name=\"confirm_email\" required></label><br/>"
                     + "<button type=\"submit\">Update email</button>"
                     + "</form>"
                     + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>";
@@ -3101,14 +3182,22 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 hasNextPage = start + pageSize < transfers.Count;
 
-                rows.Append("<table><tr><th>Date</th><th>From</th><th>To</th><th>Amount</th><th>Description</th></tr>");
+                rows.Append("<table><tr><th>Date</th><th>From</th><th>To</th><th>Amount</th><th>Description</th><th>Balance</th></tr>");
                 foreach (CurrencyTransfer t in transfers.Skip(start).Take(pageSize))
                 {
+                    // Reference's running-balance column - real gap, and the
+                    // data was already sitting right on this row unused
+                    // (ToBalance/FromBalance are populated by the currency
+                    // service on every transfer). Show whichever side of the
+                    // transfer resolves to this viewer's own resulting balance.
+                    int resultingBalance = t.ToAgent.Equals(agentID) ? t.ToBalance : t.FromBalance;
+
                     rows.Append("<tr><td>").Append(Html(t.TransferDate.ToString("yyyy-MM-dd HH:mm:ss"))).Append(" UTC</td>")
                         .Append("<td>").Append(Html(ResolveAgentName(t.FromAgent))).Append("</td>")
                         .Append("<td>").Append(Html(ResolveAgentName(t.ToAgent))).Append("</td>")
                         .Append("<td>").Append(t.Amount).Append("</td>")
-                        .Append("<td>").Append(Html(t.Description)).Append("</td></tr>");
+                        .Append("<td>").Append(Html(t.Description)).Append("</td>")
+                        .Append("<td>").Append(resultingBalance).Append("</td></tr>");
                 }
                 rows.Append("</table>");
                 if (transfers.Count == 0)
@@ -3176,14 +3265,42 @@ namespace OpenSim.Server.Handlers.WebInterface
             OSD recordsOsd = m_UserProfilesService.AvatarClassifiedsRequest(session.PrincipalID);
             if (recordsOsd is OSDArray records && records.Count > 0)
             {
-                sb.Append("<table><tr><th>Name</th><th></th><th></th></tr>");
+                // Reference's list table (user/classifieds.html) shows
+                // Creation Date/Category/Description/Price/Expiration, not
+                // just Name - real gap. AvatarClassifiedsRequest itself only
+                // ever returns id+name (that's the real SL protocol's own
+                // AvatarClassifiedsReply shape), so the rest needs one
+                // ClassifiedInfoRequest per row, same call HandleMyClassifieds
+                // already makes for the single "editing" case above.
+                sb.Append("<table><tr><th>Name</th><th>Category</th><th>Description</th><th>Price</th>")
+                  .Append("<th>Created</th><th>Expires</th><th></th><th></th></tr>");
                 foreach (OSD entry in records)
                 {
                     if (entry is not OSDMap map)
                         continue;
                     UUID adId = map["classifieduuid"].AsUUID();
-                    sb.Append("<tr><td>").Append(Html(map["name"].AsString())).Append("</td>")
-                      .Append("<td><a href=\"").Append(BasePath).Append("/myclassifieds?id=").Append(adId).Append("\">Edit</a></td>")
+                    string name = map["name"].AsString();
+
+                    UserClassifiedAdd detail = new UserClassifiedAdd { ClassifiedId = adId };
+                    string detailResult = string.Empty;
+                    bool haveDetail = m_UserProfilesService.ClassifiedInfoRequest(ref detail, ref detailResult);
+
+                    sb.Append("<tr><td>").Append(Html(name)).Append("</td>");
+                    if (haveDetail)
+                    {
+                        string categoryName = detail.Category >= 0 && detail.Category < ClassifiedCategories.Length
+                                ? ClassifiedCategories[detail.Category] : "Unknown";
+                        sb.Append("<td>").Append(Html(categoryName)).Append("</td>")
+                          .Append("<td>").Append(Html(detail.Description)).Append("</td>")
+                          .Append("<td>").Append(detail.Price).Append("</td>")
+                          .Append("<td>").Append(Html(Utils.UnixTimeToDateTime((uint)detail.CreationDate).ToString("MMM d, yyyy"))).Append("</td>")
+                          .Append("<td>").Append(Html(Utils.UnixTimeToDateTime((uint)detail.ExpirationDate).ToString("MMM d, yyyy"))).Append("</td>");
+                    }
+                    else
+                    {
+                        sb.Append("<td colspan=\"5\"></td>");
+                    }
+                    sb.Append("<td><a href=\"").Append(BasePath).Append("/myclassifieds?id=").Append(adId).Append("\">Edit</a></td>")
                       .Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/myclassifieds/delete\">")
                       .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(adId).Append("\">")
                       .Append("<button type=\"submit\">Delete</button></form></td></tr>");
@@ -3352,11 +3469,23 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (mine.Count > 0)
             {
-                sb.Append("<table><tr><th>Date</th><th>Title</th><th></th><th></th></tr>");
+                // Reference's list table (user/events.html) also shows
+                // Location/Description/Category/Duration - real gap, added
+                // below from fields EventItem already carries. Maturity and
+                // Cover Charge are NOT added here - EventItem has no such
+                // fields anywhere in the model (confirmed via
+                // OpenSim/Framework/GridEventData.cs), a real but deeper
+                // data-model gap out of scope for a display-only fix.
+                sb.Append("<table><tr><th>Date</th><th>Title</th><th>Location</th><th>Category</th>")
+                  .Append("<th>Description</th><th>Duration</th><th></th><th></th></tr>");
                 foreach (EventItem ev in mine)
                 {
                     sb.Append("<tr><td>").Append(Html(ev.EventDate.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC</td>")
                       .Append("<td>").Append(Html(ev.Title)).Append("</td>")
+                      .Append("<td>").Append(Html(ev.Location)).Append("</td>")
+                      .Append("<td>").Append(Html(ev.Category)).Append("</td>")
+                      .Append("<td>").Append(Html(ev.Description)).Append("</td>")
+                      .Append("<td>").Append(ev.DurationMinutes).Append(" min</td>")
                       .Append("<td><a href=\"").Append(BasePath).Append("/myevents?id=").Append(ev.ID).Append("\">Edit</a></td>")
                       .Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/myevents/delete\">")
                       .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(ev.ID).Append("\">")
@@ -5001,6 +5130,24 @@ namespace OpenSim.Server.Handlers.WebInterface
                     ? Utils.UnixTimeToDateTime((uint)account.Created).ToString("MMM d, yyyy")
                     : "Unknown";
 
+            // Reference's userhome.html shows Home Region and Last Login on
+            // its own account-summary card - real fields this page was
+            // missing, both cheaply available off the same GridUserInfo
+            // lookup HandleProfile already uses for "Online Location".
+            string homeRegionName = null;
+            string lastLogin = null;
+            if (m_GridUserService != null)
+            {
+                GridUserInfo info = m_GridUserService.GetGridUserInfo(session.PrincipalID.ToString());
+                if (info != null)
+                {
+                    GridRegion homeRegion = m_GridService?.GetRegionByUUID(UUID.Zero, info.HomeRegionID);
+                    homeRegionName = homeRegion?.RegionName;
+                    if (info.Login > DateTime.MinValue)
+                        lastLogin = info.Login.ToString("MMM d, yyyy HH:mm") + " UTC";
+                }
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1>Dashboard</h1>");
             sb.Append("<p style=\"color:var(--muted);margin:-8px 0 20px;\">Welcome back, ").Append(Html(session.Name)).Append("</p>");
@@ -5019,6 +5166,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<tr><th>Email</th><td>").Append(Html(account.Email)).Append("</td></tr>");
             sb.Append("<tr><th>Role</th><td><span class=\"pill ").Append(session.IsAdmin ? "pill-yes\">Administrator" : "pill-no\">Member").Append("</span></td></tr>");
             sb.Append("<tr><th>Member Since</th><td>").Append(Html(memberSince)).Append("</td></tr>");
+            if (!string.IsNullOrEmpty(homeRegionName))
+                sb.Append("<tr><th>Home Region</th><td>").Append(Html(homeRegionName)).Append("</td></tr>");
+            if (!string.IsNullOrEmpty(lastLogin))
+                sb.Append("<tr><th>Last Login</th><td>").Append(Html(lastLogin)).Append("</td></tr>");
             sb.Append("</table>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/profile?id=").Append(session.PrincipalID).Append("\">Edit Profile</a>")
               .Append(" &middot; <a href=\"").Append(BasePath).Append("/change-password\">Settings</a></p>");
@@ -5156,7 +5307,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 {
                     rows.Append("<p class=\"news-meta\">").Append(regions.Count).Append(regions.Count == 1 ? " region" : " regions")
                       .Append(query.Length > 0 ? " matched" : " on this grid").Append("</p>");
-                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Hypergrid</th><th></th><th></th><th></th><th></th><th>Group Auto-Invite</th></tr>");
+                    // Reference's Online column - real gap, this table had no
+                    // at-a-glance up/down status at all. Probed once as a
+                    // parallel batch over just this page's rows (the same
+                    // FilterOnlineRegions helper HandleGridStatus already
+                    // uses), not one blocking IsRegionAlive call per row -
+                    // sequential probes here could serialize into many
+                    // seconds of page-load time on a page full of down regions.
+                    HashSet<UUID> onlineRegionIDs = new HashSet<UUID>(
+                            FilterOnlineRegions(pageRegions).ConvertAll(r => r.RegionID));
+                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Online</th><th>Hypergrid</th><th></th><th></th><th></th><th></th><th>Group Auto-Invite</th></tr>");
                     foreach (GridRegion region in pageRegions)
                     {
                         bool open = m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID);
@@ -5165,6 +5325,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                         rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
                         rows.Append("<td>").Append(region.RegionCoordX).Append(",").Append(region.RegionCoordY).Append("</td>");
+                        rows.Append("<td><span class=\"pill ").Append(onlineRegionIDs.Contains(region.RegionID) ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>");
                         rows.Append("<td>").Append(status).Append("</td>");
                         rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/hg-toggle\">");
                         rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
@@ -6444,7 +6605,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         ? transfers.Skip(start).Take(pageSize)
                         : transfers.Take(pageSize);
 
-                rows.Append("<table><tr><th>Date</th><th>From</th><th>To</th><th>Amount</th><th>Type</th><th>Description</th></tr>");
+                // Reference's {ToBalance} column - same real gap as the
+                // self-service /transactions page had, same fix.
+                rows.Append("<table><tr><th>Date</th><th>From</th><th>To</th><th>Amount</th><th>Type</th><th>Description</th><th>To Balance</th></tr>");
                 foreach (CurrencyTransfer t in page)
                 {
                     rows.Append("<tr>");
@@ -6454,6 +6617,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     rows.Append("<td>").Append(t.Amount).Append("</td>");
                     rows.Append("<td>").Append(t.TransferType).Append("</td>");
                     rows.Append("<td>").Append(Html(t.Description)).Append("</td>");
+                    rows.Append("<td>").Append(t.ToBalance).Append("</td>");
                     rows.Append("</tr>");
                 }
                 rows.Append("</table>");
@@ -6708,13 +6872,19 @@ namespace OpenSim.Server.Handlers.WebInterface
                     {
                         rows.Append("<p class=\"news-meta\">").Append(results.Count).Append(results.Count == 1 ? " account" : " accounts")
                           .Append(string.IsNullOrEmpty(query) ? " on this grid" : " matched").Append("</p>");
-                        rows.Append("<table><tr><th>Name</th><th>Email</th><th>User Level</th></tr>");
+                        // Reference's user_manager.html table shows Region/
+                        // Location/Online at a glance - real gap, this list
+                        // made you open each account to see presence. Cheap
+                        // here since the page is already capped at 25 rows.
+                        rows.Append("<table><tr><th>Name</th><th>Email</th><th>User Level</th><th>Online</th></tr>");
                         foreach (UserAccount account in pageResults)
                         {
+                            GridRegion onlineRegion = FindOnlineUserRegion(account.PrincipalID);
                             rows.Append("<tr><td><a href=\"").Append(BasePath).Append("/admin/users?principal=").Append(account.PrincipalID).Append("\">")
                                     .Append(Html(account.Name)).Append("</a></td>");
                             rows.Append("<td>").Append(Html(account.Email)).Append("</td>");
-                            rows.Append("<td>").Append(account.UserLevel).Append("</td></tr>");
+                            rows.Append("<td>").Append(account.UserLevel).Append("</td>");
+                            rows.Append("<td>").Append(onlineRegion != null ? Html(onlineRegion.RegionName) : "Offline").Append("</td></tr>");
                         }
                         rows.Append("</table>");
 
@@ -7456,7 +7626,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 else
                 {
-                    rows.Append("<table><tr><th>Estate</th>").Append(session.IsAdmin ? "<th>Owner</th>" : "").Append("<th>Regions</th></tr>");
+                    // Reference's estate-list table (user/estate_manager.html)
+                    // surfaces Public Access/Allow Voice/Tax Free/Allow Direct
+                    // Teleport directly as columns, at-a-glance without
+                    // opening each estate - real gap, this table only had
+                    // Estate/Owner/Regions.
+                    rows.Append("<table><tr><th>Estate</th>").Append(session.IsAdmin ? "<th>Owner</th>" : "")
+                            .Append("<th>Public</th><th>Voice</th><th>Tax Free</th><th>Direct TP</th><th>Regions</th></tr>");
                     foreach (int existingEstateID in estateIDs)
                     {
                         EstateSettings estate = m_EstateDataService.LoadEstateSettings(existingEstateID);
@@ -7473,7 +7649,11 @@ namespace OpenSim.Server.Handlers.WebInterface
                             string ownerName = owner != null ? owner.Name : estate.EstateOwner.ToString();
                             rows.Append("<td>").Append(Html(ownerName)).Append("</td>");
                         }
-                        rows.Append("<td>").Append(regionCount).Append("</td></tr>");
+                        rows.Append("<td>").Append(estate.PublicAccess ? "Yes" : "No").Append("</td>")
+                                .Append("<td>").Append(estate.AllowVoice ? "Yes" : "No").Append("</td>")
+                                .Append("<td>").Append(estate.TaxFree ? "Yes" : "No").Append("</td>")
+                                .Append("<td>").Append(estate.AllowDirectTeleport ? "Yes" : "No").Append("</td>")
+                                .Append("<td>").Append(regionCount).Append("</td></tr>");
                     }
                     rows.Append("</table>");
                 }
@@ -7990,7 +8170,15 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 foreach (GridRegion region in ownedRegions)
                 {
-                    rows.Append("<h2>").Append(Html(region.RegionName)).Append("</h2>");
+                    // Reference's region_manager.html table shows X/Y grid
+                    // coordinates and online status per region - real gap,
+                    // this page named the region but gave no at-a-glance
+                    // sense of where it is or whether it's actually up.
+                    bool online = IsRegionAlive(region, 1500);
+                    rows.Append("<h2>").Append(Html(region.RegionName))
+                        .Append(" <span class=\"pill ").Append(online ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></h2>");
+                    rows.Append("<p class=\"news-meta\">Location: (").Append(region.RegionCoordX).Append(", ")
+                        .Append(region.RegionCoordY).Append(")</p>");
 
                     rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/oar-save\">");
                     rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
@@ -8494,9 +8682,18 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            // WhiteCore-Dev's own register.html lets the registering resident
+            // pick which region to start in (a real <select> populated from
+            // the grid's actual default regions) rather than silently always
+            // picking the first one - genuinely useful on a grid with more
+            // than one DefaultRegion-flagged region. GetDefaultRegions is
+            // cheap (Robust already caches this) and safe to call on every
+            // GET, matching the reference page always showing the picker.
+            List<GridRegion> homeRegionChoices = m_GridService?.GetDefaultRegions(UUID.Zero) ?? new List<GridRegion>();
+
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(string.Empty, string.Empty, string.Empty, null));
+                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(string.Empty, string.Empty, string.Empty, null, homeRegionChoices, UUID.Zero));
                 return;
             }
 
@@ -8506,11 +8703,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             string email = FormValue(form, "email").Trim();
             string password = FormValue(form, "password");
             string confirmPassword = FormValue(form, "confirm_password");
+            UUID.TryParse(FormValue(form, "home_region"), out UUID selectedHomeRegionId);
 
             string error = ValidateRegistration(firstName, lastName, password, confirmPassword);
             if (error != null)
             {
-                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, error));
+                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, error, homeRegionChoices, selectedHomeRegionId));
                 return;
             }
 
@@ -8524,20 +8722,23 @@ namespace OpenSim.Server.Handlers.WebInterface
             account.UserFlags = AccountMembershipHelper.SetMembershipType(account.UserFlags, AccountMembershipHelper.TrialMember);
             if (!m_UserAccountService.StoreUserAccount(account))
             {
-                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, "Could not create that account. Please try again."));
+                WritePage(request, response, PageTitle("Sign Up"),
+                        RegisterForm(firstName, lastName, email, "Could not create that account. Please try again.", homeRegionChoices, selectedHomeRegionId));
                 return;
             }
 
             m_AuthenticationService.SetPassword(account.PrincipalID, password);
 
-            if (m_GridService != null && m_GridUserService != null)
+            if (m_GridUserService != null)
             {
-                List<GridRegion> defaultRegions = m_GridService.GetDefaultRegions(UUID.Zero);
-                if (defaultRegions != null && defaultRegions.Count > 0)
-                {
-                    GridRegion home = defaultRegions[0];
+                // Honor the resident's actual selection if it's one of the
+                // real choices offered; fall back to the first default
+                // region for a missing/tampered/stale value rather than
+                // leaving the new account with no home at all.
+                GridRegion home = homeRegionChoices.Find(r => r.RegionID.Equals(selectedHomeRegionId))
+                        ?? (homeRegionChoices.Count > 0 ? homeRegionChoices[0] : null);
+                if (home != null)
                     m_GridUserService.SetHome(account.PrincipalID.ToString(), home.RegionID, new Vector3(128, 128, 0), new Vector3(0, 1, 0));
-                }
             }
 
             m_InventoryService?.CreateUserInventory(account.PrincipalID);
@@ -8728,9 +8929,23 @@ namespace OpenSim.Server.Handlers.WebInterface
             return null;
         }
 
-        private static string RegisterForm(string firstName, string lastName, string email, string error)
+        private static string RegisterForm(string firstName, string lastName, string email, string error,
+                List<GridRegion> homeRegionChoices, UUID selectedHomeRegionId)
         {
             string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
+
+            string homeRegionField = string.Empty;
+            if (homeRegionChoices != null && homeRegionChoices.Count > 0)
+            {
+                StringBuilder options = new StringBuilder();
+                foreach (GridRegion region in homeRegionChoices)
+                {
+                    options.Append("<option value=\"").Append(region.RegionID).Append('"')
+                            .Append(region.RegionID.Equals(selectedHomeRegionId) ? " selected" : string.Empty)
+                            .Append('>').Append(Html(region.RegionName)).Append("</option>");
+                }
+                homeRegionField = "<label>Starting region<br/><select name=\"home_region\">" + options + "</select></label><br/>";
+            }
 
             return "<h1>Sign Up</h1>"
                     + errorHtml
@@ -8740,6 +8955,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Email (optional)<br/><input type=\"email\" name=\"email\" value=\"" + Html(email) + "\"></label><br/>"
                     + "<label>Password<br/><input type=\"password\" name=\"password\" required></label><br/>"
                     + "<label>Confirm password<br/><input type=\"password\" name=\"confirm_password\" required></label><br/>"
+                    + homeRegionField
                     + "<button type=\"submit\">Create account</button>"
                     + "</form>"
                     + "<p><a href=\"" + BasePath + "/login\">Already have an account? Log in</a></p>";
@@ -8752,7 +8968,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                 m_sessions.TryRemove(token, out _);
 
             ClearSessionCookie(response);
-            response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+            WritePage(request, response, PageTitle("Logged Out"),
+                    "<h1>Logged Out</h1><p>You have been logged out successfully.</p>"
+                    + "<script>setTimeout(function() { window.location.href = \"" + BasePath + "/login\"; }, 3000);</script>");
         }
 
         // Resolves the account, then authenticates via IAuthenticationService the
@@ -8812,7 +9030,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + errorHtml
                     + "<p>Enter the email address on your account and we'll send you a link to reset your password.</p>"
                     + "<form method=\"post\" action=\"" + BasePath + "/forgot-password\">"
-                    + "<label>Email<br/><input type=\"email\" name=\"email\" value=\"" + Html(email) + "\" required></label><br/>"
+                    + "<label>Email<br/><input type=\"email\" name=\"email\" value=\"" + Html(email) + "\" required autofocus></label><br/>"
                     + "<button type=\"submit\">Send reset link</button>"
                     + "</form>"
                     + "<p><a href=\"" + BasePath + "/login\">Back to login</a></p>";

@@ -11,12 +11,14 @@ replacement for the optional `OpenSim-Grid-Interface` PHP site, which
 remains available as a swappable alternative. Session-based auth
 against real grid accounts.
 
-**Public pages:** home/splash with live grid stats, grid-wide search
-(People/Places/Events/Classifieds/Groups, plus a dedicated Land for
-Sale page with size buckets, per-region maturity filtering, and
-trending/autocomplete), a world map, a viewer download page, a live
-grid-capability "Features" page, guest support tickets, admin-managed
-static pages (About/ToS/DMCA) and news/events feeds.
+**Public pages:** home/splash with live grid stats, self-service
+sign-up with a starting-region picker (defaults to the grid's
+`DefaultRegion`-flagged regions), grid-wide search (People/Places/
+Events/Classifieds/Groups, plus a dedicated Land for Sale page with
+size buckets, per-region maturity filtering, and trending/autocomplete),
+a world map, a viewer download page, a live grid-capability "Features"
+page, guest support tickets, admin-managed static pages (About/ToS/
+DMCA) and news/events feeds.
 
 **Resident self-service:** dashboard, public profile (with group
 memberships and regions-owned, both privacy-aware), friends list, a
