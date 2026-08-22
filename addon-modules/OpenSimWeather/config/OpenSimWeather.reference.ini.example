@@ -175,6 +175,16 @@
     AutoCycleChangeOnStartup = false
     AutoCycleChoices = storm,rain,snow,sunny,clear
 
+    ;; "Random" (default) picks the next auto-cycle weather with a plain
+    ;; memoryless dice roll, same as always. "Pressure" instead simulates a
+    ;; barometric pressure that drifts toward an occasionally-re-rolled
+    ;; target each cycle, and picks weather by which severity band (fair /
+    ;; moderate / severe) it currently sits in - so a storm is more likely
+    ;; to ease into rain or clear over the next few cycles than to jump
+    ;; straight back to another storm. Still only ever picks from
+    ;; AutoCycleChoices above.
+    AutoCyclePacing = Random
+
     ;; Warning must be shorter than the cycle interval.
     ;; Placeholders: {RegionName} {NextWeather} {TimeUntilNextForecast}
     ;;               {NextForecast}
@@ -191,6 +201,25 @@
     ;; Placeholders: {RegionName} {Weather} {EmitterCount} {AutoCycle}
     ;;               {NextForecast}
     WeatherIMMessage = Weather forecast for {RegionName}: current conditions are {Weather}. Next forecast: {NextForecast}.
+
+    ;; Sends a human-readable weather report directly to every avatar in the
+    ;; region whenever weather changes.
+    AnnounceWeatherChangesInChat = true
+
+    ;; ------------------------------------------------------------------------
+    ;; SCRIPT BROADCAST (for independent in-world FX objects)
+    ;; ------------------------------------------------------------------------
+
+    ;; Sends a plain "WEATHER|<Kind>" region-wide chat message (Kind is one
+    ;; of Clear/Sunny/Rain/Storm/Snow/Blizzard) on every weather change, for
+    ;; any scripted prim - a fireplace, seasonal clothing, an umbrella - that
+    ;; isn't part of this module to react to. A prim just needs to
+    ;; llListen() on WeatherBroadcastChannel and parse the message itself;
+    ;; no other integration is required. Independent of
+    ;; AnnounceWeatherChangesInChat above, which sends a human-readable
+    ;; report to avatars, not scripts.
+    BroadcastWeatherToScripts = true
+    WeatherBroadcastChannel = -910088
 
     ;; ------------------------------------------------------------------------
     ;; EXPERIMENTAL TERRAIN SURFACE EFFECTS

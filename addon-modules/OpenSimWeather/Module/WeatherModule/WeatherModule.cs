@@ -248,6 +248,29 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private float m_blizzardTemperatureC;
         private float m_temperatureVarianceC;
         private bool m_announceWeatherInChat;
+        // Machine-readable weather broadcast for independent in-world FX
+        // objects (fireplaces, seasonal clothing, umbrellas) that aren't part
+        // of this module - a plain region-wide chat message on a fixed
+        // channel, same shape residents already used before this module
+        // existed ("WEATHER|<kind>" on a llListen'd channel). Deliberately
+        // separate from m_announceWeatherInChat above, which is a
+        // human-readable report sent directly to avatars, not scripts.
+        private bool m_broadcastWeatherToScripts;
+        private int m_weatherBroadcastChannel;
+
+        // Optional alternative to the plain memoryless random pick below:
+        // a simulated barometric pressure that drifts toward an
+        // occasionally-re-rolled target once per auto-cycle tick, with the
+        // resulting weather chosen by which severity band the pressure
+        // currently sits in. Gives weather a real trend across successive
+        // auto-cycle picks (a storm is more likely to ease into rain/clear
+        // than jump straight back to blizzard) instead of every tick being
+        // an independent dice roll. Off by default - "Random" preserves the
+        // existing, simpler, more predictable behavior for grid owners who
+        // rely on it.
+        private bool m_autoCyclePressureDriven;
+        private float m_simulatedPressureHPa = 1013.25f;
+        private float m_simulatedPressureTargetHPa = 1013.25f;
         private float m_freezingPointC;
         private float m_wetnessLevel;
         private float m_snowLevel;
@@ -412,6 +435,10 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             m_blizzardTemperatureC = Clamp(config.GetFloat("BlizzardTemperatureC", -12f), -100f, 100f);
             m_temperatureVarianceC = Clamp(config.GetFloat("TemperatureVarianceC", 3f), 0f, 50f);
             m_announceWeatherInChat = config.GetBoolean("AnnounceWeatherChangesInChat", true);
+            m_broadcastWeatherToScripts = config.GetBoolean("BroadcastWeatherToScripts", true);
+            m_weatherBroadcastChannel = config.GetInt("WeatherBroadcastChannel", -910088);
+            m_autoCyclePressureDriven = string.Equals(
+                    config.GetString("AutoCyclePacing", "Random"), "Pressure", StringComparison.OrdinalIgnoreCase);
             m_freezingPointC = Clamp(config.GetFloat("FreezingPointC", 0f), -20f, 20f);
             m_rainWetnessPerHour = Math.Max(0f, config.GetFloat("RainWetnessPerHour", 0.35f));
             m_stormWetnessPerHour = Math.Max(0f, config.GetFloat("StormWetnessPerHour", 0.75f));
@@ -640,6 +667,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 ClearWeather(true, true);
                 UpdateTemperatureForWeather(WeatherKind.Clear);
                 AnnounceWeatherChange(WeatherKind.Clear);
+                BroadcastWeatherToScripts(WeatherKind.Clear);
                 StopAutoCycle();
                 SendReply(client, m_autoCycleEnabled
                         ? "Clear. Auto cycle stopped - use any weather command (e.g. \"weather storm\") to resume it."
@@ -727,6 +755,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                         CoverageModeName(m_coverageMode));
 
                     AnnounceWeatherChange(weather);
+                    BroadcastWeatherToScripts(weather);
                     return true;
                 }
                 catch (Exception e)
@@ -1189,6 +1218,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     ClearWeather(true, true);
                     UpdateTemperatureForWeather(WeatherKind.Clear);
                     AnnounceWeatherChange(WeatherKind.Clear);
+                    BroadcastWeatherToScripts(WeatherKind.Clear);
                     m_log.InfoFormat("[WEATHER]: Auto cycle selected clear in {0}", scene.RegionInfo.RegionName);
                 }
                 else if (ApplyWeather(weather, UUID.Zero))
@@ -1291,6 +1321,9 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             lock (m_sync)
                 current = m_currentWeather;
 
+            if (m_autoCyclePressureDriven)
+                return PickPressureDrivenWeather(current);
+
             lock (m_randomSync)
             {
                 for (int attempt = 0; attempt < 8; attempt++)
@@ -1301,6 +1334,81 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 }
 
                 return m_autoCycleChoices[m_random.Next(m_autoCycleChoices.Count)];
+            }
+        }
+
+        // Fair (Clear/Sunny), moderate (Rain/Snow), and severe (Storm/
+        // Blizzard) bands, low pressure = severe - same real-meteorology
+        // direction Gemini's reference script used. Deliberately doesn't
+        // try to pick Rain vs. Snow (or any hemisphere/season guess) -
+        // that's left entirely to whichever of the two an admin actually
+        // configured into AutoCycleWeatherChoices, same as the existing
+        // random picker already respects that list.
+        private static WeatherSeverity SeverityOf(WeatherKind weather)
+        {
+            switch (weather)
+            {
+                case WeatherKind.Storm:
+                case WeatherKind.Blizzard:
+                    return WeatherSeverity.Severe;
+                case WeatherKind.Rain:
+                case WeatherKind.Snow:
+                    return WeatherSeverity.Moderate;
+                default:
+                    return WeatherSeverity.Fair;
+            }
+        }
+
+        private enum WeatherSeverity
+        {
+            Fair,
+            Moderate,
+            Severe
+        }
+
+        private WeatherKind PickPressureDrivenWeather(WeatherKind current)
+        {
+            lock (m_randomSync)
+            {
+                // Small chance each tick of a new pressure system moving in;
+                // otherwise keep drifting toward the last-rolled target. This
+                // mirrors a real pressure trend building over several ticks
+                // instead of resetting every single time.
+                if (m_random.NextDouble() < 0.35)
+                    m_simulatedPressureTargetHPa = 970f + (float)(m_random.NextDouble() * 60f); // 970-1030 hPa
+
+                m_simulatedPressureHPa +=
+                        (m_simulatedPressureTargetHPa - m_simulatedPressureHPa) * 0.45f;
+
+                WeatherSeverity band;
+                if (m_simulatedPressureHPa < 995f)
+                    band = WeatherSeverity.Severe;
+                else if (m_simulatedPressureHPa < 1012f)
+                    band = WeatherSeverity.Moderate;
+                else
+                    band = WeatherSeverity.Fair;
+
+                List<WeatherKind> candidates = new List<WeatherKind>();
+                foreach (WeatherKind weather in m_autoCycleChoices)
+                {
+                    if (SeverityOf(weather) == band)
+                        candidates.Add(weather);
+                }
+
+                // Nothing configured in this exact band (e.g. only Storm and
+                // Sunny are enabled, pressure landed on Moderate) - fall back
+                // to the full configured list rather than getting stuck.
+                if (candidates.Count == 0)
+                    candidates = m_autoCycleChoices;
+
+                for (int attempt = 0; attempt < 8; attempt++)
+                {
+                    WeatherKind weather = candidates[m_random.Next(candidates.Count)];
+                    if (candidates.Count == 1 || weather != current)
+                        return weather;
+                }
+
+                return candidates[m_random.Next(candidates.Count)];
             }
         }
 
@@ -3032,6 +3140,53 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 if (sp != null && !sp.IsDeleted && sp.ControllingClient != null)
                     SendRegionWeatherMessage(sp, report);
             });
+        }
+
+        // "WEATHER|<kind>" on a fixed region-wide channel - the same shape
+        // residents' own scripted FX prims (fireplaces, seasonal clothing,
+        // umbrellas) already used before this module existed, so a receiver
+        // built against that older convention keeps working unmodified. This
+        // is the server-side equivalent of llRegionSay: IWorldComm is what
+        // actually fans a message out to every llListen() registered on the
+        // matching channel, the same delivery path llRegionSay itself uses.
+        private void BroadcastWeatherToScripts(WeatherKind weather)
+        {
+            if (!m_broadcastWeatherToScripts)
+                return;
+
+            Scene scene = m_scene;
+            if (scene == null)
+                return;
+
+            IWorldComm worldComm = scene.RequestModuleInterface<IWorldComm>();
+            if (worldComm == null)
+                return;
+
+            string message = "WEATHER|" + BroadcastWeatherToken(weather);
+            worldComm.DeliverMessage(
+                ChatTypeEnum.Region, m_weatherBroadcastChannel, Name, scene.RegionInfo.RegionID, message);
+        }
+
+        // Deliberately separate from WeatherName() (lowercase, for human-
+        // readable chat/log text) - existing FX receiver scripts compare
+        // this token with an exact case-sensitive string match.
+        private static string BroadcastWeatherToken(WeatherKind weather)
+        {
+            switch (weather)
+            {
+                case WeatherKind.Sunny:
+                    return "Sunny";
+                case WeatherKind.Rain:
+                    return "Rain";
+                case WeatherKind.Storm:
+                    return "Storm";
+                case WeatherKind.Snow:
+                    return "Snow";
+                case WeatherKind.Blizzard:
+                    return "Blizzard";
+                default:
+                    return "Clear";
+            }
         }
 
         private void UpdateTemperatureForWeather(WeatherKind weather)

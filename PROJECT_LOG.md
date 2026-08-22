@@ -12377,3 +12377,83 @@ fix above - Robust and Welcome_Center both started clean, zero new
 errors. **Not yet live-tested against a real HG teleport with a
 scripted attachment** - that needs a real cross-grid HG jump with a
 real viewer, left for the user's own testing opportunity.
+
+## Weather module: script broadcast hook + pressure-driven auto-cycle
+## pacing, from real prior-art scripts (2026-08-22)
+
+User shared two real LSL scripts that were used on the grid before
+`OpenSimWeather` existed - "Eclipse Environment Lighting Manager" (a
+menu-driven `llSetEnvironment` EEP sky/water controller) and a Gemini-
+authored "Realistic Environmental Engine" (real solar/lunar ephemeris,
+a barometric-pressure Markov weather model, and a radio-channel
+broadcast to a separate FX receiver script) - asking whether either
+held any real insight for the native module.
+
+**Read `WeatherModule.cs` in full (3280 lines) before comparing**,
+rather than assuming a naive LSL-vs-C# comparison. Confluence's module
+turned out to already be more mature in several ways neither script
+covers: real particle-based precipitation/lightning (the two scripts
+only tint EEP sky/water, no actual rain/snow particles), already
+applies full per-weather-type sky tinting reactively (cloud coverage/
+color/density, horizon, blue density, ambient, haze, sun glow, scene
+gamma, star brightness) while deliberately leaving sun/moon position
+untouched so weather never fights the day/night cycle - something
+neither reference script has to worry about since neither runs
+alongside a separate day/night module. Also already tracks real
+per-weather-type temperature.
+
+**Two genuine, well-scoped gaps found by comparing, not by assuming
+the scripts were automatically better**:
+1. Auto-cycle weather is picked on a fixed timer with a plain
+   memoryless dice roll (`PickAutoCycleWeather` -> `m_random.Next`),
+   not physically paced - real weather builds and dissipates, this
+   just flips on a clock every `AutoCycleHours`.
+2. No way for anything outside the module to know the weather state -
+   no broadcast, no query API. A resident's fireplace, seasonal
+   clothing, or umbrella script had no way to react.
+
+User then shared a third real script - the actual FX receiver these
+two systems fed - confirming the exact `"WEATHER|<Kind>"` pipe-
+delimited message format and fixed channel (-910088) the ecosystem
+already used, which became the real compatibility target rather than
+inventing a new protocol.
+
+**Built both, additive/opt-in, without touching any existing default
+behavior**:
+- **`BroadcastWeatherToScripts`** (default on) - fires
+  `"WEATHER|<Kind>"` on `WeatherBroadcastChannel` (default -910088,
+  matching the existing ecosystem) via `IWorldComm.DeliverMessage` -
+  confirmed this is the real, same delivery path `llRegionSay` itself
+  uses server-side, not a guess. Kind values (Clear/Sunny/Rain/Storm/
+  Snow/Blizzard) are a separate, case-exact mapping from the existing
+  lowercase `WeatherName()` used for human-readable chat/log text,
+  since the receiver script does an exact string match. Wired into
+  every place weather actually changes: `ApplyWeather` and both
+  "explicit clear" / "auto-cycle picked clear" paths. Deliberately
+  separate from the existing `AnnounceWeatherChangesInChat` (human-
+  readable, sent to avatars) - different audience, independent toggle.
+- **`AutoCyclePacing = "Random"` (default, unchanged) / `"Pressure"`**
+  (new, opt-in) - a simulated barometric pressure that drifts toward
+  an occasionally re-rolled target each auto-cycle tick, with the next
+  weather chosen by severity band (fair/moderate/severe, low pressure
+  = severe) rather than a flat random pick. Deliberately kept
+  Confluence's existing fixed-interval timer architecture (which the
+  forecast-warning feature depends on) instead of moving to Gemini's
+  continuous-tick model - adapted the idea, not the implementation.
+  Doesn't invent hemisphere/season logic for Rain-vs-Snow (Gemini's
+  script assumed Southern Hemisphere seasons); severity band only
+  narrows the choice to whatever's actually configured in
+  `AutoCycleChoices`, same as the existing picker already respects.
+- Also found and fixed a real pre-existing documentation gap while
+  writing these up: `AnnounceWeatherChangesInChat` had a real config
+  default in code but was never actually listed in
+  `OpenSimWeather.reference.ini.example` at all.
+
+Build-verified (full solution) and deployed - module loads and enables
+cleanly (`[WEATHER]: Enabled in region Welcome Center on channel 89`),
+zero new errors. **Not fully live-tested**: the `weather` command
+turned out to be in-world chat/IM only (no server console command
+registered for it - confirmed by grep, not assumed), so triggering an
+actual weather change and confirming a receiver prim genuinely gets
+the broadcast needs a real viewer session, left for the user's own
+testing opportunity.

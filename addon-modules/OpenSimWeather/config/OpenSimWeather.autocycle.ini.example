@@ -36,6 +36,8 @@
     AutoCycleStartupDelaySeconds = 30
     AutoCycleChangeOnStartup = false
     AutoCycleChoices = storm,rain,snow,sunny,clear
+    ;; "Random" (default) or "Pressure" - see OpenSimWeather.reference.ini.example
+    AutoCyclePacing = Random
     AutoCycleForecastWarningMinutes = 15
 
     SendWeatherIMOnEntry = false
