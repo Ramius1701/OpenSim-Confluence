@@ -208,7 +208,11 @@ also available via `osNpc`.
 - Duplicate and failed attachment cleanup, with a phantom-attachment
   reconciliation fix for the case where an avatar is already at its
   attachment limit on arrival.
-- Coordinated queued attachment-script restarts.
+- Coordinated queued attachment-script restarts, including on the first
+  Hypergrid jump to a foreign grid — attachment scripts wait for the
+  real (asynchronous, sometimes slow) asset fetch to finish instead of
+  starting on a fixed timer, so a HUD or AO doesn't go permanently dead
+  because its assets hadn't arrived yet.
 - Widened, adaptive region-crossing prediction window, plus a
   pre-warmed access-check cache that lets a normal crossing skip a
   network round-trip on a cache hit.
