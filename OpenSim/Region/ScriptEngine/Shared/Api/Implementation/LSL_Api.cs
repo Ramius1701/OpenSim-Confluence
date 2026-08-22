@@ -594,6 +594,40 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             return false;
         }
 
+        // llRequestExperiencePermissions already does the right thing: an
+        // avatar who previously answered "yes" for this object's experience
+        // is auto-granted on every later object sharing that experience, no
+        // dialog. llRequestPermissions - the generic, non-experience-aware
+        // function most real-world scripts actually call, including most
+        // ported/vendor/RP scripts that were never written with
+        // llRequestExperiencePermissions specifically in mind - had no
+        // equivalent check at all, so every one of those scripts asked the
+        // resident every single time regardless of a standing experience
+        // grant. This mirrors CheckExperiencePermissions()'s validity checks
+        // (experience exists, not disabled/suspended, both sides on
+        // experience-enabled land) without that method's precondition that
+        // PermsMask already equals the granted sentinel - this runs BEFORE
+        // any grant exists yet, to decide whether one already should.
+        bool ExperiencePermissionAlreadyGranted(UUID agentID)
+        {
+            UUID experienceID = m_item.ExperienceID;
+            if (experienceID.IsZero() || World.ExperienceModule == null)
+                return false;
+
+            ScenePresence presence = World.GetScenePresence(agentID);
+            if (presence == null)
+                return false;
+
+            ExperienceInfo info = World.ExperienceModule.GetExperienceInfo(experienceID);
+            if (info == null || (info.properties & (int)(ExperienceFlags.Disabled | ExperienceFlags.Suspended)) != 0)
+                return false;
+
+            if (!CheckExperienceAccessAtPos(m_host.AbsolutePosition, experienceID) ||
+                    !CheckExperienceAccessAtPos(presence.AbsolutePosition, experienceID))
+                return false;
+
+            return World.ExperienceModule.GetExperiencePermission(agentID, experienceID) == ExperiencePermission.Allowed;
+        }
 
         // Todo: maybe put this in omv.dll
         enum ExperienceEvent
@@ -4813,6 +4847,17 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
             }
 
+            // Experience-covered perms (the same six bits llRequestExperiencePermissions
+            // grants - see the 408628 sentinel/ExperiencePermissionAlreadyGranted above)
+            // are implicit too, independent of attachment/sitting context, if this
+            // avatar already trusts the object's experience. Real scripts overwhelmingly
+            // call this generic function rather than llRequestExperiencePermissions
+            // directly, so without this check a standing experience grant never actually
+            // stopped the per-object dialog from firing again.
+            const int ExperienceGrantablePerms = 408628;
+            if ((perm & ExperienceGrantablePerms) != 0 && ExperiencePermissionAlreadyGranted(agentID))
+                implicitPerms |= perm & ExperienceGrantablePerms;
+
             if ((perm & (~implicitPerms)) == 0) // Requested only implicit perms
             {
                 m_host.TaskInventory.LockItemsForWrite(true);
@@ -4871,8 +4916,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                     m_waitingForScriptAnswer=true;
                 }
 
+                // Tag the dialog with the object's real experience (if any) instead
+                // of always UUID.Zero, so the viewer can render its actual
+                // Experience-branded permission dialog rather than the generic
+                // per-object one - same wire shape llRequestExperiencePermissions
+                // already uses correctly.
                 presence.ControllingClient.SendScriptQuestion(
-                    m_host.UUID, m_host.ParentGroup.RootPart.Name, ownerName, m_item.ItemID, perm, UUID.Zero);
+                    m_host.UUID, m_host.ParentGroup.RootPart.Name, ownerName, m_item.ItemID, perm, m_item.ExperienceID);
 
                 return;
             }
@@ -4893,6 +4943,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
             if ((answer & ScriptBaseClass.PERMISSION_TAKE_CONTROLS) == 0)
                 llReleaseControls();
+
+            // Record the decision against the (avatar, experience) pair, not just
+            // this one object, so every other object sharing this experience is
+            // covered by the same answer going forward - matching
+            // handleScriptExperienceAnswer's persistence for llRequestExperiencePermissions.
+            // Only touches experience storage for a genuinely experience-owned
+            // object; a plain object's dialog answer never writes here.
+            if (!m_item.ExperienceID.IsZero() && World.ExperienceModule != null &&
+                    (answer & 408628) != 0)
+                World.ExperienceModule.SetExperiencePermission(client.AgentId, m_item.ExperienceID, ExperiencePermission.Allowed);
 
             m_host.TaskInventory.LockItemsForWrite(true);
             m_host.TaskInventory[m_item.ItemID].PermsMask = answer;

@@ -12190,3 +12190,91 @@ already up to date at revision 71`, `InventoryStore ... revision 9`,
 every manually-set tracker value exactly, zero new errors (the two
 recurring ones - a missing script asset, a bad mesh on one specific
 prim - are pre-existing and unrelated).
+
+## Experience permission dialog never actually skipped the per-object
+## popup for the function real scripts actually call (2026-08-22)
+
+User asked about real SL Experiences (grant permissions once instead
+of per-object) and whether Confluence's implementation actually
+delivers that. Traced the full permission-grant path end to end rather
+than assuming from the LSL function list alone.
+
+**First pass, partially wrong**: found `llRequestPermissions`
+hardcoding `UUID.Zero` as the experience ID in its
+`SendScriptQuestion` call - the viewer-facing dialog protocol's actual
+hook for "this is an Experience-scoped request, check if I already
+trust it" (confirmed via `IClientAPI.SendScriptQuestion`'s real
+signature, which takes an `experience` UUID as its last param).
+Initially reported this as *the* gap.
+
+**Correction after reading `llRequestExperiencePermissions` in
+full**: that function - the one SL's own documentation says scripts
+should use for Experience-wide trust - already does this completely
+correctly: real experience ID passed to `SendScriptQuestion`, and
+critically, checks `GetExperiencePermission()` *first* and silently
+auto-grants with zero dialog if already `Allowed`. The mechanism
+itself is real and correctly built. Walked this back to the user
+before it caused a wasted "fix."
+
+**The real, narrower gap, confirmed by the user's own observation that
+residents get asked repeatedly**: `llRequestPermissions` - the
+generic, non-Experience-aware function the overwhelming majority of
+real-world scripts actually call, including nearly every ported/
+vendor/freebie/RP script never written with
+`llRequestExperiencePermissions` specifically in mind - had no
+Experience-awareness at all. Even an avatar who had already granted an
+Experience via `llRequestExperiencePermissions` on one object got
+asked again, every time, by any other object in the same Experience
+that used the generic function instead. That's the actual mechanism
+behind the "asked repeatedly" complaint, not a persistence bug (double-
+checked `ExperienceModule`'s cache - `OnNewClient` correctly reloads
+`m_ExperiencePermissions` from `IExperienceService.FetchExperiencePermissions`
+on every new connection, including region entry, so that part was
+already sound).
+
+**Fixed**, mirroring the existing `implicitPerms` pattern
+`llRequestPermissions` already uses for attachment-owner/sitting-
+avatar/`auto_grant_*` cases, rather than inventing a new mechanism:
+- New `ExperiencePermissionAlreadyGranted(UUID agentID)` helper -
+  same validity checks `CheckExperiencePermissions()` already does
+  (experience exists, not disabled/suspended, both sides on
+  experience-enabled land, `GetExperiencePermission == Allowed`)
+  without that method's precondition that `PermsMask` already equals
+  the granted sentinel, since this runs *before* any grant exists yet.
+- `llRequestPermissions` now folds the requested bits that overlap the
+  six Experience-grantable permissions (the `408628` sentinel mask -
+  PERMISSION_TAKE_CONTROLS/TRIGGER_ANIMATION/CONTROL_CAMERA/
+  TRACK_CAMERA/ATTACH/OVERRIDE_ANIMATIONS) into `implicitPerms` when
+  `ExperiencePermissionAlreadyGranted` is true - same silent-auto-grant
+  outcome `llRequestExperiencePermissions` already had, now also
+  reachable through the function real scripts actually call.
+- When a dialog genuinely still needs to be shown (first time for this
+  Experience, or bits outside the Experience-grantable set are also
+  requested), `SendScriptQuestion` now carries the real
+  `m_item.ExperienceID` instead of `UUID.Zero`, fixing the original
+  gap for real this time.
+- `handleScriptAnswer` (the generic answer handler) now also calls
+  `World.ExperienceModule.SetExperiencePermission(...)` when the
+  answer covers Experience-grantable bits on an Experience-owned
+  object, persisting the decision against (avatar, experience) rather
+  than just this one object - matching
+  `handleScriptExperienceAnswer`'s existing persistence exactly, so
+  every other object sharing that Experience is covered by the same
+  answer from then on.
+
+Deliberately scoped as a pure addition: every new check short-circuits
+immediately on `m_item.ExperienceID.IsZero()` (true for the vast
+majority of scripts, which have no Experience at all), so behavior for
+ordinary, non-Experience objects is byte-for-byte unchanged - verified
+by reading through each of the three new checks specifically for this.
+
+Build-verified (full solution) and deployed. Live-verified only at the
+"doesn't break anything" level - Robust and Welcome_Center both
+started clean, YEngine script threads running normally, the one
+compile error present in the log (`concrete function must have body`)
+confirmed pre-existing since 2026-08-20, two days before this change.
+**Not yet live-tested against a real Experience-enabled scripted
+object with a real viewer** - that needs an actual resident test
+(grant on one object, confirm no re-prompt on a second object sharing
+the same Experience, ideally across a relog/region-crossing too) which
+is left for the user's own testing opportunity.
