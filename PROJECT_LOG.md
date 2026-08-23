@@ -13792,3 +13792,37 @@ and webhook delivery, and a real "Start Region" launch - all three need
 the user's own hands-on smoke-test on Casperia-Dev, ideally against
 Sandbox (cheap, fully reversible) before this ever reaches the live
 grid.
+
+## Currency label: portal hardcoded "C$", viewers configured for "FC$" (2026-08-23)
+
+User question after the Store work above ("for the currency are we
+using C$ of FC$?") surfaced a real, grid-wide mismatch predating this
+session's Store feature: `[LoginService] Currency` (`Robust.HG.ini`) -
+the value co-operative viewers actually read at login for their
+currency HUD label - was set to `"FC$"`, while the entire web portal
+had `"C$"` hardcoded as a literal string in ~20 separate places
+(balance, Grid Statistics, land sale prices, auctions, transaction
+history, and the new Store pages). Every one of those ~20 spots
+predated Store; Store's own two spots just followed the same
+established convention already used everywhere else in this file.
+
+User chose to standardize on `"C$"` grid-wide rather than switch the
+portal to `"FC$"` - changed `Robust.HG.ini`'s `Currency` value itself
+(and added the previously-missing `Currency = "C$"` to
+`bin/Robust.HG.ini.example`, which had no default at all) - and, more
+importantly, asked for it done **config-driven**, not just a find-
+replace of the literal. Added one `m_currencySymbol` field to
+`WebInterfaceServiceConnector`, loaded from the same `[LoginService]
+Currency` key viewers already read (falls back to `"C$"` if unset),
+and replaced all ~20 hardcoded `"C$"` literal occurrences with it -
+the portal can never drift out of sync with what residents see
+in-world again, regardless of what an operator sets `Currency` to.
+
+Full solution build clean. Redeploy needed the same full stop-
+everything cycle as prior `OpenSim.Server.Handlers.dll` changes this
+session - Robust and both region processes stopped/restarted
+staggered. Live-verified against real data (not an empty table): the
+Economy page's Grid Totals/Top Balances/Recent Transactions sections
+all render `C$` consistently, sourced from the config value, against
+Jeffery Biedermann's and Ramius Easterwood's real balances and real
+transaction history.

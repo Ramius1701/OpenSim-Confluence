@@ -558,6 +558,12 @@
     ;; Set minimum fee to publish classified
     ; ClassifiedFee = 0
 
+    ;; Ask co-operative viewers to use a different currency name - the web
+    ;; portal reads this same key everywhere it shows a currency label
+    ;; (balance, auctions, land sale, Store, etc.), so keep it in sync with
+    ;; whatever CurrencyService's economy actually uses.
+    Currency = "C$"
+
     WelcomeMessage = "Welcome, Avatar!"
     AllowRemoteSetLoginLevel = "false"
 

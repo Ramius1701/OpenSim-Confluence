@@ -168,6 +168,12 @@ namespace OpenSim.Server.Handlers.WebInterface
         private string m_gridNick = "OpenSim";
         private string m_welcomeMessage = "";
         private string m_publicBaseUrl = string.Empty;
+        // The same [LoginService] Currency value co-operative viewers already
+        // read at login for the currency HUD label - was hardcoded as the
+        // literal "C$" in ~20 places across this file (predating the Store
+        // feature); centralized here so the portal can never drift out of
+        // sync with what residents actually see in-world again.
+        private string m_currencySymbol = "C$";
 
         public WebInterfaceServiceConnector(IConfigSource config, IHttpServer server, string configName) :
                 base(config, server, configName)
@@ -273,6 +279,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         .Replace(", <USERNAME>", string.Empty)
                         .Replace("<USERNAME>, ", string.Empty)
                         .Replace("<USERNAME>", string.Empty);
+                m_currencySymbol = loginService.GetString("Currency", m_currencySymbol);
+                if (string.IsNullOrWhiteSpace(m_currencySymbol))
+                    m_currencySymbol = "C$";
             }
 
             // Reuses the exact same [SMTP] section/keys the region-side
@@ -2882,7 +2891,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (session != null)
             {
                 int balance = m_CurrencyService.GetBalance(session.PrincipalID);
-                sb.Append("<div class=\"content-card\"><h2>My Balance</h2><p style=\"font-size:28px;font-weight:800;color:var(--accent-bright)\">C$ ")
+                sb.Append("<div class=\"content-card\"><h2>My Balance</h2><p style=\"font-size:28px;font-weight:800;color:var(--accent-bright)\">").Append(m_currencySymbol).Append(" ")
                   .Append(balance.ToString("N0")).Append("</p>")
                   .Append("<p><a href=\"").Append(BasePath).Append("/transactions\">View my transactions &rarr;</a></p></div>");
             }
@@ -2894,7 +2903,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append(RenderEconomyStats());
 
             sb.Append("<h2><i class=\"bi bi-globe\"></i> Grid Totals</h2><div class=\"stats-grid\">");
-            AppendStat(sb, "Money in Circulation", "C$ " + m_CurrencyService.GetTotalCirculation().ToString("N0"), "sum of every resident's balance");
+            AppendStat(sb, "Money in Circulation", m_currencySymbol + " " + m_CurrencyService.GetTotalCirculation().ToString("N0"), "sum of every resident's balance");
             AppendStat(sb, "Funded Accounts", m_CurrencyService.CountAccountsWithBalance().ToString("N0"), "residents with a non-zero balance");
             AppendStat(sb, "Total Transactions", m_CurrencyService.NumberOfTransactions(UUID.Zero, UUID.Zero).ToString("N0"), "all time");
             sb.Append("</div>");
@@ -2918,7 +2927,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             : Html(name);
 
                     sb.Append("<tr><td>#").Append(rank).Append("</td><td>").Append(nameCell).Append("</td>")
-                      .Append("<td>C$ ").Append(entry.Balance.ToString("N0")).Append("</td></tr>");
+                      .Append("<td>").Append(m_currencySymbol).Append(" ").Append(entry.Balance.ToString("N0")).Append("</td></tr>");
                     rank++;
                 }
                 sb.Append("</table>");
@@ -2943,7 +2952,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     sb.Append("<tr><td>").Append(Html(t.TransferDate.ToString("yyyy-MM-dd HH:mm"))).Append("</td>")
                       .Append("<td>").Append(Html(fromName)).Append("</td>")
                       .Append("<td>").Append(Html(toName)).Append("</td>")
-                      .Append("<td>C$ ").Append(t.Amount.ToString("N0")).Append("</td></tr>");
+                      .Append("<td>").Append(m_currencySymbol).Append(" ").Append(t.Amount.ToString("N0")).Append("</td></tr>");
                 }
                 sb.Append("</table>");
             }
@@ -4547,7 +4556,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     resultsSb.Append("<h2>Places</h2>");
                     foreach (LandSearchRecord place in places)
                     {
-                        string meta = place.ForSale ? "For sale - " + place.SalePrice + " C$ (" + place.Area + " m²)" : place.Area + " m²";
+                        string meta = place.ForSale ? "For sale - " + place.SalePrice + " " + m_currencySymbol + " (" + place.Area + " m²)" : place.Area + " m²";
                         AppendSearchResultCard(resultsSb, "Place", Html(place.Name), meta, string.Empty, null);
                     }
                 }
@@ -4851,7 +4860,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 {
                     foreach (LandSearchRecord r in shown)
                     {
-                        string meta = r.SalePrice + " C$ &middot; " + r.Area + " m&sup2;" + (r.Auction ? " &middot; Auction" : string.Empty);
+                        string meta = r.SalePrice + " " + m_currencySymbol + " &middot; " + r.Area + " m&sup2;" + (r.Auction ? " &middot; Auction" : string.Empty);
                         AppendSearchResultCard(sb, "For Sale", Html(r.Name), meta, string.Empty, null);
                     }
                 }
@@ -4894,8 +4903,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                 foreach (LandAuction auction in active)
                 {
                     string bidStatus = auction.HighestBid > 0
-                            ? "Current bid: " + auction.HighestBid.ToString("N0") + " C$"
-                            : "No bids yet" + (auction.MinBid > 0 ? " - min bid " + auction.MinBid.ToString("N0") + " C$" : "");
+                            ? "Current bid: " + auction.HighestBid.ToString("N0") + " " + m_currencySymbol
+                            : "No bids yet" + (auction.MinBid > 0 ? " - min bid " + auction.MinBid.ToString("N0") + " " + m_currencySymbol : "");
 
                     sb.Append("<div class=\"widget-card\">");
                     sb.Append("<h3>").Append(Html(auction.ParcelName)).Append("</h3>");
@@ -4950,15 +4959,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                     }
                     else if (amount < current.MinBid)
                     {
-                        error = "Your bid must be at least " + current.MinBid.ToString("N0") + " C$.";
+                        error = "Your bid must be at least " + current.MinBid.ToString("N0") + " " + m_currencySymbol + ".";
                     }
                     else if (amount <= current.HighestBid)
                     {
-                        error = "Someone else already bid " + current.HighestBid.ToString("N0") + " C$ - your bid must be higher.";
+                        error = "Someone else already bid " + current.HighestBid.ToString("N0") + " " + m_currencySymbol + " - your bid must be higher.";
                     }
                     else if (m_CurrencyService != null && m_CurrencyService.GetBalance(session.PrincipalID) < amount)
                     {
-                        error = "You don't have enough C$ to place this bid.";
+                        error = "You don't have enough " + m_currencySymbol + " to place this bid.";
                     }
                     // PlaceBid re-checks all of the above atomically against
                     // the database (see IAuctionData.PlaceBid) - the checks
@@ -4998,21 +5007,21 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (auction.Status != LandAuctionStatus.Active)
             {
                 string outcome = auction.Status == LandAuctionStatus.Ended && auction.WinnerID != UUID.Zero
-                        ? "This auction has ended. Winning bid: " + auction.WinningAmount.ToString("N0") + " C$."
+                        ? "This auction has ended. Winning bid: " + auction.WinningAmount.ToString("N0") + " " + m_currencySymbol + "."
                         : "This auction has ended with no winner.";
                 sb.Append("<p>").Append(Html(outcome)).Append("</p>");
             }
             else
             {
                 sb.Append("<div class=\"stats-grid\">");
-                AppendStat(sb, "Current Bid", auction.HighestBid > 0 ? auction.HighestBid.ToString("N0") + " C$" : "No bids yet", string.Empty);
-                AppendStat(sb, "Minimum Bid", auction.MinBid.ToString("N0") + " C$", string.Empty);
+                AppendStat(sb, "Current Bid", auction.HighestBid > 0 ? auction.HighestBid.ToString("N0") + " " + m_currencySymbol : "No bids yet", string.Empty);
+                AppendStat(sb, "Minimum Bid", auction.MinBid.ToString("N0") + " " + m_currencySymbol, string.Empty);
                 AppendStat(sb, "Ends", auction.EndsAt.ToString("yyyy-MM-dd HH:mm") + " UTC", string.Empty);
                 sb.Append("</div>");
 
                 int minNextBid = Math.Max(auction.HighestBid + 1, auction.MinBid);
                 sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/auctions/bid?id=").Append(auction.ID).Append("\">");
-                sb.Append("<label>Your bid (C$)<br/><input type=\"number\" name=\"amount\" min=\"").Append(minNextBid)
+                sb.Append("<label>Your bid (").Append(m_currencySymbol).Append(")<br/><input type=\"number\" name=\"amount\" min=\"").Append(minNextBid)
                   .Append("\" value=\"").Append(minNextBid).Append("\" required></label><br/>");
                 sb.Append("<button type=\"submit\">Place Bid</button>");
                 sb.Append("</form>");
@@ -5030,7 +5039,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         bidderName = bidderAccount.Name;
 
                     sb.Append("<tr><td>").Append(Html(bidderName)).Append("</td><td>")
-                      .Append(bid.Amount.ToString("N0")).Append(" C$</td><td>")
+                      .Append(bid.Amount.ToString("N0")).Append(" ").Append(m_currencySymbol).Append("</td><td>")
                       .Append(bid.BidTime.ToString("yyyy-MM-dd HH:mm")).Append("</td></tr>");
                 }
                 sb.Append("</table>");
@@ -5424,7 +5433,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 if (!string.IsNullOrEmpty(ad.SimName))
                     sb.Append(" &middot; ").Append(Html(ad.SimName));
                 if (ad.Price > 0)
-                    sb.Append(" &middot; C$ ").Append(ad.Price);
+                    sb.Append(" &middot; ").Append(m_currencySymbol).Append(" ").Append(ad.Price);
                 sb.Append("</div>");
                 string description = ad.Description ?? string.Empty;
                 if (description.Length > 140)
@@ -5460,9 +5469,9 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             StringBuilder sb = new StringBuilder();
             sb.Append("<h2>Confluence Economy</h2><div class=\"stats-grid\">");
-            AppendStat(sb, "Last 24 Hours", "C$ " + volume24h.ToString("N0"), count24h + " transactions");
-            AppendStat(sb, "Last 7 Days", "C$ " + volume7d.ToString("N0"), count7d + " transactions");
-            AppendStat(sb, "Last 30 Days", "C$ " + volume30d.ToString("N0"), count30d + " transactions");
+            AppendStat(sb, "Last 24 Hours", m_currencySymbol + " " + volume24h.ToString("N0"), count24h + " transactions");
+            AppendStat(sb, "Last 7 Days", m_currencySymbol + " " + volume7d.ToString("N0"), count7d + " transactions");
+            AppendStat(sb, "Last 30 Days", m_currencySymbol + " " + volume30d.ToString("N0"), count30d + " transactions");
             sb.Append("</div>");
             return sb.ToString();
         }
@@ -10180,7 +10189,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         if (canBuy)
                         {
                             if (item.PriceConfluence > 0)
-                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Confluence\">Buy for C$ ")
+                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Confluence\">Buy for ").Append(m_currencySymbol).Append(" ")
                                   .Append(item.PriceConfluence.ToString("N0")).Append("</button> ");
                             if (item.PriceGloebits > 0)
                                 sb.Append("<button type=\"submit\" name=\"currency\" value=\"Gloebit\"")
@@ -10921,7 +10930,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (items.Count > 0)
             {
-                sb.Append("<table><tr><th>Name</th><th>Type</th><th>Prims</th><th>Region Size</th><th>C$</th><th>G$</th><th>Days</th><th>Active</th><th></th></tr>");
+                sb.Append("<table><tr><th>Name</th><th>Type</th><th>Prims</th><th>Region Size</th><th>").Append(m_currencySymbol).Append("</th><th>G$</th><th>Days</th><th>Active</th><th></th></tr>");
                 foreach (StoreCatalogItem item in items)
                 {
                     sb.Append("<tr><td>").Append(Html(item.Name)).Append("</td>");
