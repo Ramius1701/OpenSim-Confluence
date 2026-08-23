@@ -13881,3 +13881,63 @@ Full solution build clean (0 warnings, 0 errors) before and after.
 Redeploy needed the same full stop/sync/restart-staggered cycle as
 every other `OpenSim.Region.CoreModules.dll`/`OpenSim.Server.Handlers.dll`
 change this session.
+
+## Store pricing: same rate across currencies, plus a region .ini viewer/editor (2026-08-23)
+
+Two follow-ups from reviewing a draft customer-facing pricing sheet
+(`Prices.md`) for the Store catalog:
+
+**Price parity across currencies.** User wants whatever C$ charges to
+always equal what Gloebit charges for the same item - "so users don't
+think we are price gouging for using a different currency." Along the
+way, clarified "NTLDLSMoney" (their earlier phrasing) means C$/
+ConfluenceCurrency, not a third payment system - see
+[[casperia-dtlnsl-legacy-currency-module]] (`DTLNSLMoneyModule` is
+disabled/legacy everywhere on this grid, confirmed against every
+region's own `economymodule=` line). The admin catalog form's two
+separate price fields (`PriceConfluence`/`PriceGloebits`) could
+previously diverge on a typo with nothing stopping it; replaced with
+one `price` field plus "Offer via Confluence Currency"/"Offer via
+Gloebit" checkboxes - `HandleAdminStoreSave` now writes the identical
+number into both currency columns for whichever are checked, so the
+two prices can no longer drift apart by accident. `StoreCatalogItem`'s
+schema is unchanged (still two DB columns) - this is purely an
+admin-UI-level guarantee.
+
+**Region `.ini` config file viewer/editor** (`/admin/regions/ini`,
+`/admin/regions/ini/edit`, `/admin/regions/ini/restart`) - directly
+motivated by the real data-loss bug found while verifying the additive
+prim-pack fix above (`SaveRegionToFile` silently drops comments/
+default-valued keys on every automated write). `DiscoverRegionIniFiles()`
+scans `Simulators\*\Regions\*.ini` under the configured grid root
+(reusing `[StoreService] RegionOrderGridRoot`, already added for
+region orders) via a read-only `IniConfigSource` parse - never calls
+`.Save()`, so listing regions can't itself trigger the same loss.
+Editing is a raw text save (writes the exact bytes the admin typed,
+zero Nini round-trip) rather than a structured per-key form -
+deliberately, since a structured form would have to serialize back
+through Nini and reintroduce the very problem this page exists to work
+around. Client-supplied file paths are never trusted directly - both
+the edit and restart actions re-validate against a fresh
+`DiscoverRegionIniFiles()` scan before acting, same discipline as
+`GetOwnedRegionOrNull` elsewhere in this file. Page is explicit that
+changes only take effect on that region's next start/restart (this is
+a static file write, not a live console command) and offers a Restart
+Region button (reusing the existing `RunRegionConsoleCommand`/
+`/consoleweb` channel) for when that's wanted immediately.
+
+Confirmed live, mid-investigation, exactly why this page is needed:
+`Simulators\Starbase_Andromeda\Regions\Regions.ini` still carries its
+original template's header comment (`; File location: bin/Regions/Regions.ini`)
+- every simulator's `Regions.ini` on this grid is a hand-customized
+copy of the same heavily-commented default template, which is exactly
+the kind of content an automated `SaveRegionToFile` write silently
+strips. The bare `S:\Opensim\Casperia-Dev\Regions\` folder (as opposed
+to `Simulators\<Name>\Regions\`) is empty and not referenced by any
+active region's `regionload_regionsdir` - confirmed harmless, not
+something this session's changes touched.
+
+Full solution build clean. Redeploy: `OpenSim.Server.Handlers.dll`
+only this time (no `RegionCommandsModule`/`RegionInfo` changes in this
+entry) - still needed the full stop/sync/restart-staggered cycle since
+both region processes hold a lock on that DLL too, not just Robust.

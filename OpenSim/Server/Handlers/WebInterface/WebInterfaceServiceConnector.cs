@@ -571,6 +571,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/store/orders/start":
                         HandleAdminStoreOrdersStart(request, response);
                         break;
+                    case BasePath + "/admin/regions/ini":
+                        HandleAdminRegionIniList(request, response);
+                        break;
+                    case BasePath + "/admin/regions/ini/edit":
+                        HandleAdminRegionIniEdit(request, response);
+                        break;
+                    case BasePath + "/admin/regions/ini/restart":
+                        HandleAdminRegionIniRestart(request, response);
+                        break;
                     case BasePath + "/viewers":
                         HandleViewers(request, response);
                         break;
@@ -5931,6 +5940,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue", "Respond to open support tickets");
             AppendDashboardLink(adminNav, BasePath + "/admin/store", "bi-shop", "Store Catalog", "Manage prim packs and region order listings");
             AppendDashboardLink(adminNav, BasePath + "/admin/store/orders", "bi-receipt-cutoff", "Store Orders", "Fulfillment queue, renewals, Start Region");
+            AppendDashboardLink(adminNav, BasePath + "/admin/regions/ini", "bi-file-earmark-code", "Region Config Files", "View/edit any region's raw .ini file");
             AppendDashboardLink(adminNav, BasePath + "/admin/pages", "bi-file-earmark-text", "Static Pages", "Edit About/ToS/DMCA and custom pages");
             AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
             AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "Region Console", "Run console commands on a region");
@@ -10975,10 +10985,22 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<p>Region size X / Y in meters (RegionOrder only, 0 = default 256) <input type=\"number\" name=\"region_size_x\" value=\"")
               .Append(editItem != null ? editItem.RegionSizeX : 0).Append("\"> <input type=\"number\" name=\"region_size_y\" value=\"")
               .Append(editItem != null ? editItem.RegionSizeY : 0).Append("\"></p>");
-            sb.Append("<p>Price - Confluence Currency (0 = not offered) <input type=\"number\" name=\"price_confluence\" value=\"")
-              .Append(editItem != null ? editItem.PriceConfluence : 0).Append("\"></p>");
-            sb.Append("<p>Price - Gloebits (0 = not offered) <input type=\"number\" name=\"price_gloebits\" value=\"")
-              .Append(editItem != null ? editItem.PriceGloebits : 0).Append("\"></p>");
+            {
+                // One price, same number in both currencies whenever both
+                // are offered - residents shouldn't be able to see one
+                // payment method priced higher than another for the exact
+                // same item. Existing items where an admin previously
+                // entered two different numbers show the Confluence value
+                // as the starting point; saving the form re-synchronizes
+                // both to whichever one number is submitted.
+                int existingPrice = editItem != null ? Math.Max(editItem.PriceConfluence, editItem.PriceGloebits) : 0;
+                bool offerConfluence = editItem == null || editItem.PriceConfluence > 0;
+                bool offerGloebit = editItem == null || editItem.PriceGloebits > 0;
+                sb.Append("<p>Price (same amount in both currencies whenever both are offered - never price one payment method higher than the other) <input type=\"number\" name=\"price\" value=\"")
+                  .Append(existingPrice).Append("\"></p>");
+                sb.Append("<p><label><input type=\"checkbox\" name=\"offer_confluence\" value=\"true\"").Append(offerConfluence ? " checked" : string.Empty).Append("> Offer via Confluence Currency</label> ");
+                sb.Append("<label><input type=\"checkbox\" name=\"offer_gloebit\" value=\"true\"").Append(offerGloebit ? " checked" : string.Empty).Append("> Offer via Gloebit</label></p>");
+            }
             sb.Append("<p>Duration days (0 = never expires) <input type=\"number\" name=\"duration_days\" value=\"")
               .Append(editItem != null ? editItem.DurationDays : 0).Append("\"></p>");
             sb.Append("<p>Sort order <input type=\"number\" name=\"sort_order\" value=\"").Append(editItem != null ? editItem.SortOrder : 0).Append("\"></p>");
@@ -11018,10 +11040,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                 int.TryParse(FormValue(form, "region_size_y"), out int sizeY);
                 item.RegionSizeX = Math.Max(0, sizeX);
                 item.RegionSizeY = Math.Max(0, sizeY);
-                int.TryParse(FormValue(form, "price_confluence"), out int priceConfluence);
-                int.TryParse(FormValue(form, "price_gloebits"), out int priceGloebits);
-                item.PriceConfluence = Math.Max(0, priceConfluence);
-                item.PriceGloebits = Math.Max(0, priceGloebits);
+                // Same exchange rate for both currencies, deliberately -
+                // one price field, applied identically to whichever
+                // currencies are offered, so residents never see one
+                // payment method priced higher than another for the same
+                // item (see PROJECT_LOG.md).
+                int.TryParse(FormValue(form, "price"), out int price);
+                price = Math.Max(0, price);
+                item.PriceConfluence = FormValue(form, "offer_confluence") == "true" ? price : 0;
+                item.PriceGloebits = FormValue(form, "offer_gloebit") == "true" ? price : 0;
                 int.TryParse(FormValue(form, "duration_days"), out int durationDays);
                 item.DurationDays = Math.Max(0, durationDays);
                 int.TryParse(FormValue(form, "sort_order"), out int sortOrder);
@@ -11234,6 +11261,253 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         #endregion Store
+
+        #region Admin: region .ini config file viewer/editor
+
+        // Motivated directly by a real, observed data-loss bug: automated
+        // writes via RegionInfo.SaveRegionToFile (Nini-based) silently drop
+        // any key considered "at its default" and every comment on that
+        // file - confirmed live against Sandbox's own Regions.ini after one
+        // add-prim-limit call (see PROJECT_LOG.md). This page exists so an
+        // admin can actually see - and, if needed, hand-fix - what's really
+        // in a region's config without filesystem/RDP access, without this
+        // editor itself repeating the same loss: editing here writes the
+        // exact raw bytes the admin typed, with zero Nini round-trip.
+        // Changes only take effect on that region's NEXT start/restart -
+        // there's no live-apply mechanism for arbitrary ini keys the way
+        // the Store's own add-prim-limit/set-prim-limit console commands
+        // have for prim capacity specifically.
+        private List<(string RegionName, UUID RegionID, string FilePath)> DiscoverRegionIniFiles()
+        {
+            List<(string, UUID, string)> results = new List<(string, UUID, string)>();
+
+            if (string.IsNullOrEmpty(m_regionOrderGridRoot))
+                return results;
+
+            string simulatorsRoot = Path.Combine(m_regionOrderGridRoot, "Simulators");
+            if (!Directory.Exists(simulatorsRoot))
+                return results;
+
+            foreach (string simFolder in Directory.GetDirectories(simulatorsRoot))
+            {
+                string regionsDir = Path.Combine(simFolder, "Regions");
+                if (!Directory.Exists(regionsDir))
+                    continue;
+
+                foreach (string file in Directory.GetFiles(regionsDir, "*.ini"))
+                {
+                    try
+                    {
+                        // Read-only parse - never calls .Save(), so listing
+                        // regions can never itself trigger the comment/
+                        // default-key loss this whole feature exists to
+                        // work around.
+                        IConfigSource source = new IniConfigSource(file);
+                        foreach (IConfig config in source.Configs)
+                        {
+                            UUID.TryParse(config.GetString("RegionUUID", string.Empty), out UUID regionId);
+                            results.Add((config.Name, regionId, file));
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.Warn("[WEB INTERFACE]: Could not parse region ini " + file, e);
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        private void HandleAdminRegionIniList(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Region Config Files"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+
+            List<(string RegionName, UUID RegionID, string FilePath)> regions = DiscoverRegionIniFiles();
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-file-earmark-code\"></i> Region Config Files</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>");
+            sb.Append("<p>Every region's own <code>.ini</code> file, discovered under <code>Simulators\\*\\Regions\\</code> "
+                    + "on this host. Editing here writes the raw file directly - no validation, no live effect. "
+                    + "Changes take effect the next time that region's process (re)starts.</p>");
+
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            if (regions.Count == 0)
+            {
+                sb.Append("<p>No region config files found under the configured grid root.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>Region</th><th>RegionID</th><th>File</th><th></th></tr>");
+                foreach (var r in regions.OrderBy(r => r.RegionName, StringComparer.OrdinalIgnoreCase))
+                {
+                    sb.Append("<tr><td>").Append(Html(r.RegionName)).Append("</td>");
+                    sb.Append("<td><code>").Append(r.RegionID).Append("</code></td>");
+                    sb.Append("<td><code>").Append(Html(r.FilePath)).Append("</code></td>");
+                    sb.Append("<td><a href=\"").Append(BasePath).Append("/admin/regions/ini/edit?path=")
+                      .Append(Uri.EscapeDataString(r.FilePath)).Append("\">View / Edit</a></td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, PageTitle("Region Config Files"), sb.ToString());
+        }
+
+        private void HandleAdminRegionIniEdit(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Edit Region Config"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+
+            // Never trusts a client-supplied path directly - only ever
+            // acts on a path this same discovery scan just found, same
+            // reverification discipline as every other self-service/admin
+            // action in this file that takes an ID from a form.
+            List<(string RegionName, UUID RegionID, string FilePath)> discovered = DiscoverRegionIniFiles();
+            string requestedPath = request.QueryString.Get("path");
+            string filePath = null;
+            UUID regionId = UUID.Zero;
+            string regionName = null;
+
+            foreach (var r in discovered)
+            {
+                if (string.Equals(r.FilePath, requestedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    filePath = r.FilePath;
+                    regionId = r.RegionID;
+                    regionName = r.RegionName;
+                    break;
+                }
+            }
+
+            if (filePath == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                WritePage(request, response, PageTitle("Edit Region Config"), "<h1>Not found</h1><p>That config file wasn't found by the current discovery scan.</p>");
+                return;
+            }
+
+            string message = string.Empty;
+
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                string content = FormValue(form, "content") ?? string.Empty;
+
+                try
+                {
+                    File.WriteAllText(filePath, content);
+                    message = "Saved. Restart " + regionName + " for this to take effect.";
+                }
+                catch (Exception e)
+                {
+                    message = "Save failed: " + e.Message;
+                }
+            }
+
+            string fileText;
+            try
+            {
+                fileText = File.ReadAllText(filePath);
+            }
+            catch (Exception e)
+            {
+                fileText = string.Empty;
+                if (string.IsNullOrEmpty(message))
+                    message = "Could not read file: " + e.Message;
+            }
+
+            GridRegion liveRegion = regionId != UUID.Zero && m_GridService != null
+                    ? m_GridService.GetRegionByUUID(UUID.Zero, regionId)
+                    : null;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-file-earmark-code\"></i> ").Append(Html(regionName)).Append("</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/admin/regions/ini\">Back to Region Config Files</a></p>");
+            sb.Append("<p><code>").Append(Html(filePath)).Append("</code></p>");
+
+            if (!string.IsNullOrEmpty(message))
+                sb.Append("<p>").Append(Html(message)).Append("</p>");
+
+            sb.Append("<p><strong>Changes here only take effect the next time this region's process (re)starts</strong> "
+                    + "- this is a raw file write, not a live console command.</p>");
+
+            sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/regions/ini/edit?path=")
+              .Append(Uri.EscapeDataString(filePath)).Append("\">");
+            sb.Append("<textarea name=\"content\" rows=\"30\" style=\"width:100%;font-family:monospace;white-space:pre;\">")
+              .Append(Html(fileText)).Append("</textarea>");
+            sb.Append("<p><button type=\"submit\">Save</button></p>");
+            sb.Append("</form>");
+
+            if (liveRegion != null && !string.IsNullOrEmpty(liveRegion.ServerURI) && !string.IsNullOrEmpty(m_webConsoleSecret))
+            {
+                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/regions/ini/restart\" onsubmit=\"return confirm('Restart ")
+                  .Append(Html(regionName)).Append(" now? Any residents currently there will be disconnected.');\">");
+                sb.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(regionId).Append("\">");
+                sb.Append("<button type=\"submit\">Restart Region Now</button>");
+                sb.Append("</form>");
+            }
+            else
+            {
+                sb.Append("<p><em>This region isn't currently online (or the web console isn't configured), "
+                        + "so there's no way to restart it from here - saved changes apply next time it's started manually.</em></p>");
+            }
+
+            WritePage(request, response, PageTitle("Edit " + regionName), sb.ToString());
+        }
+
+        private void HandleAdminRegionIniRestart(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || string.IsNullOrEmpty(m_webConsoleSecret) || m_GridService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Region not found.";
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                if (UUID.TryParse(FormValue(form, "region_id"), out UUID regionId))
+                {
+                    GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, regionId);
+                    if (region != null && !string.IsNullOrEmpty(region.ServerURI))
+                    {
+                        RunRegionConsoleCommand(region, "region restart 30");
+                        message = "Restart command sent to " + region.RegionName + ".";
+                    }
+                }
+            }
+
+            response.Redirect(BasePath + "/admin/regions/ini?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        #endregion Admin: region .ini config file viewer/editor
 
         // Self-service password reset (task #22 from the WhiteCore-Dev
         // re-audit's "all of it" list). Always shows the same generic
