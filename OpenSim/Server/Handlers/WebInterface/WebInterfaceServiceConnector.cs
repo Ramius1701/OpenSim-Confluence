@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using MailKit.Net.Smtp;
 using MimeKit;
 using Nini.Config;
@@ -133,6 +135,33 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IAuctionService m_AuctionService;
         private IOfflineIMService m_OfflineIMService;
         private IMessagingService m_MessagingService;
+        private IStoreService m_StoreService;
+        private OpenSim.Services.StoreService.Gloebit.GloebitClient m_GloebitClient;
+        private bool m_gloebitEnabled = false;
+        private int m_regionOrderPortStart, m_regionOrderPortEnd;
+        private int m_regionOrderGridXStart, m_regionOrderGridYStart, m_regionOrderGridXEnd, m_regionOrderGridYEnd;
+        private string m_regionOrderTemplateIniPath = string.Empty;
+        private string m_regionOrderGridRoot = string.Empty;
+        private string m_regionOrderExternalHostName = string.Empty;
+        // Per-avatar purchase lock - rejects a second concurrent "Buy"
+        // click from the same avatar before it ever reaches
+        // ICurrencyService.Transfer, which is not itself safe against
+        // concurrent double-spend (see PROJECT_LOG.md). Same TryAdd-then-
+        // remove-in-finally shape as EntityTransferStateMachine.SetInTransit.
+        private readonly Dictionary<UUID, bool> m_purchasesInProgress = new Dictionary<UUID, bool>();
+        // Avatar -> the order they were mid-checkout on when a Gloebit
+        // purchase needed a fresh OAuth2 authorize round-trip. Resumed
+        // once /store/gloebit/auth_complete reports success. In-memory
+        // only (same lifetime posture as WebSession/ResetToken) - lost on
+        // a Robust restart mid-authorize, which just means the resident
+        // re-clicks Buy, same as any other interrupted checkout.
+        private readonly Dictionary<UUID, UUID> m_pendingGloebitOrders = new Dictionary<UUID, UUID>();
+        // ICurrencyService.Transfer's transactionType is a raw int with no
+        // enum in this repo - 0 is already double-booked (admin balance-set
+        // and currency-buy-credit both use it) and the real
+        // OpenMetaverse.MoneyTransactionType values used elsewhere in this
+        // codebase top out well under 100, so this is picked clear of both.
+        private const int STORE_PURCHASE_TRANSACTION_TYPE = 5001;
         private string m_webConsoleSecret = string.Empty;
 
         private string m_gridName = "OpenSim Grid";
@@ -269,6 +298,42 @@ namespace OpenSim.Server.Handlers.WebInterface
                     m_smtpEnabled = true;
             }
 
+            m_StoreService = LoadReusedPlugin<IStoreService>(config, "StoreService", args);
+
+            IConfig storeConfig = config.Configs["StoreService"];
+            if (storeConfig != null)
+            {
+                m_regionOrderPortStart = storeConfig.GetInt("RegionOrderPortRangeStart", 9050);
+                m_regionOrderPortEnd = storeConfig.GetInt("RegionOrderPortRangeEnd", 9099);
+                m_regionOrderGridXStart = storeConfig.GetInt("RegionOrderGridXStart", 1050);
+                m_regionOrderGridYStart = storeConfig.GetInt("RegionOrderGridYStart", 1050);
+                m_regionOrderGridXEnd = storeConfig.GetInt("RegionOrderGridXEnd", 1099);
+                m_regionOrderGridYEnd = storeConfig.GetInt("RegionOrderGridYEnd", 1099);
+                m_regionOrderTemplateIniPath = storeConfig.GetString("RegionOrderTemplateIniPath", string.Empty);
+                m_regionOrderGridRoot = storeConfig.GetString("RegionOrderGridRoot", string.Empty);
+                m_regionOrderExternalHostName = storeConfig.GetString("RegionOrderExternalHostName", string.Empty);
+            }
+
+            // Store's own Gloebit integration - Robust-native, independent of
+            // addon-modules/Gloebit/GloebitMoneyModule (region-Scene-bound,
+            // see PROJECT_LOG.md). Reuses the same GLBKey/GLBSecret/
+            // GLBEnvironment already configured for the grid's region-side
+            // Gloebit integration, copied (not shared/read) into this
+            // section - does not touch Gloebit.ini in any way.
+            IConfig gloebitConfig = config.Configs["Gloebit"];
+            if (gloebitConfig != null && gloebitConfig.GetBoolean("Enabled", false))
+            {
+                string glbKey = gloebitConfig.GetString("GLBKey", string.Empty);
+                string glbSecret = gloebitConfig.GetString("GLBSecret", string.Empty);
+                string glbApiUrl = gloebitConfig.GetString("GLBApiUrl", "https://www.gloebit.com/");
+                string glbCallbackBaseUri = gloebitConfig.GetString("GLBCallbackBaseURI", string.Empty);
+                if (!string.IsNullOrEmpty(glbKey) && !string.IsNullOrEmpty(glbSecret) && !string.IsNullOrEmpty(glbCallbackBaseUri))
+                {
+                    m_GloebitClient = new OpenSim.Services.StoreService.Gloebit.GloebitClient(glbKey, glbSecret, glbApiUrl, glbCallbackBaseUri);
+                    m_gloebitEnabled = true;
+                }
+            }
+
             // Same [WebConsole] SharedSecret every region's own WebConsoleModule
             // is configured with - see that module's own security-note comment
             // for why an empty/missing secret disables the feature entirely
@@ -302,7 +367,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // first avatar you register/log in with IS the master
                 // account, no separate portal credential.
                 "/create-avatar", "/verify-avatar", "/import-avatar", "/my-avatars", "/switch-avatar",
-                "/suggestion-box", "/recovery-codes", "/recover-account"
+                "/suggestion-box", "/recovery-codes", "/recover-account",
+                // Store: prim-capacity packs + self-service region ordering.
+                "/store"
             };
             foreach (string route in topLevelRoutes)
             {
@@ -461,6 +528,39 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/admin/suggestions":
                         HandleAdminSuggestions(request, response);
+                        break;
+                    case BasePath + "/store":
+                        HandleStore(request, response);
+                        break;
+                    case BasePath + "/store/buy":
+                        HandleStoreBuy(request, response);
+                        break;
+                    case BasePath + "/store/my-purchases":
+                        HandleStoreMyPurchases(request, response);
+                        break;
+                    case BasePath + "/store/gloebit/authorize":
+                        HandleStoreGloebitAuthorize(request, response);
+                        break;
+                    case BasePath + "/store/gloebit/auth_complete":
+                        HandleStoreGloebitAuthComplete(request, response);
+                        break;
+                    case BasePath + "/store/gloebit/transaction":
+                        HandleStoreGloebitTransaction(request, response);
+                        break;
+                    case BasePath + "/admin/store":
+                        HandleAdminStore(request, response);
+                        break;
+                    case BasePath + "/admin/store/save":
+                        HandleAdminStoreSave(request, response);
+                        break;
+                    case BasePath + "/admin/store/orders":
+                        HandleAdminStoreOrders(request, response);
+                        break;
+                    case BasePath + "/admin/store/orders/renew":
+                        HandleAdminStoreOrdersRenew(request, response);
+                        break;
+                    case BasePath + "/admin/store/orders/start":
+                        HandleAdminStoreOrdersStart(request, response);
                         break;
                     case BasePath + "/viewers":
                         HandleViewers(request, response);
@@ -5820,6 +5920,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(adminNav, BasePath + "/admin/news", "bi-newspaper", "News Feed", "Post announcements to the splash page");
             AppendDashboardLink(adminNav, BasePath + "/admin/events", "bi-calendar-event", "Events", "Manage the grid-wide events calendar");
             AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue", "Respond to open support tickets");
+            AppendDashboardLink(adminNav, BasePath + "/admin/store", "bi-shop", "Store Catalog", "Manage prim packs and region order listings");
+            AppendDashboardLink(adminNav, BasePath + "/admin/store/orders", "bi-receipt-cutoff", "Store Orders", "Fulfillment queue, renewals, Start Region");
             AppendDashboardLink(adminNav, BasePath + "/admin/pages", "bi-file-earmark-text", "Static Pages", "Edit About/ToS/DMCA and custom pages");
             AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
             AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "Region Console", "Run console commands on a region");
@@ -9989,6 +10091,1130 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         #endregion Suggestion Box
 
+        #region Store: prim-capacity packs + self-service region ordering
+
+        // Resident-facing catalog. Buying is inline on each card (currency
+        // choice + a region picker/name field baked into the same POST
+        // form) rather than a separate checkout page, matching this file's
+        // existing lean-page style (see My Regions).
+        private void HandleStore(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+
+            if (m_StoreService == null)
+            {
+                WritePage(request, response, PageTitle("Store"),
+                        "<h1><i class=\"bi bi-shop\"></i> Store</h1><p>The store is not available on this grid.</p>");
+                return;
+            }
+
+            List<StoreCatalogItem> items = m_StoreService.GetActiveCatalogItems().OrderBy(i => i.SortOrder).ToList();
+            List<GridRegion> ownedRegions = session != null ? GetRegionsOwnedBy(session.PrincipalID) : new List<GridRegion>();
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-shop\"></i> Store</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a> | <a href=\"")
+              .Append(BasePath).Append("/store/my-purchases\">My Purchases</a></p>");
+
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            if (session == null)
+                sb.Append("<p><a href=\"").Append(BasePath).Append("/login\">Log in</a> to buy.</p>");
+
+            if (items.Count == 0)
+            {
+                sb.Append("<p>Nothing is for sale right now.</p>");
+            }
+            else
+            {
+                foreach (StoreCatalogItem item in items)
+                {
+                    sb.Append("<div class=\"content-card\">");
+                    sb.Append("<h2>").Append(Html(item.Name)).Append("</h2>");
+                    if (!string.IsNullOrEmpty(item.Description))
+                        sb.Append("<p>").Append(Html(item.Description)).Append("</p>");
+
+                    if (item.ItemType == "PrimPack")
+                    {
+                        sb.Append("<p>Sets the chosen region's prim capacity to <strong>")
+                          .Append((item.PrimAmount > 0 ? item.PrimAmount : 15000).ToString("N0")).Append("</strong>.</p>");
+                    }
+                    else if (item.ItemType == "RegionOrder")
+                    {
+                        sb.Append("<p>").Append(item.RegionSizeX > 0 ? item.RegionSizeX.ToString() : "256").Append("&times;")
+                          .Append(item.RegionSizeY > 0 ? item.RegionSizeY.ToString() : "256")
+                          .Append(" region, ").Append((item.PrimAmount > 0 ? item.PrimAmount : 15000).ToString("N0")).Append(" prims.</p>");
+                    }
+
+                    if (item.DurationDays > 0)
+                        sb.Append("<p>Lasts ").Append(item.DurationDays).Append(" days.</p>");
+
+                    if (session != null)
+                    {
+                        bool canBuy = item.ItemType != "PrimPack" || ownedRegions.Count > 0;
+
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/store/buy\">");
+                        sb.Append("<input type=\"hidden\" name=\"catalog_item_id\" value=\"").Append(item.ID).Append("\">");
+
+                        if (item.ItemType == "PrimPack")
+                        {
+                            if (ownedRegions.Count == 0)
+                            {
+                                sb.Append("<p><em>You don't own a region to apply this to.</em></p>");
+                            }
+                            else
+                            {
+                                sb.Append("<p><select name=\"region_id\">");
+                                foreach (GridRegion r in ownedRegions)
+                                    sb.Append("<option value=\"").Append(r.RegionID).Append("\">").Append(Html(r.RegionName)).Append("</option>");
+                                sb.Append("</select></p>");
+                            }
+                        }
+                        else if (item.ItemType == "RegionOrder")
+                        {
+                            sb.Append("<p><input type=\"text\" name=\"region_name\" placeholder=\"Region name\" maxlength=\"63\" required></p>");
+                        }
+
+                        if (canBuy)
+                        {
+                            if (item.PriceConfluence > 0)
+                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Confluence\">Buy for C$ ")
+                                  .Append(item.PriceConfluence.ToString("N0")).Append("</button> ");
+                            if (item.PriceGloebits > 0)
+                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Gloebit\"")
+                                  .Append(m_gloebitEnabled ? string.Empty : " disabled title=\"Gloebit purchases are not available on this grid\"")
+                                  .Append(">Buy for G$ ").Append(item.PriceGloebits.ToString("N0")).Append("</button>");
+                        }
+
+                        sb.Append("</form>");
+                    }
+
+                    sb.Append("</div>");
+                }
+            }
+
+            WritePage(request, response, PageTitle("Store"), sb.ToString());
+        }
+
+        private void HandleStoreBuy(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+            if (m_StoreService == null || request.HttpMethod != "POST")
+            {
+                response.Redirect(BasePath + "/store", HttpStatusCode.Redirect);
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string redirectUrl = ProcessStoreBuy(session, form);
+            response.Redirect(redirectUrl, HttpStatusCode.Redirect);
+        }
+
+        private string ProcessStoreBuy(WebSession session, Dictionary<string, string> form)
+        {
+            if (!UUID.TryParse(FormValue(form, "catalog_item_id"), out UUID catalogItemId))
+                return BasePath + "/store?message=" + Uri.EscapeDataString("Invalid item.");
+
+            StoreCatalogItem item = m_StoreService.GetCatalogItem(catalogItemId);
+            string currency = FormValue(form, "currency");
+
+            string validationError = ValidateStoreBuy(item, currency);
+            if (validationError != null)
+                return BasePath + "/store?message=" + Uri.EscapeDataString(validationError);
+
+            // Per-avatar purchase lock - ICurrencyService.Transfer is not
+            // itself safe against a double-submitted "Buy" click (see
+            // PROJECT_LOG.md), so a second concurrent purchase from the
+            // same avatar is rejected here, before it ever reaches Transfer
+            // or even creates an order row. Same TryAdd-then-remove-in-
+            // finally shape as EntityTransferStateMachine.SetInTransit.
+            bool alreadyInProgress;
+            lock (m_purchasesInProgress)
+            {
+                alreadyInProgress = m_purchasesInProgress.ContainsKey(session.PrincipalID);
+                if (!alreadyInProgress)
+                    m_purchasesInProgress[session.PrincipalID] = true;
+            }
+
+            if (alreadyInProgress)
+                return BasePath + "/store?message=" + Uri.EscapeDataString("A purchase is already in progress for your account - please wait.");
+
+            try
+            {
+                StoreOrder order = BuildStoreOrder(session, item, currency, form, out string orderError);
+                if (order == null)
+                    return BasePath + "/store?message=" + Uri.EscapeDataString(orderError);
+
+                m_StoreService.StoreOrder(order);
+
+                if (currency == "Confluence")
+                {
+                    string message = ChargeConfluenceCurrency(session, order, item);
+                    return BasePath + "/store?message=" + Uri.EscapeDataString(message);
+                }
+
+                StoreGloebitAuth auth = m_StoreService.GetGloebitAuth(session.PrincipalID);
+                if (auth == null || !auth.Authorized || string.IsNullOrEmpty(auth.AccessToken))
+                {
+                    lock (m_pendingGloebitOrders)
+                        m_pendingGloebitOrders[session.PrincipalID] = order.ID;
+                    return m_GloebitClient.BuildAuthorizeUri(session.PrincipalID, session.Name).ToString();
+                }
+
+                string gloebitMessage = SubmitGloebitTransaction(session.PrincipalID, session.Name, order, item, auth);
+                return BasePath + "/store?message=" + Uri.EscapeDataString(gloebitMessage);
+            }
+            finally
+            {
+                lock (m_purchasesInProgress)
+                    m_purchasesInProgress.Remove(session.PrincipalID);
+            }
+        }
+
+        private string ValidateStoreBuy(StoreCatalogItem item, string currency)
+        {
+            if (item == null || !item.IsActive)
+                return "This item is no longer available.";
+            if (currency != "Confluence" && currency != "Gloebit")
+                return "Choose a currency.";
+            if (currency == "Confluence" && item.PriceConfluence <= 0)
+                return "This item cannot be purchased with Confluence Currency.";
+            if (currency == "Gloebit" && item.PriceGloebits <= 0)
+                return "This item cannot be purchased with Gloebit.";
+            if (currency == "Gloebit" && (!m_gloebitEnabled || m_GloebitClient == null))
+                return "Gloebit purchases are not available on this grid.";
+            return null;
+        }
+
+        // Client-supplied region_id/region_name are never trusted alone -
+        // PrimPack re-verifies ownership via GetOwnedRegionOrNull (same
+        // discipline as My Regions), RegionOrder re-checks the name isn't
+        // already taken by a real region or another pending order.
+        private StoreOrder BuildStoreOrder(WebSession session, StoreCatalogItem item, string currency, Dictionary<string, string> form, out string error)
+        {
+            error = null;
+            StoreOrder order = new StoreOrder
+            {
+                ID = UUID.Random(),
+                CatalogItemID = item.ID,
+                OrderType = item.ItemType,
+                ResidentAvatarID = session.PrincipalID,
+                ResidentName = session.Name,
+                CurrencyUsed = currency,
+                AmountCharged = currency == "Confluence" ? item.PriceConfluence : item.PriceGloebits,
+                Status = "PendingPayment",
+                Created = DateTime.UtcNow,
+                Updated = DateTime.UtcNow
+            };
+
+            if (item.ItemType == "PrimPack")
+            {
+                if (!UUID.TryParse(FormValue(form, "region_id"), out UUID regionId))
+                {
+                    error = "Choose a region.";
+                    return null;
+                }
+
+                if (GetOwnedRegionOrNull(session, regionId) == null)
+                {
+                    error = "You don't own that region.";
+                    return null;
+                }
+
+                order.TargetRegionID = regionId;
+            }
+            else if (item.ItemType == "RegionOrder")
+            {
+                string regionName = (FormValue(form, "region_name") ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(regionName) || regionName.Length > 63)
+                {
+                    error = "Enter a valid region name.";
+                    return null;
+                }
+
+                if (m_GridService != null && m_GridService.GetRegionsByName(UUID.Zero, regionName, 1).Count > 0)
+                {
+                    error = "That region name is already taken.";
+                    return null;
+                }
+
+                if (m_StoreService.GetAllOrders().Any(o => o.OrderType == "RegionOrder"
+                        && !string.IsNullOrEmpty(o.RequestedRegionName)
+                        && string.Equals(o.RequestedRegionName, regionName, StringComparison.OrdinalIgnoreCase)
+                        && o.Status != "Cancelled" && o.Status != "PaymentFailed"))
+                {
+                    error = "That region name is already taken or pending.";
+                    return null;
+                }
+
+                order.RequestedRegionName = regionName;
+            }
+            else
+            {
+                error = "Unknown item type.";
+                return null;
+            }
+
+            return order;
+        }
+
+        private string ChargeConfluenceCurrency(WebSession session, StoreOrder order, StoreCatalogItem item)
+        {
+            if (m_CurrencyService == null)
+            {
+                order.Status = "PaymentFailed";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return "Currency service is not available.";
+            }
+
+            if (m_CurrencyService.GetBalance(session.PrincipalID) < order.AmountCharged)
+            {
+                order.Status = "PaymentFailed";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return "Insufficient balance.";
+            }
+
+            // order.ID doubles as the transactionID - currency_transactions'
+            // primary key - so a retried/duplicated POST for this order
+            // fails cleanly (rolled back) instead of double-charging. Every
+            // other call site in this codebase passes UUID.Zero here and
+            // gets no such protection (see PROJECT_LOG.md).
+            bool ok = m_CurrencyService.Transfer(UUID.Zero, session.PrincipalID, order.AmountCharged,
+                    "Store purchase: " + item.Name, STORE_PURCHASE_TRANSACTION_TYPE, order.ID);
+
+            if (!ok)
+            {
+                order.Status = "PaymentFailed";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return "Payment failed.";
+            }
+
+            order.PaymentTransactionID = order.ID.ToString();
+            order.Status = "Paid";
+            order.Updated = DateTime.UtcNow;
+            m_StoreService.StoreOrder(order);
+
+            ProcessPaidOrder(order, item);
+            return "Purchase complete.";
+        }
+
+        private string SubmitGloebitTransaction(UUID avatarId, string avatarName, StoreOrder order, StoreCatalogItem item, StoreGloebitAuth auth)
+        {
+            StoreGloebitTransaction txn = new StoreGloebitTransaction
+            {
+                ID = UUID.Random(),
+                StoreOrderID = order.ID,
+                AvatarPrincipalID = avatarId,
+                Amount = order.AmountCharged,
+                Stage = "Submitted",
+                Created = DateTime.UtcNow,
+                Updated = DateTime.UtcNow
+            };
+            m_StoreService.StoreGloebitTransaction(txn);
+
+            bool submitted = m_GloebitClient.Transact(txn.ID, avatarId, auth.AccessToken, auth.GloebitID,
+                    order.AmountCharged, "Store purchase: " + item.Name, avatarName, out string error);
+
+            order.PaymentTransactionID = txn.ID.ToString();
+            order.Updated = DateTime.UtcNow;
+
+            if (!submitted)
+            {
+                order.Status = "PaymentFailed";
+                m_StoreService.StoreOrder(order);
+                txn.Stage = "Failed";
+                txn.ResponseReason = error;
+                txn.Updated = DateTime.UtcNow;
+                m_StoreService.StoreGloebitTransaction(txn);
+                return "Gloebit payment failed: " + error;
+            }
+
+            m_StoreService.StoreOrder(order);
+            return "Payment submitted to Gloebit - awaiting confirmation. Check My Purchases shortly.";
+        }
+
+        // Redirect target for BuildAuthorizeUri when a resident hasn't
+        // authorized Gloebit for the portal yet, and for a proactive
+        // "link my Gloebit account" click with no purchase pending.
+        private void HandleStoreGloebitAuthorize(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!m_gloebitEnabled || m_GloebitClient == null)
+            {
+                response.Redirect(BasePath + "/store?message=" + Uri.EscapeDataString("Gloebit purchases are not available on this grid."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            response.Redirect(m_GloebitClient.BuildAuthorizeUri(session.PrincipalID, session.Name).ToString(), HttpStatusCode.Redirect);
+        }
+
+        // Gloebit's OAuth2 redirect target - the query string it appends
+        // (agentId/code) is exactly what BuildAuthorizeUri/GloebitClient
+        // asked for, not session-cookie-authenticated (this request comes
+        // from the resident's browser mid-redirect, but could in principle
+        // arrive without our own session cookie depending on browser
+        // referrer/SameSite behavior) - agentId in the URL is the identity
+        // here, matching how the region-side module's own auth_complete
+        // handler works.
+        private void HandleStoreGloebitAuthComplete(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            string code = request.QueryString.Get("code");
+
+            if (!UUID.TryParse(request.QueryString.Get("agentId"), out UUID avatarId) || string.IsNullOrEmpty(code)
+                    || m_GloebitClient == null || m_StoreService == null)
+            {
+                response.Redirect(BasePath + "/store?message=" + Uri.EscapeDataString("Gloebit authorization failed."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            bool ok = m_GloebitClient.ExchangeAccessToken(avatarId, code, out string accessToken, out string gloebitId, out string error);
+
+            StoreGloebitAuth auth = m_StoreService.GetGloebitAuth(avatarId) ?? new StoreGloebitAuth { AvatarPrincipalID = avatarId, Created = DateTime.UtcNow };
+            auth.Updated = DateTime.UtcNow;
+
+            if (!ok)
+            {
+                auth.Authorized = false;
+                m_StoreService.StoreGloebitAuth(auth);
+                response.Redirect(BasePath + "/store?message=" + Uri.EscapeDataString("Gloebit authorization failed: " + error), HttpStatusCode.Redirect);
+                return;
+            }
+
+            auth.AccessToken = accessToken;
+            auth.GloebitID = gloebitId;
+            auth.Authorized = true;
+            m_StoreService.StoreGloebitAuth(auth);
+
+            UUID pendingOrderId = UUID.Zero;
+            lock (m_pendingGloebitOrders)
+            {
+                if (m_pendingGloebitOrders.TryGetValue(avatarId, out UUID orderId))
+                {
+                    pendingOrderId = orderId;
+                    m_pendingGloebitOrders.Remove(avatarId);
+                }
+            }
+
+            StoreOrder order = pendingOrderId != UUID.Zero ? m_StoreService.GetOrder(pendingOrderId) : null;
+            StoreCatalogItem item = order != null ? m_StoreService.GetCatalogItem(order.CatalogItemID) : null;
+
+            if (order == null || order.Status != "PendingPayment" || item == null)
+            {
+                response.Redirect(BasePath + "/store?message=" + Uri.EscapeDataString("Gloebit account linked."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            string message = SubmitGloebitTransaction(avatarId, order.ResidentName, order, item, auth);
+            response.Redirect(BasePath + "/store?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // The required webhook - see PROJECT_LOG.md for why this isn't
+        // optional: it's the only path that ever fires local
+        // enact/consume completion. No session/cookie check - Gloebit's
+        // own transaction processor calls this directly, identified only
+        // by the unguessable transaction id embedded in the callback URL
+        // Transact() gave it. Response contract Gloebit's queue expects:
+        // a JSON array, [true] on success or [false,"<reason>"] on
+        // failure - reproduced exactly, including the "pending" magic
+        // retry string on the one path that can legitimately need a retry.
+        private void HandleStoreGloebitTransaction(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            OSDArray result = new OSDArray();
+
+            if (m_StoreService == null || !UUID.TryParse(request.QueryString.Get("id"), out UUID transactionId))
+            {
+                result.Add(OSD.FromBoolean(false));
+                result.Add(OSD.FromString("unknown transaction"));
+                WriteGloebitJson(response, result);
+                return;
+            }
+
+            StoreGloebitTransaction txn = m_StoreService.GetGloebitTransaction(transactionId);
+            if (txn == null)
+            {
+                result.Add(OSD.FromBoolean(false));
+                result.Add(OSD.FromString("unknown transaction"));
+                WriteGloebitJson(response, result);
+                return;
+            }
+
+            string state = request.QueryString.Get("state");
+            switch (state)
+            {
+                case "enact":
+                    if (!txn.Enacted)
+                    {
+                        // Pure balance-debit transaction, no in-world object
+                        // delivered - nothing to enact locally, matching how
+                        // the region-side module's own no-op enact/consume/
+                        // cancel handlers work for this transaction shape.
+                        txn.Enacted = true;
+                        txn.Stage = "EnactAsset";
+                        txn.Updated = DateTime.UtcNow;
+                        m_StoreService.StoreGloebitTransaction(txn);
+                    }
+                    result.Add(OSD.FromBoolean(true));
+                    break;
+
+                case "consume":
+                    if (!txn.Consumed)
+                    {
+                        txn.Consumed = true;
+                        txn.Stage = "ConsumeAsset";
+                        txn.Updated = DateTime.UtcNow;
+                        m_StoreService.StoreGloebitTransaction(txn);
+
+                        StoreOrder order = m_StoreService.GetOrder(txn.StoreOrderID);
+                        if (order != null && order.Status == "PendingPayment")
+                        {
+                            order.Status = "Paid";
+                            order.Updated = DateTime.UtcNow;
+                            m_StoreService.StoreOrder(order);
+
+                            StoreCatalogItem item = m_StoreService.GetCatalogItem(order.CatalogItemID);
+                            if (item != null)
+                                ProcessPaidOrder(order, item);
+                        }
+                    }
+                    result.Add(OSD.FromBoolean(true));
+                    break;
+
+                case "cancel":
+                    if (!txn.Cancelled)
+                    {
+                        txn.Cancelled = true;
+                        txn.Stage = "Cancelled";
+                        txn.Updated = DateTime.UtcNow;
+                        m_StoreService.StoreGloebitTransaction(txn);
+
+                        StoreOrder order = m_StoreService.GetOrder(txn.StoreOrderID);
+                        if (order != null && order.Status == "PendingPayment")
+                        {
+                            order.Status = "PaymentFailed";
+                            order.Updated = DateTime.UtcNow;
+                            m_StoreService.StoreOrder(order);
+                        }
+                    }
+                    result.Add(OSD.FromBoolean(true));
+                    break;
+
+                default:
+                    result.Add(OSD.FromBoolean(false));
+                    result.Add(OSD.FromString("unknown state"));
+                    break;
+            }
+
+            WriteGloebitJson(response, result);
+        }
+
+        private static void WriteGloebitJson(IOSHttpResponse response, OSDArray arr)
+        {
+            response.ContentType = "application/json";
+            response.RawBuffer = Encoding.UTF8.GetBytes(OSDParser.SerializeJsonString(arr));
+        }
+
+        private void HandleStoreMyPurchases(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (m_StoreService == null)
+            {
+                WritePage(request, response, PageTitle("My Purchases"), "<h1>My Purchases</h1><p>The store is not available on this grid.</p>");
+                return;
+            }
+
+            List<StoreOrder> orders = m_StoreService.GetOrdersByResident(session.PrincipalID).OrderByDescending(o => o.Created).ToList();
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-receipt\"></i> My Purchases</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/store\">Back to Store</a></p>");
+
+            if (orders.Count == 0)
+            {
+                sb.Append("<p>You haven't bought anything yet.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>Item</th><th>Currency</th><th>Amount</th><th>Status</th><th>Expires</th><th>Date</th></tr>");
+                foreach (StoreOrder order in orders)
+                {
+                    StoreCatalogItem item = m_StoreService.GetCatalogItem(order.CatalogItemID);
+                    sb.Append("<tr><td>").Append(Html(item != null ? item.Name : order.OrderType)).Append("</td>");
+                    sb.Append("<td>").Append(order.CurrencyUsed).Append("</td>");
+                    sb.Append("<td>").Append(order.AmountCharged.ToString("N0")).Append("</td>");
+                    sb.Append("<td>").Append(Html(order.Status)).Append("</td>");
+                    sb.Append("<td>").Append(order.ExpiresAt.HasValue ? order.ExpiresAt.Value.ToString("yyyy-MM-dd") : "-").Append("</td>");
+                    sb.Append("<td>").Append(order.Created.ToString("yyyy-MM-dd HH:mm")).Append("</td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, PageTitle("My Purchases"), sb.ToString());
+        }
+
+        // Dispatches a newly-Paid order to the matching fulfillment path.
+        // Both ConfluenceCurrency checkout and the Gloebit "consume" webhook
+        // converge here once payment is confirmed.
+        private void ProcessPaidOrder(StoreOrder order, StoreCatalogItem item)
+        {
+            if (item.ItemType == "PrimPack")
+                FulfillPrimPack(order, item);
+            else if (item.ItemType == "RegionOrder")
+                FulfillRegionOrder(order, item);
+        }
+
+        // Instant + persisted, no new communication channel - rides the
+        // same /consoleweb remote-console mechanism Restart/Group
+        // Auto-Invite/Land Search already use (RunRegionConsoleCommand).
+        private void FulfillPrimPack(StoreOrder order, StoreCatalogItem item)
+        {
+            GridRegion region = order.TargetRegionID.HasValue && m_GridService != null
+                    ? m_GridService.GetRegionByUUID(UUID.Zero, order.TargetRegionID.Value)
+                    : null;
+
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+            {
+                order.Notes = "Fulfillment failed: target region is not reachable. An admin can retry from the Store Orders queue.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            int newCapacity = item.PrimAmount > 0 ? item.PrimAmount : 15000;
+            string output = RunRegionConsoleCommand(region, "set-prim-limit " + region.RegionID + " " + newCapacity);
+
+            order.Status = "Fulfilled";
+            order.ExpiresAt = item.DurationDays > 0 ? DateTime.UtcNow.AddDays(item.DurationDays) : (DateTime?)null;
+            order.Notes = output;
+            order.Updated = DateTime.UtcNow;
+            m_StoreService.StoreOrder(order);
+        }
+
+        // Auto-generates the new region's .ini/port/location and leaves it
+        // AwaitingStart - an admin still has to click Start Region (see
+        // HandleAdminStoreOrdersStart) rather than this spawning a process
+        // unsupervised the moment payment clears.
+        private void FulfillRegionOrder(StoreOrder order, StoreCatalogItem item)
+        {
+            if (string.IsNullOrEmpty(m_regionOrderTemplateIniPath) || !File.Exists(m_regionOrderTemplateIniPath) || string.IsNullOrEmpty(m_regionOrderGridRoot))
+            {
+                order.Notes = "Provisioning failed: [StoreService] RegionOrderTemplateIniPath/RegionOrderGridRoot is not configured.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            int? port = AllocateRegionOrderPort();
+            if (port == null)
+            {
+                order.Notes = "Provisioning failed: no free port in the configured range.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            (int X, int Y)? location = AllocateRegionOrderLocation();
+            if (location == null)
+            {
+                order.Notes = "Provisioning failed: no free grid location in the configured block.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            try
+            {
+                string slug = Slugify(order.RequestedRegionName) + "-" + order.ID.ToString().Replace("-", string.Empty).Substring(0, 8);
+                string simRoot = Path.Combine(m_regionOrderGridRoot, "Simulators", slug);
+                string regionsDir = Path.Combine(simRoot, "Regions");
+                Directory.CreateDirectory(regionsDir);
+
+                // Targeted token replacement on a cloned template, not a
+                // full semantic rewrite - the template already has every
+                // other section correctly configured for this grid.
+                string templateText = File.ReadAllText(m_regionOrderTemplateIniPath);
+                string logBase = Path.Combine(simRoot, "OpenSim");
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*logfile\s*=\s*).*$", "$1\"" + logBase + ".log\"");
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*StatsLogFile\s*=\s*).*$", "$1\"" + logBase + "Stats.log\"");
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*regionload_regionsdir\s*=\s*).*$", "$1\"" + regionsDir + "\"");
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*http_listener_port\s*=\s*).*$", "$1" + port.Value);
+                File.WriteAllText(Path.Combine(simRoot, "OpenSim.ini"), templateText);
+
+                UUID regionId = UUID.Random();
+                StringBuilder regionIni = new StringBuilder();
+                regionIni.Append("[").Append(order.RequestedRegionName).Append("]\r\n");
+                regionIni.Append("RegionUUID = ").Append(regionId).Append("\r\n");
+                regionIni.Append("Location = ").Append(location.Value.X).Append(",").Append(location.Value.Y).Append("\r\n");
+                regionIni.Append("InternalAddress = 0.0.0.0\r\n");
+                regionIni.Append("InternalPort = ").Append(port.Value).Append("\r\n");
+                regionIni.Append("AllowAlternatePorts = False\r\n");
+                regionIni.Append("ExternalHostName = ").Append(m_regionOrderExternalHostName).Append("\r\n");
+                if (item.RegionSizeX > 0)
+                    regionIni.Append("SizeX = ").Append(item.RegionSizeX).Append("\r\n");
+                if (item.RegionSizeY > 0)
+                    regionIni.Append("SizeY = ").Append(item.RegionSizeY).Append("\r\n");
+                if (item.PrimAmount > 0)
+                    regionIni.Append("MaxPrims = ").Append(item.PrimAmount).Append("\r\n");
+                File.WriteAllText(Path.Combine(regionsDir, "Regions.ini"), regionIni.ToString());
+
+                order.AllocatedPort = port.Value;
+                order.AllocatedLocationX = location.Value.X;
+                order.AllocatedLocationY = location.Value.Y;
+                order.SimulatorFolderName = slug;
+                order.Status = "AwaitingStart";
+                order.Notes = "Provisioned. Awaiting admin Start Region.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+            }
+            catch (Exception e)
+            {
+                order.Notes = "Provisioning failed: " + e.Message;
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+            }
+        }
+
+        // No filesystem scan - ports are grid-wide, checked against every
+        // currently-registered region (wide sanity bound, since
+        // GetRegionRange needs explicit bounds) plus any other order still
+        // holding a port (AwaitingStart/Active).
+        private int? AllocateRegionOrderPort()
+        {
+            HashSet<int> usedPorts = new HashSet<int>();
+
+            if (m_GridService != null)
+            {
+                List<GridRegion> allRegions = m_GridService.GetRegionRange(UUID.Zero,
+                        (int)Util.RegionToWorldLoc(0), (int)Util.RegionToWorldLoc(20000),
+                        (int)Util.RegionToWorldLoc(0), (int)Util.RegionToWorldLoc(20000));
+                foreach (GridRegion r in allRegions)
+                {
+                    if (Uri.TryCreate(r.ServerURI, UriKind.Absolute, out Uri uri))
+                        usedPorts.Add(uri.Port);
+                }
+            }
+
+            if (m_StoreService != null)
+            {
+                foreach (StoreOrder o in m_StoreService.GetAllOrders())
+                {
+                    if (o.AllocatedPort.HasValue && (o.Status == "AwaitingStart" || o.Status == "Active"))
+                        usedPorts.Add(o.AllocatedPort.Value);
+                }
+            }
+
+            for (int port = m_regionOrderPortStart; port <= m_regionOrderPortEnd; port++)
+            {
+                if (!usedPorts.Contains(port))
+                    return port;
+            }
+
+            return null;
+        }
+
+        // Scoped to the configured coordinate block only - that block is
+        // dedicated to region orders, so there's no need to scan the whole
+        // grid the way the port allocator above does.
+        private (int X, int Y)? AllocateRegionOrderLocation()
+        {
+            HashSet<(int, int)> usedLocations = new HashSet<(int, int)>();
+
+            if (m_GridService != null)
+            {
+                List<GridRegion> regionsInBlock = m_GridService.GetRegionRange(UUID.Zero,
+                        (int)Util.RegionToWorldLoc((uint)m_regionOrderGridXStart), (int)Util.RegionToWorldLoc((uint)m_regionOrderGridXEnd),
+                        (int)Util.RegionToWorldLoc((uint)m_regionOrderGridYStart), (int)Util.RegionToWorldLoc((uint)m_regionOrderGridYEnd));
+                foreach (GridRegion r in regionsInBlock)
+                    usedLocations.Add((r.RegionCoordX, r.RegionCoordY));
+            }
+
+            if (m_StoreService != null)
+            {
+                foreach (StoreOrder o in m_StoreService.GetAllOrders())
+                {
+                    if (o.AllocatedLocationX.HasValue && o.AllocatedLocationY.HasValue && (o.Status == "AwaitingStart" || o.Status == "Active"))
+                        usedLocations.Add((o.AllocatedLocationX.Value, o.AllocatedLocationY.Value));
+                }
+            }
+
+            for (int y = m_regionOrderGridYStart; y <= m_regionOrderGridYEnd; y++)
+            {
+                for (int x = m_regionOrderGridXStart; x <= m_regionOrderGridXEnd; x++)
+                {
+                    if (!usedLocations.Contains((x, y)))
+                        return (x, y);
+                }
+            }
+
+            return null;
+        }
+
+        private static string Slugify(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return "region";
+
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in name.Trim().ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(c))
+                    sb.Append(c);
+                else if (sb.Length > 0 && sb[sb.Length - 1] != '_')
+                    sb.Append('_');
+            }
+
+            string result = sb.ToString().Trim('_');
+            return result.Length > 0 ? result : "region";
+        }
+
+        private void HandleAdminStore(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Store Catalog"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+            if (m_StoreService == null)
+            {
+                WritePage(request, response, PageTitle("Store Catalog"),
+                        "<h1>Store Catalog</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Store service is not available.</p>");
+                return;
+            }
+
+            List<StoreCatalogItem> items = m_StoreService.GetAllCatalogItems().OrderBy(i => i.SortOrder).ToList();
+            UUID editId = UUID.TryParse(request.QueryString.Get("edit"), out UUID parsedEditId) ? parsedEditId : UUID.Zero;
+            StoreCatalogItem editItem = editId != UUID.Zero ? m_StoreService.GetCatalogItem(editId) : null;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>Store Catalog</h1><p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a> | <a href=\"")
+              .Append(BasePath).Append("/admin/store/orders\">Store Orders</a></p>");
+
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            if (items.Count > 0)
+            {
+                sb.Append("<table><tr><th>Name</th><th>Type</th><th>Prims</th><th>Region Size</th><th>C$</th><th>G$</th><th>Days</th><th>Active</th><th></th></tr>");
+                foreach (StoreCatalogItem item in items)
+                {
+                    sb.Append("<tr><td>").Append(Html(item.Name)).Append("</td>");
+                    sb.Append("<td>").Append(item.ItemType).Append("</td>");
+                    sb.Append("<td>").Append(item.PrimAmount.ToString("N0")).Append("</td>");
+                    sb.Append("<td>").Append(item.RegionSizeX).Append("&times;").Append(item.RegionSizeY).Append("</td>");
+                    sb.Append("<td>").Append(item.PriceConfluence.ToString("N0")).Append("</td>");
+                    sb.Append("<td>").Append(item.PriceGloebits.ToString("N0")).Append("</td>");
+                    sb.Append("<td>").Append(item.DurationDays).Append("</td>");
+                    sb.Append("<td>").Append(item.IsActive ? "Yes" : "No").Append("</td>");
+                    sb.Append("<td><a href=\"").Append(BasePath).Append("/admin/store?edit=").Append(item.ID).Append("\">Edit</a></td></tr>");
+                }
+                sb.Append("</table>");
+            }
+            else
+            {
+                sb.Append("<p>No catalog items yet.</p>");
+            }
+
+            sb.Append("<h2>").Append(editItem != null ? "Edit Item" : "Add Item").Append("</h2>");
+            sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/store/save\">");
+            sb.Append("<input type=\"hidden\" name=\"id\" value=\"").Append(editItem != null ? editItem.ID.ToString() : UUID.Zero.ToString()).Append("\">");
+            sb.Append("<p>Name <input type=\"text\" name=\"name\" value=\"").Append(editItem != null ? Html(editItem.Name) : string.Empty).Append("\" required></p>");
+            sb.Append("<p>Description <textarea name=\"description\">").Append(editItem != null ? Html(editItem.Description) : string.Empty).Append("</textarea></p>");
+            sb.Append("<p>Type <select name=\"item_type\">");
+            sb.Append("<option value=\"PrimPack\"").Append(editItem == null || editItem.ItemType == "PrimPack" ? " selected" : string.Empty).Append(">Prim Pack</option>");
+            sb.Append("<option value=\"RegionOrder\"").Append(editItem != null && editItem.ItemType == "RegionOrder" ? " selected" : string.Empty).Append(">Region Order</option>");
+            sb.Append("</select></p>");
+            sb.Append("<p>Prim capacity (PrimPack: absolute new total. RegionOrder: starting capacity, 0 = default 15000) <input type=\"number\" name=\"prim_amount\" value=\"")
+              .Append(editItem != null ? editItem.PrimAmount : 0).Append("\"></p>");
+            sb.Append("<p>Region size X / Y in meters (RegionOrder only, 0 = default 256) <input type=\"number\" name=\"region_size_x\" value=\"")
+              .Append(editItem != null ? editItem.RegionSizeX : 0).Append("\"> <input type=\"number\" name=\"region_size_y\" value=\"")
+              .Append(editItem != null ? editItem.RegionSizeY : 0).Append("\"></p>");
+            sb.Append("<p>Price - Confluence Currency (0 = not offered) <input type=\"number\" name=\"price_confluence\" value=\"")
+              .Append(editItem != null ? editItem.PriceConfluence : 0).Append("\"></p>");
+            sb.Append("<p>Price - Gloebits (0 = not offered) <input type=\"number\" name=\"price_gloebits\" value=\"")
+              .Append(editItem != null ? editItem.PriceGloebits : 0).Append("\"></p>");
+            sb.Append("<p>Duration days (0 = never expires) <input type=\"number\" name=\"duration_days\" value=\"")
+              .Append(editItem != null ? editItem.DurationDays : 0).Append("\"></p>");
+            sb.Append("<p>Sort order <input type=\"number\" name=\"sort_order\" value=\"").Append(editItem != null ? editItem.SortOrder : 0).Append("\"></p>");
+            sb.Append("<p><label><input type=\"checkbox\" name=\"is_active\" value=\"true\"").Append(editItem == null || editItem.IsActive ? " checked" : string.Empty).Append("> Active</label></p>");
+            sb.Append("<p><button type=\"submit\">Save</button>");
+            if (editItem != null)
+                sb.Append(" <a href=\"").Append(BasePath).Append("/admin/store\">Cancel</a>");
+            sb.Append("</p></form>");
+
+            WritePage(request, response, PageTitle("Store Catalog"), sb.ToString());
+        }
+
+        private void HandleAdminStoreSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_StoreService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                UUID.TryParse(FormValue(form, "id"), out UUID id);
+
+                StoreCatalogItem item = id != UUID.Zero ? m_StoreService.GetCatalogItem(id) : null;
+                if (item == null)
+                    item = new StoreCatalogItem { ID = UUID.Random(), Created = DateTime.UtcNow };
+
+                item.Name = FormValue(form, "name") ?? string.Empty;
+                item.Description = FormValue(form, "description") ?? string.Empty;
+                item.ItemType = FormValue(form, "item_type") == "RegionOrder" ? "RegionOrder" : "PrimPack";
+                int.TryParse(FormValue(form, "prim_amount"), out int primAmount);
+                item.PrimAmount = Math.Max(0, primAmount);
+                int.TryParse(FormValue(form, "region_size_x"), out int sizeX);
+                int.TryParse(FormValue(form, "region_size_y"), out int sizeY);
+                item.RegionSizeX = Math.Max(0, sizeX);
+                item.RegionSizeY = Math.Max(0, sizeY);
+                int.TryParse(FormValue(form, "price_confluence"), out int priceConfluence);
+                int.TryParse(FormValue(form, "price_gloebits"), out int priceGloebits);
+                item.PriceConfluence = Math.Max(0, priceConfluence);
+                item.PriceGloebits = Math.Max(0, priceGloebits);
+                int.TryParse(FormValue(form, "duration_days"), out int durationDays);
+                item.DurationDays = Math.Max(0, durationDays);
+                int.TryParse(FormValue(form, "sort_order"), out int sortOrder);
+                item.SortOrder = sortOrder;
+                item.IsActive = FormValue(form, "is_active") == "true";
+                item.Updated = DateTime.UtcNow;
+
+                m_StoreService.StoreCatalogItem(item);
+            }
+
+            response.Redirect(BasePath + "/admin/store", HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminStoreOrders(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Store Orders"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+            if (m_StoreService == null)
+            {
+                WritePage(request, response, PageTitle("Store Orders"),
+                        "<h1>Store Orders</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Store service is not available.</p>");
+                return;
+            }
+
+            List<StoreOrder> orders = m_StoreService.GetAllOrders().OrderByDescending(o => o.Created).ToList();
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>Store Orders</h1><p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a> | <a href=\"")
+              .Append(BasePath).Append("/admin/store\">Store Catalog</a></p>");
+
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            if (orders.Count == 0)
+            {
+                sb.Append("<p>No orders yet.</p>");
+            }
+            else
+            {
+                sb.Append("<table><tr><th>Date</th><th>Resident</th><th>Item</th><th>Type</th><th>Currency</th><th>Amount</th><th>Status</th><th>Expires</th><th>Actions</th></tr>");
+                foreach (StoreOrder order in orders)
+                {
+                    StoreCatalogItem item = m_StoreService.GetCatalogItem(order.CatalogItemID);
+                    sb.Append("<tr><td>").Append(order.Created.ToString("yyyy-MM-dd HH:mm")).Append("</td>");
+                    sb.Append("<td>").Append(Html(order.ResidentName)).Append("</td>");
+                    sb.Append("<td>").Append(Html(item != null ? item.Name : order.OrderType))
+                      .Append(order.OrderType == "RegionOrder" && !string.IsNullOrEmpty(order.RequestedRegionName) ? " (" + Html(order.RequestedRegionName) + ")" : string.Empty)
+                      .Append("</td>");
+                    sb.Append("<td>").Append(order.OrderType).Append("</td>");
+                    sb.Append("<td>").Append(order.CurrencyUsed).Append("</td>");
+                    sb.Append("<td>").Append(order.AmountCharged.ToString("N0")).Append("</td>");
+                    sb.Append("<td>").Append(Html(order.Status)).Append("</td>");
+                    sb.Append("<td>").Append(order.ExpiresAt.HasValue ? order.ExpiresAt.Value.ToString("yyyy-MM-dd") : "-").Append("</td>");
+
+                    sb.Append("<td>");
+                    if (order.Status == "Fulfilled" || order.Status == "Active")
+                    {
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/store/orders/renew\" style=\"display:inline\">");
+                        sb.Append("<input type=\"hidden\" name=\"order_id\" value=\"").Append(order.ID).Append("\">");
+                        sb.Append("<input type=\"number\" name=\"extend_days\" value=\"30\" style=\"width:60px\">");
+                        sb.Append("<button type=\"submit\">Renew</button></form> ");
+                    }
+                    if (order.OrderType == "RegionOrder" && order.Status == "AwaitingStart" && !order.StartedAt.HasValue)
+                    {
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath)
+                          .Append("/admin/store/orders/start\" style=\"display:inline\" onsubmit=\"return confirm('Start a new region process for this order?');\">");
+                        sb.Append("<input type=\"hidden\" name=\"order_id\" value=\"").Append(order.ID).Append("\">");
+                        sb.Append("<button type=\"submit\">Start Region</button></form>");
+                    }
+                    if (!string.IsNullOrEmpty(order.Notes))
+                        sb.Append("<br><small>").Append(Html(order.Notes)).Append("</small>");
+                    sb.Append("</td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, PageTitle("Store Orders"), sb.ToString());
+        }
+
+        // Just pushes ExpiresAt forward, no re-charge - per the confirmed
+        // no-auto-billing decision, renewal is entirely an admin action.
+        private void HandleAdminStoreOrdersRenew(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_StoreService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Order not found.";
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                if (UUID.TryParse(FormValue(form, "order_id"), out UUID orderId))
+                {
+                    StoreOrder order = m_StoreService.GetOrder(orderId);
+                    if (order == null)
+                    {
+                        message = "Order not found.";
+                    }
+                    else
+                    {
+                        int.TryParse(FormValue(form, "extend_days"), out int extendDays);
+                        extendDays = Math.Max(1, extendDays);
+
+                        DateTime baseline = order.ExpiresAt.HasValue && order.ExpiresAt.Value > DateTime.UtcNow ? order.ExpiresAt.Value : DateTime.UtcNow;
+                        order.ExpiresAt = baseline.AddDays(extendDays);
+                        order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                                + "Renewed " + extendDays + " day(s) by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd") + ".";
+                        order.Updated = DateTime.UtcNow;
+                        m_StoreService.StoreOrder(order);
+
+                        message = "Extended by " + extendDays + " day(s).";
+                    }
+                }
+            }
+
+            response.Redirect(BasePath + "/admin/store/orders?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // The riskiest new mechanism in this feature - first process-
+        // spawning code in this codebase (see PROJECT_LOG.md). Admin-only,
+        // guarded by order.StartedAt so a double-click can't launch two
+        // processes for the same order, fire-and-forget (not supervised
+        // after launch - matches this grid's existing manual-launch
+        // posture; nothing anywhere in this codebase supervises OpenSim.exe
+        // once it's running).
+        private void HandleAdminStoreOrdersStart(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_StoreService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Order not found.";
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                if (UUID.TryParse(FormValue(form, "order_id"), out UUID orderId))
+                {
+                    StoreOrder order = m_StoreService.GetOrder(orderId);
+                    if (order == null || order.OrderType != "RegionOrder" || order.Status != "AwaitingStart" || string.IsNullOrEmpty(order.SimulatorFolderName))
+                    {
+                        message = "This order is not awaiting start.";
+                    }
+                    else if (order.StartedAt.HasValue)
+                    {
+                        message = "Start Region was already triggered for this order.";
+                    }
+                    else
+                    {
+                        try
+                        {
+                            string exePath = Path.Combine(m_regionOrderGridRoot, "OpenSim.exe");
+                            string relativeIniArg = Path.Combine("Simulators", order.SimulatorFolderName, "OpenSim.ini");
+                            string simFolder = Path.Combine(m_regionOrderGridRoot, "Simulators", order.SimulatorFolderName);
+                            string logPath = Path.Combine(simFolder, "start.log");
+
+                            ProcessStartInfo psi = new ProcessStartInfo
+                            {
+                                FileName = exePath,
+                                Arguments = "-inifile=" + relativeIniArg,
+                                WorkingDirectory = m_regionOrderGridRoot,
+                                UseShellExecute = false,
+                                CreateNoWindow = true,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true
+                            };
+
+                            File.WriteAllText(logPath, string.Empty);
+                            Process proc = new Process { StartInfo = psi };
+                            proc.OutputDataReceived += (s, e) => { if (e.Data != null) { try { File.AppendAllText(logPath, e.Data + Environment.NewLine); } catch { } } };
+                            proc.ErrorDataReceived += (s, e) => { if (e.Data != null) { try { File.AppendAllText(logPath, e.Data + Environment.NewLine); } catch { } } };
+                            proc.Start();
+                            proc.BeginOutputReadLine();
+                            proc.BeginErrorReadLine();
+
+                            order.StartedAt = DateTime.UtcNow;
+                            order.Status = "Active";
+                            order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                                    + "Region process started by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC.";
+                            order.Updated = DateTime.UtcNow;
+                            m_StoreService.StoreOrder(order);
+
+                            message = "Region process started for " + order.RequestedRegionName + " (port " + order.AllocatedPort + ").";
+                        }
+                        catch (Exception e)
+                        {
+                            message = "Failed to start region process: " + e.Message;
+                        }
+                    }
+                }
+            }
+
+            response.Redirect(BasePath + "/admin/store/orders?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        #endregion Store
+
         // Self-service password reset (task #22 from the WhiteCore-Dev
         // re-audit's "all of it" list). Always shows the same generic
         // confirmation message regardless of whether the email matched an
@@ -10629,6 +11855,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             ("/myestates", "bi-building", "My Estate"),
         };
 
+        // Store: prim-capacity packs + self-service region ordering
+        // (2026-08-23). See PROJECT_LOG.md/FEATURES.md.
+        private static readonly (string Path, string Icon, string Label)[] SidebarCommerceLinks =
+        {
+            ("/store", "bi-shop", "Store"),
+            ("/store/my-purchases", "bi-receipt", "My Purchases"),
+        };
+
         private static readonly (string Path, string Icon, string Label)[] SidebarAccountLinks =
         {
             ("/change-password", "bi-key", "Change Password"),
@@ -10716,6 +11950,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendSidebarGroup(sb, "Social", SidebarSocialLinks, currentPath, ref colorIndex);
             AppendSidebarGroup(sb, "Community", SidebarCommunityLinks, currentPath, ref colorIndex);
             AppendSidebarGroup(sb, "Land & Estate", SidebarLandLinks, currentPath, ref colorIndex);
+            AppendSidebarGroup(sb, "Store", SidebarCommerceLinks, currentPath, ref colorIndex);
             AppendSidebarGroup(sb, "Account", SidebarAccountLinks, currentPath, ref colorIndex);
 
             // Admin gets exactly one extra sidebar entry, not the old

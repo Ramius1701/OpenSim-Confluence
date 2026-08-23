@@ -109,6 +109,15 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
                 + "  This is not persisted over restart - to set it every time you must add a MaxAgents entry to your regions file.",
                 HandleRegionSet);
 
+            m_console.Commands.AddCommand(
+                "Regions", false, "set-prim-limit",
+                "set-prim-limit <region-id> <max-prims>",
+                "Set the maximum object (prim) capacity for the region with the given RegionID.",
+                "This is persisted immediately to the region's own .ini file.\n"
+                + "Unlike \"region set\", this command takes an explicit RegionID so it can be\n"
+                + "invoked without a selected console scene (e.g. via the remote console).",
+                HandleSetPrimLimit);
+
             m_console.Commands.AddCommand("Regions", false, "show neighbours",
                 "show neighbours",
                 "Shows the local region neighbours", HandleShowNeighboursCommand);
@@ -259,6 +268,45 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
 
                 rs.Save();
             }
+        }
+
+        private void HandleSetPrimLimit(string module, string[] args)
+        {
+            if (args.Length != 3)
+            {
+                MainConsole.Instance.Output("Usage: set-prim-limit <region-id> <max-prims>");
+                return;
+            }
+
+            // Takes a RegionID (UUID), not a region name - unlike the
+            // remote-console callers of the other self-service commands
+            // (region restart/group-auto-invite/land search), which all
+            // resolve a specific GridRegion server-side first and could
+            // pass its name unambiguously, region *display* names can
+            // contain spaces, which the console's whitespace-delimited
+            // argument parsing can't round-trip. The caller already has
+            // GridRegion.RegionID on hand, so this loses nothing.
+            if (!UUID.TryParse(args[1], out UUID regionID))
+            {
+                MainConsole.Instance.Output("Usage: set-prim-limit <region-id> <max-prims>");
+                return;
+            }
+
+            string rawValue = args[2];
+
+            if (regionID != m_scene.RegionInfo.RegionID)
+                return;
+
+            int newValue;
+
+            if (!ConsoleUtil.TryParseConsoleNaturalInt(MainConsole.Instance, rawValue, out newValue))
+                return;
+
+            RegionInfo ri = m_scene.RegionInfo;
+            ri.SetObjectCapacity(newValue);
+            ri.SaveRegionToFile(ri.RegionFile, ri.RegionFile);
+
+            MainConsole.Instance.Output("prim-limit set to {0} in {1}", newValue, m_scene.Name);
         }
 
         private void HandleShowScene(string module, string[] cmd)

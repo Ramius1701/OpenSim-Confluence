@@ -1,0 +1,73 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS store_catalog_items (
+	ID varchar(36) NOT NULL PRIMARY KEY,
+	ItemType varchar(20) NOT NULL,
+	Name varchar(255) NOT NULL,
+	Description text NOT NULL,
+	PrimAmount int NOT NULL DEFAULT 0,
+	RegionSizeX int NOT NULL DEFAULT 0,
+	RegionSizeY int NOT NULL DEFAULT 0,
+	PriceConfluence int NOT NULL DEFAULT 0,
+	PriceGloebits int NOT NULL DEFAULT 0,
+	DurationDays int NOT NULL DEFAULT 0,
+	IsActive int NOT NULL DEFAULT 1,
+	SortOrder int NOT NULL DEFAULT 0,
+	Created int NOT NULL,
+	Updated int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS store_catalog_items_active_sort ON store_catalog_items (IsActive, SortOrder);
+
+CREATE TABLE IF NOT EXISTS store_orders (
+	ID varchar(36) NOT NULL PRIMARY KEY,
+	CatalogItemID varchar(36) NOT NULL,
+	OrderType varchar(20) NOT NULL,
+	ResidentAvatarID varchar(36) NOT NULL,
+	ResidentName varchar(255) NOT NULL,
+	CurrencyUsed varchar(20) NOT NULL,
+	AmountCharged int NOT NULL DEFAULT 0,
+	PaymentTransactionID varchar(36) NOT NULL,
+	Status varchar(20) NOT NULL DEFAULT 'PendingPayment',
+	TargetRegionID varchar(36),
+	RequestedRegionName varchar(255),
+	AllocatedLocationX int,
+	AllocatedLocationY int,
+	AllocatedPort int,
+	SimulatorFolderName varchar(255),
+	StartedAt int,
+	ExpiresAt int,
+	Notes text,
+	Created int NOT NULL,
+	Updated int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS store_orders_catalogitemid ON store_orders (CatalogItemID);
+CREATE INDEX IF NOT EXISTS store_orders_residentavatarid ON store_orders (ResidentAvatarID);
+CREATE INDEX IF NOT EXISTS store_orders_status ON store_orders (Status);
+
+CREATE TABLE IF NOT EXISTS store_gloebit_auth (
+	AvatarPrincipalID varchar(36) NOT NULL PRIMARY KEY,
+	GloebitID varchar(64),
+	AccessToken varchar(255),
+	Authorized int NOT NULL DEFAULT 0,
+	Created int NOT NULL,
+	Updated int NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS store_gloebit_transactions (
+	ID varchar(36) NOT NULL PRIMARY KEY,
+	StoreOrderID varchar(36) NOT NULL,
+	AvatarPrincipalID varchar(36) NOT NULL,
+	Amount int NOT NULL DEFAULT 0,
+	Stage varchar(20) NOT NULL DEFAULT 'Submitted',
+	Enacted int NOT NULL DEFAULT 0,
+	Consumed int NOT NULL DEFAULT 0,
+	Cancelled int NOT NULL DEFAULT 0,
+	ResponseReason varchar(255),
+	Created int NOT NULL,
+	Updated int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS store_gloebit_transactions_orderid ON store_gloebit_transactions (StoreOrderID);
+
+COMMIT;

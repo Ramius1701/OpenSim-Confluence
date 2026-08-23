@@ -13619,3 +13619,176 @@ since unlike the earlier rounds this would disconnect an active
 session, not an idle one; approved. `Robust.log` and both regions'
 logs clean afterward, no new errors beyond the same pre-existing
 unrelated content issues documented in the entries above.
+
+## Store: prim-capacity packs + self-service region ordering, ConfluenceCurrency + Gloebit (2026-08-23)
+
+The user asked why the grid had no billing section at all, given
+residents already hold real in-world currency (ConfluenceCurrency) and
+some regions already process real Gloebit. Scoped over several rounds
+into: an admin-managed catalog of prim-capacity packs and region
+orders; resident picks the currency at checkout, not an admin-set
+single currency; one-time purchases with admin-manageable renewal (no
+auto-recurring billing); prim packs instant and self-service; region
+orders auto-generated but human-started. The user explicitly confirmed
+building both currencies in the same pass after being told Gloebit
+needs a from-scratch Robust-side OAuth2/REST integration - the
+existing Gloebit addon (`addon-modules/Gloebit/GloebitMoneyModule/`)
+is entirely region-Scene-bound (its OAuth base URL comes from an
+arbitrary live `Scene`, its HTTP callbacks register on the region's
+own `MainServer`, its authorize flow needs a live `IClientAPI`) -
+nothing Robust-side could charge a Gloebit balance before this.
+
+Planned via `EnterPlanMode` given the size (comparable to or larger
+than the multi-avatar portal work) and the real-money stakes -
+Welcome_Center/SVC/Starbase Andromeda already run real production
+Gloebit on real funds (see the entry above and earlier sessions). Full
+plan preserved at the time in `C:\Users\Allen\.claude\plans\
+sprightly-noodling-river.md`. One clarifying question asked before
+implementation: whether a region order's "Start Region" button should
+launch a brand-new dedicated `OpenSim.exe` process (its own
+`Simulators\<name>\` folder/port) or fold into an already-running
+process - user picked the dedicated-process model, matching how
+Sandbox/Welcome_Center/etc. already run today.
+
+**New `StoreService`** (7-layer recipe, same shape as `WebAccountService`/
+`SuggestionService` added earlier this session): `store_catalog_items`
+(admin-managed, `PrimPack`/`RegionOrder`, prices in both currencies -
+`0` means "not offered in that currency"), `store_orders` (one row per
+purchase, `Status` walks `PendingPayment` -> `Paid` -> `Fulfilled`/
+`AwaitingStart` -> `Active`/`Expired`, denormalized `OrderType`/
+`ResidentName` so a later catalog edit or account rename can't
+retroactively change what an existing order meant), `store_gloebit_auth`
+(one row per avatar's OAuth2 token for *this* integration - see below
+for why it's independent of the addon's own table), `store_gloebit_transactions`
+(one row per Gloebit transaction hold, mirroring the real
+`GloebitTransaction` state machine's idempotency guards).
+
+**Prim packs - instant, and rides an existing channel, not a new one.**
+`RegionInfo.ObjectCapacity` (`OpenSim/Framework/RegionInfo.cs`) was
+get-only; added `SetObjectCapacity(int)` next to it (silent no-op on
+`<=0`, matching this class's existing validation style - no setter
+here throws). New console command `set-prim-limit <region-id>
+<max-prims>` in `RegionCommandsModule.cs`, modeled on the existing
+`max-agent-limit` branch of `region set` but taking an explicit
+RegionID instead of relying on the console's `ConsoleScene` selection
+(needed since this fires over the remote-console channel, which has no
+notion of a selected scene) - and a RegionID, not a region name,
+because region *display* names can contain spaces and the console
+splits arguments on whitespace; the very first version of this command
+took a name argument and would have broken on any region like
+"Starbase Andromeda" the first time someone tried it - caught and
+fixed before it ever shipped, by re-reading the console's own arg-
+parsing contract rather than trusting the pattern would generalize.
+The command sets the value live *and* calls `RegionInfo.SaveRegionToFile`
+in the same handler, so it persists through the region's next restart
+with no separate reapply-on-startup hook. Fulfillment dispatches this
+exact command string through `RunRegionConsoleCommand` - the same
+`/consoleweb` shared-secret channel Restart/Group Auto-Invite/Land
+Search already use - so Robust never touches the region's filesystem
+or process directly for a prim pack.
+
+**Region orders - auto-generated, human-started.** Port allocator
+scans a configured range (`[StoreService] RegionOrderPortRangeStart/End`)
+against every currently-registered region's `ServerURI` port (a wide
+`IGridService.GetRegionRange` sweep, since ports are grid-wide) plus
+any other order still holding one; location allocator does the same
+over a configured grid-coordinate block, scoped to just that block
+since it's dedicated to region orders. On payment, clones a configured
+template `OpenSim.ini` (defaults to Sandbox's) into a new
+`Simulators\<slug>\` folder with targeted token replacement (log
+paths, `regionload_regionsdir`, `http_listener_port` - not a full
+semantic rewrite, the template already has everything else right for
+this grid) and writes a matching `Regions.ini`. Admin's "Start Region"
+button (`/admin/store/orders`) then does the actual `Process.Start` -
+the first process-spawning code anywhere in this codebase (confirmed
+via repo-wide search before writing it; the only precedent,
+`AutoBackupModule.cs`, is a much narrower fire-and-forget script
+launcher) - guarded by `order.StartedAt` against a double-click, fire-
+and-forget afterward (matches this grid's existing posture of not
+supervising `OpenSim.exe` once it's running - nothing anywhere in this
+codebase does).
+
+**ConfluenceCurrency checkout - closing a real double-spend gap.**
+`ICurrencyService.Transfer` reads the balance, subtracts in C# memory,
+then blind-overwrites via `INSERT...ON DUPLICATE KEY UPDATE` - no
+`WHERE Balance>=amount` guard, so two concurrent calls for the same
+avatar can both read the same starting balance and both succeed. The
+only built-in protection is that `transactionID` is the
+`currency_transactions` table's primary key - but every existing call
+site in this codebase passes `UUID.Zero`, getting no benefit from it.
+Store's checkout passes the order's own ID as the transaction ID
+(deterministic, generated before the charge), so a retried/duplicated
+POST for the same order now fails cleanly instead of double-charging -
+and adds its own per-avatar in-memory lock (`lock`-guarded dictionary
+`TryAdd`/remove-in-`finally`, modeled on
+`EntityTransferStateMachine.SetInTransit`) rejecting a second
+concurrent "Buy" click before it ever reaches `Transfer` at all. Picked
+a fresh `transactionType` constant (`5001`) rather than reusing `0`,
+which was already double-booked for admin balance-set and currency-
+purchase-credit.
+
+**Gloebit - from scratch, Robust-native, independent of the addon.**
+Researched the existing region-side integration in depth first (OAuth2
+authorize/exchange flow, the `GloebitTransaction` hold ->
+enact/consume/cancel state machine, the `/gloebit/transaction` webhook
+contract) specifically to port the *design*, not the code - the actual
+classes are unusable as-is here (`GetBaseURI()` needs a live `Scene`,
+`LoadAuthorizeUriForUser()` needs an in-world `IClientAPI`, the HTTP
+handlers register on the region's own `MainServer`). New
+`GloebitClient` (`OpenSim/Services/StoreService/Gloebit/GloebitClient.cs`)
+implements just the three calls checkout needs - build the authorize
+redirect, exchange the OAuth2 code, submit a transact request - using
+`OpenMetaverse.StructuredData.OSDMap`/`OSDParser` for JSON (this
+codebase's existing idiom, confirmed via the World Map work rather
+than reaching for a new JSON library). Three new Robust routes:
+`/store/gloebit/authorize` (redirect to Gloebit - actually simpler
+than the region module's in-world-IM version), `/store/gloebit/auth_complete`
+(token exchange), `/store/gloebit/transaction` (the *required* webhook
+- Gloebit's queue processor is the only thing that ever fires local
+enact/consume completion; without it a submitted transaction shows
+queued on Gloebit's side but never locally finalizes - reproduces the
+exact `[true]`/`[false,"pending"]`/`[false,"<reason>"]` JSON-array
+contract Gloebit's queue expects). New `[Gloebit]` section in
+`Robust.HG.ini` copies (not shares, not moves) the same `GLBKey`/
+`GLBSecret`/`GLBEnvironment` already configured in the region-side
+`Gloebit.ini` for Welcome_Center/SVC/Starbase Andromeda's real
+production integration, so a resident's Gloebit account is the same
+real account either way - but tracks its own authorization/transaction
+state in `store_gloebit_auth`/`store_gloebit_transactions`, not that
+module's `GloebitUsers`/`GloebitTransactions` tables, so this feature
+has zero dependency on the addon's assembly or schema (small cost: a
+resident authorizes once more the first time they use the portal, even
+if already authorized in-world - Gloebit's own consent screen
+auto-skips on a repeat grant, so it's a near-instant redirect, not a
+real re-login). **Ships disabled by default** (`[Gloebit] Enabled =
+false`) even though the copied key/secret point at the real production
+environment - deliberately not live the moment this deploys; flip it
+on only after a real smoke-test purchase.
+
+**Deploy note - a false hang alarm.** After the first deploy, Robust's
+log went silent right after the last `[ServiceList]` connector loaded,
+with the process sitting at near-zero CPU - looked exactly like a
+deadlock in the new startup code, and was killed twice on that
+assumption. It wasn't hung: `-WindowStyle Hidden` had simply put
+Robust's now-fully-loaded interactive console prompt on an invisible
+window with no further log-file output to show for it. Confirmed by
+starting it a third time and testing `/store` with a real HTTP request
+without killing it first - `200 OK` immediately. No code changed to
+"fix" this; it wasn't broken. Worth remembering for the next hidden-
+window deploy on this grid.
+
+Full solution build clean (0 warnings, 0 errors) before and after this
+false alarm. Live-verified on Casperia-Dev: `/store` renders the
+(empty) catalog with a login prompt for anonymous visitors,
+`/admin/store` and `/store/my-purchases` correctly redirect
+unauthenticated to `/login`, the `/store/gloebit/transaction` webhook
+returns the exact required JSON contract for an unknown transaction ID,
+`Store.migrations` created all 4 tables cleanly, unrelated existing
+pages (World Map) still render with no regression. **Not verified this
+pass** (same limitation as every money/credential-touching feature
+this session): a real ConfluenceCurrency purchase actually firing
+`set-prim-limit` against a live region, a real Gloebit OAuth round-trip
+and webhook delivery, and a real "Start Region" launch - all three need
+the user's own hands-on smoke-test on Casperia-Dev, ideally against
+Sandbox (cheap, fully reversible) before this ever reaches the live
+grid.

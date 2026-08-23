@@ -1,0 +1,77 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `store_catalog_items` (
+	`ID` VARCHAR(36) NOT NULL,
+	`ItemType` VARCHAR(20) NOT NULL,
+	`Name` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+	`Description` TEXT CHARACTER SET utf8mb4 NOT NULL,
+	`PrimAmount` INT NOT NULL DEFAULT 0,
+	`RegionSizeX` INT NOT NULL DEFAULT 0,
+	`RegionSizeY` INT NOT NULL DEFAULT 0,
+	`PriceConfluence` INT NOT NULL DEFAULT 0,
+	`PriceGloebits` INT NOT NULL DEFAULT 0,
+	`DurationDays` INT NOT NULL DEFAULT 0,
+	`IsActive` TINYINT(1) NOT NULL DEFAULT 1,
+	`SortOrder` INT NOT NULL DEFAULT 0,
+	`Created` INT NOT NULL,
+	`Updated` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `IsActive_SortOrder` (`IsActive`, `SortOrder`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `store_orders` (
+	`ID` VARCHAR(36) NOT NULL,
+	`CatalogItemID` VARCHAR(36) NOT NULL,
+	`OrderType` VARCHAR(20) NOT NULL,
+	`ResidentAvatarID` VARCHAR(36) NOT NULL,
+	`ResidentName` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+	`CurrencyUsed` VARCHAR(20) NOT NULL,
+	`AmountCharged` INT NOT NULL DEFAULT 0,
+	`PaymentTransactionID` VARCHAR(36) NOT NULL,
+	`Status` VARCHAR(20) NOT NULL DEFAULT 'PendingPayment',
+	`TargetRegionID` VARCHAR(36) NULL,
+	`RequestedRegionName` VARCHAR(255) CHARACTER SET utf8mb4 NULL,
+	`AllocatedLocationX` INT NULL,
+	`AllocatedLocationY` INT NULL,
+	`AllocatedPort` INT NULL,
+	`SimulatorFolderName` VARCHAR(255) NULL,
+	`StartedAt` INT NULL,
+	`ExpiresAt` INT NULL,
+	`Notes` TEXT CHARACTER SET utf8mb4 NULL,
+	`Created` INT NOT NULL,
+	`Updated` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `CatalogItemID` (`CatalogItemID`) USING BTREE,
+	INDEX `ResidentAvatarID` (`ResidentAvatarID`) USING BTREE,
+	INDEX `Status` (`Status`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `store_gloebit_auth` (
+	`AvatarPrincipalID` VARCHAR(36) NOT NULL,
+	`GloebitID` VARCHAR(64) NULL,
+	`AccessToken` VARCHAR(255) NULL,
+	`Authorized` TINYINT(1) NOT NULL DEFAULT 0,
+	`Created` INT NOT NULL,
+	`Updated` INT NOT NULL,
+	PRIMARY KEY (`AvatarPrincipalID`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `store_gloebit_transactions` (
+	`ID` VARCHAR(36) NOT NULL,
+	`StoreOrderID` VARCHAR(36) NOT NULL,
+	`AvatarPrincipalID` VARCHAR(36) NOT NULL,
+	`Amount` INT NOT NULL DEFAULT 0,
+	`Stage` VARCHAR(20) NOT NULL DEFAULT 'Submitted',
+	`Enacted` TINYINT(1) NOT NULL DEFAULT 0,
+	`Consumed` TINYINT(1) NOT NULL DEFAULT 0,
+	`Cancelled` TINYINT(1) NOT NULL DEFAULT 0,
+	`ResponseReason` VARCHAR(255) NULL,
+	`Created` INT NOT NULL,
+	`Updated` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `StoreOrderID` (`StoreOrderID`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+COMMIT;

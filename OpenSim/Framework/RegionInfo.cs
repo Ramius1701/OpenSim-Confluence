@@ -273,6 +273,14 @@ namespace OpenSim.Framework
             get { return m_objectCapacity; }
         }
 
+        public void SetObjectCapacity(int value)
+        {
+            if (value <= 0)
+                return;
+
+            m_objectCapacity = value;
+        }
+
         public int MaxPrimsPerUser
         {
             get { return m_maxPrimsPerUser; }

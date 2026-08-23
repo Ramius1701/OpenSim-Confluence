@@ -1334,6 +1334,32 @@
 
     </Project>
 
+    <Project name="OpenSim.Services.StoreService" path="OpenSim/Services/StoreService" type="Library">
+      <Configuration name="Debug">
+        <Options>
+          <OutputPath>../../../bin/</OutputPath>
+        </Options>
+      </Configuration>
+      <Configuration name="Release">
+        <Options>
+          <OutputPath>../../../bin/</OutputPath>
+        </Options>
+      </Configuration>
+
+      <ReferencePath>../../../bin/</ReferencePath>
+      <Reference name="OpenSim.Framework"/>
+      <Reference name="OpenSim.Framework.Console"/>
+      <Reference name="OpenSim.Services.Interfaces"/>
+      <Reference name="OpenSim.Services.Base"/>
+      <Reference name="OpenSim.Data"/>
+      <Reference name="OpenMetaverseTypes"/>
+      <Reference name="OpenMetaverse"/>
+      <Reference name="OpenMetaverse.StructuredData"/>
+      <Reference name="Nini"/>
+      <Reference name="log4net"/>
+
+    </Project>
+
     <Project name="OpenSim.Services.SuggestionService" path="OpenSim/Services/SuggestionService" type="Library">
       <Configuration name="Debug">
         <Options>
@@ -1487,6 +1513,10 @@
       <Reference name="OpenSim.Services.Base"/>
       <Reference name="OpenSim.Services.Interfaces"/>
       <Reference name="OpenSim.Services.UserAccountService"/>
+      <!-- Needed for OpenSim.Services.StoreService.Gloebit.GloebitClient - a
+           concrete class WebInterfaceServiceConnector constructs directly,
+           not reflection-loaded like the other IXService interfaces above. -->
+      <Reference name="OpenSim.Services.StoreService"/>
       <Reference name="XMLRPC"/>
       <Reference name="Nini"/>
       <Reference name="log4net"/>

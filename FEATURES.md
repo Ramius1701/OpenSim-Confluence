@@ -72,6 +72,19 @@ news/events content management, grid settings, a web-based region
 console, per-region Hypergrid open/close toggling, on-demand map-tile
 regeneration.
 
+**Store:** residents spend in-world currency — ConfluenceCurrency or
+Gloebit, their choice at checkout — on an admin-managed catalog of
+prim-capacity packs and self-service region orders. Prim packs apply
+instantly and persist through the target region's own remote console
+(no restart needed); region orders auto-generate the new region's
+`.ini`/port/grid location, with a one-click admin "Start Region"
+button rather than payment silently launching a process. Gloebit
+purchases run through this feature's own Robust-native OAuth2
+integration — independent of the region-side Gloebit module, reusing
+the same merchant key so it's the same real account either way.
+One-time purchases; an admin-facing Store Orders queue handles manual
+renewal/extension, no auto-recurring billing.
+
 ## Native Economy, Search & Grid Services
 
 Backed by MySQL/PostgreSQL/SQLite, replacing what would otherwise be

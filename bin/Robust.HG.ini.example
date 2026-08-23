@@ -958,6 +958,44 @@
     StorageProvider = "OpenSim.Data.MySQL.dll:MySqlSuggestionData"
     ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
+;; Store: prim-capacity packs + self-service region ordering (2026-08-23).
+;; See PROJECT_LOG.md/FEATURES.md for the full design.
+[StoreService]
+    LocalServiceModule = "OpenSim.Services.StoreService.dll:StoreService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlStoreData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+    ;; Region-order fulfillment: port/grid-coordinate ranges to auto-allocate
+    ;; from when a resident orders a new region, and the template a new
+    ;; Simulators\<slug>\OpenSim.ini is cloned from before an admin clicks
+    ;; "Start Region". Pick ranges clear of every port/coordinate already
+    ;; in use on your grid.
+    RegionOrderPortRangeStart = 9050
+    RegionOrderPortRangeEnd = 9099
+    RegionOrderGridXStart = 1050
+    RegionOrderGridYStart = 1050
+    RegionOrderGridXEnd = 1099
+    RegionOrderGridYEnd = 1099
+    RegionOrderTemplateIniPath = "C:\opensim\Simulators\Sandbox\OpenSim.ini"
+    RegionOrderGridRoot = "C:\opensim"
+    RegionOrderExternalHostName = "${Const|BaseHostname}"
+
+;; Store's OWN Gloebit integration - Robust-side, independent of
+;; addon-modules/Gloebit/GloebitMoneyModule (that module is entirely
+;; region-Scene-bound; nothing Robust-side can charge Gloebits without
+;; this). Reuse the SAME GLBKey/GLBSecret/GLBEnvironment already
+;; configured in your region-side Gloebit.ini, so a resident's Gloebit
+;; account is the same real account either way - this section tracks its
+;; own authorization/transaction state independently, and does not read,
+;; modify, or depend on Gloebit.ini in any way.
+[Gloebit]
+    Enabled = false
+    GLBEnvironment = production
+    GLBApiUrl = "https://www.gloebit.com/"
+    GLBKey = ""
+    GLBSecret = ""
+    GLBCallbackBaseURI = "${Const|BaseURL}:${Const|PublicPort}"
+
 ;; Self-service backup codes at /recovery-codes (logged in) and
 ;; /recover-account (public redemption) - lets a resident reset their
 ;; avatar's own password without a working email. Same shape as
