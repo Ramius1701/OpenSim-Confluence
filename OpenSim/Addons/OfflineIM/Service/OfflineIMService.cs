@@ -121,6 +121,42 @@ namespace OpenSim.OfflineIM
             return ims;
         }
 
+        public int GetMessageCount(UUID principalID)
+        {
+            return (int)m_Database.GetCount("PrincipalID", principalID.ToString());
+        }
+
+        public List<OfflineIMEntry> PeekMessages(UUID principalID)
+        {
+            List<OfflineIMEntry> entries = new List<OfflineIMEntry>();
+
+            OfflineIMData[] messages = m_Database.Get("PrincipalID", principalID.ToString());
+            if (messages is null || messages.Length == 0)
+                return entries;
+
+            foreach (OfflineIMData m in messages)
+            {
+                // "ID" is the table's real AUTO_INCREMENT primary key -
+                // already flowing through into Data today via the generic
+                // table handler's "every column not on a named field goes
+                // into Data" behavior, just never read before now.
+                int id = m.Data.TryGetValue("ID", out string idStr) && int.TryParse(idStr, out int parsedId) ? parsedId : 0;
+
+                using (MemoryStream mstream = new MemoryStream(Encoding.UTF8.GetBytes(m.Data["Message"])))
+                {
+                    GridInstantMessage im = (GridInstantMessage)m_serializer.Deserialize(mstream);
+                    entries.Add(new OfflineIMEntry { ID = id, Message = im });
+                }
+            }
+
+            return entries;
+        }
+
+        public bool DeleteMessage(UUID principalID, int id)
+        {
+            return m_Database.Delete(new[] { "ID", "PrincipalID" }, new[] { id.ToString(), principalID.ToString() });
+        }
+
         public bool StoreMessage(GridInstantMessage im, out string reason)
         {
             reason = string.Empty;

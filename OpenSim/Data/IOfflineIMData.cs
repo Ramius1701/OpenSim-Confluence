@@ -45,6 +45,14 @@ namespace OpenSim.Data
         long GetCount(string field, string key);
         bool Store(OfflineIMData data);
         bool Delete(string field, string val);
+
+        // Already implemented on both backends' MySQLGenericTableHandler/
+        // PGSQLGenericTableHandler base class - just wasn't exposed
+        // through this narrower interface before. Used to delete exactly
+        // one message by its own ID column, scoped to PrincipalID in the
+        // same WHERE clause rather than trusting an app-level check alone.
+        bool Delete(string[] fields, string[] vals);
+
         void DeleteOld();
     }
 }

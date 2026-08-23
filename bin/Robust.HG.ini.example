@@ -948,3 +948,12 @@
     LocalServiceModule = "OpenSim.Services.SuggestionService.dll:SuggestionService"
     StorageProvider = "OpenSim.Data.MySQL.dll:MySqlSuggestionData"
     ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+;; Self-service backup codes at /recovery-codes (logged in) and
+;; /recover-account (public redemption) - lets a resident reset their
+;; avatar's own password without a working email. Same shape as
+;; SuggestionService above.
+[RecoveryCodeService]
+    LocalServiceModule = "OpenSim.Services.RecoveryCodeService.dll:RecoveryCodeService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlRecoveryCodeData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"

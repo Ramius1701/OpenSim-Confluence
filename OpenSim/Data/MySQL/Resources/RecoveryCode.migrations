@@ -1,0 +1,16 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `recovery_codes` (
+	`ID` VARCHAR(36) NOT NULL,
+	`PrincipalID` VARCHAR(36) NOT NULL,
+	`CodeHash` VARCHAR(64) NOT NULL,
+	`CodeSalt` VARCHAR(32) NOT NULL,
+	`Used` TINYINT(1) NOT NULL DEFAULT 0,
+	`Created` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `PrincipalID` (`PrincipalID`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+COMMIT;

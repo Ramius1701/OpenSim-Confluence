@@ -30,22 +30,31 @@ a world map, a viewer download page, a live grid-capability "Features"
 page, guest support tickets, admin-managed static pages (About/ToS/
 DMCA) and news/events feeds.
 
-**Resident self-service:** dashboard (stat cards, a Recent Activity
-audit log for the linked account, quick links), public profile (with
-group memberships and regions-owned, both privacy-aware), friends
-list, a full partner proposal flow (propose/accept/decline/cancel/
-breakup), transaction history, classifieds/events management, a
-combined My Land & Regions page (estate-owner region management —
-OAR backup, full estate settings/access-list editing for any resident
-who owns one, not just admins — alongside per-parcel search/
-Destination Guide visibility toggles), inventory backup (IAR),
-account changes (password/email), self-service account deletion.
-Create a brand-new avatar (email-verified, so an unclaimed request
-can't squat a name), import an existing avatar by proving its
-in-world password once (never stored) — including absorbing that
-avatar's own solo account into yours if it already has one, self-service, no support ticket needed — and switch between every
-avatar linked to the account. Backup (save) only, by design — see
-`ROADMAP.md`.
+**Resident self-service:** dashboard (stat cards, a "you have new
+activity" banner surfacing unread mail/waiting offline messages/open
+tickets in one place, a Recent Activity audit log for the linked
+account, quick links), public profile (with the resident's own full
+group-membership list — always visible to themselves regardless of
+each group's "show on public profile" flag, which only ever gates
+what *other people* see — and regions-owned, both privacy-aware),
+friends list (split into This Grid / Hypergrid, each showing what
+rights you've granted them), a full partner proposal flow (propose/
+accept/decline/cancel/breakup), transaction history, classifieds/
+events management, a combined My Land & Regions page (estate-owner
+region management — OAR backup, full estate settings/access-list
+editing for any resident who owns one, not just admins — alongside
+per-parcel search/Destination Guide visibility toggles), inventory
+backup (IAR), account changes (password/email), self-service account
+deletion, self-service recovery codes (5 one-time backup codes to
+reset your own password without needing a working email). Offline
+messages are a real persistent inbox — visiting the page no longer
+silently deletes them, per-message delete alongside Clear All. Create
+a brand-new avatar (email-verified, so an unclaimed request can't
+squat a name), import an existing avatar by proving its in-world
+password once (never stored) — including absorbing that avatar's own
+solo account into yours if it already has one, self-service, no
+support ticket needed — and switch between every avatar linked to the
+account. Backup (save) only, by design — see `ROADMAP.md`.
 
 **Admin console:** user management (search, create, edit, ban with
 optional auto-expiry, soft-delete, kick/message an online resident,

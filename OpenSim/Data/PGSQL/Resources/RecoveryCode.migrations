@@ -1,0 +1,15 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS recovery_codes (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"PrincipalID" varchar(36) NOT NULL,
+	"CodeHash" varchar(64) NOT NULL,
+	"CodeSalt" varchar(32) NOT NULL,
+	"Used" boolean NOT NULL DEFAULT false,
+	"Created" int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS recovery_codes_principal ON recovery_codes ("PrincipalID");
+
+COMMIT;

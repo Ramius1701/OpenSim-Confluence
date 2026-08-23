@@ -103,6 +103,12 @@ namespace OpenSim.OfflineIM
                 {
                     case "GET":
                         return HandleGet(request);
+                    case "COUNT":
+                        return HandleCount(request);
+                    case "PEEK":
+                        return HandlePeek(request);
+                    case "DELETEONE":
+                        return HandleDeleteOne(request);
                     case "STORE":
                         return HandleStore(request);
                     case "DELETE":
@@ -161,6 +167,62 @@ namespace OpenSim.OfflineIM
 
             //m_log.DebugFormat("[XXX]: resp string: {0}", xmlString);
             return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] HandleCount(Dictionary<string, object> request)
+        {
+            Dictionary<string, object> result = new Dictionary<string, object>();
+
+            if (!request.ContainsKey("PrincipalID"))
+                NullResult(result, "Bad network data");
+            else
+            {
+                UUID principalID = new UUID(request["PrincipalID"].ToString());
+                result["RESULT"] = m_OfflineIMService.GetMessageCount(principalID).ToString();
+            }
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] HandlePeek(Dictionary<string, object> request)
+        {
+            Dictionary<string, object> result = new Dictionary<string, object>();
+
+            if (!request.ContainsKey("PrincipalID"))
+                NullResult(result, "Bad network data");
+            else
+            {
+                UUID principalID = new UUID(request["PrincipalID"].ToString());
+                List<OfflineIMEntry> entries = m_OfflineIMService.PeekMessages(principalID);
+
+                Dictionary<string, object> dict = new Dictionary<string, object>();
+                int i = 0;
+                foreach (OfflineIMEntry entry in entries)
+                {
+                    Dictionary<string, object> imDict = OfflineIMDataUtils.GridInstantMessage(entry.Message);
+                    imDict["ID"] = entry.ID.ToString();
+                    dict["im-" + i++] = imDict;
+                }
+
+                result["RESULT"] = dict;
+            }
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] HandleDeleteOne(Dictionary<string, object> request)
+        {
+            if (!request.ContainsKey("PrincipalID") || !request.ContainsKey("ID"))
+                return FailureResult();
+
+            UUID principalID = new UUID(request["PrincipalID"].ToString());
+            if (!int.TryParse(request["ID"].ToString(), out int id))
+                return FailureResult();
+
+            bool success = m_OfflineIMService.DeleteMessage(principalID, id);
+            return BoolResult(success);
         }
 
         byte[] HandleDelete(Dictionary<string, object> request)

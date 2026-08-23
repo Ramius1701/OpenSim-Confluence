@@ -124,6 +124,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IStaticPageService m_StaticPageService;
         private IWebAccountService m_WebAccountService;
         private ISuggestionService m_SuggestionService;
+        private IRecoveryCodeService m_RecoveryCodeService;
         private IGridSettingsService m_GridSettingsService;
         private IUserProfilesService m_UserProfilesService;
         private IFriendsService m_FriendsService;
@@ -178,6 +179,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_StaticPageService = LoadReusedPlugin<IStaticPageService>(config, "StaticPageService", args);
             m_WebAccountService = LoadReusedPlugin<IWebAccountService>(config, "WebAccountService", args);
             m_SuggestionService = LoadReusedPlugin<ISuggestionService>(config, "SuggestionService", args);
+            m_RecoveryCodeService = LoadReusedPlugin<IRecoveryCodeService>(config, "RecoveryCodeService", args);
             m_GridSettingsService = LoadReusedPlugin<IGridSettingsService>(config, "GridSettingsService", args);
             // Same [UserProfilesService] LocalServiceModule the region-side
             // LocalUserProfilesServiceConnector already reuses - backs the
@@ -300,7 +302,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // first avatar you register/log in with IS the master
                 // account, no separate portal credential.
                 "/create-avatar", "/verify-avatar", "/import-avatar", "/my-avatars", "/switch-avatar",
-                "/suggestion-box"
+                "/suggestion-box", "/recovery-codes", "/recover-account"
             };
             foreach (string route in topLevelRoutes)
             {
@@ -573,6 +575,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/reset-password":
                         HandleResetPassword(request, response);
+                        break;
+                    case BasePath + "/recovery-codes":
+                        HandleRecoveryCodes(request, response);
+                        break;
+                    case BasePath + "/recover-account":
+                        HandleRecoverAccount(request, response);
                         break;
                     case BasePath + "/logout":
                         HandleLogout(request, response);
@@ -2172,34 +2180,47 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             // Group memberships - real WhiteCore-Dev gap (its user profile
-            // page shows these, ours didn't). ListInProfile is the same
-            // per-membership "show this on my profile" flag the viewer's own
-            // profile floater already exposes - filtering to it here is what
-            // makes this a resident's own choice rather than a full, possibly
-            // unwanted membership dump. Search (not this page) is where
-            // residents actually discover other people's public groups/picks
-            // grid-wide, per explicit direction - this page only ever shows
-            // this one resident's own memberships.
+            // page shows these, ours didn't). ListInProfile is a per-
+            // membership "show this on my PUBLIC profile" flag the viewer's
+            // own profile floater already exposes - it must only ever gate
+            // what OTHER people see when looking at this resident's profile.
+            // A resident viewing their OWN profile always sees every group
+            // they're in, ListInProfile or not - filtering it there too was
+            // a real bug (found via OGI's own account/groups.php parity
+            // audit): a resident who hadn't flagged a group "show in
+            // profile" couldn't see that membership listed anywhere on
+            // their own dashboard/profile at all, not even to themselves.
             if (m_GroupsSearchService != null)
             {
                 List<GroupMembershipData> memberships = m_GroupsSearchService.GetAgentGroupMemberships(userId.ToString(), userId.ToString());
-                List<GroupMembershipData> visible = memberships.FindAll(m => m.ListInProfile);
-                if (visible.Count > 0)
+                List<GroupMembershipData> shown = isSelf ? memberships : memberships.FindAll(m => m.ListInProfile);
+                if (shown.Count > 0)
                 {
-                    sb.Append("<h2><i class=\"bi bi-people\"></i> Groups (").Append(visible.Count).Append(")</h2><ul>");
-                    foreach (GroupMembershipData membership in visible)
+                    sb.Append("<h2><i class=\"bi bi-people\"></i> Groups (").Append(shown.Count).Append(")</h2>");
+                    if (isSelf)
                     {
-                        sb.Append("<li>").Append(Html(membership.GroupName)).Append("</li>");
+                        sb.Append("<table><tr><th>Group</th><th>Title</th><th>On Public Profile</th><th>Notices</th></tr>");
+                        foreach (GroupMembershipData membership in shown)
+                        {
+                            sb.Append("<tr><td>").Append(Html(membership.GroupName)).Append("</td>")
+                              .Append("<td>").Append(Html(membership.GroupTitle)).Append("</td>")
+                              .Append("<td><span class=\"pill ").Append(membership.ListInProfile ? "pill-yes\">Shown" : "pill-no\">Hidden").Append("</span></td>")
+                              .Append("<td>").Append(membership.AcceptNotices ? "Yes" : "No").Append("</td></tr>");
+                        }
+                        sb.Append("</table>");
                     }
-                    sb.Append("</ul>");
+                    else
+                    {
+                        sb.Append("<ul>");
+                        foreach (GroupMembershipData membership in shown)
+                            sb.Append("<li>").Append(Html(membership.GroupName)).Append("</li>");
+                        sb.Append("</ul>");
+                    }
                 }
                 else if (isSelf)
                 {
-                    string emptyReason = memberships.Count > 0
-                            ? "You're in a group, but none are set to show on your profile. In your viewer: Me &rarr; Groups &rarr; select a group &rarr; check \"Show in my profile\"."
-                            : "You haven't joined any groups yet. Groups are managed entirely in-world - search for one from your viewer, or find one grid-wide from this site's Search page.";
                     sb.Append("<h2><i class=\"bi bi-people\"></i> Groups</h2>")
-                      .Append("<p class=\"news-meta\">").Append(emptyReason).Append("</p>");
+                      .Append("<p class=\"news-meta\">You haven't joined any groups yet. Groups are managed entirely in-world - search for one from your viewer, or find one grid-wide from this site's Search page.</p>");
                 }
             }
 
@@ -2207,16 +2228,18 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         // Offline Messages - real counterpart to OpenSim-Grid-Interface's
-        // account/offline_messages.php, but backed by IOfflineIMService
-        // (GetMessages/DeleteMessages, already a real, wired-up OpenSim
-        // service - OpenSim.Addons.OfflineIM.dll) rather than OGI's raw SQL
-        // + hand-rolled XML parsing against im_offline. IOfflineIMService
-        // only exposes DeleteMessages(principalID) - a delete-all, not a
-        // delete-one - so this page offers "Clear All" rather than OGI's
-        // per-message delete/select-all UI; extending the service for
-        // per-message delete would mean touching the data layer across all
-        // 3 DB backends again, not attempted here given the scope already
-        // in this pass.
+        // account/offline_messages.php, backed by IOfflineIMService.
+        // Deliberately reads via PeekMessages, NOT GetMessages - GetMessages
+        // deletes every message it returns as a side effect (stock "deliver
+        // once" semantics also relied on by in-world login delivery), so
+        // the old version of this page was silently wiping a resident's
+        // offline messages the instant they loaded the page to read them,
+        // even before "Clear All" ever entered the picture. PeekMessages/
+        // DeleteMessage are non-destructive/single-row respectively, added
+        // specifically so this page can be a real, re-visitable inbox
+        // instead of a one-shot reveal - a message left here stays pending
+        // and still gets delivered normally next time the resident actually
+        // logs in-world, unless explicitly deleted here first.
         private void HandleOfflineMessages(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -2229,8 +2252,19 @@ namespace OpenSim.Server.Handlers.WebInterface
             string flash = string.Empty;
             if (request.HttpMethod == "POST" && m_OfflineIMService != null)
             {
-                m_OfflineIMService.DeleteMessages(session.PrincipalID);
-                flash = "<p class=\"success\">All offline messages cleared.</p>";
+                Dictionary<string, string> form = ReadForm(request);
+                string action = FormValue(form, "action");
+                if (action == "delete" && int.TryParse(FormValue(form, "id"), out int deleteId))
+                {
+                    flash = m_OfflineIMService.DeleteMessage(session.PrincipalID, deleteId)
+                            ? "<p class=\"success\">Message deleted.</p>"
+                            : "<p class=\"error\">Could not delete that message.</p>";
+                }
+                else
+                {
+                    m_OfflineIMService.DeleteMessages(session.PrincipalID);
+                    flash = "<p class=\"success\">All offline messages cleared.</p>";
+                }
             }
 
             StringBuilder sb = new StringBuilder();
@@ -2245,23 +2279,28 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            List<GridInstantMessage> messages = m_OfflineIMService.GetMessages(session.PrincipalID);
-            if (messages == null || messages.Count == 0)
+            List<OfflineIMEntry> entries = m_OfflineIMService.PeekMessages(session.PrincipalID);
+            if (entries == null || entries.Count == 0)
             {
                 sb.Append("<p>No offline messages are currently stored for your account.</p>");
             }
             else
             {
-                sb.Append("<table><tr><th>From</th><th>Message</th><th>Received</th></tr>");
-                foreach (GridInstantMessage im in messages.OrderBy(m => m.timestamp))
+                sb.Append("<table><tr><th>From</th><th>Message</th><th>Received</th><th></th></tr>");
+                foreach (OfflineIMEntry entry in entries.OrderBy(e => e.Message.timestamp))
                 {
+                    GridInstantMessage im = entry.Message;
                     DateTime received = OpenMetaverse.Utils.UnixTimeToDateTime(im.timestamp);
                     sb.Append("<tr><td>").Append(Html(im.fromAgentName)).Append("</td>")
                       .Append("<td>").Append(Html(im.message)).Append("</td>")
-                      .Append("<td>").Append(Html(received.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC</td></tr>");
+                      .Append("<td>").Append(Html(received.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC</td>")
+                      .Append("<td><form method=\"post\" style=\"margin:0\">")
+                      .Append("<input type=\"hidden\" name=\"action\" value=\"delete\">")
+                      .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(entry.ID).Append("\">")
+                      .Append("<button type=\"submit\"><i class=\"bi bi-trash\"></i></button></form></td></tr>");
                 }
                 sb.Append("</table>");
-                sb.Append("<form method=\"post\"><p class=\"news-meta\">Per-message delete isn't available yet - clearing removes every pending offline message for your account.</p>")
+                sb.Append("<form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"clear\">")
                   .Append("<button type=\"submit\" onclick=\"return confirm('Clear all offline messages?');\">Clear All</button></form>");
             }
 
@@ -2679,11 +2718,18 @@ namespace OpenSim.Server.Handlers.WebInterface
         // (FriendsService.dll, used by the actual in-viewer friends list)
         // but had never been wired into this connector before - this is the
         // first WebInterface feature to need it. The `Friend` field on each
-        // FriendInfo is the OTHER party's principal UUID as a string (the
-        // stock OpenSim Friends table schema - confirmed via
-        // FriendsStore.migrations - not a display name), so each entry
-        // needs its own UserAccountService/GridUserService lookups to show
-        // anything human-readable.
+        // FriendInfo is the OTHER party's principal UUID as a string for a
+        // LOCAL friend (the stock OpenSim Friends table schema, confirmed
+        // via FriendsStore.migrations) - but for a HYPERGRID friend it's a
+        // "UUID;homeURI;First Last;secret" universal identifier instead
+        // (confirmed via UserAgentService.GetOnlineFriends's own parsing),
+        // which the old plain UUID.TryParse silently failed on and skipped
+        // - meaning every HG friend was invisible on this page even though
+        // this grid is Hypergrid-enabled. Fixed by falling back to
+        // Util.ParseUniversalUserIdentifier and splitting the two into
+        // separate tables (OpenSim-Grid-Interface's own account/friends.php
+        // does the same split, for the same reason - a HG friend has no
+        // local UserAccount to resolve a name/profile link from).
         private void HandleFriends(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -2711,42 +2757,88 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            sb.Append("<table><tr><th>Name</th><th>Status</th><th>Location</th></tr>");
+            StringBuilder localRows = new StringBuilder();
+            StringBuilder hgRows = new StringBuilder();
+
             foreach (OpenSim.Services.Interfaces.FriendInfo friend in friends)
             {
-                if (!UUID.TryParse(friend.Friend, out UUID friendId))
-                    continue;
+                string rightsCell = FriendRightsCell(friend.MyFlags);
 
-                UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, friendId);
-                string name = account != null ? account.Name : friend.Friend;
-
-                string status = "Offline";
-                // Reference's Region + Online Location columns (teleport-
-                // linked) - real gap this table was missing, same
-                // LastRegionID-while-online pattern HandleProfile's own
-                // "Online Location" section already uses.
-                string locationCell = string.Empty;
-                if (m_GridUserService != null)
+                if (UUID.TryParse(friend.Friend, out UUID friendId))
                 {
-                    GridUserInfo info = m_GridUserService.GetGridUserInfo(friendId.ToString());
-                    if (info != null && info.Online)
+                    UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, friendId);
+                    string name = account != null ? account.Name : friend.Friend;
+
+                    string status = "Offline";
+                    // Reference's Region + Online Location columns (teleport-
+                    // linked) - real gap this table was missing, same
+                    // LastRegionID-while-online pattern HandleProfile's own
+                    // "Online Location" section already uses.
+                    string locationCell = string.Empty;
+                    if (m_GridUserService != null)
                     {
-                        status = "Online now";
-                        GridRegion currentRegion = m_GridService?.GetRegionByUUID(UUID.Zero, info.LastRegionID);
-                        if (currentRegion != null)
+                        GridUserInfo info = m_GridUserService.GetGridUserInfo(friendId.ToString());
+                        if (info != null && info.Online)
                         {
-                            string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(currentRegion.RegionName) + "/128/128/25";
-                            locationCell = "<a href=\"" + Html(hopUrl) + "\">" + Html(currentRegion.RegionName) + "</a>";
+                            status = "Online now";
+                            GridRegion currentRegion = m_GridService?.GetRegionByUUID(UUID.Zero, info.LastRegionID);
+                            if (currentRegion != null)
+                            {
+                                string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(currentRegion.RegionName) + "/128/128/25";
+                                locationCell = "<a href=\"" + Html(hopUrl) + "\">" + Html(currentRegion.RegionName) + "</a>";
+                            }
                         }
                     }
-                }
 
-                sb.Append("<tr><td><a href=\"").Append(BasePath).Append("/profile?id=").Append(friendId).Append("\">")
-                  .Append(Html(name)).Append("</a></td><td>").Append(Html(status)).Append("</td><td>").Append(locationCell).Append("</td></tr>");
+                    localRows.Append("<tr><td><a href=\"").Append(BasePath).Append("/profile?id=").Append(friendId).Append("\">")
+                      .Append(Html(name)).Append("</a></td><td>").Append(Html(status)).Append("</td><td>").Append(locationCell)
+                      .Append("</td><td>").Append(rightsCell).Append("</td></tr>");
+                }
+                else if (Util.ParseUniversalUserIdentifier(friend.Friend, out UUID hgFriendId, out string homeUrl, out string firstName, out string lastName))
+                {
+                    string name = (firstName + " " + lastName).Trim();
+                    if (string.IsNullOrEmpty(name))
+                        name = hgFriendId.ToString();
+
+                    hgRows.Append("<tr><td>").Append(Html(name)).Append("</td><td>")
+                      .Append(Html(homeUrl)).Append("</td><td>").Append(rightsCell).Append("</td></tr>");
+                }
+                // Neither parse succeeded - a malformed/legacy row this
+                // page genuinely can't do anything useful with; skipped
+                // rather than shown as raw garbage.
             }
-            sb.Append("</table>");
+
+            if (localRows.Length > 0)
+            {
+                sb.Append("<h2><i class=\"bi bi-people\"></i> This Grid</h2>")
+                  .Append("<table><tr><th>Name</th><th>Status</th><th>Location</th><th>Rights You've Granted</th></tr>")
+                  .Append(localRows).Append("</table>");
+            }
+            if (hgRows.Length > 0)
+            {
+                sb.Append("<h2><i class=\"bi bi-globe\"></i> Hypergrid</h2>")
+                  .Append("<p class=\"news-meta\">Friends visiting from another OpenSim grid - profile links and online status aren't available for these.</p>")
+                  .Append("<table><tr><th>Name</th><th>Home Grid</th><th>Rights You've Granted</th></tr>")
+                  .Append(hgRows).Append("</table>");
+            }
 
             WritePage(request, response, PageTitle("Friends"), sb.ToString());
+        }
+
+        // "Rights You've Granted" reads MyFlags - what THIS resident has
+        // given the friend permission to do, the same direction OGI's own
+        // rights columns show. Display-only for now (no edit form yet) -
+        // GrantRights isn't exposed anywhere in this connector.
+        private static string FriendRightsCell(int myFlags)
+        {
+            List<string> rights = new List<string>();
+            if ((myFlags & (int)FriendRights.CanSeeOnline) != 0)
+                rights.Add("See Online");
+            if ((myFlags & (int)FriendRights.CanSeeOnMap) != 0)
+                rights.Add("See on Map");
+            if ((myFlags & (int)FriendRights.CanModifyObjects) != 0)
+                rights.Add("Modify Objects");
+            return rights.Count > 0 ? Html(string.Join(", ", rights)) : "<span class=\"news-meta\">None</span>";
         }
 
         // Self-service account pages - "genuinely new ground" items #3/#4
@@ -2828,6 +2920,55 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<button type=\"submit\">Update password</button>"
                     + "</form>"
                     + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>";
+        }
+
+        // Self-service backup codes for resetting THIS avatar's own
+        // in-world password without needing a working email - real gap
+        // found auditing OpenSim-Grid-Interface's own account.php.
+        // Casperia's login IS the avatar's in-world password (no separate
+        // portal password to recover), so these are tied to PrincipalID,
+        // the same identity /forgot-password already resets by email.
+        private void HandleRecoveryCodes(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (m_RecoveryCodeService == null)
+            {
+                WritePage(request, response, PageTitle("Recovery Codes"),
+                        "<h1>Recovery Codes</h1><p class=\"error\">Recovery codes are not available on this grid.</p>");
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-shield-lock\"></i> Recovery Codes</h1>");
+            sb.Append("<p>One-time backup codes that let you reset this avatar's password without needing your email - useful if your email on file is out of date. ");
+            sb.Append("Each code works once. Generating new codes immediately invalidates any old ones.</p>");
+
+            if (request.HttpMethod == "POST")
+            {
+                List<string> freshCodes = m_RecoveryCodeService.RegenerateCodes(session.PrincipalID);
+                sb.Append("<div class=\"error\" style=\"border-left-color:var(--accent);color:var(--text);\">")
+                  .Append("<strong><i class=\"bi bi-exclamation-triangle-fill\"></i> Save these now - they will not be shown again:</strong>")
+                  .Append("<div style=\"font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;margin-top:10px;letter-spacing:1px;\">");
+                foreach (string code in freshCodes)
+                    sb.Append(Html(code)).Append("<br/>");
+                sb.Append("</div></div>");
+            }
+            else
+            {
+                int remaining = m_RecoveryCodeService.GetRemainingCount(session.PrincipalID);
+                sb.Append("<p><strong>").Append(remaining).Append(" of 5</strong> codes remaining.</p>");
+            }
+
+            sb.Append("<form method=\"post\"><button type=\"submit\" onclick=\"return confirm('Generate new recovery codes? Any existing codes will stop working.');\">")
+              .Append("Generate New Codes</button></form>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a></p>");
+
+            WritePage(request, response, PageTitle("Recovery Codes"), sb.ToString());
         }
 
         // Self-service counterpart to HandleAdminUsersSoftDelete - same
@@ -5206,6 +5347,64 @@ namespace OpenSim.Server.Handlers.WebInterface
         // "portal email" - the avatar you register/log in with IS the
         // master account (see AutoProvisionWebAccount), so there's only
         // ever one real email to show.
+        // Scoped to just this page - matches the reference control panel's
+        // multi-card dashboard grid (separate elevated cards per section,
+        // icon-led stats) rather than the shared single-.card/h2-separated
+        // layout every other page here uses. ".card{...}" neutralizes the
+        // outer wrapper WritePage always adds so it doesn't show up as a
+        // second border around everything; the dash-* classes below supply
+        // their own cards instead.
+        private const string DashboardCss =
+                "<style>" +
+                ".card{background:transparent;border:none;box-shadow:none;padding:0;}" +
+                ".dash-head{display:flex;align-items:center;gap:10px;margin:0 0 4px;}" +
+                ".dash-head .bi{font-size:1.5em;color:var(--accent-bright);}" +
+                ".dash-head h1{margin:0;}" +
+                ".dash-sub{color:var(--muted);font-size:13.5px;margin:0 0 24px;}" +
+                ".dash-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:0 0 20px;}" +
+                ".dash-stat{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);" +
+                "padding:18px 20px;display:flex;align-items:center;gap:14px;box-shadow:0 8px 24px rgba(0,0,0,.35);}" +
+                ".dash-stat .bi{font-size:1.9em;}" +
+                ".dash-stat-num{font-size:1.6em;font-weight:700;color:var(--text);line-height:1.1;}" +
+                ".dash-stat-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin-top:2px;}" +
+                ".dash-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin:0 0 20px;align-items:start;}" +
+                ".dash-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);" +
+                "padding:22px 24px;box-shadow:0 8px 24px rgba(0,0,0,.35);}" +
+                ".dash-card-head{display:flex;align-items:center;justify-content:space-between;margin:0 0 16px;}" +
+                ".dash-card-title{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;color:var(--text);}" +
+                ".dash-card-title .bi{color:var(--accent-bright);}" +
+                ".dash-count-pill{background:var(--input-bg);color:var(--muted);border-radius:999px;" +
+                "padding:2px 11px;font-size:12px;font-weight:700;}" +
+                ".dash-info-row{display:flex;justify-content:space-between;align-items:center;gap:10px;" +
+                "padding:10px 0;border-bottom:1px solid var(--border);font-size:13.5px;}" +
+                ".dash-info-row:last-of-type{border-bottom:none;}" +
+                ".dash-info-label{color:var(--muted);flex:0 0 auto;}" +
+                ".dash-info-value{color:var(--text);font-weight:600;text-align:right;}" +
+                ".dash-card-actions{display:flex;gap:10px;margin-top:16px;}" +
+                "a.dash-btn-outline{flex:1;text-align:center;border:2px solid var(--accent);color:var(--accent-bright);" +
+                "border-radius:40px;padding:9px 14px;font-size:12.5px;font-weight:700;text-transform:uppercase;" +
+                "letter-spacing:.3px;display:inline-block;}" +
+                "a.dash-btn-outline:hover{background:var(--accent-tint);text-decoration:none;}" +
+                "a.dash-btn-outline.muted{border-color:var(--border);color:var(--muted);}" +
+                "a.dash-btn-outline.muted:hover{border-color:var(--text);color:var(--text);}" +
+                "a.dash-link-row{display:flex;align-items:center;gap:14px;padding:11px 0;" +
+                "border-bottom:1px solid var(--border);color:inherit;}" +
+                "a.dash-link-row:last-child{border-bottom:none;}" +
+                "a.dash-link-row:hover{text-decoration:none;color:inherit;}" +
+                ".dash-link-icon{width:38px;height:38px;border-radius:9px;background:var(--input-bg);" +
+                "display:flex;align-items:center;justify-content:center;font-size:1.1em;flex:0 0 auto;}" +
+                ".dash-link-title{font-weight:700;font-size:13.5px;color:var(--text);}" +
+                ".dash-link-sub{font-size:12px;color:var(--muted);}" +
+                ".dash-link-chev{margin-left:auto;color:var(--muted);}" +
+                ".dash-avatar-row{display:flex;align-items:center;gap:10px;padding:10px 0;" +
+                "border-bottom:1px solid var(--border);font-size:13.5px;}" +
+                ".dash-avatar-row:last-child{border-bottom:none;}" +
+                ".dash-empty{text-align:center;color:var(--muted);font-size:13px;padding:26px 10px;}" +
+                ".dash-empty .bi{font-size:2.2em;display:block;margin:0 0 10px;color:var(--border);}" +
+                ".dash-activity-action{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;" +
+                "color:var(--accent-bright);font-size:12px;}" +
+                "</style>";
+
         private void HandleDashboard(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -5215,127 +5414,236 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            int balance = m_CurrencyService != null ? m_CurrencyService.GetBalance(session.PrincipalID) : 0;
             int regionsCount = GetRegionsOwnedBy(session.PrincipalID).Count;
             int estatesCount = m_EstateDataService != null ? m_EstateDataService.GetEstatesByOwner(session.PrincipalID).Count : 0;
-            int friendsCount = m_FriendsService != null ? (m_FriendsService.GetFriends(session.PrincipalID)?.Length ?? 0) : 0;
             int eventsCount = m_EventsService != null
                     ? m_EventsService.GetUpcoming(0, 100).Count(e => e.CreatorId == session.PrincipalID)
                     : 0;
-            int avatarsCount = session.WebAccountID != UUID.Zero && m_WebAccountService != null
-                    ? m_WebAccountService.GetLinkedAvatars(session.WebAccountID).Count
-                    : 1;
+            List<WebAccountAvatarLink> linkedAvatars = session.WebAccountID != UUID.Zero && m_WebAccountService != null
+                    ? m_WebAccountService.GetLinkedAvatars(session.WebAccountID)
+                    : new List<WebAccountAvatarLink>();
+            int avatarsCount = linkedAvatars.Count > 0 ? linkedAvatars.Count : 1;
 
             UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, session.PrincipalID);
             string memberSince = account != null
                     ? Utils.UnixTimeToDateTime((uint)account.Created).ToString("MMM d, yyyy")
                     : "Unknown";
 
-            // Reference's userhome.html shows Home Region and Last Login on
-            // its own account-summary card - both cheaply available off the
-            // same GridUserInfo lookup HandleProfile already uses for
-            // "Online Location".
-            string homeRegionName = null;
             string lastLogin = null;
             if (m_GridUserService != null)
             {
                 GridUserInfo info = m_GridUserService.GetGridUserInfo(session.PrincipalID.ToString());
-                if (info != null)
-                {
-                    GridRegion homeRegion = m_GridService?.GetRegionByUUID(UUID.Zero, info.HomeRegionID);
-                    homeRegionName = homeRegion?.RegionName;
-                    if (info.Login > DateTime.MinValue)
-                        lastLogin = info.Login.ToString("MMM d, yyyy HH:mm") + " UTC";
-                }
+                if (info != null && info.Login > DateTime.MinValue)
+                    lastLogin = info.Login.ToString("MMM d, yyyy h:mm tt") + " UTC";
             }
 
-            StringBuilder sb = new StringBuilder();
-            sb.Append("<h1>Dashboard</h1>");
-            sb.Append("<p style=\"color:var(--muted);margin:-8px 0 20px;\">Welcome back, ").Append(Html(session.Name)).Append("</p>");
+            // Notification summary - real gap found auditing OpenSim-Grid-
+            // Interface's own account shell (its "you have new activity"
+            // banner + nav badge counts): nothing here previously surfaced
+            // that a resident had unread mail/waiting offline IMs/open
+            // tickets short of clicking into each page individually.
+            // Deliberately dashboard-only, not persistent sidebar badges
+            // like OGI's - OGI's badges live on its page-scoped account
+            // shell (only rendered for account/* pages), while Casperia's
+            // sidebar renders on every single page site-wide; computing 3
+            // live service calls on every page load would be a real
+            // performance cost for what's meant to be a lightweight nav.
+            // Pending-friend-request count is NOT included - confirmed via
+            // IFriendsService that there's no queryable "pending request"
+            // concept at all in this codebase (friendships only exist once
+            // accepted; requests are an in-world IM handshake that's never
+            // persisted anywhere the web portal can read) - a real, deeper
+            // gap than this pass's scope, not a data-fetch that was skipped.
+            int unreadMessages = m_MessagingService?.GetInbox(session.PrincipalID, 200)?.Count(m => !m.IsRead) ?? 0;
+            int offlineWaiting = m_OfflineIMService?.GetMessageCount(session.PrincipalID) ?? 0;
+            int openTickets = m_SupportTicketService?.GetByUser(session.PrincipalID, 0, 100)
+                    ?.Count(t => t.Status != "closed") ?? 0;
 
-            sb.Append("<div class=\"stats-grid\">");
-            AppendStat(sb, "My Avatars", avatarsCount.ToString("N0"), "linked to your account");
-            AppendStat(sb, "My Regions", regionsCount.ToString("N0"), "estate-owned");
-            AppendStat(sb, "My Estates", estatesCount.ToString("N0"), "you own");
-            AppendStat(sb, "My Events", eventsCount.ToString("N0"), "upcoming");
+            StringBuilder sb = new StringBuilder(DashboardCss);
+            sb.Append("<div class=\"dash-head\"><i class=\"bi bi-speedometer2\"></i><h1>Dashboard</h1></div>");
+            sb.Append("<p class=\"dash-sub\">Welcome back, ").Append(Html(session.Name));
+            if (!string.IsNullOrEmpty(lastLogin))
+                sb.Append(" &mdash; Last login: ").Append(Html(lastLogin));
+            sb.Append("</p>");
+
+            if (unreadMessages > 0 || offlineWaiting > 0 || openTickets > 0)
+            {
+                sb.Append("<div class=\"announcement\"><div style=\"font-weight:700;margin-bottom:6px;\">")
+                  .Append("<i class=\"bi bi-bell\"></i> You have new activity:</div><ul style=\"margin:0;padding-left:20px;\">");
+                if (unreadMessages > 0)
+                    sb.Append("<li><a href=\"").Append(BasePath).Append("/messages\">").Append(unreadMessages)
+                      .Append(unreadMessages == 1 ? " unread message" : " unread messages").Append("</a></li>");
+                if (offlineWaiting > 0)
+                    sb.Append("<li><a href=\"").Append(BasePath).Append("/offline-messages\">").Append(offlineWaiting)
+                      .Append(offlineWaiting == 1 ? " offline message waiting" : " offline messages waiting").Append("</a></li>");
+                if (openTickets > 0)
+                    sb.Append("<li><a href=\"").Append(BasePath).Append("/support\">").Append(openTickets)
+                      .Append(openTickets == 1 ? " open support ticket" : " open support tickets").Append("</a></li>");
+                sb.Append("</ul></div>");
+            }
+
+            sb.Append("<div class=\"dash-stats\">");
+            AppendDashStat(sb, "bi-people", "ic-blue", avatarsCount, "My Avatars");
+            AppendDashStat(sb, "bi-map", "ic-blue", regionsCount, "My Regions");
+            AppendDashStat(sb, "bi-building", "ic-amber", estatesCount, "My Estates");
+            AppendDashStat(sb, "bi-calendar-event", "ic-green", eventsCount, "My Events");
             sb.Append("</div>");
 
-            sb.Append("<h2>Account Information</h2>");
-            sb.Append("<table>");
-            sb.Append("<tr><th>Active Avatar</th><td>").Append(Html(session.Name));
-            if (avatarsCount > 1)
-                sb.Append(" &middot; <a href=\"").Append(BasePath).Append("/my-avatars\">Switch</a>");
-            sb.Append("</td></tr>");
-            if (account != null && !string.IsNullOrEmpty(account.Email))
-                sb.Append("<tr><th>Email</th><td>").Append(Html(account.Email)).Append("</td></tr>");
-            sb.Append("<tr><th>Balance</th><td>FC$").Append(balance.ToString("N0")).Append("</td></tr>");
-            sb.Append("<tr><th>Friends</th><td>").Append(friendsCount.ToString("N0")).Append("</td></tr>");
-            sb.Append("<tr><th>Role</th><td><span class=\"pill ").Append(session.IsAdmin ? "pill-yes\">Administrator" : "pill-no\">Member").Append("</span></td></tr>");
-            if (account != null)
-                sb.Append("<tr><th>Member Since</th><td>").Append(Html(memberSince)).Append("</td></tr>");
-            if (!string.IsNullOrEmpty(homeRegionName))
-                sb.Append("<tr><th>Home Region</th><td>").Append(Html(homeRegionName)).Append("</td></tr>");
-            if (!string.IsNullOrEmpty(lastLogin))
-                sb.Append("<tr><th>Last Login</th><td>").Append(Html(lastLogin)).Append("</td></tr>");
-            sb.Append("</table>");
-            sb.Append("<p><a href=\"").Append(BasePath).Append("/profile?id=").Append(session.PrincipalID).Append("\">Edit Profile</a>")
-              .Append(" &middot; <a href=\"").Append(BasePath).Append("/change-password\">Settings</a></p>");
+            sb.Append("<div class=\"dash-row\">");
 
-            sb.Append("<h2>Recent Activity</h2>");
+            // Account Information - deliberately just the reference's own
+            // 4 fields (Username/Email/Role/Member Since), not the wider
+            // set the old single-card layout had room for (Balance/Friends/
+            // Home Region moved to their own cards/pages below - Balance
+            // stays reachable via My Transactions, not lost, just relocated
+            // to match the reference's card boundaries).
+            sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
+              .Append("<i class=\"bi bi-person-vcard\"></i> Account Information</div></div>");
+            AppendDashInfoRow(sb, "Username", Html(session.Name));
+            if (account != null && !string.IsNullOrEmpty(account.Email))
+                AppendDashInfoRow(sb, "Email", Html(account.Email));
+            AppendDashInfoRow(sb, "Role", "<span class=\"pill " + (session.IsAdmin ? "pill-yes\">Administrator" : "pill-no\">Member") + "</span>");
+            AppendDashInfoRow(sb, "Member Since", Html(memberSince));
+            sb.Append("<div class=\"dash-card-actions\">")
+              .Append("<a class=\"dash-btn-outline\" href=\"").Append(BasePath).Append("/profile?id=").Append(session.PrincipalID)
+              .Append("\"><i class=\"bi bi-pencil\"></i> Edit Profile</a>")
+              .Append("<a class=\"dash-btn-outline muted\" href=\"").Append(BasePath).Append("/change-password\">")
+              .Append("<i class=\"bi bi-gear\"></i> Settings</a>")
+              .Append("</div></div>");
+
+            // Quick Links - trimmed to the reference's own 5 actions;
+            // Casperia's extra dashboard shortcuts (classifieds, transactions,
+            // grid search) are still one click away via the sidebar, just no
+            // longer competing for space in this specific card.
+            sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
+              .Append("<i class=\"bi bi-grid-3x3-gap\"></i> Quick Links</div></div>");
+            AppendDashLinkRow(sb, BasePath + "/create-avatar", "bi-person-plus", "ic-blue", "Create Avatar", "Register a new avatar on the grid");
+            AppendDashLinkRow(sb, BasePath + "/import-avatar", "bi-box-arrow-in-down", "ic-cyan", "Import Avatar", "Link an existing grid avatar");
+            AppendDashLinkRow(sb, BasePath + "/myregions", "bi-arrow-clockwise", "ic-amber", "Restart Region", "Restart one of your regions");
+            AppendDashLinkRow(sb, BasePath + "/myevents", "bi-calendar-plus", "ic-green", "Post an Event", "Add an event to the grid calendar");
+            AppendDashLinkRow(sb, BasePath + "/support", "bi-headset", "ic-pink", "Submit Support Ticket", "Get help from our team");
+            sb.Append("</div>");
+
+            // My Avatars - the same linked-avatar list the sidebar switcher
+            // and /my-avatars use, just the compact dashboard-card form of it.
+            sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
+              .Append("<i class=\"bi bi-people\"></i> My Avatars</div>")
+              .Append("<a class=\"dash-btn-outline\" style=\"flex:none;padding:6px 16px;\" href=\"")
+              .Append(BasePath).Append("/my-avatars\">View All</a></div>");
+            if (linkedAvatars.Count == 0)
+            {
+                sb.Append("<div class=\"dash-avatar-row\"><i class=\"bi bi-person-circle\"></i> ")
+                  .Append(Html(session.Name)).Append("<span class=\"pill pill-yes\" style=\"margin-left:auto;\">Active</span></div>");
+            }
+            else
+            {
+                foreach (WebAccountAvatarLink link in linkedAvatars.Take(5))
+                {
+                    UserAccount linkedAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, link.AvatarPrincipalID);
+                    string linkedName = linkedAccount != null ? linkedAccount.Name : link.AvatarPrincipalID.ToString();
+                    bool isActive = link.AvatarPrincipalID == session.PrincipalID;
+                    sb.Append("<div class=\"dash-avatar-row\"><i class=\"bi bi-person-circle\"></i> ").Append(Html(linkedName));
+                    if (isActive)
+                        sb.Append("<span class=\"pill pill-yes\" style=\"margin-left:auto;\">Active</span>");
+                    sb.Append("</div>");
+                }
+            }
+            sb.Append("</div>");
+
+            sb.Append("</div>"); // .dash-row
+
+            // Online Friends - same online-check HandleFriends already uses
+            // (GridUserInfo.Online), just summarized to a short list here.
+            sb.Append("<div class=\"dash-card\" style=\"margin:0 0 20px;\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
+              .Append("<i class=\"bi bi-people-fill\"></i> Online Friends</div>");
+            List<(string Name, UUID Id)> onlineFriends = new List<(string, UUID)>();
+            if (m_FriendsService != null && m_GridUserService != null)
+            {
+                OpenSim.Services.Interfaces.FriendInfo[] friends = m_FriendsService.GetFriends(session.PrincipalID);
+                if (friends != null)
+                {
+                    foreach (OpenSim.Services.Interfaces.FriendInfo friend in friends)
+                    {
+                        if (!UUID.TryParse(friend.Friend, out UUID friendId))
+                            continue;
+                        GridUserInfo info = m_GridUserService.GetGridUserInfo(friendId.ToString());
+                        if (info == null || !info.Online)
+                            continue;
+                        UserAccount friendAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, friendId);
+                        onlineFriends.Add((friendAccount != null ? friendAccount.Name : friendId.ToString(), friendId));
+                    }
+                }
+            }
+            sb.Append("<span class=\"dash-count-pill\">").Append(onlineFriends.Count).Append("</span></div>");
+            if (onlineFriends.Count == 0)
+            {
+                sb.Append("<div class=\"dash-empty\"><i class=\"bi bi-person\"></i>You don't have any friends online right now.</div>");
+            }
+            else
+            {
+                foreach ((string friendName, UUID friendId) in onlineFriends)
+                {
+                    sb.Append("<div class=\"dash-avatar-row\"><i class=\"bi bi-person-circle ic-green\"></i> <a href=\"")
+                      .Append(BasePath).Append("/profile?id=").Append(friendId).Append("\">").Append(Html(friendName)).Append("</a></div>");
+                }
+            }
+            sb.Append("</div>");
+
+            // Recent Activity - shows the raw EventType (not a humanized
+            // label) styled like a log/code token, matching the reference's
+            // own treatment, since these are meant to read as an audit
+            // trail rather than a friendly narrative.
+            sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
+              .Append("<i class=\"bi bi-clock-history\"></i> Recent Activity</div></div>");
             if (session.WebAccountID == UUID.Zero || m_WebAccountService == null)
             {
-                sb.Append("<p class=\"news-meta\">Activity tracking starts once you've added an email to your account.</p>");
+                sb.Append("<div class=\"dash-empty\">Activity tracking starts once you've added an email to your account.</div>");
             }
             else
             {
                 List<WebActivityEntry> activity = m_WebAccountService.GetRecentActivity(session.WebAccountID, 10);
                 if (activity.Count == 0)
                 {
-                    sb.Append("<p class=\"news-meta\">No activity recorded yet.</p>");
+                    sb.Append("<div class=\"dash-empty\">No activity recorded yet.</div>");
                 }
                 else
                 {
                     sb.Append("<table><tr><th>Action</th><th>Description</th><th>IP Address</th><th>Date &amp; Time</th></tr>");
                     foreach (WebActivityEntry entry in activity)
                     {
-                        sb.Append("<tr><td>").Append(Html(HumanizeActivityEvent(entry.EventType))).Append("</td>")
+                        sb.Append("<tr><td><span class=\"dash-activity-action\">").Append(Html(entry.EventType)).Append("</span></td>")
                           .Append("<td>").Append(Html(entry.Description)).Append("</td>")
                           .Append("<td>").Append(Html(entry.IPAddress)).Append("</td>")
-                          .Append("<td>").Append(Html(entry.Created.ToString("MMM d, yyyy HH:mm"))).Append(" UTC</td></tr>");
+                          .Append("<td>").Append(Html(entry.Created.ToString("MMM d, yyyy h:mm tt"))).Append(" UTC</td></tr>");
                     }
                     sb.Append("</table>");
                 }
             }
-
-            sb.Append("<h2>Quick Links</h2><div class=\"widget-grid\">");
-            AppendDashboardLink(sb, BasePath + "/create-avatar", "bi-person-plus", "Create Avatar", "Add a new avatar to your account");
-            AppendDashboardLink(sb, BasePath + "/import-avatar", "bi-box-arrow-in-right", "Import Avatar", "Link an existing avatar to your account");
-            AppendDashboardLink(sb, BasePath + "/myclassifieds", "bi-megaphone", "Post a Classified", "Advertise your business, shop or event grid-wide");
-            AppendDashboardLink(sb, BasePath + "/myevents", "bi-calendar-plus", "Post an Event", "Add an event to the grid calendar");
-            AppendDashboardLink(sb, BasePath + "/myregions", "bi-hdd-rack", "Restart Region", "Back up or restart a region you own");
-            AppendDashboardLink(sb, BasePath + "/transactions", "bi-cash-stack", "View Transactions", "See your recent currency activity");
-            AppendDashboardLink(sb, BasePath + "/support", "bi-headset", "Submit a Ticket", "Get help from the grid support team");
-            AppendDashboardLink(sb, BasePath + "/search", "bi-search", "Search the Grid", "Find people, places, events and classifieds");
             sb.Append("</div>");
 
             WritePage(request, response, PageTitle("Dashboard"), sb.ToString());
         }
 
-        private static readonly Dictionary<string, string> ActivityEventLabels = new Dictionary<string, string>
+        private static void AppendDashStat(StringBuilder sb, string icon, string colorClass, int value, string label)
         {
-            { "user_login", "Logged In" },
-            { "user_registered", "Account Created" },
-            { "avatar_request_created", "Avatar Requested" },
-            { "email_verified", "Email Verified" },
-            { "avatar_imported", "Avatar Imported" },
-            { "avatar_linked", "Avatar Linked" },
-            { "active_avatar_switched", "Avatar Switched" },
-            { "suggestion_submitted", "Suggestion Submitted" }
-        };
+            sb.Append("<div class=\"dash-stat\"><i class=\"bi ").Append(icon).Append(' ').Append(colorClass).Append("\"></i><div>")
+              .Append("<div class=\"dash-stat-num\">").Append(value.ToString("N0")).Append("</div>")
+              .Append("<div class=\"dash-stat-label\">").Append(Html(label)).Append("</div></div></div>");
+        }
 
-        private static string HumanizeActivityEvent(string eventType)
+        private static void AppendDashInfoRow(StringBuilder sb, string label, string valueHtml)
         {
-            return ActivityEventLabels.TryGetValue(eventType, out string label) ? label : eventType;
+            sb.Append("<div class=\"dash-info-row\"><span class=\"dash-info-label\">").Append(Html(label))
+              .Append("</span><span class=\"dash-info-value\">").Append(valueHtml).Append("</span></div>");
+        }
+
+        private static void AppendDashLinkRow(StringBuilder sb, string href, string icon, string colorClass, string title, string subtitle)
+        {
+            sb.Append("<a class=\"dash-link-row\" href=\"").Append(href).Append("\">")
+              .Append("<div class=\"dash-link-icon\"><i class=\"bi ").Append(icon).Append(' ').Append(colorClass).Append("\"></i></div>")
+              .Append("<div><div class=\"dash-link-title\">").Append(Html(title)).Append("</div>")
+              .Append("<div class=\"dash-link-sub\">").Append(Html(subtitle)).Append("</div></div>")
+              .Append("<i class=\"bi bi-chevron-right dash-link-chev\"></i></a>");
         }
 
         private static void AppendDashboardLink(StringBuilder sb, string href, string icon, string title, string description)
@@ -9639,6 +9947,85 @@ namespace OpenSim.Server.Handlers.WebInterface
             response.Redirect(BasePath + "/login?message=" + Uri.EscapeDataString("Password updated. Please log in."), HttpStatusCode.Redirect);
         }
 
+        // Public, logged-out counterpart to /reset-password - redeems one
+        // of the avatar's own recovery codes (see HandleRecoveryCodes)
+        // instead of an emailed token, so it works even when the email on
+        // file is stale or was never set. One step, not two - a valid
+        // code is itself the proof email-based reset gets from clicking a
+        // link, so there's no separate "check your email" round trip.
+        private void HandleRecoverAccount(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST")
+            {
+                WritePage(request, response, PageTitle("Recover Account"), RecoverAccountForm(string.Empty, string.Empty, null));
+                return;
+            }
+
+            if (m_RecoveryCodeService == null || m_UserAccountService == null || m_AuthenticationService == null)
+            {
+                WritePage(request, response, PageTitle("Recover Account"),
+                        RecoverAccountForm(string.Empty, string.Empty, "Account recovery is not available on this grid right now."));
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string firstName = FormValue(form, "first_name").Trim();
+            string lastName = FormValue(form, "last_name").Trim();
+            string code = FormValue(form, "code");
+            string password = FormValue(form, "password");
+            string confirmPassword = FormValue(form, "confirm_password");
+
+            if (string.IsNullOrEmpty(password) || password.Length < 6)
+            {
+                WritePage(request, response, PageTitle("Recover Account"), RecoverAccountForm(firstName, lastName, "Password must be at least 6 characters."));
+                return;
+            }
+            if (password != confirmPassword)
+            {
+                WritePage(request, response, PageTitle("Recover Account"), RecoverAccountForm(firstName, lastName, "Passwords do not match."));
+                return;
+            }
+
+            // Same generic-failure posture as TryLogin/HandleForgotPassword -
+            // "no such avatar" and "wrong code" get the identical message,
+            // so this can't be used to enumerate which avatars have
+            // recovery codes set up.
+            const string genericError = "Invalid name or recovery code.";
+
+            UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, firstName, lastName);
+            if (account == null || !m_RecoveryCodeService.RedeemCode(account.PrincipalID, code))
+            {
+                WritePage(request, response, PageTitle("Recover Account"), RecoverAccountForm(firstName, lastName, genericError));
+                return;
+            }
+
+            if (!m_AuthenticationService.SetPassword(account.PrincipalID, password))
+            {
+                WritePage(request, response, PageTitle("Recover Account"),
+                        RecoverAccountForm(firstName, lastName, "Could not update your password. Please try again."));
+                return;
+            }
+
+            response.Redirect(BasePath + "/login?message=" + Uri.EscapeDataString("Password updated. Please log in."), HttpStatusCode.Redirect);
+        }
+
+        private static string RecoverAccountForm(string firstName, string lastName, string error)
+        {
+            string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
+            return "<h1>Recover Account</h1>"
+                    + "<p>Use one of your saved recovery codes to set a new password without needing email access.</p>"
+                    + errorHtml
+                    + "<form method=\"post\" action=\"" + BasePath + "/recover-account\">"
+                    + "<label>First name<br/><input type=\"text\" name=\"first_name\" value=\"" + Html(firstName) + "\" required autofocus></label><br/>"
+                    + "<label>Last name<br/><input type=\"text\" name=\"last_name\" value=\"" + Html(lastName) + "\" required></label><br/>"
+                    + "<label>Recovery code<br/><input type=\"text\" name=\"code\" required></label><br/>"
+                    + "<label>New password<br/><input type=\"password\" name=\"password\" required></label><br/>"
+                    + "<label>Confirm new password<br/><input type=\"password\" name=\"confirm_password\" required></label><br/>"
+                    + "<button type=\"submit\">Reset password</button>"
+                    + "</form>"
+                    + "<p><a href=\"" + BasePath + "/forgot-password\">Use email instead</a> &middot; <a href=\"" + BasePath + "/login\">Back to login</a></p>";
+        }
+
         // Mirrors the region-side EmailModule.cs's own MailKit connect/
         // authenticate/send sequence (see that file's SendEmail method) -
         // same library, same three calls, just without the LSL-specific
@@ -9896,7 +10283,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Email<br/><input type=\"email\" name=\"email\" value=\"" + Html(email) + "\" required autofocus></label><br/>"
                     + "<button type=\"submit\">Send reset link</button>"
                     + "</form>"
-                    + "<p><a href=\"" + BasePath + "/login\">Back to login</a></p>";
+                    + "<p><a href=\"" + BasePath + "/recover-account\">Use a recovery code instead</a> &middot; <a href=\"" + BasePath + "/login\">Back to login</a></p>";
         }
 
         private static string ResetPasswordForm(string token, string error)
@@ -9930,7 +10317,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<button type=\"submit\">Log in</button>"
                     + "</form>"
                     + "<p><a href=\"" + BasePath + "/register\">Sign up for a new account</a></p>"
-                    + "<p><a href=\"" + BasePath + "/forgot-password\">Forgot your password?</a></p>";
+                    + "<p><a href=\"" + BasePath + "/forgot-password\">Forgot your password?</a> &middot; <a href=\"" + BasePath + "/recover-account\">Use a recovery code</a></p>";
         }
 
         // Not static (unlike the rest of this #region) specifically so it can
@@ -10095,6 +10482,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             ("/change-password", "bi-key", "Change Password"),
             ("/change-email", "bi-envelope", "Change Email"),
+            ("/recovery-codes", "bi-shield-lock", "Recovery Codes"),
             ("/delete-account", "bi-trash", "Delete Account"),
         };
 

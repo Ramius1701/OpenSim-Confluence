@@ -13071,3 +13071,201 @@ still log in independently with their own separate passwords
 afterward, both landing on the one shared master account with a
 correctly merged Recent Activity feed (interleaved entries from both
 avatars' pre-merge history, in the right chronological order).
+
+## Dashboard rebuilt to actually match the 3rd Rock reference (2026-08-23)
+
+The original multi-avatar build's dashboard reused Casperia's existing
+single-`.card`/`h2`-separated page template - functionally similar to
+the reference (same stat counts, same Recent Activity concept) but
+structurally nothing like it, since that template renders the whole
+page as ONE bordered card with heading-separated sections stacked
+vertically, not a grid of separate elevated cards. The user pointed
+this out directly after re-sharing real screenshots of the actual
+`3rg.mygridpanel.com/user/dashboard.php` (3RD Rock Grid Panel -
+DigiWorldz's white-labeled control panel product, same owner/software,
+different grid branding) - the earlier screenshots from the original
+ask didn't survive this session's context compaction, so this was a
+genuine gap, not a refusal to match.
+
+Rebuilt `HandleDashboard` against the real screenshots pixel-by-pixel
+rather than the paraphrased description: new page-scoped `DashboardCss`
+(matching the established `WelcomeCompactCss` pattern - a `<style>`
+block prepended to the body HTML, not a global rule) that neutralizes
+the shared `.card` wrapper (`background:transparent;border:none;
+box-shadow:none;padding:0`) and supplies its own `.dash-*` classes:
+icon-led stat cards (icon left, number+label stacked right, not the
+label-above-value vertical stack `.stat-card` uses elsewhere -
+`AppendStat`/`.stat-card` deliberately left untouched since ~10 other
+pages share it), a 3-column `.dash-row` grid (Account Information /
+Quick Links / My Avatars), and two new full-width cards Online Friends
+and Recent Activity.
+
+Structural changes to match, not just visual: **Account Information**
+trimmed to the reference's own 4 fields (Username/Email/Role/Member
+Since) - Balance and Friends-count dropped from this card (still
+reachable via My Transactions/Friends, just not competing for space
+here), Home Region dropped entirely (still on `/profile`), styled
+"Edit Profile"/"Settings" buttons instead of plain text links. No
+"Verified" pill next to email, deliberately - that would reintroduce
+the email-verification concept removed in the portal-password
+simplification pass, which the reference's own product still has but
+Casperia's simplified model doesn't. **Quick Links** trimmed to the
+reference's 5 actions (Create/Import Avatar, Restart Region, Post an
+Event, Submit Support Ticket) in the icon-box+title+subtitle+chevron
+row style, not the card-grid `AppendDashboardLink`/`.dashboard-link`
+style still used by `/admin`'s own nav grid. **My Avatars** (new) -
+the same `GetLinkedAvatars` list the sidebar switcher already uses,
+compact card form, Active pill on the current one, "View All" to
+`/my-avatars`. **Online Friends** (new) - reuses `HandleFriends`'s own
+`GridUserInfo.Online` check, count-pill header, empty state matching
+the reference's copy. **Recent Activity** - switched the Action column
+from the humanized label (`HumanizeActivityEvent`/`ActivityEventLabels`,
+now dead code, removed) to the raw `EventType` string in a monospace/
+accent-colored span, matching the reference's own log-token styling
+exactly (`user_login`, `avatar_imported`, etc., not "Logged In").
+
+Rebuilt clean, redeployed, live-verified with the same throwaway
+avatar pair from the account-merge testing above: confirmed via
+`getComputedStyle` in the live page (not just text-content matching)
+that `.dash-stat`/`.dash-card` render as real flex/grid boxes with
+actual borders and backgrounds, and that the outer `.card` wrapper is
+correctly transparent/borderless so it doesn't show up as a second
+frame around everything. `get_page_text` confirmed every section
+present with the right content: 4 icon stat cards, the trimmed Account
+Information fields, exactly the 5 Quick Links, both avatars in My
+Avatars with the active one pilled, the Online Friends empty state,
+and Recent Activity showing raw event-type tokens. Could not take an
+actual screenshot in this environment (the browser pane doesn't
+composite off-screen), so final pixel-level sign-off is still up to
+the user/Jeffery once they look at it live.
+
+## All 5 OpenSim-Grid-Interface audit gaps built (2026-08-23)
+
+Follow-up to the OGI-vs-Casperia gap audit (background research agent,
+resident `account/` pages vs. this connector's equivalent handlers).
+User's direction: "all of them." Five independent fixes, in the order
+built:
+
+**1. Groups visibility bug fixed** (`HandleProfile`'s Groups section).
+`ListInProfile` - a per-membership "show this on my PUBLIC profile"
+flag - was being used to filter what a resident sees about their OWN
+memberships too, not just what strangers see. A resident in a group
+they hadn't flagged public couldn't see it listed anywhere on their
+own profile, not even to themselves. Fixed: `isSelf` now sees every
+membership (rendered as a richer table - Group/Title/On Public
+Profile/Notices, matching OGI's own `account/groups.php` fields);
+non-self viewers still see only `ListInProfile == true` entries,
+name-only, exactly as before.
+
+**2. Dashboard notification banner** - real gap, OGI's own account
+shell surfaces unread messages/offline IMs/open tickets in one place,
+Casperia had nothing. Added a "You have new activity" banner to
+`HandleDashboard` covering unread web messages, offline messages
+waiting, and open support tickets. Deliberately dashboard-only, not
+persistent sidebar badges like OGI's - OGI's badges live on a
+page-scoped account shell (only account/* pages), Casperia's sidebar
+renders on every page site-wide, so live badge counts there would be
+a real per-request performance cost for a nav element meant to be
+cheap. Pending-friend-request count is NOT included - confirmed via
+`IFriendsService` that this codebase has no queryable "pending
+request" concept at all (friendships only exist once accepted;
+requests are an in-world IM handshake never persisted anywhere the
+web portal can read) - a real, deeper gap than this pass's scope.
+
+**Caught building the banner, fixed immediately**: the naive
+implementation called `GetMessages` just to get an offline-message
+count - but `OfflineIMService.GetMessages` **deletes every message it
+returns as a side effect** (stock "deliver once" semantics, also
+relied on by the real in-world login-delivery path in
+`OfflineIMRegionModule`). That would have made the dashboard itself
+silently wipe a resident's pending offline messages on every page
+load, before they ever saw them. Added a real non-destructive
+`GetMessageCount` to `IOfflineIMService` (backed by the already-
+non-destructive `IOfflineIMData.GetCount`) across all 3 implementers
+(`OfflineIMService`, `OfflineIMRegionModule`, the remote/robust wire
+connectors) before the banner ever shipped.
+
+**3. Friends list: Hypergrid friends were invisible, plus rights
+columns.** `FriendInfo.Friend` is a plain UUID string for a local
+friend but a `"UUID;homeURI;First Last;secret"` universal identifier
+for an HG friend (confirmed via `UserAgentService.GetOnlineFriends`'s
+own parsing) - the old `UUID.TryParse(friend.Friend, ...)` silently
+`continue`'d past every HG friend, meaning they never appeared on this
+page at all despite this being a Hypergrid-enabled grid. Fixed via
+`Util.ParseUniversalUserIdentifier` and split into "This Grid"/
+"Hypergrid" tables (OGI's `account/friends.php` does the same split,
+for the same reason - an HG friend has no local `UserAccount` to
+resolve a profile link from). Also added a "Rights You've Granted"
+column (`MyFlags` decoded via `FriendRights.CanSeeOnline`/
+`CanSeeOnMap`/`CanModifyObjects`) to both tables - display-only for
+now, no edit form since `GrantRights` isn't wired into this connector
+anywhere yet.
+
+**4. Offline messages reworked for real persistence + per-message
+delete.** Same "deletes on read" discovery as #2, but here it was
+already live in production behavior, not just a near-miss: the OLD
+`HandleOfflineMessages` called `GetMessages` to render the page on
+every GET, meaning simply visiting the page to read your messages
+silently wiped them - "Clear All" was almost redundant, since by the
+time a resident could click it their messages were usually already
+gone. Asked the user how far to take the real fix (leave it, or
+rework the stock "deliver once" semantics properly, accepting the
+larger blast radius since `OfflineIMRegionModule`'s in-world login
+delivery shares the same service); they chose the full rework.
+Landed the safer version of that: `GetMessages` itself is untouched
+(still consume-all, still what real login delivery relies on) - added
+new, additive-only primitives instead. `im_offline` already has a
+real `ID` AUTO_INCREMENT primary key that was silently flowing into
+`OfflineIMData.Data["ID"]` via the generic table handler's "every
+extra column goes into Data" behavior, just never read by any code
+before now. New `PeekMessages` (non-destructive list, includes each
+message's real ID) and `DeleteMessage(principalID, id)` (single-row
+delete, WHERE clause scoped to both ID and PrincipalID so a resident
+can never delete anyone else's message even with a tampered ID) added
+across `IOfflineIMService`/`OfflineIMService`/`OfflineIMRegionModule`/
+the remote+robust wire connectors (new `PEEK`/`DELETEONE` protocol
+methods) and one new `IOfflineIMData.Delete(string[], string[])`
+overload (already implemented on both MySQL/PGSQL's generic table
+handler base classes - just wasn't exposed through the narrower
+interface). `HandleOfflineMessages` now peeks (not consumes) to
+render, with a real per-row delete button per message alongside the
+existing Clear All. A message left un-deleted here is still delivered
+normally (and removed) the next time the resident actually logs
+in-world - the web page is now a real, re-visitable inbox instead of
+a one-shot reveal.
+
+**5. Self-service recovery codes** - new `RecoveryCodeService`, full
+7-layer recipe (Framework POCO, service+data interfaces, service
+base/impl, 3 DB backends, migrations, prebuild.xml/sln/ini
+registration), matching `SuggestionService`'s exact pattern. Tied to
+`PrincipalID` (an avatar), not `WebAccountID` - Casperia's login IS
+the avatar's own in-world password, there's no separate portal
+credential to recover, so this resets the same identity
+`/forgot-password` already resets by email, just reachable without
+one. 5 codes per avatar (10-char, ambiguity-safe charset - no 0/O/1/I/
+L), PBKDF2-SHA256 hashed+salted at rest, shown in plaintext exactly
+once at generation (`/recovery-codes`, logged in). Redemption
+(`/recover-account`, public, no session) is one step, not two - a
+valid code is itself the proof an emailed reset link provides, so
+there's no separate "check your email" round trip; sets the new
+password immediately on a correct, unused code. Single-use, case/
+whitespace-insensitive matching. Linked from both `/login` and
+`/forgot-password` ("Use a recovery code instead"), and from the
+sidebar's Account group.
+
+Rebuilt clean after several rounds of csproj registration fixes
+(`OpenSim.Data.csproj`/`OpenSim.Framework.csproj`/all 3 DB backend
+csprojs need explicit `<Compile Include>`/`<EmbeddedResource Include>`
+entries, `EnableDefaultItems=false` in this tree - the same gotcha
+hit twice already during the original multi-avatar build). Redeployed,
+live-verified every item: groups table renders with the richer self-view
+columns; the notification banner correctly showed "1 open support
+ticket" after submitting a real test ticket; recovery codes generated,
+redeemed successfully (password actually changed, confirmed by logging
+in with the new one), a second redemption of the SAME code correctly
+rejected ("Invalid name or recovery code"), and a second, still-unused
+code redeemed successfully with lowercase/normalized input; sidebar
+"Recovery Codes" entry renders in the Account group. `Robust.log`
+confirmed clean throughout - `RecoveryCode` migration created at
+version 1 with no errors, no new errors of any kind versus the
+pre-existing baseline.

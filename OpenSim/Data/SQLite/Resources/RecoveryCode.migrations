@@ -1,0 +1,14 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS recovery_codes (
+	ID varchar(36) NOT NULL PRIMARY KEY,
+	PrincipalID varchar(36) NOT NULL,
+	CodeHash varchar(64) NOT NULL,
+	CodeSalt varchar(32) NOT NULL,
+	Used int NOT NULL DEFAULT 0,
+	Created int NOT NULL
+);
+
+COMMIT;

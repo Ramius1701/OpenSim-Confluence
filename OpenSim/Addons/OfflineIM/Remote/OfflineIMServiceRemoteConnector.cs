@@ -121,6 +121,51 @@ namespace OpenSim.OfflineIM
             return ims;
         }
 
+        public int GetMessageCount(UUID principalID)
+        {
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["PrincipalID"] = principalID;
+
+            Dictionary<string, object> ret = MakeRequest("COUNT", sendData);
+            if (ret == null || !ret.TryGetValue("RESULT", out object resultobj))
+                return 0;
+
+            return int.TryParse(resultobj.ToString(), out int count) ? count : 0;
+        }
+
+        public List<OfflineIMEntry> PeekMessages(UUID principalID)
+        {
+            List<OfflineIMEntry> entries = new List<OfflineIMEntry>();
+
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["PrincipalID"] = principalID;
+
+            Dictionary<string, object> ret = MakeRequest("PEEK", sendData);
+            if (ret == null || !ret.TryGetValue("RESULT", out object resultobj) || resultobj is not Dictionary<string, object> resultdic)
+                return entries;
+
+            foreach (object v in resultdic.Values)
+            {
+                if (v is not Dictionary<string, object> vdic)
+                    continue;
+                int id = vdic.TryGetValue("ID", out object idobj) && int.TryParse(idobj.ToString(), out int parsedId) ? parsedId : 0;
+                entries.Add(new OfflineIMEntry { ID = id, Message = OfflineIMDataUtils.GridInstantMessage(vdic) });
+            }
+
+            return entries;
+        }
+
+        public bool DeleteMessage(UUID principalID, int id)
+        {
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["PrincipalID"] = principalID;
+            sendData["ID"] = id;
+
+            Dictionary<string, object> ret = MakeRequest("DELETEONE", sendData);
+            return ret != null && ret.TryGetValue("RESULT", out object resultobj)
+                    && bool.TryParse(resultobj.ToString(), out bool success) && success;
+        }
+
         public bool StoreMessage(GridInstantMessage im, out string reason)
         {
             Dictionary<string, object> sendData = OfflineIMDataUtils.GridInstantMessage(im);

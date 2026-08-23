@@ -239,6 +239,21 @@ namespace OpenSim.OfflineIM
             return m_OfflineIMService.GetMessages(principalID);
         }
 
+        public int GetMessageCount(UUID principalID)
+        {
+            return m_OfflineIMService.GetMessageCount(principalID);
+        }
+
+        public List<OfflineIMEntry> PeekMessages(UUID principalID)
+        {
+            return m_OfflineIMService.PeekMessages(principalID);
+        }
+
+        public bool DeleteMessage(UUID principalID, int id)
+        {
+            return m_OfflineIMService.DeleteMessage(principalID, id);
+        }
+
         public bool StoreMessage(GridInstantMessage im, out string reason)
         {
             return m_OfflineIMService.StoreMessage(im, out reason);

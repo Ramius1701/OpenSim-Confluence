@@ -32,9 +32,43 @@ using OpenMetaverse;
 
 namespace OpenSim.Services.Interfaces
 {
+    // Carries a message alongside its own real row ID, for callers that
+    // need to reference one specific pending message later (PeekMessages/
+    // DeleteMessage) - GetMessages never needed this since it consumes
+    // everything it returns in the same call.
+    public class OfflineIMEntry
+    {
+        public int ID;
+        public GridInstantMessage Message;
+    }
+
     public interface IOfflineIMService
     {
         List<GridInstantMessage> GetMessages(UUID principalID);
+
+        // Non-destructive - GetMessages deletes what it returns as a side
+        // effect (stock "deliver once" semantics also relied on by the
+        // in-world login-delivery path in OfflineIMRegionModule), so
+        // anything that only needs a count (a notification badge, say)
+        // must NOT call GetMessages - that would silently wipe a
+        // resident's pending messages before they ever see them.
+        int GetMessageCount(UUID principalID);
+
+        // Also non-destructive, and also returns each message's own row
+        // ID (unlike GetMessages) - lets the web portal show a
+        // persistent, re-visitable list with real per-message delete,
+        // without touching GetMessages' existing consume-on-read
+        // behavior that in-world login delivery depends on. A message
+        // peeked here is still delivered normally (and removed) the next
+        // time the resident actually logs in-world, unless deleted first
+        // via DeleteMessage.
+        List<OfflineIMEntry> PeekMessages(UUID principalID);
+
+        // Deletes exactly one message by its own row ID. Scoped to
+        // principalID at the data layer (not just an app-level check) so
+        // a resident can only ever delete their own messages, even if an
+        // ID were guessed/tampered with.
+        bool DeleteMessage(UUID principalID, int id);
 
         bool StoreMessage(GridInstantMessage im, out string reason);
 
