@@ -74,9 +74,11 @@ regeneration.
 
 **Store:** residents spend in-world currency — ConfluenceCurrency or
 Gloebit, their choice at checkout — on an admin-managed catalog of
-prim-capacity packs and self-service region orders. Prim packs apply
-instantly and persist through the target region's own remote console
-(no restart needed); region orders auto-generate the new region's
+prim-capacity packs and self-service region orders. Prim packs add to
+whatever the region's current cap already is — every region can have a
+different baseline — and apply instantly, persisting through the
+target region's own remote console (no restart needed); region orders
+auto-generate the new region's
 `.ini`/port/grid location, with a one-click admin "Start Region"
 button rather than payment silently launching a process. Gloebit
 purchases run through this feature's own Robust-native OAuth2

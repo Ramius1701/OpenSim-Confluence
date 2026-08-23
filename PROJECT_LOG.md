@@ -13826,3 +13826,58 @@ Economy page's Grid Totals/Top Balances/Recent Transactions sections
 all render `C$` consistently, sourced from the config value, against
 Jeffery Biedermann's and Ramius Easterwood's real balances and real
 transaction history.
+
+## Prim packs made additive, not absolute-set (2026-08-23)
+
+User was drafting a customer-facing pricing sheet (`Prices.md`) for
+the Store catalog and caught a real bug in review: prim packs were
+marketed as "+5,000 Prims" (additive), but `set-prim-limit` (added
+with the Store feature above) sets a region's prim cap to an absolute
+value, not a delta - Robust has no way to ask a live region "what's
+your current cap?" (the grid registry doesn't track it), so
+`FulfillPrimPack` was passing the catalog's raw `PrimAmount` straight
+through as the new total. A resident buying "Basic Prim Pack"
+(catalog value `5000`, meant as "+5,000") on a region already at its
+15,000 default would have had their cap **cut to 5,000** - the
+opposite of what they paid for. Confirmed directly relevant: checked
+three real regions' `Regions.ini` (`Welcome_Center`,
+`Starbase_Andromeda`, `UFPGC`) and found genuinely different baselines
+in production today - Welcome Center has no `MaxPrims` line at all
+(falls back to the 15000 code default), Starbase Andromeda and UFPGC
+both explicitly set `45000` - so a single flat absolute-value catalog
+entry could never have served every rental tier correctly anyway.
+
+Fixed at the source rather than working around it in Robust: new
+console command `add-prim-limit <region-id> <delta-prims>`
+(`RegionCommandsModule.cs`, right alongside `set-prim-limit`) reads
+`m_scene.RegionInfo.ObjectCapacity` - the region **process's own**
+live current value, which it always knows regardless of what's in its
+`.ini` - and adds the delta, rather than requiring the caller to know
+or recompute the current value first. `FulfillPrimPack` now calls
+`add-prim-limit` instead of `set-prim-limit`; catalog `PrimAmount` for
+`PrimPack` items is genuinely "+N" again, matching the pricing sheet's
+own marketing copy. Both commands are kept - `set-prim-limit` stays
+available for direct admin/support use where an absolute value is
+actually what's wanted.
+
+Verified live against a real region, not a dry run: called
+`add-prim-limit` directly over Sandbox's `/consoleweb` channel
+(`45000 -> 50000`, confirmed in the rewritten `.ini`), then
+`set-prim-limit ... 45000` to restore the pre-test value. That test
+also surfaced a real, separate side effect worth flagging for the
+future: `RegionInfo.SaveRegionToFile`'s Nini-based writer doesn't
+selectively patch just the changed key - it rewrites the whole file
+and silently drops any key it currently considers "at its default"
+(`AllowAlternatePorts`, `ResolveAddress`, `ScopeID`, and even explicit
+`SizeX`/`SizeY = 256` all vanished from Sandbox's `Regions.ini` after
+one write, since 256 already matches the code default) - harmless in
+this instance, but a real, silent way for hand-authored comments and
+explicit-but-default values to erode out of these files over
+repeated automated writes. Directly motivated the user's next ask:
+an admin-panel `.ini` viewer/editor, so an admin can see and fix this
+kind of drift without needing filesystem/RDP access.
+
+Full solution build clean (0 warnings, 0 errors) before and after.
+Redeploy needed the same full stop/sync/restart-staggered cycle as
+every other `OpenSim.Region.CoreModules.dll`/`OpenSim.Server.Handlers.dll`
+change this session.

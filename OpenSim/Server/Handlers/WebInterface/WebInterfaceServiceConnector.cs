@@ -10147,8 +10147,8 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                     if (item.ItemType == "PrimPack")
                     {
-                        sb.Append("<p>Sets the chosen region's prim capacity to <strong>")
-                          .Append((item.PrimAmount > 0 ? item.PrimAmount : 15000).ToString("N0")).Append("</strong>.</p>");
+                        sb.Append("<p>Adds <strong>+").Append(item.PrimAmount.ToString("N0"))
+                          .Append("</strong> prims to the chosen region's current capacity.</p>");
                     }
                     else if (item.ItemType == "RegionOrder")
                     {
@@ -10708,8 +10708,19 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            int newCapacity = item.PrimAmount > 0 ? item.PrimAmount : 15000;
-            string output = RunRegionConsoleCommand(region, "set-prim-limit " + region.RegionID + " " + newCapacity);
+            if (item.PrimAmount <= 0)
+            {
+                order.Notes = "Fulfillment failed: this catalog item has no prim amount configured.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            // Additive - each region can already have a different baseline
+            // MaxPrims (its own .ini either sets one or falls back to the
+            // 15000 default), so a pack is always "+N on top of whatever
+            // this region already has," never a flat replacement.
+            string output = RunRegionConsoleCommand(region, "add-prim-limit " + region.RegionID + " " + item.PrimAmount);
 
             order.Status = "Fulfilled";
             order.ExpiresAt = item.DurationDays > 0 ? DateTime.UtcNow.AddDays(item.DurationDays) : (DateTime?)null;
@@ -10959,7 +10970,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<option value=\"PrimPack\"").Append(editItem == null || editItem.ItemType == "PrimPack" ? " selected" : string.Empty).Append(">Prim Pack</option>");
             sb.Append("<option value=\"RegionOrder\"").Append(editItem != null && editItem.ItemType == "RegionOrder" ? " selected" : string.Empty).Append(">Region Order</option>");
             sb.Append("</select></p>");
-            sb.Append("<p>Prim capacity (PrimPack: absolute new total. RegionOrder: starting capacity, 0 = default 15000) <input type=\"number\" name=\"prim_amount\" value=\"")
+            sb.Append("<p>Prim capacity (PrimPack: prims added on top of the region's current cap, whatever that already is. RegionOrder: starting capacity, 0 = default 15000) <input type=\"number\" name=\"prim_amount\" value=\"")
               .Append(editItem != null ? editItem.PrimAmount : 0).Append("\"></p>");
             sb.Append("<p>Region size X / Y in meters (RegionOrder only, 0 = default 256) <input type=\"number\" name=\"region_size_x\" value=\"")
               .Append(editItem != null ? editItem.RegionSizeX : 0).Append("\"> <input type=\"number\" name=\"region_size_y\" value=\"")

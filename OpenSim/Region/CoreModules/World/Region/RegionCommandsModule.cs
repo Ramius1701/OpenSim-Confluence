@@ -118,6 +118,17 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
                 + "invoked without a selected console scene (e.g. via the remote console).",
                 HandleSetPrimLimit);
 
+            m_console.Commands.AddCommand(
+                "Regions", false, "add-prim-limit",
+                "add-prim-limit <region-id> <delta-prims>",
+                "Add to the maximum object (prim) capacity for the region with the given RegionID.",
+                "Adds to whatever this region's current cap already is (which can vary per region -\n"
+                + "each region's own .ini either sets its own MaxPrims or falls back to the 15000\n"
+                + "default), rather than replacing it - the region process itself resolves the\n"
+                + "current value, so the caller never needs to know it in advance. Persisted\n"
+                + "immediately to the region's own .ini file, same as set-prim-limit.",
+                HandleAddPrimLimit);
+
             m_console.Commands.AddCommand("Regions", false, "show neighbours",
                 "show neighbours",
                 "Shows the local region neighbours", HandleShowNeighboursCommand);
@@ -307,6 +318,46 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
             ri.SaveRegionToFile(ri.RegionFile, ri.RegionFile);
 
             MainConsole.Instance.Output("prim-limit set to {0} in {1}", newValue, m_scene.Name);
+        }
+
+        // Additive counterpart to HandleSetPrimLimit - reads
+        // m_scene.RegionInfo.ObjectCapacity (this region process's own live
+        // value, whatever it currently is - each region's .ini can set its
+        // own MaxPrims independently, or fall back to the 15000 default) and
+        // adds the delta, rather than requiring the caller to know or
+        // recompute the current value. Backs Store's prim-capacity packs,
+        // which are meant to be an add-on regardless of a region's starting
+        // tier, not a flat replacement.
+        private void HandleAddPrimLimit(string module, string[] args)
+        {
+            if (args.Length != 3)
+            {
+                MainConsole.Instance.Output("Usage: add-prim-limit <region-id> <delta-prims>");
+                return;
+            }
+
+            if (!UUID.TryParse(args[1], out UUID regionID))
+            {
+                MainConsole.Instance.Output("Usage: add-prim-limit <region-id> <delta-prims>");
+                return;
+            }
+
+            string rawValue = args[2];
+
+            if (regionID != m_scene.RegionInfo.RegionID)
+                return;
+
+            int delta;
+
+            if (!ConsoleUtil.TryParseConsoleNaturalInt(MainConsole.Instance, rawValue, out delta))
+                return;
+
+            RegionInfo ri = m_scene.RegionInfo;
+            int newValue = ri.ObjectCapacity + delta;
+            ri.SetObjectCapacity(newValue);
+            ri.SaveRegionToFile(ri.RegionFile, ri.RegionFile);
+
+            MainConsole.Instance.Output("prim-limit increased by {0} to {1} in {2}", delta, newValue, m_scene.Name);
         }
 
         private void HandleShowScene(string module, string[] cmd)
