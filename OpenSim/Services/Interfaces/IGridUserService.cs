@@ -156,5 +156,11 @@ namespace OpenSim.Services.Interfaces
         // showing "online" forever, with nothing to ever correct it. Pass
         // an empty/null set to mean "no regions are alive" (returns 0).
         int GetOnlineUserCount(HashSet<string> aliveRegionIDs);
+
+        // Same accuracy caveat/alive-region filtering as
+        // GetOnlineUserCount(aliveRegionIDs), but returns who and where -
+        // backs the World Map's "Show Users" toggle. Pass an empty/null
+        // set to mean "no regions are alive" (returns an empty list).
+        List<GridUserInfo> GetOnlineUsers(HashSet<string> aliveRegionIDs);
     }
 }

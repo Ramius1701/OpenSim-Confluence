@@ -1863,8 +1863,40 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            // Same alive-region probe HandleWelcome/HandleGridStatus already
+            // use. The map tiles themselves are built ONLY from this list,
+            // not the full `regions` set - a region that's registered but
+            // not actually running has no live tile server to fetch a
+            // current image from anyway, and showing its (possibly very
+            // stale) last-known tile as if it were a real, visitable place
+            // is misleading. The "All Regions" table below still lists
+            // every registered region regardless of status, with its own
+            // Online/Offline column, so nothing about the grid's roster is
+            // hidden - only the interactive map itself is online-only.
+            List<GridRegion> aliveRegions = FilterOnlineRegions(regions);
+            HashSet<string> aliveRegionIDs = new HashSet<string>(aliveRegions.Select(r => r.RegionID.ToString()));
+
+            // Resolved once per unique estate owner, not once per region -
+            // a grid where one resident owns many regions shouldn't cost
+            // one UserAccountService lookup per region. Shared by both the
+            // map-tile loop (alive regions only) and the full "All Regions"
+            // table below (every registered region), so an owner looked up
+            // for one isn't looked up again for the other.
+            Dictionary<UUID, string> ownerNames = new Dictionary<UUID, string>();
+            string ResolveOwnerName(UUID estateOwner)
+            {
+                if (estateOwner == UUID.Zero || m_UserAccountService == null)
+                    return "Unknown";
+                if (ownerNames.TryGetValue(estateOwner, out string cached))
+                    return cached;
+                UserAccount ownerAccount = m_UserAccountService.GetUserAccount(UUID.Zero, estateOwner);
+                string resolved = ownerAccount != null ? ownerAccount.Name : "Unknown";
+                ownerNames[estateOwner] = resolved;
+                return resolved;
+            }
+
             OSDArray regionArray = new OSDArray();
-            foreach (GridRegion region in regions)
+            foreach (GridRegion region in aliveRegions)
             {
                 OSDMap r = new OSDMap();
                 r["name"] = region.RegionName;
@@ -1874,27 +1906,99 @@ namespace OpenSim.Server.Handlers.WebInterface
                 r["sizeX"] = region.RegionSizeX;
                 r["sizeY"] = region.RegionSizeY;
                 r["teleportUrl"] = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                r["owner"] = ResolveOwnerName(region.EstateOwner);
+
+                int unitsX = Math.Max(1, region.RegionSizeX / 256);
+                int unitsY = Math.Max(1, region.RegionSizeY / 256);
+                r["sizeLabel"] = unitsX + "×" + unitsY;
+
+                // Absence of a row in IRegionHGService means open (its own
+                // documented default) - matches how HandleAdminStats/
+                // HandleAdmin already treat a null service the same way.
+                r["hgOpen"] = m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID);
+
                 regionArray.Add(r);
             }
             string regionJson = OSDParser.SerializeJsonString(regionArray);
 
+            // "Show Users" data - built from the same alive-region set as
+            // the tiles above. GridUserInfo.UserID is a plain UUID for a
+            // local resident but a "UUID;homeURI;First Last;secret"
+            // universal identifier for a Hypergrid visitor (same format
+            // HandleFriends already has to account for) - resolved the
+            // same way there, not skipped here.
+            OSDArray userArray = new OSDArray();
+            if (m_GridUserService != null)
+            {
+                foreach (GridUserInfo info in m_GridUserService.GetOnlineUsers(aliveRegionIDs))
+                {
+                    GridRegion userRegion = aliveRegions.Find(reg => reg.RegionID == info.LastRegionID);
+                    if (userRegion == null)
+                        continue;
+
+                    string userName = null;
+                    if (UUID.TryParse(info.UserID, out UUID localId))
+                    {
+                        UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, localId);
+                        userName = account?.Name;
+                    }
+                    else if (Util.ParseUniversalUserIdentifier(info.UserID, out UUID _, out string _, out string hgFirst, out string hgLast))
+                    {
+                        userName = (hgFirst + " " + hgLast).Trim();
+                    }
+                    if (string.IsNullOrEmpty(userName))
+                        continue;
+
+                    OSDMap u = new OSDMap();
+                    u["name"] = userName;
+                    // Region's own grid-unit origin plus this avatar's
+                    // in-region meters position, converted into the same
+                    // grid-unit space the region tiles are drawn in (1
+                    // grid unit = 256m) - matches gridX/gridY above.
+                    u["x"] = userRegion.RegionCoordX + (info.LastPosition.X / 256.0);
+                    u["y"] = userRegion.RegionCoordY + (info.LastPosition.Y / 256.0);
+                    userArray.Add(u);
+                }
+            }
+            string userJson = OSDParser.SerializeJsonString(userArray);
+
             sb.Append("<link rel=\"stylesheet\" href=\"/static/leaflet.css\">");
             sb.Append("<style>#worldMap{width:100%;height:640px;border-radius:8px;border:1px solid var(--border);background:#0a0a0a;}" +
                     ".region-popup h3{margin:0 0 6px;font-size:14px;}" +
-                    ".region-popup .wm-meta{color:var(--muted);font-size:12px;margin:0 0 10px;}" +
+                    ".region-popup .wm-meta{color:var(--muted);font-size:12px;margin:0 0 4px;}" +
                     ".region-popup a.wm-tp{display:inline-block;background:var(--accent);color:#fff;padding:6px 14px;" +
-                    "border-radius:40px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;}" +
+                    "border-radius:40px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-top:6px;}" +
                     ".region-popup a.wm-tp:hover{background:var(--accent-dark);text-decoration:none;}" +
                     ".leaflet-popup-content-wrapper{background:var(--card-bg);color:var(--text);border-radius:8px;}" +
-                    ".leaflet-popup-tip{background:var(--card-bg);}</style>");
+                    ".leaflet-popup-tip{background:var(--card-bg);}" +
+                    ".map-toolbar{display:flex;align-items:center;gap:16px;margin:0 0 10px;flex-wrap:wrap;}" +
+                    "#mapSearch{max-width:260px;margin:0;}" +
+                    ".map-toolbar label{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--muted);margin:0;}" +
+                    ".map-toolbar label input{width:auto;margin:0;}" +
+                    "</style>");
+            sb.Append("<div class=\"map-toolbar\">")
+              .Append("<input type=\"text\" id=\"mapSearch\" placeholder=\"Search regions…\" autocomplete=\"off\">")
+              .Append("<label><input type=\"checkbox\" id=\"mapShowUsers\"> Show Users</label>")
+              .Append("</div>");
             sb.Append("<div id=\"worldMap\"></div>");
             sb.Append("<script src=\"/static/leaflet.js\"></script>");
             sb.Append("<script>(function(){");
             sb.Append("var regions=").Append(regionJson).Append(";");
-            sb.Append("var map=L.map('worldMap',{crs:L.CRS.Simple,minZoom:-4,maxZoom:6,attributionControl:false});");
+            sb.Append("var onlineUsers=").Append(userJson).Append(";");
+            // maxZoom raised 6->8: bounds are defined in whole grid-units
+            // (see imgBounds below), so at zoom level N one region is
+            // 2^N CSS pixels wide - zoom 8 is where that reaches 256px,
+            // the tiles' own native resolution. Below 8 the map was
+            // capped well short of the actual image detail; going further
+            // than 8 just upscales/blurs the same fixed-resolution JPEGs
+            // (there's no higher-res source to reveal), so 8 is the real
+            // ceiling, not an arbitrary number.
+            sb.Append("var map=L.map('worldMap',{crs:L.CRS.Simple,minZoom:-4,maxZoom:8,attributionControl:false});");
             sb.Append("var bounds=L.latLngBounds([]);");
+            sb.Append("var byName={};"); // lowercased region name -> {center:[y,x], layer:firstTileLayer}
             sb.Append("regions.forEach(function(r){");
             sb.Append("var tilesX=Math.max(1,Math.ceil(r.sizeX/256)),tilesY=Math.max(1,Math.ceil(r.sizeY/256));");
+            sb.Append("var firstLayer=null,cy=r.gridY+tilesY/2,cx=r.gridX+tilesX/2;");
             sb.Append("for(var ty=0;ty<tilesY;ty++){for(var tx=0;tx<tilesX;tx++){");
             sb.Append("var x=r.gridX+tx,y=r.gridY+ty;");
             sb.Append("var imgBounds=[[y,x],[y+1,x+1]];bounds.extend(imgBounds[0]);bounds.extend(imgBounds[1]);");
@@ -1906,22 +2010,58 @@ namespace OpenSim.Server.Handlers.WebInterface
             // 256m region shows the same one corner tile stretched/repeated
             // across its whole footprint.
             sb.Append("var tileUrl='/map/map-1-'+x+'-'+y+'-objects.jpg';");
-            sb.Append("var layer=L.imageOverlay(tileUrl,imgBounds,{opacity:1});");
+            // interactive:true is required - L.imageOverlay defaults to
+            // NOT firing mouse events at all (unlike L.marker/L.path),
+            // confirmed live: clicking a tile did nothing whatsoever
+            // without this, popup bound or not.
+            sb.Append("var layer=L.imageOverlay(tileUrl,imgBounds,{opacity:1,interactive:true});");
             sb.Append("var popupHtml='<div class=\"region-popup\"><h3>'+r.name.replace(/</g,'&lt;')+'</h3>'+" +
-                    "'<div class=\"wm-meta\">'+r.sizeX+'m &times; '+r.sizeY+'m &middot; ('+r.gridX+', '+r.gridY+')</div>'+" +
+                    "'<div class=\"wm-meta\">'+r.sizeLabel+' region ('+r.sizeX+'m &times; '+r.sizeY+'m) &middot; ('+r.gridX+', '+r.gridY+')</div>'+" +
+                    "'<div class=\"wm-meta\">Owner: '+r.owner.replace(/</g,'&lt;')+'</div>'+" +
+                    "'<div class=\"wm-meta\">Hypergrid: '+(r.hgOpen?'Open':'Closed')+'</div>'+" +
                     "'<a class=\"wm-tp\" href=\"'+r.teleportUrl+'\">Teleport &rarr;</a></div>';");
             sb.Append("layer.bindPopup(popupHtml,{className:'region-popup-wrap',closeButton:true});");
-            sb.Append("layer.addTo(map);}}});");
+            sb.Append("layer.addTo(map);if(!firstLayer)firstLayer=layer;}}");
+            sb.Append("byName[r.name.toLowerCase()]={center:[cy,cx],layer:firstLayer};");
+            sb.Append("});");
             sb.Append("if(bounds.isValid())map.fitBounds(bounds,{padding:[24,24]});else map.setView([1000,1000],4);");
+
+            sb.Append("var usersLayer=L.layerGroup();");
+            sb.Append("onlineUsers.forEach(function(u){");
+            // Styled via Leaflet's own circleMarker options, not a CSS
+            // class - a circleMarker renders as an SVG <path>, and CSS
+            // box-model properties (background/border/border-radius/
+            // box-shadow) silently do nothing on SVG elements. Confirmed
+            // live: the marker WAS in the DOM and toggling correctly the
+            // whole time, just rendered invisible-ish at Leaflet's default
+            // 20%-opacity blue fill with no styling actually landing.
+            sb.Append("L.circleMarker([u.y,u.x],{radius:6,color:'#fff',weight:2,fillColor:'#22d3ee',fillOpacity:1})" +
+                    ".bindTooltip(u.name.replace(/</g,'&lt;')).addTo(usersLayer);");
+            sb.Append("});");
+            sb.Append("document.getElementById('mapShowUsers').addEventListener('change',function(e){");
+            sb.Append("if(e.target.checked)usersLayer.addTo(map);else map.removeLayer(usersLayer);});");
+
+            sb.Append("var searchBox=document.getElementById('mapSearch');");
+            sb.Append("function doSearch(){");
+            sb.Append("var q=searchBox.value.trim().toLowerCase();if(!q)return;");
+            sb.Append("var hit=byName[q];");
+            sb.Append("if(!hit){for(var k in byName){if(k.indexOf(q)!==-1){hit=byName[k];break;}}}");
+            sb.Append("if(hit){map.setView(hit.center,3);if(hit.layer)hit.layer.openPopup();}");
+            sb.Append("}");
+            sb.Append("searchBox.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();doSearch();}});");
             sb.Append("})();</script>");
 
-            sb.Append("<h2>All Regions</h2><table><tr><th>Region</th><th>Size</th><th></th></tr>");
+            sb.Append("<h2>All Regions</h2><p class=\"news-meta\">Every region registered on this grid - the map above only draws the ones actually online right now.</p>");
+            sb.Append("<table><tr><th>Region</th><th>Status</th><th>Size</th><th>Owner</th><th></th></tr>");
             foreach (GridRegion region in regions)
             {
                 string teleportUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                bool isOnline = aliveRegionIDs.Contains(region.RegionID.ToString());
                 sb.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>")
+                  .Append("<td><span class=\"pill ").Append(isOnline ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>")
                   .Append("<td>").Append(region.RegionSizeX).Append("x").Append(region.RegionSizeY).Append("</td>")
-                  .Append("<td><a href=\"").Append(Html(teleportUrl)).Append("\">Teleport</a></td></tr>");
+                  .Append("<td>").Append(Html(ResolveOwnerName(region.EstateOwner))).Append("</td>")
+                  .Append("<td>").Append(isOnline ? "<a href=\"" + Html(teleportUrl) + "\">Teleport</a>" : string.Empty).Append("</td></tr>");
             }
             sb.Append("</table>");
 
@@ -5286,22 +5426,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private static bool IsRegionAlive(GridRegion region, int timeoutMs)
         {
-            try
-            {
-                Uri uri = new Uri(region.ServerURI);
-                using (System.Net.Sockets.TcpClient client = new System.Net.Sockets.TcpClient())
-                {
-                    System.Threading.Tasks.Task connectTask = client.ConnectAsync(uri.Host, uri.Port);
-                    if (System.Threading.Tasks.Task.WhenAny(connectTask,
-                            System.Threading.Tasks.Task.Delay(timeoutMs)).Result != connectTask)
-                        return false;
-                    return client.Connected && connectTask.IsCompletedSuccessfully;
-                }
-            }
-            catch
-            {
-                return false;
-            }
+            return Util.IsHostAlive(region.ServerURI, timeoutMs);
         }
 
         private static void AppendStat(StringBuilder sb, string label, string value, string sub)

@@ -3565,6 +3565,38 @@ namespace OpenSim.Framework
             }
         }
 
+        // TCP-reachability probe against a region's own ServerURI - "this
+        // region is registered in the grid database" and "this region is
+        // actually running right now" are different things (a killed/
+        // never-started region process leaves a perfectly valid-looking
+        // GridRegion row behind), and several callers need to tell them
+        // apart: the WebInterface world map/dashboard (don't draw/count a
+        // region that isn't really there) and LLLoginService.FindDestination
+        // (don't hand a viewer connection details for a home/last region
+        // that's registered but dead - it would otherwise fail login with
+        // a raw socket-timeout error instead of falling back to a default
+        // region the same way an unset home/unresolvable last-region ID
+        // already does).
+        public static bool IsHostAlive(string serverURI, int timeoutMs)
+        {
+            try
+            {
+                Uri uri = new Uri(serverURI);
+                using (TcpClient client = new TcpClient())
+                {
+                    System.Threading.Tasks.Task connectTask = client.ConnectAsync(uri.Host, uri.Port);
+                    if (System.Threading.Tasks.Task.WhenAny(connectTask,
+                            System.Threading.Tasks.Task.Delay(timeoutMs)).Result != connectTask)
+                        return false;
+                    return client.Connected && connectTask.IsCompletedSuccessfully;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static long TotalFireAndForgetCallsMade { get { return numTotalThreadFuncsCalled; } }
 
         public static Dictionary<string, int> GetFireAndForgetCallsMade()

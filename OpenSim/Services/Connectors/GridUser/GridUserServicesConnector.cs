@@ -219,6 +219,44 @@ namespace OpenSim.Services.Connectors
             return 0;
         }
 
+        public List<GridUserInfo> GetOnlineUsers(HashSet<string> aliveRegionIDs)
+        {
+            List<GridUserInfo> results = new List<GridUserInfo>();
+            if (aliveRegionIDs == null || aliveRegionIDs.Count == 0)
+                return results;
+
+            Dictionary<string, object> sendData = new Dictionary<string, object>();
+            sendData["VERSIONMIN"] = ProtocolVersions.ClientProtocolVersionMin.ToString();
+            sendData["VERSIONMAX"] = ProtocolVersions.ClientProtocolVersionMax.ToString();
+            sendData["METHOD"] = "getonlineusersforregions";
+            sendData["REGIONIDS"] = string.Join(",", aliveRegionIDs);
+
+            string reqString = ServerUtils.BuildQueryString(sendData);
+            string uri = m_ServerURI + "/griduser";
+            try
+            {
+                string reply = SynchronousRestFormsRequester.MakeRequest("POST", uri, reqString, m_Auth);
+                if (!string.IsNullOrEmpty(reply))
+                {
+                    Dictionary<string, object> replyData = ServerUtils.ParseXmlResponse(reply);
+                    if (replyData != null && !(replyData.ContainsKey("result") && replyData["result"].ToString() == "null"))
+                    {
+                        foreach (object griduser in replyData.Values)
+                        {
+                            if (griduser is Dictionary<string, object> dict)
+                                results.Add(Create(dict));
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.DebugFormat("[GRID USER CONNECTOR]: Exception when contacting grid user server at {0}: {1}", uri, e.Message);
+            }
+
+            return results;
+        }
+
         public int GetOnlineUserCount(HashSet<string> aliveRegionIDs)
         {
             if (aliveRegionIDs == null || aliveRegionIDs.Count == 0)

@@ -26,7 +26,11 @@ sign-up with a starting-region picker (defaults to the grid's
 `DefaultRegion`-flagged regions), grid-wide search (People/Places/
 Events/Classifieds/Groups, plus a dedicated Land for Sale page with
 size buckets, per-region maturity filtering, and trending/autocomplete),
-a world map, a viewer download page, a live grid-capability "Features"
+an interactive Leaflet world map (region search, live "Show Users"
+online-resident markers, popups with owner name/size/Hypergrid status,
+draws only regions actually online right now — an all-regions table
+below covers the full roster with its own status column), a viewer
+download page, a live grid-capability "Features"
 page, guest support tickets, admin-managed static pages (About/ToS/
 DMCA) and news/events feeds.
 

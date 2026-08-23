@@ -637,6 +637,15 @@
 [MapImageService]
     LocalServiceModule = "OpenSim.Services.MapImageService.dll:MapImageService"
 
+    ; Deletes every cached map tile on Robust startup, so the World Map
+    ; always shows only what's re-uploaded since. Off by default - tiles
+    ; only ever refresh when a region actually uploads a new one, so on a
+    ; grid where Robust restarts more often than its regions do, turning
+    ; this on means the map shows nothing but water until every region
+    ; catches up. Worth enabling on a dev/test grid where a stale tile
+    ; from a region that's since been rebuilt is worse than a brief gap.
+    ; ClearTilesOnStartup = false
+
     ; Set this if you want to change the default
     ; TilesStoragePath = "maptiles"
     ;

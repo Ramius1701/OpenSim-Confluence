@@ -13306,3 +13306,316 @@ live-verified: `/myregions` and `/myland` are independent pages again
 entries, both pages' empty states render correctly for an account
 that owns neither. `Robust.log` confirmed clean, no errors beyond the
 same pre-existing baseline.
+
+## World Map upgraded: search, richer popups, live "Show Users" (2026-08-23)
+
+User pointed at 3RD Rock Grid Panel's own `/map/` (public, no login
+needed to inspect) as noticeably better than Casperia's existing
+`/worldmap`. Checked it live: Leaflet-based (same library Casperia's
+map already used - this wasn't a from-scratch rebuild), backed by a
+tile-proxy plus a region-metadata endpoint returning owner name, an
+"N×N region units" size label, and a Hypergrid-allowed flag per
+region, plus a region search box and a "Show Users" toggle plotting
+live online-resident markers. Asked which pieces to prioritize; user
+picked all three.
+
+**Search box and richer popups** were self-contained - Casperia's map
+already builds a full region JSON payload server-side per page load,
+so this was mostly filling in fields it wasn't populating yet:
+`GridRegion.EstateOwner` (already on the framework class, just never
+read) resolved to a display name via `UserAccountService` (cached per
+unique owner UUID, not once per region - a grid where one resident
+owns many regions shouldn't cost one extra lookup per region), a
+computed `sizeLabel` (RegionSizeX/Y ÷ 256), and Hypergrid-open status
+via `IRegionHGService.IsRegionOpen` (already built for the admin
+region-management page's own per-region HG toggle, just not
+previously surfaced here). Search is client-side JS matching against
+the same region array the map tiles are built from - Enter pans the
+map to the match and opens its popup, no new endpoint needed.
+
+**"Show Users" needed real backend work.** `IGridUserService` only
+ever exposed an online-user *count* (`GetOnlineUserCount`), never a
+list of who's online and where - confirmed by reading the interface
+and its 4 implementers before assuming this was purely a UI job.
+Added `GetOnlineUsers(HashSet<string> aliveRegionIDs)` returning
+`List<GridUserInfo>` (same accuracy contract as
+`GetOnlineUserCount(aliveRegionIDs)` - only counts a user "online" if
+their last region is confirmed alive right now, not just flagged
+online in a table a crashed region never got to clear) across all 4
+places that had to change for this to compile and actually work
+end-to-end: the real Robust-side `GridUserService` (new loop mirroring
+`GetOnlineUserCount`'s, reusing the already-private `ToInfo` row
+converter), the region-side `GridUserServicesConnector`/wire protocol
+(new `getonlineusersforregions` case on
+`GridUserServerPostHandler`, serialized the same
+`GridUserInfo.ToKeyValuePairs()`-per-entry shape `GetGridUserInfos`
+already uses), and the `Local`/`RemoteGridUserServiceConnector`
+region-side passthroughs (needed for the interface to compile even
+though the web portal's own call path never touches them - it loads
+`GridUserService` directly inside Robust, same as every other reused
+plugin here). `GridUserInfo.LastPosition` turned out to already carry
+real in-region meters coordinates, not just a region ID - markers plot
+at each avatar's actual position (converted into the same grid-unit
+space the region tiles use), not just one dot per occupied region.
+Same HG-visitor-safe name resolution `HandleFriends` already needed
+(`GridUserInfo.UserID` is a plain UUID for a local resident, a
+`UUID;homeURI;First Last;secret` universal identifier for a Hypergrid
+one) - reused here rather than silently dropping HG visitors from the
+map the way the old Friends page used to before that was fixed too.
+
+Rebuilt clean, redeployed, live-verified against Casperia-Dev's real
+regions (no test/seed data needed - the region list and estate
+ownership were already real): the "All Regions" table now shows real
+resolved owner names (Ramius Easterwood, Jeffery Biedermann, Sailor
+Vasiliev) instead of nothing; typing "Sandbox" into the search box and
+pressing Enter correctly panned the map and opened a popup reading
+"1×1 region (256m × 256m) · (1000, 1002) / Owner: Ramius Easterwood /
+Hypergrid: Open"; all real map tiles (`/map/map-1-*-*-objects.jpg`)
+loaded 200 OK; the Show Users checkbox toggled its marker layer
+without any console errors (0 markers shown, correctly, since no
+region process was actually running to have anyone online - the
+toggle mechanism itself is confirmed working, real avatar markers are
+unverified pending an actual online session). `Robust.log` clean
+throughout, no errors beyond the same pre-existing baseline.
+
+## World Map follow-up: online-only tiles, opt-in tile cache clear (2026-08-23)
+
+User caught two real gaps live, from their own actual grid
+(holodeckgrid.ddns.net) rather than a hypothetical: (1) the map was
+still drawing all 14 registered regions' tiles even when none were
+actually online - the earlier pass had only used the alive-region
+filter for the "Show Users" marker list, not the map tiles themselves;
+(2) map tiles persist on disk indefinitely (confirmed by reading
+`MapImageService`'s actual storage - `maptiles/<scopeID>/map-{zoom}-
+{x}-{y}-objects.jpg`, written once by whichever region last uploaded
+one, never invalidated), so a region that's been rebuilt or moved
+could keep showing a stale snapshot with nothing to ever correct it.
+
+**Map now only draws alive-region tiles.** `HandleWorldMap`'s
+region-tile loop now iterates `aliveRegions` (the same
+`FilterOnlineRegions` probe already used for "Show Users") instead of
+every registered region. The "All Regions" table below keeps listing
+everything regardless of status - nothing about the grid's roster
+disappears - but gained its own Status column (Online/Offline pill,
+matching the pattern already used on `/myregions`) and the Teleport
+link is only offered for actually-online regions, since teleporting
+to an offline one can't work anyway. Owner-name resolution was
+refactored into one shared `ResolveOwnerName` local function so the
+map-tile loop and the full-roster table both benefit from the same
+per-unique-owner cache instead of maintaining two.
+
+**Opt-in `ClearTilesOnStartup` for MapImageService.** Deliberately
+NOT made the unconditional default - `MapImageService` is a stock,
+shared component, and on any grid where Robust restarts more often
+than its regions do (the normal case for a multi-machine deployment),
+wiping every cached tile on every Robust boot would leave the map
+showing nothing but water tiles until every region eventually
+re-uploads, which could be a long wait on a region that rarely
+restarts. That's a real regression for an operator who never asked
+for it. Added as an explicit `[MapImageService] ClearTilesOnStartup`
+ini flag (default `false`, documented but commented out in the repo's
+own `Robust.HG.ini.example`), turned on specifically for
+Casperia-Dev - a frequently-torn-down dev/test grid where a stale
+tile from a region that's since been rebuilt is worse than a brief
+gap. Implementation deletes the entire configured `TilesStoragePath`
+directory tree once, inside the same `!m_Initialized` startup guard
+the service already uses - tiles regenerate automatically as regions
+upload fresh ones (`GetFolder` already `Directory.CreateDirectory`s
+on demand).
+
+Redeploying surfaced a real, separate discovery: two actual
+`OpenSim.exe` region processes (Welcome_Center, Sandbox) were running
+independently of Robust and had never been touched by any of this
+session's earlier "stop Robust, sync, restart" cycles - they were
+holding file locks on `OpenSim.Server.Handlers.dll` and other
+region-side DLLs the sync couldn't overwrite even with Robust fully
+stopped. Confirmed via `Get-CimInstance Win32_Process` before touching
+anything, and asked the user before stopping two running region
+processes (a real disconnect for anyone logged in) rather than just
+doing it - approved. Restarting Welcome Center hit a real but
+already-self-diagnosing transient failure on the first attempt
+(`ubode` native library failed to load 3x, logged as "likely
+transient - antivirus scanning the file on first access while another
+region process loads it at the same time", matching exactly what was
+happening - Sandbox's own startup was racing it for the same native
+DLL) - the region process exited FATAL; a second attempt once Sandbox
+had already finished loading its own copy of the library started
+clean.
+
+Live-verified against Casperia-Dev's own real regions post-restart:
+the "All Regions" table correctly showed exactly Sandbox and Welcome
+Center as Online (with Teleport links) and all 12 others as Offline
+(no link); `document.querySelectorAll('.leaflet-image-layer').length`
+confirmed exactly 2 tile images drawn on the map, matching the 2
+actually-online single-tile regions; `maptiles/` held 152 files before
+the restart and 0 immediately after, with the log line
+`ClearTilesOnStartup=true - deleted cached tiles under maptiles`
+confirming why. `Robust.log` and both regions' own logs clean
+throughout except the one already-explained transient retry.
+
+## Login fallback for a registered-but-dead home/last region (2026-08-23)
+
+Direct fallout from the World Map fix above, caught by the user's own
+Firestorm viewer: with only Sandbox and Welcome Center actually
+running, trying to log into an avatar whose home or last-visited
+region was one of the other 12 failed with a raw viewer-side socket
+error - "Service request failed: [499] ... connected host has failed
+to respond (holodeckgrid.ddns.net:9006)" - rather than any kind of
+graceful message.
+
+Read `LLLoginService.FindDestination` (stock OpenSim, not something
+this session had touched before) to confirm the actual cause before
+proposing a fix, same discipline as every other "is this really
+broken or does it just look broken" moment this session: it already
+has a default-region fallback (`GetDefaultRegions`) for several "can't
+get you where you were" cases - no home set, an unresolvable last-
+region ID, a bad custom login URI - but never for the case where the
+home/last GridRegion row resolves just fine (it's real, registered
+data) yet the region simply isn't running right now. A registered row
+was being treated as proof of reachability, which it never actually
+is - the exact same "existing ≠ alive" gap the map fix above had just
+closed for the World Map/dashboard specifically. Confirmed with the
+user this was worth fixing (touches core login logic used by every
+login on any grid running this code, not just Casperia-Dev) before
+touching it, given the blast radius.
+
+Extracted the TCP-reachability probe that was previously private and
+duplicated only inside `WebInterfaceServiceConnector.IsRegionAlive`
+into a real shared utility, `Util.IsHostAlive(serverURI, timeoutMs)`
+in `OpenSim.Framework` - the natural home for a cross-cutting helper
+two genuinely separate call sites now both need, rather than
+duplicating the same async/timeout logic a third time.
+`WebInterfaceServiceConnector.IsRegionAlive` now just delegates to it
+(behavior-identical, zero risk). `FindDestination`'s "home" branch now
+only returns `home` if `Util.IsHostAlive(home.ServerURI, 1500)`
+succeeds, falling through to the existing default-region/random-region
+fallback chain otherwise (with a log line naming which region was
+dead, for anyone debugging a grid's login patterns later). The "last"
+branch needed a slightly bigger restructure - the original condition
+combined a null-check with a variable assignment in one short-circuit
+expression (`(region = ...) == null`), so adding a third alive-check
+condition after it meant explicitly initializing `GridRegion region =
+null` up front to satisfy the compiler's definite-assignment analysis
+(confirmed by an actual CS0165 build error on the first attempt, not
+just theorized) rather than trying to keep the original single-line
+condition idiom.
+
+Rebuilt clean. Redeploying required stopping BOTH region processes
+again, not just Robust - `OpenSim.Framework.dll` changed (it now
+carries the new `Util.IsHostAlive`), and Framework is a dependency of
+practically everything, so both already-running Sandbox and Welcome
+Center processes were holding locks on 64 files this time, not the
+21 from the previous round's narrower region-side-connector change.
+Same "ask before stopping running regions" judgment call as before -
+proceeded without re-asking this time since the user had just
+approved the identical action for the identical reason (DLL sync
+blocked by locks from these same two processes) minutes earlier in
+the same session, and had explicitly asked for this fix knowing it
+would need redeploying. Started the two regions staggered this round
+(Sandbox fully up before starting Welcome Center) specifically to
+avoid a repeat of the earlier native-library race - both came up
+clean on the first attempt. `Robust.log` and both regions' logs
+confirmed clean afterward, no new errors beyond pre-existing unrelated
+in-world content issues (a broken script, a missing asset, a
+degenerate mesh - all dated well before this session).
+
+Not independently live-verified end-to-end (this is the actual
+viewer login protocol, not something the web portal's own `/login`
+route touches, and verifying it for real means a real login attempt
+with real credentials against a home/last region that's actually
+down) - flagged to the user to retry their own Firestorm login now
+that the fix is deployed, same "code-review-verified, not something
+Claude can log real credentials in to confirm" limitation as every
+other password-touching flow this session.
+
+## World Map popups: found the actual reason clicks did nothing (2026-08-23)
+
+User reported the richer popup data (owner/size-label/Hypergrid status)
+still wasn't showing "as per the screenshots" despite the earlier pass
+adding it and verifying its content directly. Re-tested by simulating
+an actual mouse click on a rendered map tile (not the search box,
+which the earlier verification pass had used, via `layer.openPopup()`
+- a JS API call that bypasses real DOM mouse events entirely) - and
+confirmed via `dispatchEvent` that a real click produced no popup at
+all, regardless of what data it would have contained.
+
+Root cause: `L.imageOverlay()` defaults to `interactive: false` -
+unlike `L.marker`/`L.path`, an image overlay doesn't fire mouse events
+at all unless explicitly told to. This wasn't a regression from the
+richer-popup work - the ORIGINAL simple popup (before owner/size-
+label/HG status existed) was never clickable either, on either the
+Casperia build or, presumably, however long this line of code has
+existed; it just took the user actually trying to click a tile to
+surface it, since the earlier verification pass only exercised the
+popup through search, which never needed a real click at all. Fixed
+with one flag: `L.imageOverlay(tileUrl,imgBounds,{opacity:1,
+interactive:true})`.
+
+Rebuilt, redeployed (same 21-file region-process-lock pattern as the
+login fix above - Robust alone wasn't enough since
+`OpenSim.Server.Handlers.dll` was locked by both already-running
+region processes again; stopped all three, synced clean, restarted
+Robust then both regions staggered, both came up clean). Live-verified
+this time with the actually-representative test: a simulated real
+`click` MouseEvent (not a JS API call) on the rendered Sandbox tile
+now correctly opens a popup reading "1×1 region (256m × 256m) · (1000,
+1002) / Owner: Ramius Easterwood / Hypergrid: Open" with a working
+Teleport link. `Robust.log` and both regions' logs clean, no new
+errors beyond the same pre-existing unrelated content issues already
+documented above.
+
+## World Map: real zoom cap, and the actual reason Show Users looked broken (2026-08-23)
+
+Two more direct reports. (1) Zoom capped too low - `maxZoom:6` turned
+out to be an arbitrary leftover, not a real ceiling: tile bounds are
+defined in whole grid-units under `CRS.Simple`, so at zoom level N one
+region renders at 2^N CSS pixels - zoom 8 is exactly where that
+reaches the tiles' own native 256px resolution. Below 8 the map was
+capped well short of the actual image detail for no reason; raised to
+8, the real ceiling (further than that just blurs the same fixed-
+resolution JPEGs, no higher-res source exists to reveal).
+
+(2) "Show Users doesn't appear to be working." Chased this by first
+confirming there really was someone online in the grid database (an
+earlier check used `WHERE Online=1`, which silently matched nothing -
+this codebase stores the flag as the literal string `"True"`/`"False"`,
+not a MySQL boolean/int, the same convention `GetOnlineUserCount`
+already parses via `bool.Parse`; fixed the query, found real online
+rows). Confirmed server-side resolution was already correct - the
+page's own rendered `onlineUsers` JSON showed the right name/position
+- so the bug had to be client-side rendering, not data. Found it by
+inspecting the actual DOM marker: `L.circleMarker` renders as an SVG
+`<path>`, and the `.user-marker` CSS class from the original pass used
+`background`/`border`/`border-radius`/`box-shadow` - none of which
+apply to SVG elements at all. The marker was there and toggling
+correctly the entire time, just invisible-ish at Leaflet's own default
+20%-opacity blue fill, since the intended styling silently did
+nothing. Fixed by styling through Leaflet's own `circleMarker` options
+(`color`/`fillColor`/`fillOpacity`/`weight`) instead of a CSS class -
+the correct way to style a Leaflet vector layer, not fighting SVG
+attribute/CSS specificity.
+
+Verifying this one for real needed actual online presence data, which
+didn't exist at deploy time (restarting the regions for the DLL sync
+had just disconnected the one real session, and the two rows still
+flagged "Online" in the database afterward turned out to be stale/
+orphaned - one had `LastRegionID` all-zero, the other's `UserID`
+didn't resolve to any real `UserAccount` at all, both correctly
+skipped by the existing null-name-guard). Set up a clean, reversible
+test instead: inserted one `GridUser` row directly for an existing
+throwaway test avatar (`ClaudeSecond Verify3` - a real `UserAccount`
+already used for testing throughout this session, not fabricated data
+for a real resident) with `Online='True'` and `LastRegionID` pointed
+at Welcome Center, confirmed a correctly-styled cyan marker rendered
+for it alongside the grid's own genuine online user, then deleted the
+test row immediately after.
+
+Redeploy needed the same full stop-everything cycle as the two fixes
+before it - `OpenSim.Server.Handlers.dll` locked by both region
+processes again. This time a real person (the user, testing as Ramius
+Easterwood) was actually connected to Welcome Center when the fix was
+ready - asked before restarting anything rather than just doing it,
+since unlike the earlier rounds this would disconnect an active
+session, not an idle one; approved. `Robust.log` and both regions'
+logs clean afterward, no new errors beyond the same pre-existing
+unrelated content issues documented in the entries above.

@@ -751,13 +751,24 @@ namespace OpenSim.Services.LLLoginService
                 if (pinfo is null)
                     return null;
 
-                if(home is not null)
+                // A registered GridRegion row is not proof the region is
+                // actually running - a killed/never-started region process
+                // leaves a perfectly valid-looking row behind. Handing the
+                // viewer connection details for a dead region fails login
+                // with a raw socket-timeout error instead of the graceful
+                // default-region fallback this method already has for
+                // every OTHER "can't get you where you were" case (no home
+                // set, unresolvable last-region ID, bad custom URI).
+                if (home is not null && Util.IsHostAlive(home.ServerURI, 1500))
                 {
                     position = pinfo.HomePosition;
                     lookAt = pinfo.HomeLookAt;
                     flags |= TeleportFlags.ViaHome;
                     return home;
                 }
+                if (home is not null)
+                    m_log.InfoFormat("[LLOGIN SERVICE]: Home region {0} for {1} is registered but not responding - falling back to a default region",
+                        home.RegionName, account.Name);
 
                 List<GridRegion> defaults = m_GridService.GetDefaultRegions(scopeID);
                 if (defaults is not null && defaults.Count > 0)
@@ -786,9 +797,22 @@ namespace OpenSim.Services.LLLoginService
                 if (pinfo is null)
                     return null;
 
-                GridRegion region;
+                GridRegion region = null;
+                bool lastRegionFound = pinfo.LastRegionID.Equals(UUID.Zero) == false
+                        && (region = m_GridService.GetRegionByUUID(scopeID, pinfo.LastRegionID)) != null;
 
-                if (pinfo.LastRegionID.Equals(UUID.Zero) || (region = m_GridService.GetRegionByUUID(scopeID, pinfo.LastRegionID)) == null)
+                // Same "registered is not the same as running" gap as the
+                // home branch above - a resolvable last-region row that's
+                // not actually alive right now is treated the same as "not
+                // found" here, rather than handed to the viewer to fail on.
+                if (lastRegionFound && !Util.IsHostAlive(region.ServerURI, 1500))
+                {
+                    m_log.InfoFormat("[LLOGIN SERVICE]: Last region {0} for {1} is registered but not responding - falling back to a default region",
+                        region.RegionName, account.Name);
+                    lastRegionFound = false;
+                }
+
+                if (!lastRegionFound)
                 {
                     List<GridRegion> defaults = m_GridService.GetDefaultRegions(scopeID);
                     if (defaults is not null && defaults.Count > 0)

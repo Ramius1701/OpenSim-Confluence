@@ -166,6 +166,23 @@ namespace OpenSim.Services.UserAccountService
             return count;
         }
 
+        public List<GridUserInfo> GetOnlineUsers(HashSet<string> aliveRegionIDs)
+        {
+            List<GridUserInfo> results = new List<GridUserInfo>();
+            if (aliveRegionIDs == null || aliveRegionIDs.Count == 0)
+                return results;
+
+            foreach (GridUserData gu in m_Database.GetAll(""))
+            {
+                if (bool.Parse(gu.Data["Online"]) &&
+                        gu.Data.TryGetValue("LastRegionID", out string lastRegionID) &&
+                        aliveRegionIDs.Contains(lastRegionID))
+                    results.Add(ToInfo(gu));
+            }
+
+            return results;
+        }
+
         private static ExpiringCacheOS<string, GridUserData> cache = new ExpiringCacheOS<string, GridUserData>(100000);
         private GridUserData GetGridUserData(string userID)
         {

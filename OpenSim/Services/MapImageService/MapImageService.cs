@@ -78,6 +78,22 @@ namespace OpenSim.Services.MapImageService
                     if (serviceConfig is not null)
                     {
                         m_TilesStoragePath = serviceConfig.GetString("TilesStoragePath", m_TilesStoragePath);
+
+                        // Opt-in, defaults false - tiles only ever get
+                        // refreshed by a region actually uploading a new
+                        // one, so on a grid where Robust restarts more
+                        // often than its regions do (the normal case on a
+                        // multi-machine deployment), wiping this
+                        // unconditionally on every Robust startup would
+                        // leave the map showing nothing but water tiles
+                        // until every region eventually re-uploads - a real
+                        // regression for anyone who didn't ask for it. Real
+                        // use here: a frequently-torn-down dev/test grid
+                        // where a stale tile from a region that's since
+                        // been rebuilt/moved is worse than a brief gap.
+                        if (serviceConfig.GetBoolean("ClearTilesOnStartup", false))
+                            ClearAllTiles();
+
                         //memory cache JPEG tile with just water.
                         m_WaterBitmap = new Bitmap(IMAGE_WIDTH, IMAGE_WIDTH, PixelFormat.Format24bppRgb);
                         FillImage(m_WaterBitmap, m_Watercolor);
@@ -89,6 +105,22 @@ namespace OpenSim.Services.MapImageService
                         }
                     }
                 }
+            }
+        }
+
+        private void ClearAllTiles()
+        {
+            try
+            {
+                if (Directory.Exists(m_TilesStoragePath))
+                {
+                    Directory.Delete(m_TilesStoragePath, true);
+                    m_log.Info($"[MAP IMAGE SERVICE]: ClearTilesOnStartup=true - deleted cached tiles under {m_TilesStoragePath}");
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.Warn($"[MAP IMAGE SERVICE]: ClearTilesOnStartup could not clear {m_TilesStoragePath}: {e.Message}");
             }
         }
 

@@ -97,6 +97,8 @@ namespace OpenSim.Server.Handlers.GridUser
                         return GetUniqueVisitorCount(request);
                     case "getonlineusercountforregions":
                         return GetOnlineUserCountForRegions(request);
+                    case "getonlineusersforregions":
+                        return GetOnlineUsersForRegions(request);
                 }
                 m_log.DebugFormat("[GRID USER HANDLER]: unknown method request: {0}", method);
             }
@@ -288,6 +290,34 @@ namespace OpenSim.Server.Handlers.GridUser
 
             Dictionary<string, object> result = new Dictionary<string, object>();
             result["result"] = count.ToString();
+
+            string xmlString = ServerUtils.BuildXmlResponse(result);
+            return Util.UTF8NoBomEncoding.GetBytes(xmlString);
+        }
+
+        byte[] GetOnlineUsersForRegions(Dictionary<string, object> request)
+        {
+            HashSet<string> aliveRegionIDs = new HashSet<string>();
+            if (request.TryGetValue("REGIONIDS", out object idsObj))
+            {
+                foreach (string id in idsObj.ToString().Split(','))
+                {
+                    if (!string.IsNullOrEmpty(id))
+                        aliveRegionIDs.Add(id);
+                }
+            }
+
+            List<GridUserInfo> infos = m_GridUserService.GetOnlineUsers(aliveRegionIDs);
+
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            if (infos == null || infos.Count == 0)
+                result["result"] = "null";
+            else
+            {
+                int i = 0;
+                foreach (GridUserInfo info in infos)
+                    result["griduser" + i++] = info.ToKeyValuePairs();
+            }
 
             string xmlString = ServerUtils.BuildXmlResponse(result);
             return Util.UTF8NoBomEncoding.GetBytes(xmlString);
