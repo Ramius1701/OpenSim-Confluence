@@ -13269,3 +13269,40 @@ code redeemed successfully with lowercase/normalized input; sidebar
 confirmed clean throughout - `RecoveryCode` migration created at
 version 1 with no errors, no new errors of any kind versus the
 pre-existing baseline.
+
+## My Land & My Regions split back apart, region list made compact (2026-08-23)
+
+Direct feedback from real use on a live grid (holodeckgrid.ddns.net,
+a tester's grid running this same connector): once actual regions
+showed up after bringing the grid fully online, "Regions I Own"
+turned out to be a real usability problem - each region rendered as a
+tall stacked block (heading, location line, full-width Back Up
+button, a 3-line OAR-restore explanation, full-width Restart button),
+and that explanation paragraph repeated verbatim after every single
+region. Four regions meant scrolling through the same paragraph four
+times.
+
+Two changes: **(1)** `HandleMyRegions` no longer renders a per-region
+paragraph - the OAR backup/restore explanation now appears once,
+above a table (Region/Status/Location/Actions), with both action
+buttons living in one compact table cell per region instead of two
+full-width stacked buttons. **(2)** Split "My Land & Regions" back
+into two separate pages/sidebar entries (`/myregions` "My Regions",
+`/myland` "My Land") - the same split that existed before the
+2026-08-23 merge earlier today. `HandleMyLand` is a real page again
+(was a bare redirect to `/myregions` while merged); `HandleMyLandToggle`'s
+post-toggle redirect target changed back from `/myregions` to
+`/myland`. `SidebarLandLinks` now lists both entries again under the
+same "Land & Estate" collapsible group. This directly reverses this
+morning's explicit merge instruction - both were the user's own
+direction, in the order given, the second one a correction after
+seeing the first one's real consequence at scale.
+
+Rebuilt clean, redeployed (hit a transient DLL lock during sync -
+same "no visible owning process" class documented earlier this
+session, resolved once the user closed whatever had a handle open),
+live-verified: `/myregions` and `/myland` are independent pages again
+(no more redirect), sidebar shows both as separate "Land & Estate"
+entries, both pages' empty states render correctly for an account
+that owns neither. `Robust.log` confirmed clean, no errors beyond the
+same pre-existing baseline.

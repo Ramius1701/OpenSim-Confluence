@@ -8613,14 +8613,14 @@ namespace OpenSim.Server.Handlers.WebInterface
         // OpenSim already has its own scheduled AutoBackupModule for operator-
         // side backups; this is specifically for a user to back up or restore
         // their own content on demand.
-        // Merged with the former standalone My Land page (2026-08-23, at
-        // the user's direction) - "My Regions" (sims you're the ESTATE
-        // OWNER of, with backup/restart access) and "My Land" (individual
+        // Briefly merged with My Land into one page (2026-08-23), then
+        // split back apart the same day after live use showed the merged
+        // page getting unwieldy for any resident owning more than a
+        // couple of regions. "My Regions" (sims you're the ESTATE OWNER
+        // of, with backup/restart access) and "My Land" (individual
         // PARCELS you own, which you can have without owning any region,
-        // and vice versa) are genuinely different kinds of ownership, but
-        // having them as two separate sidebar entries read as redundant.
-        // One page, two sections; `/myland` still exists as a route but
-        // just redirects here now rather than duplicating content.
+        // and vice versa) are genuinely different kinds of ownership -
+        // real, separate pages again, matching that difference.
         private void HandleMyRegions(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -8633,7 +8633,6 @@ namespace OpenSim.Server.Handlers.WebInterface
             StringBuilder rows = new StringBuilder();
             List<GridRegion> ownedRegions = GetRegionsOwnedBy(session.PrincipalID);
 
-            rows.Append("<h2><i class=\"bi bi-hdd-rack\"></i> Regions I Own</h2>");
             if (m_EstateDataService == null || m_GridService == null)
             {
                 rows.Append("<p>Estate/grid service is not available.</p>");
@@ -8644,65 +8643,36 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             else
             {
+                // One compact table row per region instead of a full
+                // stacked block (heading/location/button/paragraph/button)
+                // repeated per region - that layout got unmanageably long
+                // for any resident owning more than a couple of regions.
+                // The backup/restore explanation now appears once, above
+                // the table, rather than duplicated on every row.
+                rows.Append("<p class=\"news-meta\">Backups save to each region's configured OAR folder on the server (same as autobackup) - ")
+                    .Append("restoring from a browser-uploaded OAR isn't offered here. No OpenSim web UI this project has checked against ")
+                    .Append("(including WhiteCore-Dev's) offers browser-based OAR restore either, and relaying a whole region archive through ")
+                    .Append("a public-facing reverse proxy has real, environment-dependent failure modes (body size limits, read timeouts) ")
+                    .Append("that a self-service page can't fix on its own. Restore an OAR from the region's own console instead.</p>");
+
+                rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Actions</th></tr>");
                 foreach (GridRegion region in ownedRegions)
                 {
-                    // Reference's region_manager.html table shows X/Y grid
-                    // coordinates and online status per region - real gap,
-                    // this page named the region but gave no at-a-glance
-                    // sense of where it is or whether it's actually up.
                     bool online = IsRegionAlive(region, 1500);
-                    rows.Append("<h3>").Append(Html(region.RegionName))
-                        .Append(" <span class=\"pill ").Append(online ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></h3>");
-                    rows.Append("<p class=\"news-meta\">Location: (").Append(region.RegionCoordX).Append(", ")
-                        .Append(region.RegionCoordY).Append(")</p>");
-
-                    rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/oar-save\">");
+                    rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
+                    rows.Append("<td><span class=\"pill ").Append(online ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>");
+                    rows.Append("<td>(").Append(region.RegionCoordX).Append(", ").Append(region.RegionCoordY).Append(")</td>");
+                    rows.Append("<td>");
+                    rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/oar-save\" style=\"margin-right:8px\">");
                     rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
-                    rows.Append("<button type=\"submit\">Back up my region (save OAR)</button>");
-                    rows.Append("</form>");
-                    rows.Append("<p class=\"news-meta\">Saves to this region's configured OAR folder on the server (same as autobackup) - restoring from a browser-uploaded OAR isn't offered here. No OpenSim web UI this project has checked against (including WhiteCore-Dev's) offers browser-based OAR restore either, and relaying a whole region archive through a public-facing reverse proxy has real, environment-dependent failure modes (body size limits, read timeouts) that a self-service page can't fix on its own. Restore an OAR from the region's own console instead.</p>");
-
+                    rows.Append("<button type=\"submit\">Back Up (OAR)</button></form>");
                     rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/restart\" onsubmit=\"return confirm('Restart ")
                             .Append(Html(region.RegionName).Replace("'", "\\'")).Append("? Everyone in the region will be disconnected.');\">");
                     rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
-                    rows.Append("<button type=\"submit\">Restart this region</button>");
-                    rows.Append("</form>");
+                    rows.Append("<button type=\"submit\">Restart</button></form>");
+                    rows.Append("</td></tr>");
                 }
-            }
-
-            rows.Append("<h2><i class=\"bi bi-signpost-split\"></i> Land I Own</h2>");
-            rows.Append("<p>Control whether your own parcels show up in the grid's Destination Guide and Search ")
-              .Append("(Popular/Featured tabs). Once shown, ranking there is based on real traffic (dwell), not this page.</p>");
-            if (m_SearchService == null)
-            {
-                rows.Append("<p>Search service is not available.</p>");
-            }
-            else
-            {
-                List<LandSearchRecord> parcels = m_SearchService.GetParcelsByOwner(session.PrincipalID);
-                if (parcels.Count == 0)
-                {
-                    rows.Append("<p>You don't own any parcels on this grid.</p>");
-                }
-                else
-                {
-                    rows.Append("<table><tr><th>Parcel</th><th>Region</th><th>Traffic</th><th>Show in Search</th></tr>");
-                    foreach (LandSearchRecord parcel in parcels)
-                    {
-                        rows.Append("<tr><td>").Append(Html(parcel.Name)).Append("</td>");
-                        rows.Append("<td>").Append(Html(parcel.RegionName)).Append("</td>");
-                        rows.Append("<td>").Append(((int)parcel.Dwell).ToString("N0")).Append("</td>");
-                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/myland/toggle\">");
-                        rows.Append("<input type=\"hidden\" name=\"parcel_id\" value=\"").Append(parcel.ParcelID).Append("\">");
-                        rows.Append("<input type=\"hidden\" name=\"action\" value=\"").Append(parcel.ShowInSearch ? "disable" : "enable").Append("\">");
-                        rows.Append("<button type=\"submit\"").Append(string.IsNullOrEmpty(m_webConsoleSecret) ? " disabled" : "").Append(">")
-                              .Append(parcel.ShowInSearch ? "Showing - click to hide" : "Hidden - click to show").Append("</button>");
-                        rows.Append("</form></td></tr>");
-                    }
-                    rows.Append("</table>");
-                    if (string.IsNullOrEmpty(m_webConsoleSecret))
-                        rows.Append("<p class=\"news-meta\">The web console is not configured, so this toggle can't be applied remotely. Set [WebConsole] SharedSecret to enable it.</p>");
-                }
+                rows.Append("</table>");
             }
 
             string message = string.Empty;
@@ -8710,12 +8680,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!string.IsNullOrEmpty(queryMessage))
                 message = "<p>" + Html(queryMessage) + "</p>";
 
-            string body = "<h1>My Land &amp; Regions</h1>"
+            string body = "<h1><i class=\"bi bi-hdd-rack\"></i> My Regions</h1>"
                     + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
                     + message
                     + rows.ToString();
 
-            WritePage(request, response, PageTitle("My Land & Regions"), body);
+            WritePage(request, response, PageTitle("My Regions"), body);
         }
 
         // GetEstatesByOwner + GetRegions rather than iterating every region on
@@ -8888,12 +8858,66 @@ namespace OpenSim.Server.Handlers.WebInterface
         // is always re-checked against GetParcelsByOwner before acting,
         // never trusted on its own - a resident can only ever toggle a
         // parcel that query actually returns for their own PrincipalID.
-        // Merged into HandleMyRegions above (2026-08-23) - this route stays
-        // registered purely so any existing link/bookmark to /myland still
-        // lands somewhere real rather than 404ing.
+        // Split back out from HandleMyRegions (2026-08-23) - the merged
+        // "My Land & Regions" page got unwieldy for any resident who
+        // owned more than a couple of regions, per direct feedback after
+        // live use. Real page again, not a redirect.
         private void HandleMyLand(IOSHttpRequest request, IOSHttpResponse response)
         {
-            response.Redirect(BasePath + "/myregions", HttpStatusCode.Redirect);
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            StringBuilder rows = new StringBuilder();
+            rows.Append("<p>Control whether your own parcels show up in the grid's Destination Guide and Search ")
+              .Append("(Popular/Featured tabs). Once shown, ranking there is based on real traffic (dwell), not this page.</p>");
+
+            if (m_SearchService == null)
+            {
+                rows.Append("<p>Search service is not available.</p>");
+            }
+            else
+            {
+                List<LandSearchRecord> parcels = m_SearchService.GetParcelsByOwner(session.PrincipalID);
+                if (parcels.Count == 0)
+                {
+                    rows.Append("<p>You don't own any parcels on this grid.</p>");
+                }
+                else
+                {
+                    rows.Append("<table><tr><th>Parcel</th><th>Region</th><th>Traffic</th><th>Show in Search</th></tr>");
+                    foreach (LandSearchRecord parcel in parcels)
+                    {
+                        rows.Append("<tr><td>").Append(Html(parcel.Name)).Append("</td>");
+                        rows.Append("<td>").Append(Html(parcel.RegionName)).Append("</td>");
+                        rows.Append("<td>").Append(((int)parcel.Dwell).ToString("N0")).Append("</td>");
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/myland/toggle\">");
+                        rows.Append("<input type=\"hidden\" name=\"parcel_id\" value=\"").Append(parcel.ParcelID).Append("\">");
+                        rows.Append("<input type=\"hidden\" name=\"action\" value=\"").Append(parcel.ShowInSearch ? "disable" : "enable").Append("\">");
+                        rows.Append("<button type=\"submit\"").Append(string.IsNullOrEmpty(m_webConsoleSecret) ? " disabled" : "").Append(">")
+                              .Append(parcel.ShowInSearch ? "Showing - click to hide" : "Hidden - click to show").Append("</button>");
+                        rows.Append("</form></td></tr>");
+                    }
+                    rows.Append("</table>");
+                    if (string.IsNullOrEmpty(m_webConsoleSecret))
+                        rows.Append("<p class=\"news-meta\">The web console is not configured, so this toggle can't be applied remotely. Set [WebConsole] SharedSecret to enable it.</p>");
+                }
+            }
+
+            string message = string.Empty;
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                message = "<p>" + Html(queryMessage) + "</p>";
+
+            string body = "<h1><i class=\"bi bi-signpost-split\"></i> My Land</h1>"
+                    + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
+                    + message
+                    + rows.ToString();
+
+            WritePage(request, response, PageTitle("My Land"), body);
         }
 
         private void HandleMyLandToggle(IOSHttpRequest request, IOSHttpResponse response)
@@ -8947,7 +8971,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
             }
 
-            response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+            response.Redirect(BasePath + "/myland?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
         #endregion Self-service parcel "Show in Search" toggle
@@ -10470,11 +10494,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             ("/suggestion-box", "bi-lightbulb", "Suggestion Box"),
         };
 
-        // /myland is a redirect to /myregions now (merged page) - only the
-        // merged entry appears in the nav.
+        // Split back into separate My Regions / My Land pages (2026-08-23) -
+        // the merged page got unwieldy fast once a resident owned more than
+        // a couple of regions.
         private static readonly (string Path, string Icon, string Label)[] SidebarLandLinks =
         {
-            ("/myregions", "bi-map", "My Land & Regions"),
+            ("/myregions", "bi-hdd-rack", "My Regions"),
+            ("/myland", "bi-signpost-split", "My Land"),
             ("/myestates", "bi-building", "My Estate"),
         };
 

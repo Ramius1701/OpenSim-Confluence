@@ -40,10 +40,11 @@ what *other people* see — and regions-owned, both privacy-aware),
 friends list (split into This Grid / Hypergrid, each showing what
 rights you've granted them), a full partner proposal flow (propose/
 accept/decline/cancel/breakup), transaction history, classifieds/
-events management, a combined My Land & Regions page (estate-owner
-region management — OAR backup, full estate settings/access-list
-editing for any resident who owns one, not just admins — alongside
-per-parcel search/Destination Guide visibility toggles), inventory
+events management, My Regions (estate-owner region management — OAR
+backup, restart, full estate settings/access-list editing for any
+resident who owns one, not just admins — in a compact per-region
+table, not a repeated stacked block) and My Land (per-parcel search/
+Destination Guide visibility toggles) as separate pages, inventory
 backup (IAR), account changes (password/email), self-service account
 deletion, self-service recovery codes (5 one-time backup codes to
 reset your own password without needing a working email). Offline
