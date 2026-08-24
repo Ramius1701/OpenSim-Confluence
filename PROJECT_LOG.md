@@ -14195,6 +14195,64 @@ via the usual stop/sync/restart-staggered cycle. This order
 (`test_region-b5014578`) is now actually startable - Start Region has
 not been clicked yet, so that remains the next real untested piece.
 
+## Start Region: real crash, two real bugs, both fixed (2026-08-24)
+
+User clicked Start Region on the "Standard Region" order above. The
+admin queue immediately showed `Status=Active` with a success note -
+but the region never showed up under My Regions or My Land, and no
+third `OpenSim.exe` process was actually running. Two real, distinct
+bugs, both found by checking the process list and the region's own
+log directly rather than trusting the recorded "success":
+
+**1. A brand-new region has no estate, and stock OpenSim tries to
+interactively prompt for one - fatal on a headless child process.**
+`OpenSimBase.PopulateRegionEstateInfo` found `TesT Region` unassigned
+to any estate and fell through to
+`MainConsole.Instance.Prompt("Do you wish to join...")`, which calls
+`Console.GetCursorPosition()` - and since this process was launched
+via `Process.Start(UseShellExecute=false, CreateNoWindow=true)` with
+no real console attached, that throws
+`System.IO.IOException: The handle is invalid` and kills the process
+outright, seconds into startup, well before it ever registers with the
+grid (which is exactly why it was invisible everywhere - it never
+actually joined).
+
+Fixed by having `FulfillRegionOrder` append a second `[Estates]`
+section to the cloned `OpenSim.ini` with `DefaultEstateName =
+"<ResidentName>'s Estate"` (Nini merges repeated section headers
+within one file). `PopulateRegionEstateInfo` auto-creates - or joins,
+if a later order from the same resident reuses the name - that estate
+with zero prompting. Confirmed estate *ownership* still isn't
+necessarily the purchasing resident (`CreateEstate`'s own default, not
+addressed by this fix) - flagged as a real, separate follow-up, not
+silently left implied-fixed.
+
+**2. `HandleAdminStoreOrdersStart` marked the order `Active` right
+after `Process.Start()` returned, with no check that the process
+actually stayed alive.** A crash one second later left the order
+looking like a success with nothing to show for it - and worse, the
+button-visibility guard (`Status == "AwaitingStart" &&
+!StartedAt.HasValue`) meant there was no way to retry, since
+`StartedAt` was already set.
+
+Fixed with a brief (3 second) liveness check after `Process.Start()`:
+if `proc.HasExited`, the order goes back to `AwaitingStart` with
+`StartedAt` left unset (so the button reappears and a retry is
+possible) and a Notes entry pointing at the exit code and the log
+files; only a process still running after 3 seconds gets marked
+`Active`. Deliberately still not full health supervision past that
+point - matches this grid's existing manual-launch posture - just
+closes the specific "instant crash reported as instant success" gap
+this incident exposed.
+
+Reset the real order's DB state back to `AwaitingStart`/`StartedAt=NULL`
+and hand-appended the same `[Estates]` fix to its already-generated
+`OpenSim.ini` (the code fix only covers ini generation for *future*
+orders) so it can be retried with both fixes in place. Full solution
+build clean, redeployed `OpenSim.Server.Handlers.dll` via the usual
+stop/sync/restart-staggered cycle. Start Region has not been
+successfully retried yet - that's still the next real step.
+
 Full solution build clean, no new project references needed (reflection-
 based cross-service loading, consistent with how every other
 cross-service reference in this codebase works). Redeployed

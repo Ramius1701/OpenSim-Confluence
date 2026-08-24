@@ -10822,6 +10822,28 @@ namespace OpenSim.Server.Handlers.WebInterface
                 templateText = Regex.Replace(templateText, @"(?m)^(\s*StatsLogFile\s*=\s*).*$", "${1}\"" + logBase + "Stats.log\"");
                 templateText = Regex.Replace(templateText, @"(?m)^(\s*regionload_regionsdir\s*=\s*).*$", "${1}\"" + regionsDir + "\"");
                 templateText = Regex.Replace(templateText, @"(?m)^(\s*http_listener_port\s*=\s*).*$", "${1}" + port.Value);
+
+                // Without this, a brand-new region has no estate at all,
+                // and stock OpenSim's own startup code
+                // (OpenSimBase.PopulateRegionEstateInfo) tries to
+                // interactively prompt an admin to create/join one
+                // (Console.GetCursorPosition, via ConsoleBase.Prompt) -
+                // found live: that throws IOException("The handle is
+                // invalid") and kills the whole process instantly on a
+                // headless Process.Start()'d child with no real console
+                // attached, well before the region ever registers with
+                // the grid. Setting DefaultEstateName here makes
+                // PopulateRegionEstateInfo auto-create (or join, if a
+                // second order from the same resident reuses the name)
+                // the estate with zero prompting - a second [Estates]
+                // section appended after the template's own (commented-
+                // out) one; Nini merges repeated section headers within
+                // one file rather than erroring. Estate *ownership*
+                // still defaults to whatever CreateEstate's own default
+                // is, not necessarily the purchasing resident - a real,
+                // separate follow-up, not fixed by this alone.
+                templateText += "\r\n[Estates]\r\n    DefaultEstateName = \"" + order.ResidentName + "'s Estate\"\r\n";
+
                 File.WriteAllText(Path.Combine(simRoot, "OpenSim.ini"), templateText);
 
                 UUID regionId = UUID.Random();
@@ -11275,14 +11297,49 @@ namespace OpenSim.Server.Handlers.WebInterface
                             proc.BeginOutputReadLine();
                             proc.BeginErrorReadLine();
 
-                            order.StartedAt = DateTime.UtcNow;
-                            order.Status = "Active";
-                            order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
-                                    + "Region process started by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC.";
+                            // Brief liveness check, not full health
+                            // monitoring (still fire-and-forget after
+                            // this point, matching this grid's existing
+                            // manual-launch posture) - but found live
+                            // that a region can crash within the first
+                            // second (an unhandled startup exception,
+                            // e.g. the estate-assignment prompt issue
+                            // fixed above) while this code still marked
+                            // the order Active regardless, leaving no
+                            // sign anything had gone wrong short of
+                            // noticing the process just isn't there.
+                            // Catches at least that whole class of
+                            // failure without needing real supervision.
+                            System.Threading.Thread.Sleep(3000);
                             order.Updated = DateTime.UtcNow;
-                            m_StoreService.StoreOrder(order);
 
-                            message = "Region process started for " + order.RequestedRegionName + " (port " + order.AllocatedPort + ").";
+                            if (proc.HasExited)
+                            {
+                                // StartedAt deliberately left unset on
+                                // failure - the admin queue's "Start
+                                // Region" button only hides once
+                                // StartedAt is set, so a failed attempt
+                                // can be retried (e.g. after fixing
+                                // whatever crashed it) instead of being
+                                // permanently stuck with no way to start
+                                // this order at all.
+                                order.Status = "AwaitingStart";
+                                order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                                        + "Start attempt by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm")
+                                        + " UTC failed - the process exited within 3 seconds (exit code " + proc.ExitCode + "). See " + logPath + ".";
+                                m_StoreService.StoreOrder(order);
+                                message = "Region process for " + order.RequestedRegionName + " failed to start - it exited immediately (exit code "
+                                        + proc.ExitCode + "). Check " + logPath + " and the region's own OpenSim.log, then try again.";
+                            }
+                            else
+                            {
+                                order.StartedAt = DateTime.UtcNow;
+                                order.Status = "Active";
+                                order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                                        + "Region process started by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC.";
+                                m_StoreService.StoreOrder(order);
+                                message = "Region process started for " + order.RequestedRegionName + " (port " + order.AllocatedPort + ").";
+                            }
                         }
                         catch (Exception e)
                         {
