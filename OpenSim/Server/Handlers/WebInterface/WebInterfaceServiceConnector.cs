@@ -10832,17 +10832,31 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // invalid") and kills the whole process instantly on a
                 // headless Process.Start()'d child with no real console
                 // attached, well before the region ever registers with
-                // the grid. Setting DefaultEstateName here makes
-                // PopulateRegionEstateInfo auto-create (or join, if a
-                // second order from the same resident reuses the name)
-                // the estate with zero prompting - a second [Estates]
-                // section appended after the template's own (commented-
-                // out) one; Nini merges repeated section headers within
-                // one file rather than erroring. Estate *ownership*
-                // still defaults to whatever CreateEstate's own default
-                // is, not necessarily the purchasing resident - a real,
-                // separate follow-up, not fixed by this alone.
-                templateText += "\r\n[Estates]\r\n    DefaultEstateName = \"" + order.ResidentName + "'s Estate\"\r\n";
+                // the grid. DefaultEstateName makes PopulateRegionEstateInfo
+                // auto-create (or join, if a later order from the same
+                // resident reuses the name) the estate with zero
+                // prompting.
+                //
+                // That alone isn't enough, though - found live, second
+                // round: a freshly auto-created estate has no *owner*
+                // either, and OpenSimBase.SetUpEstateOwner has its own
+                // separate interactive prompt for that (same fatal
+                // IOException). DefaultEstateOwnerName (split on the
+                // space into first/last) skips it - and since this is
+                // grid mode, not standalone, SetUpEstateOwner looks up
+                // an existing UserAccount by that name rather than
+                // prompting for a password/email/UUID to create one
+                // (those prompts are explicitly Standalone-only in the
+                // code), so this also correctly makes the purchasing
+                // resident the estate's real owner, not just avoiding a
+                // crash.
+                //
+                // Both appended as a second [Estates] section after the
+                // template's own (commented-out) one - Nini merges
+                // repeated section headers within one file rather than
+                // erroring.
+                templateText += "\r\n[Estates]\r\n    DefaultEstateName = \"" + order.ResidentName + "'s Estate\"\r\n"
+                        + "    DefaultEstateOwnerName = \"" + order.ResidentName + "\"\r\n";
 
                 File.WriteAllText(Path.Combine(simRoot, "OpenSim.ini"), templateText);
 
@@ -10867,8 +10881,30 @@ namespace OpenSim.Server.Handlers.WebInterface
                 order.AllocatedLocationX = location.Value.X;
                 order.AllocatedLocationY = location.Value.Y;
                 order.SimulatorFolderName = slug;
-                order.Status = "AwaitingStart";
-                order.Notes = "Provisioned. Awaiting admin Start Region.";
+
+                // Fully automatic per the user's explicit direction - the
+                // one-click admin gate this originally had was a
+                // deliberate testing scaffold for exactly the two real
+                // startup crashes it caught (the estate-assignment and
+                // estate-owner interactive prompts, both fixed above),
+                // not the intended real-world behavior. Payment success
+                // now launches the process directly; the admin "Start
+                // Region" button (HandleAdminStoreOrdersStart) still
+                // exists purely as a manual retry path for when this
+                // automatic attempt itself fails.
+                if (TryStartRegionProcess(order, out int exitCode, out string startLogPath))
+                {
+                    order.StartedAt = DateTime.UtcNow;
+                    order.Status = "Active";
+                    order.Notes = "Provisioned and started automatically.";
+                }
+                else
+                {
+                    order.Status = "AwaitingStart";
+                    order.Notes = "Provisioned, but the automatic start failed - the process exited within 3 seconds "
+                            + "(exit code " + exitCode + "). See " + startLogPath + ". An admin can retry from the Store Orders queue.";
+                }
+
                 order.Updated = DateTime.UtcNow;
                 m_StoreService.StoreOrder(order);
             }
@@ -11271,67 +11307,20 @@ namespace OpenSim.Server.Handlers.WebInterface
                     }
                     else
                     {
+                        // Manual retry path only now - the normal, happy-
+                        // path launch happens automatically inside
+                        // FulfillRegionOrder right after payment. This
+                        // button only ever appears when that automatic
+                        // attempt itself failed (Status stays
+                        // AwaitingStart with StartedAt unset), so this
+                        // is purely the "try again by hand" escape
+                        // hatch, using the exact same TryStartRegionProcess
+                        // helper.
                         try
                         {
-                            string exePath = Path.Combine(m_regionOrderGridRoot, "OpenSim.exe");
-                            string relativeIniArg = Path.Combine("Simulators", order.SimulatorFolderName, "OpenSim.ini");
-                            string simFolder = Path.Combine(m_regionOrderGridRoot, "Simulators", order.SimulatorFolderName);
-                            string logPath = Path.Combine(simFolder, "start.log");
-
-                            ProcessStartInfo psi = new ProcessStartInfo
-                            {
-                                FileName = exePath,
-                                Arguments = "-inifile=" + relativeIniArg,
-                                WorkingDirectory = m_regionOrderGridRoot,
-                                UseShellExecute = false,
-                                CreateNoWindow = true,
-                                RedirectStandardOutput = true,
-                                RedirectStandardError = true
-                            };
-
-                            File.WriteAllText(logPath, string.Empty);
-                            Process proc = new Process { StartInfo = psi };
-                            proc.OutputDataReceived += (s, e) => { if (e.Data != null) { try { File.AppendAllText(logPath, e.Data + Environment.NewLine); } catch { } } };
-                            proc.ErrorDataReceived += (s, e) => { if (e.Data != null) { try { File.AppendAllText(logPath, e.Data + Environment.NewLine); } catch { } } };
-                            proc.Start();
-                            proc.BeginOutputReadLine();
-                            proc.BeginErrorReadLine();
-
-                            // Brief liveness check, not full health
-                            // monitoring (still fire-and-forget after
-                            // this point, matching this grid's existing
-                            // manual-launch posture) - but found live
-                            // that a region can crash within the first
-                            // second (an unhandled startup exception,
-                            // e.g. the estate-assignment prompt issue
-                            // fixed above) while this code still marked
-                            // the order Active regardless, leaving no
-                            // sign anything had gone wrong short of
-                            // noticing the process just isn't there.
-                            // Catches at least that whole class of
-                            // failure without needing real supervision.
-                            System.Threading.Thread.Sleep(3000);
                             order.Updated = DateTime.UtcNow;
 
-                            if (proc.HasExited)
-                            {
-                                // StartedAt deliberately left unset on
-                                // failure - the admin queue's "Start
-                                // Region" button only hides once
-                                // StartedAt is set, so a failed attempt
-                                // can be retried (e.g. after fixing
-                                // whatever crashed it) instead of being
-                                // permanently stuck with no way to start
-                                // this order at all.
-                                order.Status = "AwaitingStart";
-                                order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
-                                        + "Start attempt by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm")
-                                        + " UTC failed - the process exited within 3 seconds (exit code " + proc.ExitCode + "). See " + logPath + ".";
-                                m_StoreService.StoreOrder(order);
-                                message = "Region process for " + order.RequestedRegionName + " failed to start - it exited immediately (exit code "
-                                        + proc.ExitCode + "). Check " + logPath + " and the region's own OpenSim.log, then try again.";
-                            }
-                            else
+                            if (TryStartRegionProcess(order, out int exitCode, out string logPath))
                             {
                                 order.StartedAt = DateTime.UtcNow;
                                 order.Status = "Active";
@@ -11339,6 +11328,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                                         + "Region process started by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC.";
                                 m_StoreService.StoreOrder(order);
                                 message = "Region process started for " + order.RequestedRegionName + " (port " + order.AllocatedPort + ").";
+                            }
+                            else
+                            {
+                                order.Status = "AwaitingStart";
+                                order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                                        + "Start attempt by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm")
+                                        + " UTC failed - the process exited within 3 seconds (exit code " + exitCode + "). See " + logPath + ".";
+                                m_StoreService.StoreOrder(order);
+                                message = "Region process for " + order.RequestedRegionName + " failed to start - it exited immediately (exit code "
+                                        + exitCode + "). Check " + logPath + " and the region's own OpenSim.log, then try again.";
                             }
                         }
                         catch (Exception e)
@@ -11350,6 +11349,75 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             response.Redirect(BasePath + "/admin/store/orders?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Shared by both the automatic launch (FulfillRegionOrder, right
+        // after payment succeeds) and the admin's manual retry button
+        // (HandleAdminStoreOrdersStart, only reachable when the automatic
+        // attempt itself failed) - one implementation of the actual
+        // Process.Start + liveness check, so the two callers can't drift.
+        // Returns true and starts the order's process; on failure returns
+        // false with the child's exit code and log path so the caller can
+        // report why. Still fire-and-forget past the 3-second check - see
+        // the comment above HandleAdminStoreOrdersStart for why that's
+        // this codebase's existing posture, not a new one.
+        private bool TryStartRegionProcess(StoreOrder order, out int exitCode, out string logPath)
+        {
+            exitCode = 0;
+
+            string exePath = Path.Combine(m_regionOrderGridRoot, "OpenSim.exe");
+            string relativeIniArg = Path.Combine("Simulators", order.SimulatorFolderName, "OpenSim.ini");
+            string simFolder = Path.Combine(m_regionOrderGridRoot, "Simulators", order.SimulatorFolderName);
+            string logFilePath = Path.Combine(simFolder, "start.log");
+            logPath = logFilePath;
+
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = exePath,
+                // -background=true selects OpenSimBackground ("Consoleless
+                // OpenSimulator region server") instead of the normal
+                // interactive console loop - found live that without it,
+                // Application.cs's `while (true) { MainConsole.Instance.
+                // Prompt(); }` spins as fast as it can (hundreds of
+                // thousands of lines/minute) because a CreateNoWindow child
+                // has no real console screen buffer for ReadLine's cursor-
+                // position calls to read, and every failed attempt is
+                // immediately retried with no backoff. OpenSimBackground
+                // blocks on a wait handle instead of ever calling Prompt(),
+                // so it never hits this - and it doesn't affect the remote
+                // web console (/consoleweb, used by RunRegionConsoleCommand
+                // for things like add-prim-limit), which is wired up during
+                // normal region-module startup either way.
+                Arguments = "-inifile=" + relativeIniArg + " -background=true",
+                WorkingDirectory = m_regionOrderGridRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            File.WriteAllText(logFilePath, string.Empty);
+            Process proc = new Process { StartInfo = psi };
+            proc.OutputDataReceived += (s, e) => { if (e.Data != null) { try { File.AppendAllText(logFilePath, e.Data + Environment.NewLine); } catch { } } };
+            proc.ErrorDataReceived += (s, e) => { if (e.Data != null) { try { File.AppendAllText(logFilePath, e.Data + Environment.NewLine); } catch { } } };
+            proc.Start();
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+
+            // Brief liveness check, not full health monitoring - found live
+            // that a region can crash within the first second (an unhandled
+            // startup exception, e.g. the estate-assignment prompt issue
+            // fixed elsewhere in this file) while a naive "Process.Start
+            // returned, so it worked" check would still report success.
+            System.Threading.Thread.Sleep(3000);
+
+            if (proc.HasExited)
+            {
+                exitCode = proc.ExitCode;
+                return false;
+            }
+
+            return true;
         }
 
         #endregion Store

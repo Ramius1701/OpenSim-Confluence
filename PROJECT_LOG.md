@@ -14261,3 +14261,140 @@ to Casperia-Dev via the usual full stop/sync/restart-staggered cycle;
 confirmed via `Robust.log` that `IGridSettingsService` loaded cleanly
 for `CurrencyService` (no fallback warning), and `/admin/settings`
 still responds correctly.
+
+**Second Start Region crash, found on retry after the estate-name fix
+above, and full automation of Start Region.** Retrying the real
+"Standard Region" order after the `DefaultEstateName` fix hit a
+second, separate interactive-prompt crash: with the estate now
+auto-created but ownerless (`EstateOwner=UUID.Zero`),
+`OpenSimBase.SetUpEstateOwner` falls through to its own
+`MainConsole.Instance.Prompt(...)` for an owner name - same
+`Console.GetCursorPosition()`/`IOException: The handle is invalid`
+failure as before, just one step later in startup. Fixed the same way:
+`FulfillRegionOrder`'s generated `[Estates]` section now also carries
+`DefaultEstateOwnerName = "<ResidentName>"`. In GRID mode (this
+deployment, not Standalone) that resolves an *existing* `UserAccount`
+by name with no prompting at all - the purchasing resident ends up as
+the real estate owner, not just a crash workaround. Hand-patched the
+same fix into the real pending order's already-generated `OpenSim.ini`
+alongside the earlier estate-name patch.
+
+Separately, per direct instruction ("Yes, make it fully automatic"):
+removed the one-click admin gate as the *primary* path for starting a
+newly-provisioned region. `FulfillRegionOrder` now calls process launch
+directly right after provisioning succeeds - on success the order goes
+straight to `Status=Active`/`StartedAt` set with no admin action
+needed; on failure it stays `AwaitingStart` with a Notes entry
+explaining why. The `ProcessStartInfo`/liveness-check logic itself
+didn't change - it was extracted verbatim out of
+`HandleAdminStoreOrdersStart` into a new shared private method,
+`TryStartRegionProcess(order, out exitCode, out logPath)`, so the
+admin's Start Region button (now purely a manual retry path, only ever
+reachable when the automatic attempt itself failed) and the automatic
+path can never drift apart. One real compile snag: the original inline
+version's output/error handlers were lambdas capturing the local
+`logPath`, which doesn't compile once `logPath` became an `out`
+parameter (`CS1628`) - fixed by capturing a separate local
+(`logFilePath`) inside the method instead.
+
+Full solution build clean (0 errors). Redeployed
+`OpenSim.Server.Handlers.dll` to Casperia-Dev. Restarting Robust via a
+backgrounded Bash `nohup ... &` crashed immediately with the exact same
+headless-console `IOException` this whole feature has been fighting -
+a good reminder that the failure mode isn't specific to region
+processes, it's any `LocalConsole`-using process launched without a
+real console handle. Started it properly instead via PowerShell's
+`Start-Process` (own console, matches every other deploy this
+session). Verified via HTTP: Robust `/store` → 200, Sandbox (port
+9018) and Welcome_Center (port 9004) both → 404 (alive). The real
+pending order (`b5014578-d45a-474d-b97e-4dbb8de41ef3`, "TesT Region")
+is still sitting at `AwaitingStart`/`StartedAt=NULL` with both estate
+fixes hand-patched into its ini - next step is the user retrying it via
+the (now retry-only) Start Region button to confirm both fixes and the
+automation refactor together against a real launch.
+
+**Third real bug found on that retry: both estate fixes actually
+worked, but the spawned region process then ran away in an infinite
+error loop and had to be killed.** The user clicked Start Region; the
+admin queue reported success (process survived the 3-second liveness
+check). The region's own log tells a fuller story: startup genuinely
+completed correctly this time - `[GRID SERVICE]: Region TesT Region
+... registered at 1050,1050 with flags RegionOnline`, `INITIALIZATION
+COMPLETE FOR TesT Region - LOGINS ENABLED`, and the "Estate ... has no
+owner set" line followed by no crash/prompt confirmed
+`DefaultEstateOwnerName` correctly resolved to Ramius Easterwood with
+zero interactivity - both prior estate fixes are genuinely solid.
+
+But immediately after, `Application.cs`'s top-level `while (true) {
+MainConsole.Instance.Prompt(); }` loop started throwing
+`System.IO.IOException: The handle is invalid` (same failure family,
+`ConsolePal.GetBufferInfo`/`GetCursorPosition`, this time inside
+`LocalConsole.ReadLine`'s cursor-position handling) - and, unlike the
+two earlier crashes, this exception is caught and logged rather than
+fatal, so the `while(true)` loop just immediately retries and fails
+again, as fast as the CPU allows. Caught this by re-checking the
+process list and the region's own log rather than trusting the "Region
+process started" message - found a third live `OpenSim.exe`, and its
+`start.log` had already hit **76MB / 660,000+ lines in under two
+minutes** and was still growing. Killed the process immediately
+(`Stop-Process -Force`) before it could fill the disk, deleted the
+runaway log, and reset the order back to `AwaitingStart`/
+`StartedAt=NULL` with a Notes entry explaining why (it had been marked
+`Active` since it passed the 3-second liveness check before it started
+spinning). Confirmed the DB's `regions` row for TesT Region was left
+with a stale `RegionOnline` flag from the ungraceful kill - not
+manually cleaned up, since a successful next start overwrites it via
+the normal grid registration upsert.
+
+Root cause: a `Process.Start` child with `CreateNoWindow=true` and only
+stdout/stderr redirected (no real console screen buffer, and stdin not
+redirected either) can run region startup fine, but its interactive
+command-prompt loop can't actually read a line once reached, because
+`LocalConsole.ReadLine`'s cursor-position handling needs a real
+console. This isn't specific to the estate flow at all - every
+future headlessly-spawned region hits this exact loop the moment
+startup finishes successfully, regardless of anything estate-related.
+Fixed at the source instead of working around it further: this
+codebase already ships a purpose-built "Consoleless OpenSimulator
+region server" mode (`OpenSimBackground`, its own doc comment's exact
+words) - passing `-background=true` on the command line
+(`ArgvConfigSource`/`[Startup] background`, same switch mechanism as
+`-inifile=`) swaps in `OpenSimBackground` in place of `OpenSim` in
+`Application.cs`'s startup branch, which blocks on a `ManualResetEvent`
+after startup instead of ever calling `Prompt()` - the crashing loop
+is structurally unreachable, not just less likely. Confirmed this
+doesn't affect the remote web console (`/consoleweb`, what
+`RunRegionConsoleCommand` uses for `add-prim-limit`/region restart/
+etc.) - that's wired up during normal region-module startup,
+unrelated to the interactive local loop `OpenSimBackground` skips.
+Added `-background=true` to `TryStartRegionProcess`'s `Arguments`
+only - Sandbox/Welcome_Center's own manual PowerShell-launched starts
+are unaffected and don't need it (they run in a real console already).
+
+Full solution build clean (0 errors). Redeployed
+`OpenSim.Server.Handlers.dll` to Casperia-Dev via the usual full
+stop/sync/restart-staggered cycle; confirmed Robust `/store` → 200,
+Sandbox (9018) and Welcome_Center (9004) both → 404 (alive). The real
+order is back to `AwaitingStart`/`StartedAt=NULL`, ready for the user
+to retry once more - this is the first attempt that should actually
+complete cleanly end to end, since all three real bugs found across
+the last two retries (estate-name prompt, estate-owner prompt, and
+this console-loop runaway) are now fixed.
+
+**Retry confirmed clean end to end - Start Region works for real now.**
+User retried once more. Independently verified rather than trusting the
+admin queue's message: a fourth `OpenSim.exe` process is running and
+stable (`start.log` at 337 lines/29KB, unchanged since startup finished
+- no runaway growth), `[OPENSIM MAIN]: Startup complete, serving 1
+region` is `OpenSimBackground`'s own log line confirming it's correctly
+idling on its wait handle rather than looping, the region answers on
+its allocated port (9050, HTTP 404 = alive), grid registration
+succeeded, and the order is `Status=Active`/`StartedAt` set correctly
+in the DB. Directly confirmed estate ownership too:
+`estate_settings.EstateOwner` for "Ramius Easterwood's Estate" is
+`8713d37e-1a17-4845-9cc4-362ebf6af1c5`, which matches
+`UserAccounts.PrincipalID` for Ramius Easterwood exactly - the
+purchasing resident really is the estate owner, not a fallback/default.
+Fully-automatic region-order fulfillment (`FulfillRegionOrder` ->
+`TryStartRegionProcess`, admin Start Region demoted to manual retry)
+is done and proven against a real order.
