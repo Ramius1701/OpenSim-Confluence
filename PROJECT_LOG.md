@@ -13981,11 +13981,27 @@ transfer now debits the banker's *real* balance and will fail with
 insufficient funds if it isn't funded first - `money set <bankerUUID>
 <amount>` on the region console before flipping this on, not after.
 
-Deliberately left unset on Casperia-Dev for now (the field defaults to
-blank, matching MoneyServer's own `UUID.Zero`-means-unset convention)
-- this is new, unexercised code, and turning it on for real needs a
-funded banker account and a real test transfer first, same posture as
-every other new payment-adjacent piece this session.
+**Funded and live-tested the same day, not left unexercised.** Funded
+Ramius Easterwood (the test banker) with a real +5,000 top-up matching
+`SetBalance`'s exact effect (balance write + a matching ledger row,
+`FromAgent=UUID.Zero`, "Balance set by administrator" - Robust's own
+console is unreachable headlessly with no REST console configured, so
+this one bootstrap step went through direct SQL reproducing exactly
+what the "money set" console command itself does, not a shortcut
+around it), then set `BankerAvatarID` via `grid_settings`. Triggered a
+**real** `Transfer()` through the actual production code path - POSTed
+a real `buyCurrency` XML-RPC request (the same call a real viewer's
+L$-buy dialog sends) for a small test amount, crediting
+`ClaudeSecond Verify3` (this session's existing throwaway test
+avatar, not a real resident) - confirmed via the resulting balances
+and ledger row, not just the `success:true` response: Ramius
+6000->5990, ClaudeSecond 0->10, and critically the transaction's
+`FromAgent` recorded as Ramius's real UUID, not `UUID.Zero` - proof
+the substitution inside `Transfer()` actually ran, not just that the
+purchase succeeded (which would have looked identical from the
+`success:true` response alone under the old untracked behavior).
+Left configured on Casperia-Dev afterward - proven working, not
+reverted to unset.
 
 Full solution build clean, no new project references needed (reflection-
 based cross-service loading, consistent with how every other
