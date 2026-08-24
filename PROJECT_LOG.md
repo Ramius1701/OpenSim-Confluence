@@ -13941,3 +13941,57 @@ Full solution build clean. Redeploy: `OpenSim.Server.Handlers.dll`
 only this time (no `RegionCommandsModule`/`RegionInfo` changes in this
 entry) - still needed the full stop/sync/restart-staggered cycle since
 both region processes hold a lock on that DLL too, not just Robust.
+
+## Banker Avatar: ConfluenceCurrency's own missing feature-parity gap (2026-08-23)
+
+While scoping production readiness, `CurrencyService.Transfer`'s
+`UUID.Zero`-means-system convention turned out to be a real gap versus
+what it replaced: `DTLNSLMoneyModule`/`MoneyServer.ini` already had a
+real "Banker Avatar" concept (`BankerAvatar` setting,
+`AddBankerMoneyHandler` XML-RPC) that ConfluenceCurrency never got an
+equivalent for - every system transfer (fees, currency purchases,
+upload charges) currently skips balance tracking entirely on the
+`UUID.Zero` side, so money just vanishes into or appears from nowhere,
+untracked and unauditable. Same category of miss as the
+`OnCompleteMovementToRegion` event-wiring gap documented earlier this
+project - see the (now broadened) "native module event-parity audit"
+memory note, which used to be scoped to client/scene event
+subscriptions only and now explicitly covers config keys and RPC
+surfaces too.
+
+Fixed by giving `CurrencyService` its own `IGridSettingsService`
+reference (same `ServiceBase.LoadPlugin<T>` reflection pattern its own
+base class already uses to load `ICurrencyData` - no new project
+reference needed) and a `GetBankerAvatarID()` helper that live-reads
+the `BankerAvatarID` Grid Settings key on every `Transfer()` call (no
+caching, so an admin change takes effect immediately, no Robust
+restart). When set (and not `UUID.Zero`), `Transfer()` substitutes the
+banker for either side of a transfer that would otherwise pass
+`UUID.Zero`, before the existing balance-check/tracking logic runs -
+so system credits/debits now genuinely move real currency through a
+real, balance-tracked account instead of a sentinel value.
+
+New "Banker Avatar" section on the existing `/admin/settings` page
+(reusing the same live `IGridSettingsService` store already backing
+every other Grid Setting - no new migration, no new admin page),
+resolves and displays the currently-configured avatar's name, and
+validates the UUID format on save. The page's own copy is explicit
+about the real behavioral consequence: once set, a "system credit"
+transfer now debits the banker's *real* balance and will fail with
+insufficient funds if it isn't funded first - `money set <bankerUUID>
+<amount>` on the region console before flipping this on, not after.
+
+Deliberately left unset on Casperia-Dev for now (the field defaults to
+blank, matching MoneyServer's own `UUID.Zero`-means-unset convention)
+- this is new, unexercised code, and turning it on for real needs a
+funded banker account and a real test transfer first, same posture as
+every other new payment-adjacent piece this session.
+
+Full solution build clean, no new project references needed (reflection-
+based cross-service loading, consistent with how every other
+cross-service reference in this codebase works). Redeployed
+`OpenSim.Services.CurrencyService.dll` + `OpenSim.Server.Handlers.dll`
+to Casperia-Dev via the usual full stop/sync/restart-staggered cycle;
+confirmed via `Robust.log` that `IGridSettingsService` loaded cleanly
+for `CurrencyService` (no fallback warning), and `/admin/settings`
+still responds correctly.

@@ -35,6 +35,33 @@ namespace OpenSim.Services.CurrencyService
         private readonly int m_weeklyCapHundredths;
         private readonly int m_monthlyCapHundredths;
 
+        // DTLNSLMoneyModule/MoneyServer had a real "Banker" concept
+        // (MoneyServer.ini's BankerAvatar + AddBankerMoneyHandler) that the
+        // native ledger never got an equivalent for: every "system"
+        // transfer (fees, currency purchases, upload charges - anything
+        // that passes UUID.Zero as a counterparty) currently just skips
+        // balance tracking entirely for that side of the transfer - money
+        // vanishes into or appears from nowhere, untracked, unauditable.
+        // When a Banker Avatar is configured (Grid Settings admin page,
+        // key "BankerAvatarID" - same live IGridSettingsService store
+        // already backing that page, so it's settable without a restart,
+        // matching MoneyServer's own settable-without-recompiling
+        // BankerAvatar), Transfer() substitutes it for UUID.Zero on
+        // either side, so that money actually comes from and goes to a
+        // real, balance-tracked account. Unset (empty, or explicitly
+        // "00000000-0000-0000-0000-000000000000", matching MoneyServer's
+        // own "unset" convention) means unchanged current behavior.
+        //
+        // Real behavioral consequence once configured, not just cosmetic:
+        // a "system credit" transfer (fromID=UUID.Zero, e.g. a currency
+        // purchase credit) now debits the banker's own real balance and
+        // can fail with insufficient funds if the banker isn't funded -
+        // this is the whole point (money has to come from somewhere real
+        // now), but it means the banker account needs a real starting
+        // balance (e.g. "money set <bankerUUID> <amount>") before this is
+        // turned on, or every system credit will start failing.
+        private IGridSettingsService m_GridSettingsService;
+
         public CurrencyService(IConfigSource config)
             : base(config)
         {
@@ -44,6 +71,20 @@ namespace OpenSim.Services.CurrencyService
             m_dailyCapHundredths = (currencyConfig?.GetInt("DailyPurchaseCapUSD", 500) ?? 500) * 100;
             m_weeklyCapHundredths = (currencyConfig?.GetInt("WeeklyPurchaseCapUSD", 2000) ?? 2000) * 100;
             m_monthlyCapHundredths = (currencyConfig?.GetInt("MonthlyPurchaseCapUSD", 5000) ?? 5000) * 100;
+
+            IConfig gridSettingsConfig = config.Configs["GridSettingsService"];
+            string gridSettingsDll = gridSettingsConfig?.GetString("LocalServiceModule", string.Empty);
+            if (!string.IsNullOrEmpty(gridSettingsDll))
+            {
+                try
+                {
+                    m_GridSettingsService = LoadPlugin<IGridSettingsService>(gridSettingsDll, new object[] { config });
+                }
+                catch (Exception e)
+                {
+                    m_log.Warn("[CURRENCY SERVICE]: Could not load IGridSettingsService for Banker Avatar support - system transfers will use the old untracked UUID.Zero behavior", e);
+                }
+            }
 
             if (MainConsole.Instance != null)
             {
@@ -93,10 +134,35 @@ namespace OpenSim.Services.CurrencyService
             return amount;
         }
 
+        // Live-reads the current Grid Settings value on every call (no
+        // caching) so an admin changing/unsetting the Banker Avatar takes
+        // effect immediately, without a Robust restart - same as every
+        // other Grid Settings-backed admin control in the WebUI.
+        private UUID GetBankerAvatarID()
+        {
+            if (m_GridSettingsService == null)
+                return UUID.Zero;
+
+            string value = m_GridSettingsService.Get("BankerAvatarID");
+            if (string.IsNullOrEmpty(value) || !UUID.TryParse(value, out UUID bankerID))
+                return UUID.Zero;
+
+            return bankerID;
+        }
+
         public bool Transfer(UUID toID, UUID fromID, int amount, string description, int transactionType, UUID transactionID)
         {
             if (amount < 0)
                 return false;
+
+            UUID bankerID = GetBankerAvatarID();
+            if (bankerID != UUID.Zero)
+            {
+                if (toID == UUID.Zero)
+                    toID = bankerID;
+                if (fromID == UUID.Zero)
+                    fromID = bankerID;
+            }
 
             int? fromBalance = null;
             if (fromID != UUID.Zero)

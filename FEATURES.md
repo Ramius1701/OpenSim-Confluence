@@ -72,7 +72,10 @@ news/events content management, grid settings, a web-based region
 console, per-region Hypergrid open/close toggling, on-demand map-tile
 regeneration, a region config file browser/editor (every region's raw
 `.ini`, discovered automatically — no filesystem/RDP access needed —
-with a restart button for changes that need one to take effect).
+with a restart button for changes that need one to take effect), and
+a settable Banker Avatar (Grid Settings) — an account fee/purchase
+transfers actually flow through instead of an untracked void, same
+concept as the classic MoneyServer's own BankerAvatar setting.
 
 **Store:** residents spend in-world currency — ConfluenceCurrency or
 Gloebit, their choice at checkout — on an admin-managed catalog of

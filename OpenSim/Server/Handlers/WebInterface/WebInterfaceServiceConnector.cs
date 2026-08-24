@@ -6718,6 +6718,15 @@ namespace OpenSim.Server.Handlers.WebInterface
             string perksFree = GetSetting("MembershipPerksFree", string.Empty);
             string perksExtra = GetSetting("MembershipPerksExtra", string.Empty);
 
+            string bankerAvatarID = GetSetting("BankerAvatarID", string.Empty);
+            string bankerAvatarName = string.Empty;
+            if (UUID.TryParse(bankerAvatarID, out UUID bankerUUID) && bankerUUID != UUID.Zero && m_UserAccountService != null)
+            {
+                UserAccount bankerAccount = m_UserAccountService.GetUserAccount(UUID.Zero, bankerUUID);
+                if (bankerAccount != null)
+                    bankerAvatarName = bankerAccount.Name;
+            }
+
             string message = string.Empty;
             string queryMessage = request.QueryString.Get("message");
             if (!string.IsNullOrEmpty(queryMessage))
@@ -6745,6 +6754,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Title<br/><input type=\"text\" id=\"announcementTitleInput\" name=\"announcement_title\" value=\"" + Html(announcementTitle) + "\"></label><br/>"
                     + "<label>Text<br/><textarea id=\"announcementTextInput\" name=\"announcement_text\" rows=\"2\">" + Html(announcementText) + "</textarea></label><br/>"
                     + "<label>Color<br/><input type=\"color\" name=\"announcement_color\" value=\"" + Html(announcementColor) + "\" style=\"width:auto\"></label><br/>"
+                    + "<h2>Economy: Banker Avatar</h2>"
+                    + "<p class=\"news-meta\">The account ConfluenceCurrency system transfers (fees, currency purchases, upload charges - anything that previously vanished into an untracked void) now flow through, instead of nowhere. "
+                    + "Same concept as the classic MoneyServer's own BankerAvatar setting. Leave blank/zero to keep the old untracked behavior. "
+                    + "<strong>Fund this account with a real starting balance (\"money set &lt;uuid&gt; &lt;amount&gt;\" on the region console) before setting it</strong> - once set, currency purchases and other system credits draw down this account's real balance and will fail if it runs out.</p>"
+                    + (string.IsNullOrEmpty(bankerAvatarName) ? string.Empty : "<p>Currently: " + Html(bankerAvatarName) + "</p>")
+                    + "<label>Banker avatar UUID<br/><input type=\"text\" name=\"banker_avatar_id\" value=\"" + Html(bankerAvatarID) + "\" placeholder=\"00000000-0000-0000-0000-000000000000\"></label><br/>"
                     + "<h2>Features Page: Powered By</h2>"
                     + "<p class=\"news-meta\">Shown on the Features page as an infrastructure grid. Leave blank to hide the section. One item per line, format: <code>Group|icon-name|Title|Subtitle</code> - icon-name is a Bootstrap Icons name without the \"bi-\" prefix (e.g. <code>windows</code>, <code>database</code>, <code>server</code>). Items with the same Group are shown together under that heading.</p>"
                     + "<label>Powered By items<br/><textarea name=\"powered_by\" rows=\"8\" placeholder=\"Infrastructure|windows|Windows|Host OS\nInfrastructure|hdd-network|Proxmox|Virtualization\nGrid Backend|database|MariaDB|Database\">" + Html(poweredBy) + "</textarea></label><br/>"
@@ -6800,10 +6815,17 @@ namespace OpenSim.Server.Handlers.WebInterface
             string poweredBy = FormValue(form, "powered_by");
             string perksFree = FormValue(form, "perks_free");
             string perksExtra = FormValue(form, "perks_extra");
+            string bankerAvatarID = FormValue(form, "banker_avatar_id").Trim();
 
             if (string.IsNullOrEmpty(gridName))
             {
                 response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Grid name is required."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(bankerAvatarID) && !UUID.TryParse(bankerAvatarID, out _))
+            {
+                response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Banker avatar UUID is not valid."), HttpStatusCode.Redirect);
                 return;
             }
 
@@ -6819,6 +6841,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_GridSettingsService.Set("PoweredByItems", poweredBy);
             m_GridSettingsService.Set("MembershipPerksFree", perksFree);
             m_GridSettingsService.Set("MembershipPerksExtra", perksExtra);
+            m_GridSettingsService.Set("BankerAvatarID", bankerAvatarID);
 
             response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
         }
