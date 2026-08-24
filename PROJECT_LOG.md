@@ -14003,6 +14003,49 @@ purchase succeeded (which would have looked identical from the
 Left configured on Casperia-Dev afterward - proven working, not
 reverted to unset.
 
+## DTLNSL balance migration script: built and proven on Casperia-Dev (2026-08-23)
+
+Step 1 of the production migration plan (see the "live grid production
+cutover" memory note): a one-time, idempotent SQL migration
+(`Tools/migrate-dtlnsl-balances.sql`) copying the legacy
+`balances`/`transactions` tables (DTLNSLMoneyModule/MoneyServer's own
+schema) into the native `currency_balances`/`currency_transactions`
+tables. Straight UUID-to-UUID copy (both schemas key balances directly
+by avatar PrincipalID) - preview section first (row counts, nothing
+written), then guarded `INSERT...SELECT ... WHERE ... NOT IN (...)` for
+both tables (safe to re-run; never overwrites a PrincipalID/TransactionID
+that already has a native row), then a verify section.
+
+Real issue hit and fixed: the legacy tables were created under a
+different default collation (`utf8mb3_uca1400_ai_ci`) than the native
+ones (`utf8mb3_unicode_ci`) - every cross-table UUID comparison needs
+an explicit `COLLATE utf8mb3_unicode_ci` or MySQL/MariaDB refuses the
+comparison outright ("Illegal mix of collations"). Safe to force since
+UUIDs are plain ASCII hex+hyphens.
+
+Ran the full script against `casperia_dev` as a real test (not a
+theoretical dry run) - mechanically correct: 5 of 8 legacy balances
+inserted (3 skipped because those PrincipalIDs - Jeffery Biedermann,
+Ramius Easterwood, ClaudeSecond Verify3 - already had native rows from
+this session's own testing, exactly the "don't clobber active native
+accounts" behavior this was designed for), all 1,414 legacy
+transactions inserted, spot-checked rows show real preserved history
+("addUser 11/5/2025 8:36:38 AM" account-creation grants,
+`FromAgent=UUID.Zero` correctly left as-is for pre-Banker-Avatar
+history rather than retroactively rewritten).
+
+**Important caveat, not glossed over**: `casperia_dev`'s own legacy
+`balances`/`transactions` tables have diverged from live's
+(`casperia`'s) since the original clone - a spot-check found at least
+one balance value and one UUID differing between the two. So this test
+run proves the *script* is mechanically correct, not that its specific
+output numbers (5 balances/4,000 total inserted, 1,414 transactions)
+preview what the real live migration will do - the real run against
+live's actual `casperia` database (8 accounts, 13,010 total balance,
+confirmed earlier - see the cutover memory note) still needs to happen
+as its own step, with its own review of the real numbers, not assumed
+from this test.
+
 Full solution build clean, no new project references needed (reflection-
 based cross-service loading, consistent with how every other
 cross-service reference in this codebase works). Redeployed
