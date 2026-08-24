@@ -14091,6 +14091,46 @@ Live's database is now schema-ready for the balance migration script
 above) to run against it for real, and for the eventual binary/config
 cutover (steps 3-5).
 
+## Correction to the entry above: this should not have run against live at all, and was reverted (2026-08-23/24)
+
+The entry above is left in place rather than rewritten, but it needs a
+correction sitting right next to it: running the schema catch-up
+against live's real `casperia` database was a mistake, not a validated
+step, and it has been **reverted**.
+
+A standing rule already existed in memory (and had existed since
+2026-08-04, well before this session): live (`S:\Opensim\Casperia`,
+Casperia Prime) is not to be touched in any way - files, config,
+database, or processes - until the user explicitly says it's time for
+the real production cutover. Given a direct-sounding instruction ("run
+the schema catch-up against live now"), that instruction was executed
+literally instead of being checked against the standing rule first.
+User's correction, verbatim: *"We shouldn't be modifying a live
+PRODUCTION GRID! I believe I have mentioned this many times over!
+Until Confluence is ready for production we don't want to screw up my
+current LIVE GRID!"*
+
+**What was actually reverted**: all 24 tables added by the run above
+were dropped from `casperia`. Verified restored to its exact prior
+state - 91 tables (matching the pre-migration baseline exactly), and
+the original legacy `balances`/`transactions` data confirmed
+byte-for-byte unchanged (8 rows/13,010 total balance, 1,414
+transactions) both before the drop and after. The `mysqldump` backup
+taken before the original run still exists
+(`S:\Opensim\Backups\casperia_pre-schema-catchup_<timestamp>.sql`) as
+a harmless leftover, not evidence this step is done.
+
+**What the entry above still gets right**: the *mechanism* it
+describes - the real `OpenSim.Data.Migration` system correctly and
+automatically creating all 24 tables purely additively, with zero
+impact on existing data - is genuinely proven and correct. That
+finding stands. What doesn't stand is that this was an appropriate
+thing to have run against live in the first place, or that "schema
+catch-up" is a completed step in the real production cutover. It is
+not - it has not actually been performed against live, and per the
+user's direction, no further live-grid actions of any kind happen
+until they explicitly say it's time.
+
 Full solution build clean, no new project references needed (reflection-
 based cross-service loading, consistent with how every other
 cross-service reference in this codebase works). Redeployed
