@@ -14046,6 +14046,51 @@ confirmed earlier - see the cutover memory note) still needs to happen
 as its own step, with its own review of the real numbers, not assumed
 from this test.
 
+## Step 2 of production cutover: schema catch-up run for real against live (2026-08-23)
+
+The 24 tables missing from live's `casperia` database (see the
+"live grid production cutover" memory note) are created by the
+standard `OpenSim.Data.Migration` mechanism automatically, the same
+way they'd be created for any grid owner's first Robust startup with
+these services enabled - nothing bespoke to write for this step, just
+a real run of the real mechanism.
+
+Took a full `mysqldump` backup of `casperia` first (371MB,
+`S:\Opensim\Backups\casperia_pre-schema-catchup_<timestamp>.sql`) -
+the first real write action against live's actual database this
+session, worth a safety net regardless of how low-risk additive schema
+migrations are expected to be.
+
+Ran it by cloning Casperia-Dev's own proven `Robust.HG.ini` (every
+needed `[ServiceList]` entry already correct), pointing every
+`ConnectionString` at `casperia` instead of `casperia_dev`, moving
+`[Const] PublicPort`/`PrivatePort` to private scratch ports
+(19002/19003) and `BaseHostname` to `127.0.0.1` so nothing external
+could reach it, and separate log paths so it could never be confused
+with the real Casperia-Dev `Robust.log`. Started it, let every
+service's constructor run its own migration exactly as it normally
+would, confirmed via direct table-count query (not just log-reading)
+that all 24 target tables now exist (91 -> 115 tables, exact match),
+stopped it, deleted the scratch config. Real Casperia-Dev's own
+Robust instance ran the whole time, untouched, confirmed still healthy
+afterward.
+
+One benign migration-log entry worth noting, not a real problem: a
+"Duplicate column name 'TOSDate'" during `UserAccounts`'s upgrade to
+revision 10 - live's `UserAccounts` already had that column from an
+earlier partial migration state, so that one `ALTER TABLE` step
+correctly no-opped; the overall `UserAccount data tables already up to
+date at revision 10` line right after confirms it completed
+successfully. Spot-checked live's original data (the legacy `balances`/
+`transactions` tables specifically) after the run - still exactly
+8 rows/13,010 total and 1,414 rows respectively, confirming the whole
+operation was purely additive.
+
+Live's database is now schema-ready for the balance migration script
+(step 1, already built and proven on Casperia-Dev - see the entry
+above) to run against it for real, and for the eventual binary/config
+cutover (steps 3-5).
+
 Full solution build clean, no new project references needed (reflection-
 based cross-service loading, consistent with how every other
 cross-service reference in this codebase works). Redeployed
