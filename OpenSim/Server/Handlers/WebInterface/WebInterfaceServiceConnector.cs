@@ -10806,10 +10806,22 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // other section correctly configured for this grid.
                 string templateText = File.ReadAllText(m_regionOrderTemplateIniPath);
                 string logBase = Path.Combine(simRoot, "OpenSim");
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*logfile\s*=\s*).*$", "$1\"" + logBase + ".log\"");
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*StatsLogFile\s*=\s*).*$", "$1\"" + logBase + "Stats.log\"");
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*regionload_regionsdir\s*=\s*).*$", "$1\"" + regionsDir + "\"");
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*http_listener_port\s*=\s*).*$", "$1" + port.Value);
+                // ${1}, not bare $1 - a bare $1 immediately followed by a
+                // digit (http_listener_port's replacement appends the raw
+                // port number) gets parsed by .NET's regex engine as an
+                // attempt to reference a much higher-numbered capture group
+                // (e.g. "$1" + "9050" becomes the literal replacement string
+                // "$19050", read as "group 19050") instead of "group 1, then
+                // the literal text 9050" - found live: a real region order's
+                // http_listener_port line came out as the literal text
+                // "$19050", not a valid port, which would have failed to
+                // start. The other three substitutions happen to start with
+                // a quote character so they were never ambiguous, but ${1}
+                // everywhere is the actually-correct, non-fragile form.
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*logfile\s*=\s*).*$", "${1}\"" + logBase + ".log\"");
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*StatsLogFile\s*=\s*).*$", "${1}\"" + logBase + "Stats.log\"");
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*regionload_regionsdir\s*=\s*).*$", "${1}\"" + regionsDir + "\"");
+                templateText = Regex.Replace(templateText, @"(?m)^(\s*http_listener_port\s*=\s*).*$", "${1}" + port.Value);
                 File.WriteAllText(Path.Combine(simRoot, "OpenSim.ini"), templateText);
 
                 UUID regionId = UUID.Random();

@@ -165,18 +165,49 @@ namespace OpenSim.Services.CurrencyService
             }
 
             int? fromBalance = null;
-            if (fromID != UUID.Zero)
+            int? toBalance = null;
+
+            if (fromID != UUID.Zero && fromID == toID)
             {
-                int currentFromBalance = m_Database.GetBalance(fromID);
-                if (currentFromBalance < amount)
+                // Same account on both sides - most commonly the Banker
+                // Avatar making a purchase or triggering a fee themselves,
+                // since the substitution above can turn a UUID.Zero
+                // counterparty into the same avatar who's also the real
+                // other side of the transfer (found live: a resident who
+                // is also the configured banker buying something with
+                // ConfluenceCurrency). Net balance change is genuinely
+                // zero. Reading GetBalance independently for "from" and
+                // "to" (the normal path below) both read the same
+                // pre-write balance and both write back to the same row -
+                // the second write silently clobbers the first, which
+                // inflated the balance by the full transferred amount
+                // instead of leaving it unchanged. Still requires the
+                // account to actually hold the amount (same "can't spend
+                // more than you have" rule as a real transfer) and still
+                // records a real ledger row for audit history - just with
+                // no actual balance movement, both sides written as the
+                // same unchanged value.
+                int currentBalance = m_Database.GetBalance(fromID);
+                if (currentBalance < amount)
                     return false; // insufficient funds
 
-                fromBalance = currentFromBalance - amount;
+                fromBalance = currentBalance;
+                toBalance = currentBalance;
             }
+            else
+            {
+                if (fromID != UUID.Zero)
+                {
+                    int currentFromBalance = m_Database.GetBalance(fromID);
+                    if (currentFromBalance < amount)
+                        return false; // insufficient funds
 
-            int? toBalance = null;
-            if (toID != UUID.Zero)
-                toBalance = m_Database.GetBalance(toID) + amount;
+                    fromBalance = currentFromBalance - amount;
+                }
+
+                if (toID != UUID.Zero)
+                    toBalance = m_Database.GetBalance(toID) + amount;
+            }
 
             CurrencyTransfer transfer = new CurrencyTransfer
             {

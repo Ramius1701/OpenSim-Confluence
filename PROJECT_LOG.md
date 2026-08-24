@@ -14131,6 +14131,70 @@ not - it has not actually been performed against live, and per the
 user's direction, no further live-grid actions of any kind happen
 until they explicitly say it's time.
 
+## First real Store purchase found two real bugs (2026-08-24)
+
+User bought "Standard Region" (a RegionOrder catalog item, C$ 5,610)
+through the real web checkout - the first genuine end-to-end exercise
+of any Store purchase path this session. Mostly worked: order created,
+port allocator picked 9050 (the configured range's first free port),
+location allocator picked (1050,1050) (same), slug generation produced
+`test_region-b5014578`, the `Simulators\` folder and `Regions.ini` got
+written, order landed correctly in `AwaitingStart`. But it surfaced two
+real bugs, both real code defects, not testing artifacts:
+
+**1. Currency self-transfer double-write bug (`CurrencyService.Transfer`).**
+The buyer (Ramius Easterwood) is also the configured Banker Avatar, so
+after the Banker substitution `fromID == toID == Ramius`. Both
+`GetBalance` reads happened against the same pre-write balance (5990),
+and both `fromBalance`/`toBalance` got computed independently as if
+the other side's write hadn't happened; `ApplyTransfer` then wrote
+both to the same row, and the second write (the credit) silently
+clobbered the first (the debit). Net effect: instead of a wash (pay
+yourself, balance unchanged), Ramius's balance jumped to 11,600 - a
+5,610 overcredit, the full purchase amount added on top instead of
+netting to zero. This wasn't specific to region orders or even to
+Store - any transfer where the same avatar ends up on both sides
+(which the Banker Avatar substitution makes newly possible any time
+the banker themselves is the other party to a UUID.Zero-routed
+transaction) would hit this.
+
+Fixed by adding an explicit `fromID == toID` branch in `Transfer()`:
+reads the balance once, still enforces "can't spend more than you
+have," but computes both sides as the *same* unchanged value instead
+of independently mutating it - still records a real ledger row for
+audit history, just with genuinely zero net balance movement.
+Corrected Ramius's balance back to 5990 on Casperia-Dev (a real data
+fix, not just a code fix) with its own ledger entry explaining why.
+
+**2. Regex backreference bug in `FulfillRegionOrder`'s ini templating.**
+`Regex.Replace(templateText, pattern, "$1" + port.Value)` builds the
+replacement string `"$19050"` at the C# string level *before* handing
+it to the regex engine - and .NET's regex replacement syntax reads a
+bare `$1` immediately followed by more digits as an attempt to
+reference a much higher-numbered capture group (group 19050), not
+"group 1, then the literal text 9050." The result: the provisioned
+region's `http_listener_port` line came out as the literal broken text
+`$19050`, not a valid port - the region could not have been started as
+provisioned. The other three substitutions (log paths,
+`regionload_regionsdir`) all happen to start with a quote character
+immediately after `$1`, so they were never ambiguous and worked
+correctly the whole time - only the bare-integer one broke, and only
+because of the specific value being substituted, not the mechanism
+itself.
+
+Fixed by switching all four substitutions to `${1}` (braced group
+reference), the actually-correct, non-fragile form regardless of what
+follows. Hand-patched the one already-broken file
+(`Simulators\test_region-b5014578\OpenSim.ini`) directly rather than
+re-running provisioning, since the fix and the correct port value were
+already known.
+
+Full solution build clean. Redeployed
+`OpenSim.Server.Handlers.dll`/`OpenSim.Services.CurrencyService.dll`
+via the usual stop/sync/restart-staggered cycle. This order
+(`test_region-b5014578`) is now actually startable - Start Region has
+not been clicked yet, so that remains the next real untested piece.
+
 Full solution build clean, no new project references needed (reflection-
 based cross-service loading, consistent with how every other
 cross-service reference in this codebase works). Redeployed
