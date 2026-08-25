@@ -76,6 +76,7 @@ namespace OpenSim.Server.Base
             argvConfig.AddSwitch("Startup", "inifile", "i");
             argvConfig.AddSwitch("Startup", "prompt",  "p");
             argvConfig.AddSwitch("Startup", "logconfig", "g");
+            argvConfig.AddSwitch("Startup", "background");
 
             // Automagically create the ini file name
             string fileName = "";
@@ -206,15 +207,42 @@ namespace OpenSim.Server.Base
             Watchdog.Enabled = true;
             MemoryWatchdog.Enabled = true;
 
-            while (m_Running)
+            // Consoleless mode - same rationale and shape as OpenSimBackground
+            // for region processes (OpenSim/Region/Application/
+            // OpenSimBackground.cs, "Consoleless OpenSimulator region
+            // server"). A Robust spawned with no real console attached (a
+            // Windows Task Scheduler task running whether a user is logged
+            // on or not, a Linux systemd unit, a Docker container, etc.)
+            // can't actually read a line from Prompt() - LocalConsole's
+            // cursor-position handling throws immediately - and since that
+            // exception is caught and the loop just retries instantly with
+            // no backoff, it spins as fast as the CPU allows instead of
+            // failing cleanly (confirmed live against the equivalent region-
+            // process bug, see PROJECT_LOG.md - hundreds of thousands of
+            // log lines within two minutes). `console=mock` is NOT a fix
+            // for this despite looking like one: MockConsole.Prompt() is an
+            // empty no-op, so the same while loop would spin on a silent,
+            // symptomless empty call instead - still 100% CPU on one
+            // thread, just with nothing in the logs to notice it by.
+            IConfig backgroundStartupConfig = Config.Configs["Startup"];
+            if (backgroundStartupConfig != null && backgroundStartupConfig.GetBoolean("background", false))
             {
-                try
+                m_log.Info("[SERVER]: Running in background/consoleless mode - console commands are not available.");
+                while (m_Running)
+                    Thread.Sleep(1000);
+            }
+            else
+            {
+                while (m_Running)
                 {
-                    MainConsole.Instance.Prompt();
-                }
-                catch (Exception e)
-                {
-                    m_log.ErrorFormat("Command error: {0}", e);
+                    try
+                    {
+                        MainConsole.Instance.Prompt();
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.ErrorFormat("Command error: {0}", e);
+                    }
                 }
             }
 
