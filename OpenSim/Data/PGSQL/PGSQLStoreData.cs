@@ -153,6 +153,7 @@ namespace OpenSim.Data.PGSQL
                 "\"ID\", \"CatalogItemID\", \"OrderType\", \"ResidentAvatarID\", \"ResidentName\", \"CurrencyUsed\", " +
                 "\"AmountCharged\", \"PaymentTransactionID\", \"Status\", \"TargetRegionID\", \"RequestedRegionName\", " +
                 "\"AllocatedLocationX\", \"AllocatedLocationY\", \"AllocatedPort\", \"SimulatorFolderName\", " +
+                "\"RequestedEstateID\", \"RequestedEstateName\", \"RequestedLocationX\", \"RequestedLocationY\", " +
                 "\"StartedAt\", \"ExpiresAt\", \"Notes\", \"Created\", \"Updated\"";
 
         public StoreOrder GetOrder(UUID id)
@@ -223,7 +224,8 @@ namespace OpenSim.Data.PGSQL
                     "INSERT INTO store_orders (" + OrderColumns + ") " +
                     "VALUES (:id, :catalogitemid, :ordertype, :residentavatarid, :residentname, :currencyused, " +
                     ":amountcharged, :paymenttransactionid, :status, :targetregionid, :requestedregionname, " +
-                    ":allocatedlocationx, :allocatedlocationy, :allocatedport, :simulatorfoldername, :startedat, " +
+                    ":allocatedlocationx, :allocatedlocationy, :allocatedport, :simulatorfoldername, " +
+                    ":requestedestateid, :requestedestatename, :requestedlocationx, :requestedlocationy, :startedat, " +
                     ":expiresat, :notes, :created, :updated) " +
                     "ON CONFLICT (\"ID\") DO UPDATE SET " +
                     "\"CatalogItemID\" = :catalogitemid, \"OrderType\" = :ordertype, " +
@@ -233,6 +235,8 @@ namespace OpenSim.Data.PGSQL
                     "\"TargetRegionID\" = :targetregionid, \"RequestedRegionName\" = :requestedregionname, " +
                     "\"AllocatedLocationX\" = :allocatedlocationx, \"AllocatedLocationY\" = :allocatedlocationy, " +
                     "\"AllocatedPort\" = :allocatedport, \"SimulatorFolderName\" = :simulatorfoldername, " +
+                    "\"RequestedEstateID\" = :requestedestateid, \"RequestedEstateName\" = :requestedestatename, " +
+                    "\"RequestedLocationX\" = :requestedlocationx, \"RequestedLocationY\" = :requestedlocationy, " +
                     "\"StartedAt\" = :startedat, \"ExpiresAt\" = :expiresat, \"Notes\" = :notes, " +
                     "\"Updated\" = :updated", conn))
             {
@@ -255,6 +259,13 @@ namespace OpenSim.Data.PGSQL
                 cmd.Parameters.AddWithValue(":allocatedport",
                         order.AllocatedPort.HasValue ? (object)order.AllocatedPort.Value : DBNull.Value);
                 cmd.Parameters.AddWithValue(":simulatorfoldername", (object)order.SimulatorFolderName ?? DBNull.Value);
+                cmd.Parameters.AddWithValue(":requestedestateid",
+                        order.RequestedEstateID.HasValue ? (object)order.RequestedEstateID.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue(":requestedestatename", (object)order.RequestedEstateName ?? DBNull.Value);
+                cmd.Parameters.AddWithValue(":requestedlocationx",
+                        order.RequestedLocationX.HasValue ? (object)order.RequestedLocationX.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue(":requestedlocationy",
+                        order.RequestedLocationY.HasValue ? (object)order.RequestedLocationY.Value : DBNull.Value);
                 cmd.Parameters.AddWithValue(":startedat",
                         order.StartedAt.HasValue ? (object)(int)Utils.DateTimeToUnixTime(order.StartedAt.Value) : DBNull.Value);
                 cmd.Parameters.AddWithValue(":expiresat",
@@ -287,11 +298,15 @@ namespace OpenSim.Data.PGSQL
                 AllocatedLocationY = reader.IsDBNull(12) ? (int?)null : reader.GetInt32(12),
                 AllocatedPort = reader.IsDBNull(13) ? (int?)null : reader.GetInt32(13),
                 SimulatorFolderName = reader.IsDBNull(14) ? null : reader.GetString(14),
-                StartedAt = reader.IsDBNull(15) ? (DateTime?)null : Utils.UnixTimeToDateTime((uint)reader.GetInt32(15)),
-                ExpiresAt = reader.IsDBNull(16) ? (DateTime?)null : Utils.UnixTimeToDateTime((uint)reader.GetInt32(16)),
-                Notes = reader.IsDBNull(17) ? null : reader.GetString(17),
-                Created = Utils.UnixTimeToDateTime((uint)reader.GetInt32(18)),
-                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(19))
+                RequestedEstateID = reader.IsDBNull(15) ? (int?)null : reader.GetInt32(15),
+                RequestedEstateName = reader.IsDBNull(16) ? null : reader.GetString(16),
+                RequestedLocationX = reader.IsDBNull(17) ? (int?)null : reader.GetInt32(17),
+                RequestedLocationY = reader.IsDBNull(18) ? (int?)null : reader.GetInt32(18),
+                StartedAt = reader.IsDBNull(19) ? (DateTime?)null : Utils.UnixTimeToDateTime((uint)reader.GetInt32(19)),
+                ExpiresAt = reader.IsDBNull(20) ? (DateTime?)null : Utils.UnixTimeToDateTime((uint)reader.GetInt32(20)),
+                Notes = reader.IsDBNull(21) ? null : reader.GetString(21),
+                Created = Utils.UnixTimeToDateTime((uint)reader.GetInt32(22)),
+                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(23))
             };
         }
 

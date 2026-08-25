@@ -83,9 +83,12 @@ prim-capacity packs and self-service region orders. Prim packs add to
 whatever the region's current cap already is — every region can have a
 different baseline — and apply instantly, persisting through the
 target region's own remote console (no restart needed); region orders
-auto-generate the new region's
-`.ini`/port/grid location, with a one-click admin "Start Region"
-button rather than payment silently launching a process. Gloebit
+auto-generate the new region's `.ini`/port/grid location and launch it
+automatically on successful payment, no admin click needed, with an
+admin "Start Region" button in the Store Orders queue as a manual
+retry path for the rare case the automatic launch itself fails. At
+checkout, region orders also let the resident join one of their own
+existing estates instead of always creating a new one. Gloebit
 purchases run through this feature's own Robust-native OAuth2
 integration — independent of the region-side Gloebit module, reusing
 the same merchant key so it's the same real account either way.

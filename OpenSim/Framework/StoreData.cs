@@ -82,6 +82,25 @@ namespace OpenSim.Framework
         public int? AllocatedPort = null;
         public string SimulatorFolderName = null;
 
+        // RegionOrder only - the resident's checkout choice: specific grid
+        // coordinates within the admin-configured region-order block,
+        // re-verified as still free and in-bounds at fulfillment time (not
+        // just at checkout - another order can claim it in between). Null
+        // for both means "pick any free spot" (AllocateRegionOrderLocation's
+        // existing scan behavior); only one of the two set is invalid and
+        // rejected at checkout.
+        public int? RequestedLocationX = null;
+        public int? RequestedLocationY = null;
+
+        // RegionOrder only - the resident's checkout choice. A value here
+        // means "join this estate I already own" (re-verified server-side
+        // against the resident's own GetEstatesByOwner list at checkout
+        // time - never trusted from the form alone); null means "create a
+        // new estate," using RequestedEstateName if given or else
+        // "<ResidentName>'s Estate". Null for PrimPack items.
+        public int? RequestedEstateID = null;
+        public string RequestedEstateName = null;
+
         // Set once, the moment the admin's "Start Region" click actually
         // fires Process.Start - guards the button from firing twice.
         public DateTime? StartedAt = null;

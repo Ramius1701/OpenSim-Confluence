@@ -14398,3 +14398,272 @@ purchasing resident really is the estate owner, not a fallback/default.
 Fully-automatic region-order fulfillment (`FulfillRegionOrder` ->
 `TryStartRegionProcess`, admin Start Region demoted to manual retry)
 is done and proven against a real order.
+
+**Estate selection at checkout for region orders.** Per the user's own
+follow-up idea after the estate crashes above ("during the order they
+should be able to select/create the estate") - built as its own
+feature, not folded silently into the crash fixes.
+
+Added `RequestedEstateID`/`RequestedEstateName` to `StoreOrder`
+(`OpenSim/Framework/StoreData.cs`) - a value in the first means "join
+this estate the resident already owns" (their checkout choice, but
+always re-verified server-side against `IEstateDataService.
+GetEstatesByOwner(session.PrincipalID)`, never trusted from the posted
+form alone - same discipline as the existing PrimPack `region_id`
+check); null means "create a new one," using `RequestedEstateName` if
+given, else the existing "<ResidentName>'s Estate" default. New
+`:VERSION 2` migration (additive `ALTER TABLE`, all three backends -
+MySQL/PGSQL/SQLite - kept in sync per this project's existing Store
+convention) adds the two columns; all three `*StoreData.cs`
+implementations' `OrderColumns`/insert/`ReadOrder` extended to match.
+
+`/store`'s RegionOrder card now has an estate dropdown (the resident's
+own existing estates, from `GetEstatesByOwner`, plus a "Create a new
+estate" default option) and an optional new-estate-name field.
+`BuildStoreOrder` re-verifies the posted choice before trusting it.
+
+The actual join mechanism turned out to matter: `DefaultEstateName`/
+`DefaultEstateOwnerName` (used by the existing auto-create path) live
+in `OpenSim.ini`'s own `[Estates]` section, but
+`OpenSimBase.PopulateRegionEstateInfo`'s OTHER mechanism -
+`TargetEstate`, join-by-ID, checked *before* `DefaultEstateName` - is
+read via `RegionInfo.GetSetting`, which only ever sees keys from the
+REGION's own config section (`m_extraSettings`, populated per-key from
+`Regions.ini`'s `[RegionName]` block), not `OpenSim.ini` at all. So
+`TargetEstate = <ID>` is now written into the generated `Regions.ini`
+region section (not `OpenSim.ini`), while `DefaultEstateName`/
+`DefaultEstateOwnerName` are still ALWAYS written too, as a fallback -
+if the `TargetEstate` join fails for any reason (estate deleted
+between checkout and provisioning, etc.), `PopulateRegionEstateInfo`
+falls through to the default-estate path instead of the interactive
+prompt that crashed this whole flow twice already, rather than
+reintroducing that crash for one edge case.
+
+Full solution build clean (0 errors). Since this touches
+`OpenSim/Framework/StoreData.cs` (in `OpenSim.Framework.dll`, a
+dependency of nearly every other assembly), did a full `bin/` binary
+sync again rather than a targeted one - same reasoning as the earlier
+git-version-staleness fix this session, avoiding any risk of a partial-
+update version mismatch. Migration confirmed via `DESCRIBE
+store_orders` on `casperia_dev`: both new columns present. Robust,
+Sandbox, and Welcome_Center all verified alive after restart. Sanity-
+checked `/store` renders without a server error (unauthenticated view
+only - the estate picker itself still needs the user's own real-
+account test, same limitation as every other checkout-flow change this
+session).
+
+**Confirmed clean on the user's own real test - no new bugs.** User
+bought a region order ("Sandbox 2") choosing to join their existing
+"Grid Estate" rather than create a new one. Verified independently
+rather than trusting the order's own status: `store_orders` shows
+`RequestedEstateID=101`/`Status=Active`; `estate_map` confirms the
+region's real UUID is actually linked to `EstateID=101` (not a
+silent fallback to an auto-created estate of its own); `estate_settings`
+confirms 101 is genuinely "Grid Estate". Process stable (342 lines/
+29KB, same healthy background-mode footprint as the earlier clean
+Start Region run, no runaway growth), region answering on its
+allocated port (9051, HTTP 404 = alive), "INITIALIZATION COMPLETE...
+LOGINS ENABLED" reached cleanly. One harmless log line - a neighbour-
+notify failure to "TesT Region" (port 9050), which simply isn't
+running right now - unrelated to this feature. Estate selection at
+checkout is done and proven.
+
+**Optional grid-coordinate entry at checkout for region orders.**
+Added `RequestedLocationX`/`RequestedLocationY` to `StoreOrder` (same
+pattern as `RequestedEstateID` - `:VERSION 3` additive migration, all
+three backends kept in sync, `OrderColumns`/insert/`ReadOrder` extended
+in each `*StoreData.cs`). `/store`'s RegionOrder card now has two
+optional number inputs (X/Y), with the configured block's actual range
+shown as a hint - blank on both keeps today's existing "auto-pick any
+free spot" behavior.
+
+`AllocateRegionOrderLocation` (previously parameterless) now takes an
+optional preferred (X,Y) and its used-locations scan was pulled out
+into a shared `ComputeUsedRegionOrderLocations()` helper, so
+`BuildStoreOrder`'s checkout-time check and the fulfillment-time
+allocator can't drift apart. Checkout validates both-or-neither, in-
+range, and not already taken (best-effort, same caveat as the existing
+region-name uniqueness check - another order can still claim the same
+spot before payment clears); fulfillment re-validates for real and
+fails the order outright with a specific message if the resident's
+exact requested spot is gone by then, rather than silently placing the
+region somewhere else they didn't ask for.
+
+Also caught and fixed a stale doc comment on `FulfillRegionOrder`
+itself, left over from before the full-automation change - it still
+said "leaves it AwaitingStart - an admin still has to click Start
+Region," which stopped being true days ago. Updated `FEATURES.md`'s
+Store paragraph to match (it had the same staleness).
+
+Full solution build clean (0 errors). Full `bin/` binary sync again
+(same `OpenSim.Framework.dll` reasoning as the estate-selection
+deploy). Migration confirmed via `DESCRIBE store_orders` on
+`casperia_dev`: both new columns present. Robust, Sandbox, and
+Welcome_Center all verified alive after restart. Still needs the
+user's own real-account checkout test to confirm the picker end to
+end.
+
+**WebUI verification pass, 4 real issues found - 3 fixed, 1 needs a
+user decision.** User asked to spot-check the WebUI; identified and
+diagnosed all 4 against real code and live data before touching
+anything, per usual practice on this project.
+
+1. **"Purchases" under My Transactions is empty for Store buys - by
+   design, not a bug.** `/transactions?tab=purchases` only ever
+   queries `currency_purchases` (real-money `buyCurrency`/
+   `RecordPurchase` only) - Store purchases live in `store_orders` and
+   surface correctly elsewhere: verified real rows for the user's own
+   two region orders show up both under the Transfers tab
+   (`currency_transactions`, `FromAgent`=them, description "Store
+   purchase: ...") and on `/store/my-purchases` (`GetOrdersByResident`
+   confirmed correct). Nothing lost, but the tab name is genuinely
+   misleading. **Left alone - user wants to decide between merging
+   Store purchases into that tab vs. renaming it, not yet decided.**
+
+2. **Balance missing from the dashboard - confirmed real bug, fixed.**
+   A comment on `HandleDashboard` claimed Balance had been "relocated"
+   into the Account Information card - it never actually was; grepped
+   the whole handler, zero references anywhere on the page. Added a
+   5th stat card to the existing 4-card top row (Avatars/Regions/
+   Estates/Events) via `m_CurrencyService.GetBalance`, and corrected
+   the stale comment instead of leaving it to mislead the next read.
+
+3. **Recent Activity only ever shows logins - confirmed real gap,
+   fixed.** All 8 existing `LogActivity` call sites in this file are
+   avatar/account lifecycle events (login, registration, avatar
+   import/switch, email verification, suggestion submitted) - none of
+   them Store-related, which is exactly why a resident's own real
+   purchases never appeared. Added logging to `ProcessPaidOrder` (the
+   shared convergence point for both ConfluenceCurrency and Gloebit
+   payment success, so it's one call site covering both currencies,
+   not two) - resolves the resident's `WebAccountID` via
+   `GetLinkForAvatar` and logs a `store_purchase` entry with the item
+   name and amount.
+
+4. **New Store-ordered regions don't show the Online pill - real, but
+   not a WebUI bug; added a diagnostic instead of a false fix.**
+   Tested directly: the long-standing Sandbox (port 9018) answers via
+   the public `holodeckgrid.ddns.net` hostname; the freshly
+   auto-created Sandbox 2 (port 9051) does not, despite answering fine
+   on `127.0.0.1`. Windows Firewall already allows `opensim.exe` on
+   any port (confirmed via `Get-NetFirewallRule`/
+   `Get-NetFirewallApplicationFilter`), so this isn't a Windows-side
+   block - it's the router's port-forwarding, which only covers the
+   grid's historically-configured ports, not the Store's
+   auto-allocated region-order range. This means new regions are
+   genuinely unreachable to real residents from outside the LAN, not
+   just invisible to one pill - an operational gap in the "fully
+   automatic" Store feature that needs the user to forward the
+   configured `RegionOrderPortRangeStart`-`RegionOrderPortRangeEnd`
+   block on their router once, covering every future auto-created
+   region. Not something fixable in code. What IS a real code fix:
+   the existing "Online/Offline" pill (`IsRegionAlive`, a single
+   public-URI probe) can't tell "genuinely down" from "running but not
+   forwarded" apart, and was reporting both as flatly "Offline" -
+   actively misleading, since the two failure modes need completely
+   different admin actions. Added `RenderRegionReachabilityPill`
+   (shared by My Regions and the new Store Orders admin queue column):
+   probes the public `ServerURI` first (unchanged "Online" behavior),
+   and only on failure additionally probes `127.0.0.1` on the same
+   port - if that succeeds, shows a distinct "Not reachable publicly"
+   pill with a tooltip pointing at port forwarding specifically,
+   instead of a plain, wrong "Offline".
+
+Full solution build clean (0 errors). Only `OpenSim.Server.Handlers.dll`
+changed this pass (no `OpenSim.Framework.dll` touch) - targeted DLL
+sync, not a full `bin/` sync. Restarted Robust/Sandbox/Welcome_Center
+and Sandbox 2's region process directly (its order was already Active,
+so the Store's own Start Region button doesn't apply - restarted the
+same way Sandbox/Welcome_Center always have been). Confirmed via direct
+network tests: Sandbox 2 answers on `127.0.0.1:9051` but not on
+`holodeckgrid.ddns.net:9051`, exactly the case item 4's new pill exists
+to surface. Admin Store Orders page confirmed not crashing (302 to
+login, unauthenticated) - the actual rendered pill still needs the
+user's own admin login to see live, same limitation as every other
+admin-page verification this session.
+
+**Fixed bare holodeckgrid.ddns.net stopped reaching the WebUI - not a
+Casperia-Dev code issue, a shared Apache config gap.** User reported
+needing to type the WebUI's port explicitly (`:9002`) to reach the
+site, when it used to work bare. Traced it: `httpd.exe` (Laragon's
+Apache, which also serves several real live sites on this same
+machine - ufpgc.org/.com/.net, casperia.ddns.net) is what actually
+owns port 80/443 here, and its `holodeckgrid.ddns.net` vhost
+(`S:\laragon\etc\apache2\sites-enabled\zzz-public-holodeck.conf`, a
+file outside this repo) had never been configured to reach Robust at
+all - it served a static legacy PHP site instead (still on disk,
+untouched, just no longer the default). Nothing in Casperia-Dev's own
+config changed; `Robust.HG.ini`'s `PublicPort` has been 9002 all
+along.
+
+Backed up the original vhost (`zzz-public-holodeck.conf.bak-20260825`),
+added `mod_proxy`/`mod_proxy_http` reverse-proxy directives to both the
+`:80` and `:443` blocks pointing at `http://127.0.0.1:9002/` (both
+modules were already enabled in `httpd.conf`, no changes needed there),
+deliberately excluding `/.well-known/` from the proxy so ACME
+certificate renewal keeps working against the static site. Validated
+syntax (`httpd -t` -> "Syntax OK") before doing anything live - this
+Apache instance serves multiple real production domains, not just
+Casperia-Dev, so a config mistake here has a much wider blast radius
+than anything else touched this session. The actual reload
+(`httpd -k restart`) was done by the user directly, not by me - a
+restart of a shared process serving other live sites was correctly
+blocked by the permission system as out of scope for an unattended
+action. Confirmed clean afterward: bare `holodeckgrid.ddns.net` now
+returns the real WebUI (`<title>Casperia Prime Dev</title>`), and
+ufpgc.org/.com/.net (200) plus casperia.ddns.net (302, its own
+pre-existing behavior, untouched by this change) all still serve
+correctly - the shared Apache instance wasn't disrupted.
+
+**Item 1 resolved: Store purchases merged into My Transactions'
+Purchases tab.** User's decision. The existing real-money purchase
+table (`currency_purchases`/`GetPurchaseHistory`) is unchanged, now
+headed "Real-Money Purchases (L$)" for clarity; a second "Store
+Purchases" table was added below it, sourced from
+`m_StoreService.GetOrdersByResident` (most recent 25, no separate
+pagination - the two lists have no reason to share length/paging, and
+`/store/my-purchases` remains the full paginated-by-scrolling archive
+with Status/Expires/renewal-relevant detail this digest deliberately
+leaves out). A "View full Store purchase history" link points there.
+Full solution build clean (0 errors), only `OpenSim.Server.Handlers.dll`
+changed - targeted sync, full stop/sync/restart-staggered cycle
+(Robust, Sandbox, Welcome_Center, plus Sandbox 2's region process
+directly since its order is already Active). One transient 404 on
+Robust's first `/store` check during this restart - retried a few
+seconds later and got 200, a startup race (checked too early in the
+route-registration sequence), not a real fault.
+
+**Robust now has a real consoleless/background mode
+(`OpenSim/Server/Base/ServicesServerBase.cs`).** Grew out of a
+side-conversation about remotely launching the grid when the user isn't
+at the machine (their VHDX-backed drive is deliberately left unmounted
+at boot, to keep it always safe to back up - see the new sibling
+project `ServiceLauncher`, a separate repo at `S:\Github\ServiceLauncher`,
+not part of this one). Confirmed `Robust.exe` shares the exact same
+`while (m_Running) { MainConsole.Instance.Prompt(); }` pattern already
+fixed for region processes (`OpenSimBackground`,
+`Application.cs`/`OpenSimBackground.cs`) - `ServicesServerBase.Run()`
+had no equivalent, so a headlessly-spawned Robust (Task Scheduler
+"run whether user is logged on or not," a Linux systemd unit, Docker,
+etc.) would hit the identical runaway-loop bug. Checked `console=mock`
+first as a possible zero-code-change fix - it's not: `MockConsole.
+Prompt()` is an empty no-op, so the same `while` loop would just spin
+on a silent, symptomless empty call instead of a logged exception -
+100% CPU on one thread with nothing in the logs to notice it by,
+arguably worse than the crash-and-spam version. Added a real
+`[Startup] background = true` switch (`-background=true` on the
+command line, same `ArgvConfigSource` mechanism as region processes)
+that blocks on a 1-second sleep-poll loop instead of ever calling
+`Prompt()`.
+
+Live-verified against a genuine cold start (Robust, Sandbox, and
+Welcome_Center were all actually down at the time, not just
+re-launched from an already-running state): `Robust.log` shows
+"Running in background/consoleless mode - console commands are not
+available." immediately after startup, both regions registered
+normally seconds later, and the log stayed stable with no runaway
+growth. This is the same core mechanism `ServiceLauncher`'s
+`services.example.json` now assumes (`-background=true` on both
+Robust and every region's own launch arguments) - benefits any grid
+owner running Robust/regions under any headless/service mechanism,
+not just this specific remote-launch use case.

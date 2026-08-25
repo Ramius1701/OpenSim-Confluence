@@ -71,3 +71,21 @@ CREATE TABLE IF NOT EXISTS store_gloebit_transactions (
 CREATE INDEX IF NOT EXISTS store_gloebit_transactions_orderid ON store_gloebit_transactions ("StoreOrderID");
 
 COMMIT;
+
+:VERSION 2
+
+BEGIN;
+
+ALTER TABLE store_orders ADD COLUMN "RequestedEstateID" int;
+ALTER TABLE store_orders ADD COLUMN "RequestedEstateName" varchar(255);
+
+COMMIT;
+
+:VERSION 3
+
+BEGIN;
+
+ALTER TABLE store_orders ADD COLUMN "RequestedLocationX" int;
+ALTER TABLE store_orders ADD COLUMN "RequestedLocationY" int;
+
+COMMIT;

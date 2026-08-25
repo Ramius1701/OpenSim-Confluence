@@ -158,7 +158,8 @@ namespace OpenSim.Data.MySQL
         private const string OrderColumns =
                 "ID, CatalogItemID, OrderType, ResidentAvatarID, ResidentName, CurrencyUsed, AmountCharged, " +
                 "PaymentTransactionID, Status, TargetRegionID, RequestedRegionName, AllocatedLocationX, " +
-                "AllocatedLocationY, AllocatedPort, SimulatorFolderName, StartedAt, ExpiresAt, Notes, Created, Updated";
+                "AllocatedLocationY, AllocatedPort, SimulatorFolderName, RequestedEstateID, RequestedEstateName, " +
+                "RequestedLocationX, RequestedLocationY, StartedAt, ExpiresAt, Notes, Created, Updated";
 
         public StoreOrder GetOrder(UUID id)
         {
@@ -239,7 +240,8 @@ namespace OpenSim.Data.MySQL
                         "REPLACE INTO store_orders (" + OrderColumns + ") " +
                         "VALUES (?ID, ?CatalogItemID, ?OrderType, ?ResidentAvatarID, ?ResidentName, ?CurrencyUsed, " +
                         "?AmountCharged, ?PaymentTransactionID, ?Status, ?TargetRegionID, ?RequestedRegionName, " +
-                        "?AllocatedLocationX, ?AllocatedLocationY, ?AllocatedPort, ?SimulatorFolderName, ?StartedAt, " +
+                        "?AllocatedLocationX, ?AllocatedLocationY, ?AllocatedPort, ?SimulatorFolderName, " +
+                        "?RequestedEstateID, ?RequestedEstateName, ?RequestedLocationX, ?RequestedLocationY, ?StartedAt, " +
                         "?ExpiresAt, ?Notes, ?Created, ?Updated)", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", order.ID.ToString());
@@ -261,6 +263,13 @@ namespace OpenSim.Data.MySQL
                     cmd.Parameters.AddWithValue("?AllocatedPort",
                             order.AllocatedPort.HasValue ? (object)order.AllocatedPort.Value : DBNull.Value);
                     cmd.Parameters.AddWithValue("?SimulatorFolderName", (object)order.SimulatorFolderName ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("?RequestedEstateID",
+                            order.RequestedEstateID.HasValue ? (object)order.RequestedEstateID.Value : DBNull.Value);
+                    cmd.Parameters.AddWithValue("?RequestedEstateName", (object)order.RequestedEstateName ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("?RequestedLocationX",
+                            order.RequestedLocationX.HasValue ? (object)order.RequestedLocationX.Value : DBNull.Value);
+                    cmd.Parameters.AddWithValue("?RequestedLocationY",
+                            order.RequestedLocationY.HasValue ? (object)order.RequestedLocationY.Value : DBNull.Value);
                     cmd.Parameters.AddWithValue("?StartedAt",
                             order.StartedAt.HasValue ? (object)Utils.DateTimeToUnixTime(order.StartedAt.Value) : DBNull.Value);
                     cmd.Parameters.AddWithValue("?ExpiresAt",
@@ -293,11 +302,15 @@ namespace OpenSim.Data.MySQL
                 AllocatedLocationY = reader.IsDBNull(12) ? (int?)null : Convert.ToInt32(reader.GetValue(12)),
                 AllocatedPort = reader.IsDBNull(13) ? (int?)null : Convert.ToInt32(reader.GetValue(13)),
                 SimulatorFolderName = reader.IsDBNull(14) ? null : reader.GetString(14),
-                StartedAt = reader.IsDBNull(15) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(15))),
-                ExpiresAt = reader.IsDBNull(16) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(16))),
-                Notes = reader.IsDBNull(17) ? null : reader.GetString(17),
-                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(18))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(19)))
+                RequestedEstateID = reader.IsDBNull(15) ? (int?)null : Convert.ToInt32(reader.GetValue(15)),
+                RequestedEstateName = reader.IsDBNull(16) ? null : reader.GetString(16),
+                RequestedLocationX = reader.IsDBNull(17) ? (int?)null : Convert.ToInt32(reader.GetValue(17)),
+                RequestedLocationY = reader.IsDBNull(18) ? (int?)null : Convert.ToInt32(reader.GetValue(18)),
+                StartedAt = reader.IsDBNull(19) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(19))),
+                ExpiresAt = reader.IsDBNull(20) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(20))),
+                Notes = reader.IsDBNull(21) ? null : reader.GetString(21),
+                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(22))),
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(23)))
             };
         }
 

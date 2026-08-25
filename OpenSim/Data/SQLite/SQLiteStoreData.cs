@@ -151,7 +151,8 @@ namespace OpenSim.Data.SQLite
         private const string OrderColumns =
                 "ID, CatalogItemID, OrderType, ResidentAvatarID, ResidentName, CurrencyUsed, AmountCharged, " +
                 "PaymentTransactionID, Status, TargetRegionID, RequestedRegionName, AllocatedLocationX, " +
-                "AllocatedLocationY, AllocatedPort, SimulatorFolderName, StartedAt, ExpiresAt, Notes, Created, Updated";
+                "AllocatedLocationY, AllocatedPort, SimulatorFolderName, RequestedEstateID, RequestedEstateName, " +
+                "RequestedLocationX, RequestedLocationY, StartedAt, ExpiresAt, Notes, Created, Updated";
 
         public StoreOrder GetOrder(UUID id)
         {
@@ -224,7 +225,8 @@ namespace OpenSim.Data.SQLite
                         "INSERT OR REPLACE INTO store_orders (" + OrderColumns + ") " +
                         "VALUES (:id, :catalogitemid, :ordertype, :residentavatarid, :residentname, :currencyused, " +
                         ":amountcharged, :paymenttransactionid, :status, :targetregionid, :requestedregionname, " +
-                        ":allocatedlocationx, :allocatedlocationy, :allocatedport, :simulatorfoldername, :startedat, " +
+                        ":allocatedlocationx, :allocatedlocationy, :allocatedport, :simulatorfoldername, " +
+                        ":requestedestateid, :requestedestatename, :requestedlocationx, :requestedlocationy, :startedat, " +
                         ":expiresat, :notes, :created, :updated)", m_conn))
                 {
                     cmd.Parameters.Add(new SQLiteParameter(":id", order.ID.ToString()));
@@ -246,6 +248,13 @@ namespace OpenSim.Data.SQLite
                     cmd.Parameters.Add(new SQLiteParameter(":allocatedport",
                             order.AllocatedPort.HasValue ? (object)order.AllocatedPort.Value : DBNull.Value));
                     cmd.Parameters.Add(new SQLiteParameter(":simulatorfoldername", (object)order.SimulatorFolderName ?? DBNull.Value));
+                    cmd.Parameters.Add(new SQLiteParameter(":requestedestateid",
+                            order.RequestedEstateID.HasValue ? (object)order.RequestedEstateID.Value : DBNull.Value));
+                    cmd.Parameters.Add(new SQLiteParameter(":requestedestatename", (object)order.RequestedEstateName ?? DBNull.Value));
+                    cmd.Parameters.Add(new SQLiteParameter(":requestedlocationx",
+                            order.RequestedLocationX.HasValue ? (object)order.RequestedLocationX.Value : DBNull.Value));
+                    cmd.Parameters.Add(new SQLiteParameter(":requestedlocationy",
+                            order.RequestedLocationY.HasValue ? (object)order.RequestedLocationY.Value : DBNull.Value));
                     cmd.Parameters.Add(new SQLiteParameter(":startedat",
                             order.StartedAt.HasValue ? (object)Utils.DateTimeToUnixTime(order.StartedAt.Value) : DBNull.Value));
                     cmd.Parameters.Add(new SQLiteParameter(":expiresat",
@@ -278,11 +287,15 @@ namespace OpenSim.Data.SQLite
                 AllocatedLocationY = reader.IsDBNull(12) ? (int?)null : Convert.ToInt32(reader.GetValue(12)),
                 AllocatedPort = reader.IsDBNull(13) ? (int?)null : Convert.ToInt32(reader.GetValue(13)),
                 SimulatorFolderName = reader.IsDBNull(14) ? null : reader.GetString(14),
-                StartedAt = reader.IsDBNull(15) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(15))),
-                ExpiresAt = reader.IsDBNull(16) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(16))),
-                Notes = reader.IsDBNull(17) ? null : reader.GetString(17),
-                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(18))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(19)))
+                RequestedEstateID = reader.IsDBNull(15) ? (int?)null : Convert.ToInt32(reader.GetValue(15)),
+                RequestedEstateName = reader.IsDBNull(16) ? null : reader.GetString(16),
+                RequestedLocationX = reader.IsDBNull(17) ? (int?)null : Convert.ToInt32(reader.GetValue(17)),
+                RequestedLocationY = reader.IsDBNull(18) ? (int?)null : Convert.ToInt32(reader.GetValue(18)),
+                StartedAt = reader.IsDBNull(19) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(19))),
+                ExpiresAt = reader.IsDBNull(20) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(20))),
+                Notes = reader.IsDBNull(21) ? null : reader.GetString(21),
+                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(22))),
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(23)))
             };
         }
 

@@ -3654,6 +3654,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 List<CurrencyPurchase> purchases = m_CurrencyService.GetPurchaseHistory(agentID, dateStart, dateEnd, null, null);
                 hasNextPage = start + pageSize < purchases.Count;
 
+                rows.Append("<h2>Real-Money Purchases (L$)</h2>");
                 rows.Append("<table><tr><th>Date</th><th>L$ credited</th><th>Real amount (hundredths)</th></tr>");
                 foreach (CurrencyPurchase p in purchases.Skip(start).Take(pageSize))
                 {
@@ -3663,7 +3664,44 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 rows.Append("</table>");
                 if (purchases.Count == 0)
-                    rows.Append("<p>You haven't made any purchases yet.</p>");
+                    rows.Append("<p>You haven't made any real-money purchases yet.</p>");
+
+                // Store purchases - merged in from a genuinely different
+                // table (store_orders, not currency_purchases) at the
+                // user's explicit request, since this tab's name reads as
+                // "everything I've bought" and Store buys (prim packs,
+                // region orders) previously never showed up here at all.
+                // Kept to a recent digest rather than sharing the above
+                // pagination controls (the two lists have no reason to be
+                // the same length) - /store/my-purchases remains the full,
+                // paginated-by-scrolling archive with Status/Expires, this
+                // is just enough to answer "did I buy this" from one page.
+                if (m_StoreService != null)
+                {
+                    List<StoreOrder> storeOrders = m_StoreService.GetOrdersByResident(agentID)
+                            .OrderByDescending(o => o.Created).Take(pageSize).ToList();
+
+                    rows.Append("<h2>Store Purchases</h2>");
+                    if (storeOrders.Count == 0)
+                    {
+                        rows.Append("<p>You haven't bought anything from the Store yet.</p>");
+                    }
+                    else
+                    {
+                        rows.Append("<table><tr><th>Date</th><th>Item</th><th>Currency</th><th>Amount</th><th>Status</th></tr>");
+                        foreach (StoreOrder order in storeOrders)
+                        {
+                            StoreCatalogItem item = m_StoreService.GetCatalogItem(order.CatalogItemID);
+                            rows.Append("<tr><td>").Append(order.Created.ToString("yyyy-MM-dd HH:mm:ss")).Append(" UTC</td>")
+                                .Append("<td>").Append(Html(item != null ? item.Name : order.OrderType)).Append("</td>")
+                                .Append("<td>").Append(order.CurrencyUsed).Append("</td>")
+                                .Append("<td>").Append(order.AmountCharged.ToString("N0")).Append("</td>")
+                                .Append("<td>").Append(Html(order.Status)).Append("</td></tr>");
+                        }
+                        rows.Append("</table>");
+                        rows.Append("<p><a href=\"").Append(BasePath).Append("/store/my-purchases\">View full Store purchase history</a></p>");
+                    }
+                }
             }
             else
             {
@@ -5659,6 +5697,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             int regionsCount = GetRegionsOwnedBy(session.PrincipalID).Count;
             int estatesCount = m_EstateDataService != null ? m_EstateDataService.GetEstatesByOwner(session.PrincipalID).Count : 0;
+            int balance = m_CurrencyService?.GetBalance(session.PrincipalID) ?? 0;
             int eventsCount = m_EventsService != null
                     ? m_EventsService.GetUpcoming(0, 100).Count(e => e.CreatorId == session.PrincipalID)
                     : 0;
@@ -5730,16 +5769,17 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashStat(sb, "bi-map", "ic-blue", regionsCount, "My Regions");
             AppendDashStat(sb, "bi-building", "ic-amber", estatesCount, "My Estates");
             AppendDashStat(sb, "bi-calendar-event", "ic-green", eventsCount, "My Events");
+            if (m_CurrencyService != null)
+                AppendDashStat(sb, "bi-wallet2", "ic-green", balance, "Balance (" + m_currencySymbol + ")");
             sb.Append("</div>");
 
             sb.Append("<div class=\"dash-row\">");
 
-            // Account Information - deliberately just the reference's own
-            // 4 fields (Username/Email/Role/Member Since), not the wider
-            // set the old single-card layout had room for (Balance/Friends/
-            // Home Region moved to their own cards/pages below - Balance
-            // stays reachable via My Transactions, not lost, just relocated
-            // to match the reference's card boundaries).
+            // Account Information - the reference's own 4 fields (Username/
+            // Email/Role/Member Since). Balance was previously claimed by a
+            // stale comment here to have been "relocated" into this card -
+            // it never actually was; it's now a real stat card in the row
+            // above instead, not fixed by resurrecting the old claim.
             sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
               .Append("<i class=\"bi bi-person-vcard\"></i> Account Information</div></div>");
             AppendDashInfoRow(sb, "Username", Html(session.Name));
@@ -8927,9 +8967,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                 rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Actions</th></tr>");
                 foreach (GridRegion region in ownedRegions)
                 {
-                    bool online = IsRegionAlive(region, 1500);
                     rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
-                    rows.Append("<td><span class=\"pill ").Append(online ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>");
+                    rows.Append("<td>").Append(RenderRegionReachabilityPill(region)).Append("</td>");
                     rows.Append("<td>(").Append(region.RegionCoordX).Append(", ").Append(region.RegionCoordY).Append(")</td>");
                     rows.Append("<td>");
                     rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/oar-save\" style=\"margin-right:8px\">");
@@ -10153,6 +10192,20 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<StoreCatalogItem> items = m_StoreService.GetActiveCatalogItems().OrderBy(i => i.SortOrder).ToList();
             List<GridRegion> ownedRegions = session != null ? GetRegionsOwnedBy(session.PrincipalID) : new List<GridRegion>();
 
+            // For the RegionOrder estate picker below - the resident's own
+            // existing estates, so checkout can offer "join one of these"
+            // as an alternative to always creating a brand new estate.
+            List<EstateSettings> ownedEstates = new List<EstateSettings>();
+            if (session != null && m_EstateDataService != null)
+            {
+                foreach (int estateId in m_EstateDataService.GetEstatesByOwner(session.PrincipalID))
+                {
+                    EstateSettings estate = m_EstateDataService.LoadEstateSettings(estateId);
+                    if (estate != null && estate.EstateID != 0)
+                        ownedEstates.Add(estate);
+                }
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1><i class=\"bi bi-shop\"></i> Store</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a> | <a href=\"")
@@ -10217,6 +10270,37 @@ namespace OpenSim.Server.Handlers.WebInterface
                         else if (item.ItemType == "RegionOrder")
                         {
                             sb.Append("<p><input type=\"text\" name=\"region_name\" placeholder=\"Region name\" maxlength=\"63\" required></p>");
+
+                            // Estate choice: join one of the resident's own
+                            // existing estates (re-verified server-side at
+                            // checkout - this dropdown is just a UI
+                            // convenience, not the trust boundary), or
+                            // create a new one. "new" is deliberately the
+                            // default option so a resident who ignores this
+                            // entirely still gets today's existing behavior.
+                            sb.Append("<p><label>Estate: <select name=\"estate_choice\" onchange=\"this.form.querySelector('[name=estate_name]').style.display = this.value === 'new' ? '' : 'none';\">");
+                            sb.Append("<option value=\"new\">Create a new estate</option>");
+                            foreach (EstateSettings estate in ownedEstates)
+                                sb.Append("<option value=\"").Append(estate.EstateID).Append("\">Join \"").Append(Html(estate.EstateName)).Append("\"</option>");
+                            sb.Append("</select></label></p>");
+                            sb.Append("<p><input type=\"text\" name=\"estate_name\" placeholder=\"New estate name (default: ")
+                              .Append(Html(session.Name)).Append("'s Estate)\" maxlength=\"63\"></p>");
+
+                            // Grid location: optional, blank on both means
+                            // "pick any free spot in the configured block"
+                            // (today's existing behavior). A resident who
+                            // fills in just one is caught server-side, not
+                            // here - both-or-neither is enforced in
+                            // BuildStoreOrder, not by disabling one field
+                            // client-side, since that's easy to bypass and
+                            // this isn't a trust boundary either way.
+                            sb.Append("<p><label>Grid location (optional - leave blank to auto-pick; valid range ")
+                              .Append(m_regionOrderGridXStart).Append("-").Append(m_regionOrderGridXEnd).Append(" x ")
+                              .Append(m_regionOrderGridYStart).Append("-").Append(m_regionOrderGridYEnd).Append("): ")
+                              .Append("<input type=\"number\" name=\"location_x\" placeholder=\"X\" style=\"width:5em\" min=\"")
+                              .Append(m_regionOrderGridXStart).Append("\" max=\"").Append(m_regionOrderGridXEnd).Append("\"> ")
+                              .Append("<input type=\"number\" name=\"location_y\" placeholder=\"Y\" style=\"width:5em\" min=\"")
+                              .Append(m_regionOrderGridYStart).Append("\" max=\"").Append(m_regionOrderGridYEnd).Append("\"></label></p>");
                         }
 
                         if (canBuy)
@@ -10397,6 +10481,77 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
 
                 order.RequestedRegionName = regionName;
+
+                // Estate choice - a submitted estate_choice value is never
+                // trusted alone; re-checked against this resident's own
+                // GetEstatesByOwner list, same discipline as the PrimPack
+                // region_id check above. Anything other than a real owned
+                // estate ID (missing field, "new", tampered value, an
+                // estate they don't actually own) falls through to
+                // "create a new estate," never silently to someone else's.
+                string estateChoice = FormValue(form, "estate_choice");
+                if (!string.IsNullOrEmpty(estateChoice) && estateChoice != "new"
+                        && int.TryParse(estateChoice, out int estateId))
+                {
+                    if (m_EstateDataService == null || !m_EstateDataService.GetEstatesByOwner(session.PrincipalID).Contains(estateId))
+                    {
+                        error = "You don't own that estate.";
+                        return null;
+                    }
+
+                    order.RequestedEstateID = estateId;
+                }
+                else
+                {
+                    string estateName = (FormValue(form, "estate_name") ?? string.Empty).Trim();
+                    if (estateName.Length > 63)
+                    {
+                        error = "Estate name is too long.";
+                        return null;
+                    }
+
+                    order.RequestedEstateName = string.IsNullOrEmpty(estateName) ? null : estateName;
+                }
+
+                // Grid location - optional, both-or-neither. Best-effort
+                // check here (same caveat as the region-name uniqueness
+                // check above: another order can still claim this exact
+                // spot between now and payment/fulfillment) - the
+                // authoritative re-check happens in
+                // AllocateRegionOrderLocation at fulfillment time, which
+                // fails the order outright rather than silently picking a
+                // different spot if the resident's specific request is no
+                // longer free by then.
+                string locationXStr = FormValue(form, "location_x");
+                string locationYStr = FormValue(form, "location_y");
+                bool hasLocationX = !string.IsNullOrEmpty(locationXStr);
+                bool hasLocationY = !string.IsNullOrEmpty(locationYStr);
+                if (hasLocationX != hasLocationY)
+                {
+                    error = "Enter both a grid X and Y, or leave both blank to auto-pick.";
+                    return null;
+                }
+
+                if (hasLocationX && hasLocationY)
+                {
+                    if (!int.TryParse(locationXStr, out int requestedX) || !int.TryParse(locationYStr, out int requestedY)
+                            || requestedX < m_regionOrderGridXStart || requestedX > m_regionOrderGridXEnd
+                            || requestedY < m_regionOrderGridYStart || requestedY > m_regionOrderGridYEnd)
+                    {
+                        error = "Grid location must be within " + m_regionOrderGridXStart + "-" + m_regionOrderGridXEnd
+                                + " x " + m_regionOrderGridYStart + "-" + m_regionOrderGridYEnd + ".";
+                        return null;
+                    }
+
+                    if (ComputeUsedRegionOrderLocations().Contains((requestedX, requestedY)))
+                    {
+                        error = "That grid location is already taken or pending.";
+                        return null;
+                    }
+
+                    order.RequestedLocationX = requestedX;
+                    order.RequestedLocationY = requestedY;
+                }
             }
             else
             {
@@ -10715,9 +10870,28 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         // Dispatches a newly-Paid order to the matching fulfillment path.
         // Both ConfluenceCurrency checkout and the Gloebit "consume" webhook
-        // converge here once payment is confirmed.
+        // converge here once payment is confirmed - the one shared place to
+        // log the purchase to Recent Activity, so both currencies get it
+        // without duplicating the call at each payment path. Real gap this
+        // closes: LogActivity previously had 8 call sites (login, avatar
+        // import/switch, etc.) and none of them were Store purchases -
+        // confirmed live, a resident who'd made real region-order/prim-pack
+        // purchases saw only login entries on their own dashboard.
         private void ProcessPaidOrder(StoreOrder order, StoreCatalogItem item)
         {
+            WebAccountAvatarLink link = m_WebAccountService?.GetLinkForAvatar(order.ResidentAvatarID);
+            if (link != null)
+            {
+                string currencyLabel = order.CurrencyUsed == "Gloebit" ? "G$" : m_currencySymbol;
+                m_WebAccountService.LogActivity(new WebActivityEntry
+                {
+                    WebAccountID = link.WebAccountID,
+                    AvatarPrincipalID = order.ResidentAvatarID,
+                    EventType = "store_purchase",
+                    Description = "Bought \"" + item.Name + "\" for " + currencyLabel + " " + order.AmountCharged.ToString("N0")
+                });
+            }
+
             if (item.ItemType == "PrimPack")
                 FulfillPrimPack(order, item);
             else if (item.ItemType == "RegionOrder")
@@ -10762,10 +10936,10 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_StoreService.StoreOrder(order);
         }
 
-        // Auto-generates the new region's .ini/port/location and leaves it
-        // AwaitingStart - an admin still has to click Start Region (see
-        // HandleAdminStoreOrdersStart) rather than this spawning a process
-        // unsupervised the moment payment clears.
+        // Auto-generates the new region's .ini/port/location and launches
+        // it automatically (see TryStartRegionProcess) - Start Region in
+        // the admin queue is a manual retry path only, for when this
+        // automatic launch itself fails.
         private void FulfillRegionOrder(StoreOrder order, StoreCatalogItem item)
         {
             if (string.IsNullOrEmpty(m_regionOrderTemplateIniPath) || !File.Exists(m_regionOrderTemplateIniPath) || string.IsNullOrEmpty(m_regionOrderGridRoot))
@@ -10785,10 +10959,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            (int X, int Y)? location = AllocateRegionOrderLocation();
+            (int X, int Y)? location = AllocateRegionOrderLocation(order.RequestedLocationX, order.RequestedLocationY);
             if (location == null)
             {
-                order.Notes = "Provisioning failed: no free grid location in the configured block.";
+                order.Notes = order.RequestedLocationX.HasValue
+                        ? "Provisioning failed: the requested grid location (" + order.RequestedLocationX + "," + order.RequestedLocationY
+                                + ") is no longer free or is outside the configured block."
+                        : "Provisioning failed: no free grid location in the configured block.";
                 order.Updated = DateTime.UtcNow;
                 m_StoreService.StoreOrder(order);
                 return;
@@ -10854,8 +11031,18 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // Both appended as a second [Estates] section after the
                 // template's own (commented-out) one - Nini merges
                 // repeated section headers within one file rather than
-                // erroring.
-                templateText += "\r\n[Estates]\r\n    DefaultEstateName = \"" + order.ResidentName + "'s Estate\"\r\n"
+                // erroring. Always written, even when the resident chose
+                // to join an existing estate below (via TargetEstate,
+                // checked first by PopulateRegionEstateInfo) - if that
+                // join fails for any reason (e.g. the estate was deleted
+                // between checkout and provisioning), PopulateRegionEstateInfo
+                // falls through to this DefaultEstateName/Owner path
+                // instead of the interactive prompt that crashed this
+                // whole flow twice already.
+                string estateName = !string.IsNullOrEmpty(order.RequestedEstateName)
+                        ? order.RequestedEstateName
+                        : order.ResidentName + "'s Estate";
+                templateText += "\r\n[Estates]\r\n    DefaultEstateName = \"" + estateName + "\"\r\n"
                         + "    DefaultEstateOwnerName = \"" + order.ResidentName + "\"\r\n";
 
                 File.WriteAllText(Path.Combine(simRoot, "OpenSim.ini"), templateText);
@@ -10875,6 +11062,17 @@ namespace OpenSim.Server.Handlers.WebInterface
                     regionIni.Append("SizeY = ").Append(item.RegionSizeY).Append("\r\n");
                 if (item.PrimAmount > 0)
                     regionIni.Append("MaxPrims = ").Append(item.PrimAmount).Append("\r\n");
+                // The resident's checkout choice to join one of their own
+                // existing estates. TargetEstate is a per-REGION setting
+                // (RegionInfo.GetSetting reads it from this file's own
+                // section, via m_extraSettings - unlike DefaultEstateName/
+                // Owner above, which live in OpenSim.ini's [Estates]
+                // section instead), and PopulateRegionEstateInfo checks it
+                // before DefaultEstateName, joining by estate ID directly -
+                // no name-collision ambiguity, and no owner setup needed
+                // since the estate they're joining already has one.
+                if (order.RequestedEstateID.HasValue)
+                    regionIni.Append("TargetEstate = ").Append(order.RequestedEstateID.Value).Append("\r\n");
                 File.WriteAllText(Path.Combine(regionsDir, "Regions.ini"), regionIni.ToString());
 
                 order.AllocatedPort = port.Value;
@@ -10957,7 +11155,11 @@ namespace OpenSim.Server.Handlers.WebInterface
         // Scoped to the configured coordinate block only - that block is
         // dedicated to region orders, so there's no need to scan the whole
         // grid the way the port allocator above does.
-        private (int X, int Y)? AllocateRegionOrderLocation()
+        // Shared by AllocateRegionOrderLocation and BuildStoreOrder's own
+        // best-effort checkout-time check - one source of truth for what
+        // counts as "taken" (a real registered region, or another order
+        // still holding its allocated spot).
+        private HashSet<(int, int)> ComputeUsedRegionOrderLocations()
         {
             HashSet<(int, int)> usedLocations = new HashSet<(int, int)>();
 
@@ -10977,6 +11179,31 @@ namespace OpenSim.Server.Handlers.WebInterface
                     if (o.AllocatedLocationX.HasValue && o.AllocatedLocationY.HasValue && (o.Status == "AwaitingStart" || o.Status == "Active"))
                         usedLocations.Add((o.AllocatedLocationX.Value, o.AllocatedLocationY.Value));
                 }
+            }
+
+            return usedLocations;
+        }
+
+        // requestedX/Y come from the resident's own checkout choice
+        // (StoreOrder.RequestedLocationX/Y) - re-validated here rather than
+        // trusted from BuildStoreOrder's earlier check, since time has
+        // passed and another order could have claimed the same spot in the
+        // meantime. Null/null (the common case) auto-picks the first free
+        // spot, same as before this feature existed. A specific request
+        // that's no longer valid returns null - the caller fails the order
+        // outright rather than silently placing it somewhere the resident
+        // didn't ask for.
+        private (int X, int Y)? AllocateRegionOrderLocation(int? requestedX, int? requestedY)
+        {
+            HashSet<(int, int)> usedLocations = ComputeUsedRegionOrderLocations();
+
+            if (requestedX.HasValue && requestedY.HasValue)
+            {
+                if (requestedX.Value < m_regionOrderGridXStart || requestedX.Value > m_regionOrderGridXEnd
+                        || requestedY.Value < m_regionOrderGridYStart || requestedY.Value > m_regionOrderGridYEnd)
+                    return null;
+
+                return usedLocations.Contains((requestedX.Value, requestedY.Value)) ? null : (requestedX.Value, requestedY.Value);
             }
 
             for (int y = m_regionOrderGridYStart; y <= m_regionOrderGridYEnd; y++)
@@ -11155,6 +11382,33 @@ namespace OpenSim.Server.Handlers.WebInterface
             response.Redirect(BasePath + "/admin/store", HttpStatusCode.Redirect);
         }
 
+        // Distinguishes "genuinely down" from "the process is running but
+        // not reachable from outside this server" - found live: a freshly
+        // auto-created Store region order answers fine on 127.0.0.1 (the
+        // process really is up) but not on its own registered public
+        // ServerURI, because its auto-allocated port (unlike the grid's
+        // original, manually-configured regions) was never added to the
+        // router's port-forwarding. IsRegionAlive's single public-URI
+        // probe can't tell these two failure modes apart and would just
+        // read "Offline" either way - actively misleading, since the fix
+        // for "genuinely down" (check the region's own OpenSim.log) and
+        // "not forwarded" (open the port on the router) are completely
+        // different actions for whoever's looking at this pill. Reused by
+        // both My Regions and the Store Orders admin queue rather than
+        // duplicated in each.
+        private static string RenderRegionReachabilityPill(GridRegion region)
+        {
+            if (IsRegionAlive(region, 1000))
+                return "<span class=\"pill pill-yes\">Online</span>";
+
+            bool reachableLocally = Uri.TryCreate(region.ServerURI, UriKind.Absolute, out Uri uri)
+                    && Util.IsHostAlive("http://127.0.0.1:" + uri.Port + "/", 1000);
+
+            return reachableLocally
+                    ? "<span class=\"pill pill-no\" title=\"The region process is running, but its public address isn't reachable from outside this server - the port likely needs to be added to the router's port forwarding.\">Not reachable publicly</span>"
+                    : "<span class=\"pill pill-no\">Offline</span>";
+        }
+
         private void HandleAdminStoreOrders(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -11204,7 +11458,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                     sb.Append("<td>").Append(order.OrderType).Append("</td>");
                     sb.Append("<td>").Append(order.CurrencyUsed).Append("</td>");
                     sb.Append("<td>").Append(order.AmountCharged.ToString("N0")).Append("</td>");
-                    sb.Append("<td>").Append(Html(order.Status)).Append("</td>");
+                    sb.Append("<td>").Append(Html(order.Status));
+                    if (order.OrderType == "RegionOrder" && order.Status == "Active" && m_GridService != null
+                            && !string.IsNullOrEmpty(order.RequestedRegionName))
+                    {
+                        List<GridRegion> matches = m_GridService.GetRegionsByName(UUID.Zero, order.RequestedRegionName, 1);
+                        if (matches.Count > 0)
+                            sb.Append(" ").Append(RenderRegionReachabilityPill(matches[0]));
+                    }
+                    sb.Append("</td>");
                     sb.Append("<td>").Append(order.ExpiresAt.HasValue ? order.ExpiresAt.Value.ToString("yyyy-MM-dd") : "-").Append("</td>");
 
                     sb.Append("<td>");

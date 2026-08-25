@@ -75,3 +75,21 @@ CREATE TABLE IF NOT EXISTS `store_gloebit_transactions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 COMMIT;
+
+:VERSION 2 # -----------------
+
+BEGIN;
+
+ALTER TABLE `store_orders` ADD COLUMN `RequestedEstateID` INT NULL AFTER `SimulatorFolderName`;
+ALTER TABLE `store_orders` ADD COLUMN `RequestedEstateName` VARCHAR(255) CHARACTER SET utf8mb4 NULL AFTER `RequestedEstateID`;
+
+COMMIT;
+
+:VERSION 3 # -----------------
+
+BEGIN;
+
+ALTER TABLE `store_orders` ADD COLUMN `RequestedLocationX` INT NULL AFTER `RequestedEstateName`;
+ALTER TABLE `store_orders` ADD COLUMN `RequestedLocationY` INT NULL AFTER `RequestedLocationX`;
+
+COMMIT;
