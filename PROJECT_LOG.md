@@ -14700,3 +14700,106 @@ via the usual cycle; confirmed `/admin/simulators` doesn't crash (302
 to login, unauthenticated). The actual Start/Start All buttons still
 need the user's own admin login to exercise live - same limitation as
 every other admin-page verification this session.
+
+**Added Stop/Stop All to the same Simulators page - a real graceful
+shutdown, not Task Manager "End Task."** User's explicit ask, directly
+following Start. Rides the exact same `/consoleweb` remote-console
+channel already proven for restart/kick/add-prim-limit
+(`RunRegionConsoleCommand`), sending the region's own `"shutdown"`
+command - the identical `RunCommand("shutdown")` `OpenSim.cs`'s own
+SIGTERM handler already uses, so this isn't a new code path on the
+region side, just a new caller of an existing one. Guarded the same
+way the region .ini editor's own restart button already is: no button
+shown, and the handler itself refuses, if `[WebConsole] SharedSecret`
+isn't configured.
+
+**Tested for real, not just reasoned about** - sent an actual
+`shutdown` command directly to a live Sandbox (bypassing the WebUI
+login requirement, hitting `/consoleweb` the same way
+`RunRegionConsoleCommand` does, real `SharedSecret` from
+`Robust.HG.ini`). Confirmed via `Sandbox`'s own log: "World has come
+to an end" -> orderly thread/listener/client shutdown -> "Closing down
+the single simulator" -> **"Deregistering region Sandbox... at
+1000-1002"**. Checked the DB directly afterward: the region's row was
+gone from `regions` entirely, not just flag-updated - a genuinely
+clean deregistration, in real contrast to every force-kill earlier
+this session (the runaway-process incidents, the Apache-adjacent
+testing), which left a stale `RegionOnline`-flagged row behind every
+time. This is the first time this session a region has come down
+*cleanly* rather than being killed - closes that gap specifically, not
+just adds a button. Restarted Sandbox and Welcome_Center afterward to
+restore baseline; both confirmed alive.
+
+Full solution build clean (0 errors). Only `OpenSim.Server.Handlers.dll`
+changed - targeted sync.
+
+**Two more real bugs found live testing Stop, plus a proxy-timeout gap
+on the bulk actions - all fixed together.**
+
+1. **Stop All silently "succeeded" on 2 regions it never actually
+   reached.** User ran Stop All against a real 14-region grid; Sandbox 2
+   and TesT Region (the two Store-ordered regions) kept running and had
+   to be force-killed via Task Manager - exactly the outcome Stop exists
+   to avoid. Root cause: `RunRegionConsoleCommand` posts to
+   `region.ServerURI` - the region's **public** `holodeckgrid.ddns.net`
+   hostname, not `127.0.0.1` - and the router only forwards the grid's
+   original, manually-configured ports (already known from the earlier
+   "Not reachable publicly" pill work), not the Store's auto-allocated
+   range. So the `/consoleweb` POST to Sandbox 2/TesT Region silently
+   failed, while `TryStopRegion` unconditionally returned `true` after
+   calling it, without ever checking the result - a real bug independent
+   of the networking issue, and the reason the failure was invisible.
+   Fixed both: `RunRegionConsoleCommand` now builds its URL from
+   `127.0.0.1:<port>` (parsed from `ServerURI`) instead of the public
+   hostname - Robust and every region share this same host in every
+   deployment this file assumes, so there's no reason to depend on NAT
+   hairpin/port-forwarding for an admin backend call at all - and
+   `TryStopRegion` now actually checks whether the shutdown command
+   succeeded before reporting it did. This same fix also repairs restart/
+   kick/message/add-prim-limit for Store-ordered regions specifically,
+   which had this exact same silent-failure risk all along, just never
+   noticed since those actions are mostly used against the grid's
+   original, always-forwarded regions.
+
+2. **A real, user-identified data-safety gap: nothing stopped Stop from
+   shutting down a region mid-backup.** Traced the actual risk:
+   `Scene.Close()`'s own "final backup" step (`Backup(true)`) silently
+   no-ops instead of waiting if an `AutoBackupModule` cycle is already
+   running - `Backup()`'s own re-entrancy guard just logs a warning and
+   returns immediately - so a shutdown during an in-progress backup can
+   let the scene (and its DB connections) close out from under a write
+   still in flight. Added a new `Scene.IsBackingUp` public accessor
+   (`OpenSim/Region/Framework/Scenes/Scene.cs`) wrapping the existing
+   private `m_backingup` field, and a new remote-queryable console
+   command `backup-status <region-id>`
+   (`RegionCommandsModule.cs`, same registration/dispatch shape as
+   `add-prim-limit`) that reports it over the same `/consoleweb`
+   channel. `TryStopRegion` now checks this first and refuses to send
+   `shutdown` if a backup is in progress (or if the check itself can't
+   be confirmed - fails closed, not open) - "wait for it to finish, then
+   try again" instead of risking it.
+
+3. **Start All/Stop All could exceed the shared Apache reverse proxy's
+   own timeout.** Found live: the user's real Start All against a full
+   16-region grid returned a "Proxy Error" page from Apache, even though
+   every region actually started successfully - confirmed via each
+   region's own fresh, complete `RegionReady` log entries. A full-grid
+   bulk action synchronously blocking one HTTP request for over a minute
+   (each simulator gets its own ~3+ second check, now plus a
+   backup-status round trip for Stop) was always going to risk this once
+   the request got proxied through anything with its own timeout. Both
+   `HandleAdminSimulatorsStartAll` and `...StopAll` now kick the actual
+   work onto a background thread and redirect immediately with a "check
+   back shortly" message - the status table already reflects each
+   simulator's live state on every page load, so nothing is lost by not
+   blocking for a final count.
+
+Full solution build clean (0 errors) for all three fixes together. Item
+1/2 touch `OpenSim.Region.Framework.dll`/`OpenSim.Region.CoreModules.dll`
+(build+sync already done in a prior entry today) - full `bin/` sync;
+item 3 (this deploy) is `OpenSim.Server.Handlers.dll` only - targeted
+sync. Started only Robust afterward, deliberately, so the user can
+verify Start All against a real cold grid through the real Apache
+proxy - the actual conditions that exposed the timeout bug in the
+first place.
+

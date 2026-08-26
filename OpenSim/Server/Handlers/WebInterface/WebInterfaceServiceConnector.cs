@@ -589,6 +589,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/simulators/start-all":
                         HandleAdminSimulatorsStartAll(request, response);
                         break;
+                    case BasePath + "/admin/simulators/stop":
+                        HandleAdminSimulatorsStop(request, response);
+                        break;
+                    case BasePath + "/admin/simulators/stop-all":
+                        HandleAdminSimulatorsStopAll(request, response);
+                        break;
                     case BasePath + "/viewers":
                         HandleViewers(request, response);
                         break;
@@ -7105,7 +7111,23 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             try
             {
-                string url = region.ServerURI.TrimEnd('/') + "/consoleweb";
+                // Prefer the same-host loopback address over the region's
+                // public ServerURI - Robust and every region process share
+                // this same physical host in every deployment this file
+                // assumes, and going out through the public hostname needs
+                // NAT hairpin/router port-forwarding that isn't guaranteed
+                // for every port. Confirmed live: this silently failed for
+                // Store-ordered regions specifically (their auto-allocated
+                // ports, unlike the grid's original manually-configured
+                // regions, aren't forwarded on the router) - a Stop/restart/
+                // PrimPack-fulfillment command looked like it was sent, but
+                // never reached the region, because every caller here
+                // trusted a "sent" result without the call actually having
+                // succeeded. Falls back to the public URI only if the
+                // ServerURI itself can't be parsed, for safety.
+                string url = Uri.TryCreate(region.ServerURI, UriKind.Absolute, out Uri parsedUri)
+                        ? "http://127.0.0.1:" + parsedUri.Port + "/consoleweb"
+                        : region.ServerURI.TrimEnd('/') + "/consoleweb";
                 using (System.Net.Http.HttpClient client = new System.Net.Http.HttpClient())
                 {
                     client.Timeout = TimeSpan.FromSeconds(15);
@@ -12038,8 +12060,11 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             else
             {
-                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/start-all\" style=\"margin:0 0 16px;\">");
-                sb.Append("<button type=\"submit\">Start All Stopped</button></form>");
+                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/start-all\" style=\"display:inline\">");
+                sb.Append("<button type=\"submit\">Start All Stopped</button></form> ");
+                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/stop-all\" style=\"display:inline;margin:0 0 16px;\" ")
+                  .Append("onsubmit=\"return confirm('Gracefully shut down every running simulator? Anyone currently in one will be disconnected.');\">");
+                sb.Append("<button type=\"submit\">Stop All Running</button></form>");
 
                 sb.Append("<table><tr><th>Region</th><th>Status</th><th>Actions</th></tr>");
                 foreach (var s in simulators.OrderBy(s => s.RegionName, StringComparer.OrdinalIgnoreCase))
@@ -12055,6 +12080,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                         sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/start\" style=\"display:inline\">");
                         sb.Append("<input type=\"hidden\" name=\"folder\" value=\"").Append(Html(s.SimulatorFolder)).Append("\">");
                         sb.Append("<button type=\"submit\">Start</button></form>");
+                    }
+                    else
+                    {
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/stop\" style=\"display:inline\" ")
+                          .Append("onsubmit=\"return confirm('Gracefully shut down ").Append(Html(s.RegionName).Replace("'", "\\'"))
+                          .Append("? Anyone currently there will be disconnected.');\">");
+                        sb.Append("<input type=\"hidden\" name=\"folder\" value=\"").Append(Html(s.SimulatorFolder)).Append("\">");
+                        sb.Append("<button type=\"submit\">Stop</button></form>");
                     }
                     sb.Append("</td></tr>");
                 }
@@ -12110,31 +12143,177 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            int started = 0;
-            int failed = 0;
-
+            string message = "Nothing to do.";
             if (request.HttpMethod == "POST")
             {
-                foreach (var s in DiscoverSimulators())
-                {
-                    int? port = GetSimulatorPort(s.SimulatorFolder);
-                    bool alreadyRunning = port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
-                    if (alreadyRunning)
-                        continue;
+                List<(string SimulatorFolder, string RegionName, UUID RegionID)> toStart = DiscoverSimulators()
+                        .Where(s =>
+                        {
+                            int? port = GetSimulatorPort(s.SimulatorFolder);
+                            return !(port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000));
+                        })
+                        .ToList();
 
-                    // TryStartRegionProcess's own 3-second liveness check
-                    // already staggers these launches - no extra delay
-                    // needed between calls in this loop.
-                    if (TryStartRegionProcess(s.SimulatorFolder, out _, out _))
-                        started++;
-                    else
-                        failed++;
+                if (toStart.Count == 0)
+                {
+                    message = "Nothing to start - everything discovered is already running.";
+                }
+                else
+                {
+                    // Runs in the background rather than blocking this
+                    // request for the full duration - found live, a
+                    // full-grid Start All (16 simulators, each with its own
+                    // ~3+ second check) took long enough to exceed the
+                    // shared Apache reverse proxy's own timeout, showing
+                    // the admin a "Proxy Error" even though every region
+                    // actually started successfully in the background. The
+                    // status table on this page already reflects each
+                    // simulator's real state live on every load, so there's
+                    // nothing lost by not blocking here for a final count.
+                    List<(string SimulatorFolder, string RegionName, UUID RegionID)> toStartCaptured = toStart;
+                    System.Threading.Thread worker = new System.Threading.Thread(() =>
+                    {
+                        foreach (var s in toStartCaptured)
+                            TryStartRegionProcess(s.SimulatorFolder, out _, out _);
+                    })
+                    { IsBackground = true };
+                    worker.Start();
+
+                    message = "Starting " + toStart.Count + " simulator(s) in the background - refresh this page in a bit to see status.";
                 }
             }
 
-            string message = started == 0 && failed == 0
-                    ? "Nothing to start - everything discovered is already running."
-                    : "Started " + started + ", failed " + failed + ".";
+            response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // A real graceful shutdown, not Process.Kill()/Task Manager "End
+        // Task" - rides the exact same /consoleweb remote-console channel
+        // already used for restart/kick/add-prim-limit (RunRegionConsoleCommand),
+        // sending the region's own "shutdown" command (OpenSim.cs's SIGTERM
+        // handler uses the identical RunCommand("shutdown")). This saves
+        // state and deregisters from the grid cleanly - a force-kill
+        // doesn't, and left a real stale RegionOnline flag behind after
+        // exactly that happened live during earlier testing (see
+        // PROJECT_LOG.md's Start Region entries) - graceful shutdown avoids
+        // reproducing that on the way down, not just on the way up.
+        private bool TryStopRegion(UUID regionId, string displayName, out string message)
+        {
+            if (string.IsNullOrEmpty(m_webConsoleSecret))
+            {
+                message = displayName + ": the web console isn't configured, so it can't be stopped remotely from here.";
+                return false;
+            }
+
+            GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+            {
+                message = displayName + " isn't currently registered with the grid - it may already be stopped.";
+                return false;
+            }
+
+            // Refuse rather than risk it - the shutdown sequence's own
+            // "final backup" step (Scene.Close -> Backup(true)) silently
+            // no-ops instead of waiting if an AutoBackupModule cycle is
+            // already running (Backup()'s own re-entrancy guard just logs
+            // and returns), so a shutdown mid-backup can let the scene
+            // close - and its DB connections tear down - out from under a
+            // write still in flight. Fails closed: if the status check
+            // itself can't be confirmed (region unreachable, unexpected
+            // response), don't send shutdown without knowing it's safe.
+            string backupStatus = RunRegionConsoleCommand(region, "backup-status " + regionId);
+            if (!backupStatus.Contains("BACKUP_IN_PROGRESS: False"))
+            {
+                message = backupStatus.Contains("BACKUP_IN_PROGRESS: True")
+                        ? displayName + " is currently backing up - wait for it to finish, then try again."
+                        : displayName + ": couldn't confirm it's safe to stop, so not stopping it. " + backupStatus;
+                return false;
+            }
+
+            // RunRegionConsoleCommand's result was previously ignored here
+            // entirely - found live, this let a Stop All report "sent" for
+            // two regions whose command never actually reached them (see
+            // the loopback-vs-public-URI fix above), with no way to tell
+            // from the admin page that anything had gone wrong.
+            string result = RunRegionConsoleCommand(region, "shutdown");
+            bool ok = !result.StartsWith("Region responded with HTTP") && !result.StartsWith("Could not reach ");
+            message = ok
+                    ? displayName + ": shutdown command sent."
+                    : displayName + ": failed to send shutdown - " + result;
+            return ok;
+        }
+
+        private void HandleAdminSimulatorsStop(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Simulator not found.";
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                string requestedFolder = FormValue(form, "folder");
+
+                // Same re-verification discipline as Start - never act on a
+                // client-supplied folder name that isn't backed by a real,
+                // freshly-discovered simulator.
+                var match = DiscoverSimulators().FirstOrDefault(s => string.Equals(s.SimulatorFolder, requestedFolder, StringComparison.OrdinalIgnoreCase));
+                if (match.SimulatorFolder == null)
+                    message = "That simulator wasn't found by the current discovery scan.";
+                else
+                    TryStopRegion(match.RegionID, match.RegionName, out message);
+            }
+
+            response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSimulatorsStopAll(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Nothing to do.";
+            if (request.HttpMethod == "POST")
+            {
+                List<(string SimulatorFolder, string RegionName, UUID RegionID)> toStop = DiscoverSimulators()
+                        .Where(s =>
+                        {
+                            int? port = GetSimulatorPort(s.SimulatorFolder);
+                            return port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
+                        })
+                        .ToList();
+
+                if (toStop.Count == 0)
+                {
+                    message = "Nothing to stop - everything discovered is already stopped.";
+                }
+                else
+                {
+                    // Same background-thread fix as Start All, and for the
+                    // same reason - each stop now includes a backup-status
+                    // round trip before the shutdown itself, so a full-grid
+                    // Stop All is at least as slow as Start All was when it
+                    // first hit the reverse proxy's timeout.
+                    List<(string SimulatorFolder, string RegionName, UUID RegionID)> toStopCaptured = toStop;
+                    System.Threading.Thread worker = new System.Threading.Thread(() =>
+                    {
+                        foreach (var s in toStopCaptured)
+                            TryStopRegion(s.RegionID, s.RegionName, out _);
+                    })
+                    { IsBackground = true };
+                    worker.Start();
+
+                    message = "Sending shutdown to " + toStop.Count + " simulator(s) in the background - refresh this page in a bit to see status.";
+                }
+            }
+
             response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 

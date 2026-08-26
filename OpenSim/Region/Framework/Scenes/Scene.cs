@@ -400,6 +400,19 @@ namespace OpenSim.Region.Framework.Scenes
         private readonly SceneGraph m_sceneGraph;
         private readonly Timer m_restartTimer = new(15000); // Wait before firing
         private volatile bool m_backingup;
+
+        // Public read-only view of m_backingup - added so a remote caller
+        // (the WebUI's admin Simulators Stop button, via a new console
+        // command) can check whether a backup is genuinely in flight before
+        // sending a shutdown. Real risk found live: Close()'s own "final
+        // backup" step (Backup(true) below) silently no-ops if an
+        // AutoBackupModule cycle is already running - Backup()'s own
+        // re-entrancy guard just logs a warning and returns immediately
+        // rather than waiting - so a shutdown during an in-progress backup
+        // can let the scene close (and its DB connections/SimulationData
+        // service tear down) out from under a write that's still in
+        // flight, not just skip a redundant one.
+        public bool IsBackingUp => m_backingup;
         private readonly Dictionary<UUID, ReturnInfo> m_returns = new();
         private readonly HashSet<UUID> m_groupsWithTargets = new();
 

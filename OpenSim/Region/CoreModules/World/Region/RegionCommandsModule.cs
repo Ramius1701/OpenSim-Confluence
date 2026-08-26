@@ -129,6 +129,17 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
                 + "immediately to the region's own .ini file, same as set-prim-limit.",
                 HandleAddPrimLimit);
 
+            m_console.Commands.AddCommand(
+                "Regions", false, "backup-status",
+                "backup-status <region-id>",
+                "Reports whether this region is currently in the middle of a backup.",
+                "Queried by the WebUI's admin Simulators Stop button before sending a graceful\n"
+                + "shutdown - a real risk found live: the shutdown sequence's own \"final backup\"\n"
+                + "step silently skips instead of waiting if an AutoBackupModule cycle is already\n"
+                + "running, so closing the scene mid-write is possible without this check.\n"
+                + "Output is a single parseable line: \"BACKUP_IN_PROGRESS: True\" or \"...: False\".",
+                HandleBackupStatus);
+
             m_console.Commands.AddCommand("Regions", false, "show neighbours",
                 "show neighbours",
                 "Shows the local region neighbours", HandleShowNeighboursCommand);
@@ -358,6 +369,26 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
             ri.SaveRegionToFile(ri.RegionFile, ri.RegionFile);
 
             MainConsole.Instance.Output("prim-limit increased by {0} to {1} in {2}", delta, newValue, m_scene.Name);
+        }
+
+        private void HandleBackupStatus(string module, string[] args)
+        {
+            if (args.Length != 2)
+            {
+                MainConsole.Instance.Output("Usage: backup-status <region-id>");
+                return;
+            }
+
+            if (!UUID.TryParse(args[1], out UUID regionID))
+            {
+                MainConsole.Instance.Output("Usage: backup-status <region-id>");
+                return;
+            }
+
+            if (regionID != m_scene.RegionInfo.RegionID)
+                return;
+
+            MainConsole.Instance.Output("BACKUP_IN_PROGRESS: {0}", m_scene.IsBackingUp);
         }
 
         private void HandleShowScene(string module, string[] cmd)
