@@ -86,7 +86,16 @@ namespace OpenSim.Services.Connectors
 
         public bool DoHelloNeighbourCall(GridRegion region, RegionInfo thisRegion)
         {
-            string uri = region.ServerURI + "region/" + thisRegion.RegionID + "/";
+            // If the neighbour reports the same external hostname as this region, they're on the
+            // same physical box - call loopback directly instead of the public hostname, since a
+            // NAT hairpin/loopback call to one's own forwarded public port is refused by many routers
+            // even when the port is correctly forwarded for real outside traffic.
+            string uri;
+            if (!string.IsNullOrEmpty(region.ExternalHostName) &&
+                string.Equals(region.ExternalHostName, thisRegion.ExternalHostName, StringComparison.OrdinalIgnoreCase))
+                uri = "http://127.0.0.1:" + region.HttpPort + "/region/" + thisRegion.RegionID + "/";
+            else
+                uri = region.ServerURI + "region/" + thisRegion.RegionID + "/";
             //m_log.Debug("   >>> DoHelloNeighbourCall <<< " + uri);
 
             byte[] buffer;

@@ -14888,3 +14888,43 @@ real, currently-in-use Store orders (Sandbox 2, TesT Region) to test
 this needs the user's own go-ahead, not something to do unprompted
 against live data.
 
+## Neighbor-hello loopback fix (2026-08-26)
+
+User corrected router port-forwarding to cover 9000-9099 (previously
+unforwarded), expecting this to resolve the recurring
+`DoHelloNeighbourCall` warnings between Sandbox 2 and TesT Region.
+Checked the live logs after the change - warnings were still firing
+("No connection could be made because the target machine actively
+refused it. (holodeckgrid.ddns.net:9050)"), which ruled out a simple
+forwarding gap: "actively refused" is a TCP RST, not a timeout, meaning
+the packet reached something that refused it - classic NAT hairpin/
+loopback behavior, where a router won't route a request originating
+from inside the LAN back in through its own forwarded public port, even
+when that port is correctly forwarded for real outside traffic.
+
+This is the exact same root cause as the earlier `RunRegionConsoleCommand`
+fix (admin-to-region), just in a different code path: region-to-region,
+via `NeighbourServicesConnector.DoHelloNeighbourCall`
+(`OpenSim/Services/Connectors/Neighbour/NeighbourServicesConnector.cs`).
+That method always built its call URI from the neighbor's public
+`region.ServerURI`, with no loopback preference at all.
+
+Fix: when the neighbor region reports the same `ExternalHostName` as
+this region (both regions on the same physical box, which the existing
+same-region-startup check on the line above already establishes as a
+meaningful comparison), call `http://127.0.0.1:<port>/` directly instead
+of the public hostname. Falls back to the unmodified public-URI behavior
+whenever the hostnames differ, so a genuinely distributed multi-server
+grid (neighbor regions on separate machines) is unaffected - this only
+changes behavior for same-host neighbors, which is this deployment's
+exact situation.
+
+Deployed via a full stop-all -> sync `OpenSim.Services.Connectors.dll`
+(used by every region process, not Robust) -> restart Robust -> restart
+all 16 regions staggered. Verified live: both Sandbox 2 and TesT Region's
+fresh startup logs now show `successfully informed neighbour ... that
+it is up` on both sides, replacing the prior warning. All 16 regions
+confirmed reaching `RegionReady`'s "is ready" log line after the
+restart - full clean redeploy, not just the two affected regions.
+
+Not yet committed/pushed to git as of this entry.
