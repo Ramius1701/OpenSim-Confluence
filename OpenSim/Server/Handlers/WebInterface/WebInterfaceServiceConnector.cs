@@ -6774,6 +6774,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             string perksFree = GetSetting("MembershipPerksFree", string.Empty);
             string perksExtra = GetSetting("MembershipPerksExtra", string.Empty);
 
+            bool clearMapTilesOnStartup = GetSetting("ClearMapTilesOnStartup", "false") == "true";
+
             string bankerAvatarID = GetSetting("BankerAvatarID", string.Empty);
             string bankerAvatarName = string.Empty;
             if (UUID.TryParse(bankerAvatarID, out UUID bankerUUID) && bankerUUID != UUID.Zero && m_UserAccountService != null)
@@ -6816,6 +6818,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<strong>Fund this account with a real starting balance (\"money set &lt;uuid&gt; &lt;amount&gt;\" on the region console) before setting it</strong> - once set, currency purchases and other system credits draw down this account's real balance and will fail if it runs out.</p>"
                     + (string.IsNullOrEmpty(bankerAvatarName) ? string.Empty : "<p>Currently: " + Html(bankerAvatarName) + "</p>")
                     + "<label>Banker avatar UUID<br/><input type=\"text\" name=\"banker_avatar_id\" value=\"" + Html(bankerAvatarID) + "\" placeholder=\"00000000-0000-0000-0000-000000000000\"></label><br/>"
+                    + "<h2>Map Tiles</h2>"
+                    + "<p class=\"news-meta\">Clears every cached map tile the next time Robust starts. Tiles only ever get "
+                    + "refreshed by a region actually uploading a new one, so leaving this on wipes the map back to blank water "
+                    + "tiles on every single Robust restart until each region re-uploads - meant as a one-time cleanup after a "
+                    + "stale tile (a region that's since moved or been rebuilt), not a standing default. Turn it off again after "
+                    + "the next restart clears what you needed cleared. Takes effect on Robust's next restart, not live.</p>"
+                    + "<label><input type=\"checkbox\" name=\"clear_map_tiles_on_startup\" value=\"true\"" + (clearMapTilesOnStartup ? " checked" : "") + " style=\"width:auto;display:inline\"> Clear all map tiles on Robust's next restart</label><br/>"
                     + "<h2>Features Page: Powered By</h2>"
                     + "<p class=\"news-meta\">Shown on the Features page as an infrastructure grid. Leave blank to hide the section. One item per line, format: <code>Group|icon-name|Title|Subtitle</code> - icon-name is a Bootstrap Icons name without the \"bi-\" prefix (e.g. <code>windows</code>, <code>database</code>, <code>server</code>). Items with the same Group are shown together under that heading.</p>"
                     + "<label>Powered By items<br/><textarea name=\"powered_by\" rows=\"8\" placeholder=\"Infrastructure|windows|Windows|Host OS\nInfrastructure|hdd-network|Proxmox|Virtualization\nGrid Backend|database|MariaDB|Database\">" + Html(poweredBy) + "</textarea></label><br/>"
@@ -6872,6 +6881,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string perksFree = FormValue(form, "perks_free");
             string perksExtra = FormValue(form, "perks_extra");
             string bankerAvatarID = FormValue(form, "banker_avatar_id").Trim();
+            bool clearMapTilesOnStartup = FormValue(form, "clear_map_tiles_on_startup") == "true";
 
             if (string.IsNullOrEmpty(gridName))
             {
@@ -6898,6 +6908,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_GridSettingsService.Set("MembershipPerksFree", perksFree);
             m_GridSettingsService.Set("MembershipPerksExtra", perksExtra);
             m_GridSettingsService.Set("BankerAvatarID", bankerAvatarID);
+            m_GridSettingsService.Set("ClearMapTilesOnStartup", clearMapTilesOnStartup ? "true" : "false");
 
             response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
         }

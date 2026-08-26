@@ -33,6 +33,7 @@ using log4net;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
+using OpenSim.Services.Base;
 using OpenSim.Services.Interfaces;
 using System;
 using System.Collections.Generic;
@@ -45,7 +46,7 @@ using System.Threading;
 
 namespace OpenSim.Services.MapImageService
 {
-    public class MapImageService : IMapImageService
+    public class MapImageService : ServiceBase, IMapImageService
     {
         private static readonly ILog m_log = LogManager.GetLogger( MethodBase.GetCurrentMethod().DeclaringType);
 #pragma warning disable 414
@@ -65,7 +66,7 @@ namespace OpenSim.Services.MapImageService
         private static Bitmap m_WaterBitmap = null;
         private static byte[] m_WaterJPEGBytes = null;
 
-        public MapImageService(IConfigSource config)
+        public MapImageService(IConfigSource config) : base(config)
         {
             lock (m_Sync)
             {
@@ -83,15 +84,55 @@ namespace OpenSim.Services.MapImageService
                         // refreshed by a region actually uploading a new
                         // one, so on a grid where Robust restarts more
                         // often than its regions do (the normal case on a
-                        // multi-machine deployment), wiping this
-                        // unconditionally on every Robust startup would
-                        // leave the map showing nothing but water tiles
-                        // until every region eventually re-uploads - a real
-                        // regression for anyone who didn't ask for it. Real
-                        // use here: a frequently-torn-down dev/test grid
-                        // where a stale tile from a region that's since
-                        // been rebuilt/moved is worse than a brief gap.
-                        if (serviceConfig.GetBoolean("ClearTilesOnStartup", false))
+                        // multi-machine deployment, and also just true
+                        // during active development - found live, this
+                        // was hardcoded true in Robust.HG.ini and silently
+                        // wiping every tile on every one of many same-day
+                        // restarts), wiping this unconditionally on every
+                        // Robust startup would leave the map showing
+                        // nothing but water tiles until every region
+                        // eventually re-uploads - a real regression for
+                        // anyone who didn't ask for it. Real use here: a
+                        // one-time cleanup after a stale tile from a
+                        // region that's since been rebuilt/moved, not a
+                        // standing default.
+                        //
+                        // Checked via the same live IGridSettingsService
+                        // store the admin Grid Settings page (Map Tiles
+                        // section) already uses for Banker Avatar and
+                        // everything else there - an admin can flip this
+                        // without touching the ini or restarting Robust
+                        // twice (once to change the setting, again to have
+                        // it take effect - the setting only matters at
+                        // this one startup-time check, so a restart is
+                        // still needed to actually clear the tiles, but at
+                        // least changing the toggle itself doesn't need
+                        // filesystem access). Falls back to the ini's own
+                        // ClearTilesOnStartup only when the grid setting
+                        // has never been touched, so an existing
+                        // deployment's current ini value keeps working
+                        // exactly as before until an admin explicitly
+                        // overrides it from the WebUI.
+                        bool clearTiles = serviceConfig.GetBoolean("ClearTilesOnStartup", false);
+
+                        IConfig gridSettingsConfig = config.Configs["GridSettingsService"];
+                        string gridSettingsDll = gridSettingsConfig?.GetString("LocalServiceModule", string.Empty);
+                        if (!string.IsNullOrEmpty(gridSettingsDll))
+                        {
+                            try
+                            {
+                                IGridSettingsService gridSettingsService = LoadPlugin<IGridSettingsService>(gridSettingsDll, new object[] { config });
+                                string overrideValue = gridSettingsService?.Get("ClearMapTilesOnStartup");
+                                if (!string.IsNullOrEmpty(overrideValue))
+                                    clearTiles = overrideValue == "true";
+                            }
+                            catch (Exception e)
+                            {
+                                m_log.Warn("[MAP IMAGE SERVICE]: Could not load IGridSettingsService - falling back to the ini's own ClearTilesOnStartup value", e);
+                            }
+                        }
+
+                        if (clearTiles)
                             ClearAllTiles();
 
                         //memory cache JPEG tile with just water.

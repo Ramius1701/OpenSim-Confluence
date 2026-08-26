@@ -14803,3 +14803,37 @@ verify Start All against a real cold grid through the real Apache
 proxy - the actual conditions that exposed the timeout bug in the
 first place.
 
+**Map tile clearing made an admin toggle instead of an always-on ini
+default.** User noticed maptiles were getting wiped on every single
+Robust restart - confirmed via `Robust.log`: every restart today
+(08:08, 15:58, 16:06, 16:44, 16:50) logged "ClearTilesOnStartup=true -
+deleted cached tiles." `MapImageService.cs` already had this as an
+opt-in, defaults-false setting with its own comment explaining exactly
+why it shouldn't be a standing default (tiles only refresh when a
+region re-uploads one, so wiping them on every restart leaves the map
+blank until every region eventually re-uploads) - but `Robust.HG.ini`
+had `ClearTilesOnStartup = true` hardcoded regardless, silently
+fighting the code's own documented intent on every one of many
+same-day restarts during active development.
+
+Wired it the same way Banker Avatar already is: `MapImageService` now
+extends `ServiceBase` (previously `IMapImageService` only - needed for
+`LoadPlugin<T>`) and loads `IGridSettingsService` the same reflection
+pattern `CurrencyService` already uses, checking a new
+`ClearMapTilesOnStartup` grid setting before falling back to the ini's
+own value if that setting has never been touched. New "Map Tiles"
+section on `/admin/settings` - a checkbox, explicitly labeled "takes
+effect on Robust's next restart, not live" since this is a startup-time
+check, not an ongoing behavior (unlike Banker Avatar, which really is
+live). Also flipped `Robust.HG.ini`'s own `ClearTilesOnStartup` to
+`false` - the grid setting isn't set yet, so it would otherwise still
+fall back to the stale `true` on the very next restart.
+
+Full solution build clean (0 errors) - one real snag: `ServiceBase` has
+an explicit `IConfigSource` constructor, not an implicit parameterless
+one as assumed at first; `MapImageService`'s own constructor needed
+`: base(config)` added. Only `OpenSim.Services.MapImageService.dll`
+and `OpenSim.Server.Handlers.dll` changed - targeted sync. Verified for
+real, not just assumed: this restart's `Robust.log` entry shows
+"Starting MapImage service" with no follow-up deletion line, and the
+`maptiles` folder has its 101 real tile files intact.
