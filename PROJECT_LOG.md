@@ -14837,3 +14837,54 @@ and `OpenSim.Server.Handlers.dll` changed - targeted sync. Verified for
 real, not just assumed: this restart's `Robust.log` entry shows
 "Starting MapImage service" with no follow-up deletion line, and the
 `maptiles` folder has its 101 real tile files intact.
+
+**Store region-order ports moved to be sequential right after the
+static range, not a separate high block.** User's ask, with a clear
+reason: one contiguous port range they can forward on their router
+once, rather than opening scattered/random ports over time as new
+Store orders come in. Audited the real current static-simulator ports
+first rather than trust either of us going from memory (`http_listener_port`
+straight out of every `Simulators\*\OpenSim.ini`): actual range is
+9004-9019, with a gap at 9005 and 9010 permanently unusable (Logitech
+G HUB - see today's Sector_004 port-conflict fix). `Robust.HG.ini`'s
+`RegionOrderPortRangeStart` moved from 9050 to 9020 (`RangeEnd` stays
+9099) - pure config change, no code change needed, since
+`AllocateRegionOrderPort` already picks the lowest free port in
+whatever range is configured, so it was already "sequential" within
+its range; this just moves where that range begins. The two orders
+already fulfilled (Sandbox 2 = 9050, TesT Region = 9051) keep their
+existing ports - only future orders land in the new 9020-9099 block.
+Restarted only Robust (region processes don't read this config, don't
+need to restart) - confirmed all 16 regions stayed up through it.
+
+**Added a Cancel Order action for region orders - the missing release
+valve found while discussing port/location reuse.** Real gap:
+`AllocateRegionOrderPort`/`AllocateRegionOrderLocation` treat any order
+with `Status` AwaitingStart/Active as permanently holding its port and
+grid location - stopping the region process (even a clean graceful
+shutdown) never touches the `store_orders` row, so there was no way to
+actually release a port/location for reuse short of editing the
+database directly. New "Cancel Order" button on `/admin/store/orders`
+(shown for RegionOrder rows in either of those two statuses) sets
+`Status = "Cancelled"` (outside the set the allocators check, so its
+port/location become available again) and appends a Notes entry
+recording exactly what was released and by whom.
+
+Deliberately does not stop the region itself - Cancel and Stop stay
+two separate, single-purpose actions rather than one button with two
+different blast radii. Refuses (same 127.0.0.1 port-probe pattern used
+throughout the Simulators page) if the region still answers on its
+allocated port, so an admin can't cancel an order out from under a
+region that's still actually running and serving - the error message
+points at the Simulators page's Stop button as the first step.
+
+Full solution build clean (0 errors). Only `OpenSim.Server.Handlers.dll`
+changed - targeted sync. Full stop/sync/restart-staggered cycle for
+Robust + all 16 regions; confirmed `/admin/store/orders` (302,
+unauthenticated) and the new `/admin/store/orders/cancel` route (403,
+unauthenticated POST-only action) both respond correctly, no crash.
+Not yet exercised against a real order - cancelling one of the two
+real, currently-in-use Store orders (Sandbox 2, TesT Region) to test
+this needs the user's own go-ahead, not something to do unprompted
+against live data.
+
