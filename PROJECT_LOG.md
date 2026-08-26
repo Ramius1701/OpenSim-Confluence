@@ -14667,3 +14667,36 @@ growth. This is the same core mechanism `ServiceLauncher`'s
 Robust and every region's own launch arguments) - benefits any grid
 owner running Robust/regions under any headless/service mechanism,
 not just this specific remote-launch use case.
+
+**New admin page: `/admin/simulators` - start any region process from
+the WebUI itself.** Grew directly out of confirming only Robust needs
+to be running for the WebUI to work at all - regions are a separate
+concern, and previously the only ways to start one were the .bat file
+or the Store's own automatic/retry flow. Built entirely on already-
+proven pieces rather than new plumbing: `DiscoverRegionIniFiles` (the
+region .ini editor's existing scan) grouped by simulator folder for the
+list, and `TryStartRegionProcess` (previously `StoreOrder`-only)
+generalized into a `(string simulatorFolderName, ...)` overload so the
+Store path and this new admin path share the exact same launch
+mechanism (`-background=true`, the 3-second crash check) and can't
+drift apart - the original `StoreOrder` overload is now a one-line
+wrapper around it.
+
+New `GetSimulatorPort` reads a simulator's own `http_listener_port`
+straight out of its `OpenSim.ini` and probes `127.0.0.1` directly for
+Running/Stopped status - deliberately not dependent on grid
+registration, since a simulator that's never been started (or was
+force-killed, like the runaway-process incidents earlier in this log)
+has no live `GridRegion` to check against otherwise. Client-supplied
+folder names are re-verified against a fresh `DiscoverSimulators()`
+scan before ever being used to start a process, same discipline as the
+region .ini editor's own path handling - never trusted from the form
+alone. "Start All Stopped" reuses the same per-service loop shape,
+skipping anything already running rather than blindly relaunching it.
+
+Full solution build clean (0 errors). Only `OpenSim.Server.Handlers.dll`
+changed - targeted sync. Restarted Robust, Sandbox, and Welcome_Center
+via the usual cycle; confirmed `/admin/simulators` doesn't crash (302
+to login, unauthenticated). The actual Start/Start All buttons still
+need the user's own admin login to exercise live - same limitation as
+every other admin-page verification this session.

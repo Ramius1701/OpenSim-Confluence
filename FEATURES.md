@@ -72,7 +72,10 @@ news/events content management, grid settings, a web-based region
 console, per-region Hypergrid open/close toggling, on-demand map-tile
 regeneration, a region config file browser/editor (every region's raw
 `.ini`, discovered automatically — no filesystem/RDP access needed —
-with a restart button for changes that need one to take effect), and
+with a restart button for changes that need one to take effect), a
+Simulators page to start any region process directly from the WebUI
+(individually or all stopped ones at once — only Robust itself needs
+to be running for the WebUI to work, regions are separate), and
 a settable Banker Avatar (Grid Settings) — an account fee/purchase
 transfers actually flow through instead of an untracked void, same
 concept as the classic MoneyServer's own BankerAvatar setting.

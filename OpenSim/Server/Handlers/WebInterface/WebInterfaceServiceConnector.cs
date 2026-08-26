@@ -580,6 +580,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/regions/ini/restart":
                         HandleAdminRegionIniRestart(request, response);
                         break;
+                    case BasePath + "/admin/simulators":
+                        HandleAdminSimulators(request, response);
+                        break;
+                    case BasePath + "/admin/simulators/start":
+                        HandleAdminSimulatorsStart(request, response);
+                        break;
+                    case BasePath + "/admin/simulators/start-all":
+                        HandleAdminSimulatorsStartAll(request, response);
+                        break;
                     case BasePath + "/viewers":
                         HandleViewers(request, response);
                         break;
@@ -5981,6 +5990,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(adminNav, BasePath + "/admin/store", "bi-shop", "Store Catalog", "Manage prim packs and region order listings");
             AppendDashboardLink(adminNav, BasePath + "/admin/store/orders", "bi-receipt-cutoff", "Store Orders", "Fulfillment queue, renewals, Start Region");
             AppendDashboardLink(adminNav, BasePath + "/admin/regions/ini", "bi-file-earmark-code", "Region Config Files", "View/edit any region's raw .ini file");
+            AppendDashboardLink(adminNav, BasePath + "/admin/simulators", "bi-play-circle", "Simulators", "Start any region process - only Robust needs to be running for this site itself");
             AppendDashboardLink(adminNav, BasePath + "/admin/pages", "bi-file-earmark-text", "Static Pages", "Edit About/ToS/DMCA and custom pages");
             AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
             AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "Region Console", "Run console commands on a region");
@@ -11625,11 +11635,21 @@ namespace OpenSim.Server.Handlers.WebInterface
         // this codebase's existing posture, not a new one.
         private bool TryStartRegionProcess(StoreOrder order, out int exitCode, out string logPath)
         {
+            return TryStartRegionProcess(order.SimulatorFolderName, out exitCode, out logPath);
+        }
+
+        // Generalized from the Store-only version above so the admin
+        // Simulators page (any discovered simulator, not just Store-
+        // ordered ones) can start a region the exact same proven way -
+        // same -background=true, same 3-second crash check, one
+        // implementation either caller can't drift from.
+        private bool TryStartRegionProcess(string simulatorFolderName, out int exitCode, out string logPath)
+        {
             exitCode = 0;
 
             string exePath = Path.Combine(m_regionOrderGridRoot, "OpenSim.exe");
-            string relativeIniArg = Path.Combine("Simulators", order.SimulatorFolderName, "OpenSim.ini");
-            string simFolder = Path.Combine(m_regionOrderGridRoot, "Simulators", order.SimulatorFolderName);
+            string relativeIniArg = Path.Combine("Simulators", simulatorFolderName, "OpenSim.ini");
+            string simFolder = Path.Combine(m_regionOrderGridRoot, "Simulators", simulatorFolderName);
             string logFilePath = Path.Combine(simFolder, "start.log");
             logPath = logFilePath;
 
@@ -11930,6 +11950,195 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         #endregion Admin: region .ini config file viewer/editor
+
+        #region Admin: Simulators (start any region process)
+
+        // Only Robust needs to be running for this WebUI itself to work -
+        // regions are a separate concern entirely. This page exists so an
+        // admin can bring any simulator up from here directly, reusing the
+        // exact same launch mechanism Store region orders already use
+        // (TryStartRegionProcess), rather than needing filesystem/RDP
+        // access to run a launcher script by hand.
+
+        // One row per simulator folder under Simulators\ - built on top of
+        // DiscoverRegionIniFiles (already proven for the region .ini editor)
+        // rather than a second, separately-written filesystem scan. Each
+        // simulator here has exactly one region .ini in this codebase's own
+        // convention, so RegionName/RegionID from that scan double as this
+        // page's display name and liveness key.
+        private List<(string SimulatorFolder, string RegionName, UUID RegionID)> DiscoverSimulators()
+        {
+            List<(string, string, UUID)> results = new List<(string, string, UUID)>();
+            foreach (var r in DiscoverRegionIniFiles())
+            {
+                // r.FilePath is .../Simulators/<folder>/Regions/<name>.ini
+                string regionsDir = Path.GetDirectoryName(r.FilePath);
+                string simFolder = regionsDir != null ? Path.GetFileName(Path.GetDirectoryName(regionsDir)) : null;
+                if (!string.IsNullOrEmpty(simFolder))
+                    results.Add((simFolder, r.RegionName, r.RegionID));
+            }
+            return results;
+        }
+
+        // A simulator that's never been started (or was force-killed, like
+        // the runaway-process incidents documented in PROJECT_LOG.md) has
+        // no live GridRegion to check reachability against - reading its
+        // own configured port straight out of its OpenSim.ini and probing
+        // 127.0.0.1 directly works regardless of registration state, which
+        // is exactly what "should the Start button be enabled" needs here.
+        private int? GetSimulatorPort(string simulatorFolder)
+        {
+            string iniPath = Path.Combine(m_regionOrderGridRoot, "Simulators", simulatorFolder, "OpenSim.ini");
+            if (!File.Exists(iniPath))
+                return null;
+
+            try
+            {
+                IConfigSource source = new IniConfigSource(iniPath);
+                IConfig networkConfig = source.Configs["Network"];
+                int port = networkConfig?.GetInt("http_listener_port", 0) ?? 0;
+                return port > 0 ? port : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void HandleAdminSimulators(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Simulators"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+
+            List<(string SimulatorFolder, string RegionName, UUID RegionID)> simulators = DiscoverSimulators();
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-play-circle\"></i> Simulators</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>");
+            sb.Append("<p>Only Robust needs to be running for this site itself - regions are started separately. "
+                    + "This starts a region process directly on this host, the same way a Store region order does.</p>");
+
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            if (simulators.Count == 0)
+            {
+                sb.Append("<p>No simulators found under the configured grid root.</p>");
+            }
+            else
+            {
+                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/start-all\" style=\"margin:0 0 16px;\">");
+                sb.Append("<button type=\"submit\">Start All Stopped</button></form>");
+
+                sb.Append("<table><tr><th>Region</th><th>Status</th><th>Actions</th></tr>");
+                foreach (var s in simulators.OrderBy(s => s.RegionName, StringComparer.OrdinalIgnoreCase))
+                {
+                    int? port = GetSimulatorPort(s.SimulatorFolder);
+                    bool running = port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
+
+                    sb.Append("<tr><td>").Append(Html(s.RegionName)).Append("</td>");
+                    sb.Append("<td><span class=\"pill ").Append(running ? "pill-yes\">Running" : "pill-no\">Stopped").Append("</span></td>");
+                    sb.Append("<td>");
+                    if (!running)
+                    {
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/start\" style=\"display:inline\">");
+                        sb.Append("<input type=\"hidden\" name=\"folder\" value=\"").Append(Html(s.SimulatorFolder)).Append("\">");
+                        sb.Append("<button type=\"submit\">Start</button></form>");
+                    }
+                    sb.Append("</td></tr>");
+                }
+                sb.Append("</table>");
+            }
+
+            WritePage(request, response, PageTitle("Simulators"), sb.ToString());
+        }
+
+        private void HandleAdminSimulatorsStart(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Simulator not found.";
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                string requestedFolder = FormValue(form, "folder");
+
+                // Client-supplied folder name is never trusted alone - only
+                // ever acts on a folder this same discovery scan just
+                // found, same reverification discipline as the region .ini
+                // editor's own path handling.
+                bool known = DiscoverSimulators().Any(s => string.Equals(s.SimulatorFolder, requestedFolder, StringComparison.OrdinalIgnoreCase));
+                if (!known)
+                {
+                    message = "That simulator wasn't found by the current discovery scan.";
+                }
+                else if (TryStartRegionProcess(requestedFolder, out int exitCode, out string logPath))
+                {
+                    message = requestedFolder + " started.";
+                }
+                else
+                {
+                    message = requestedFolder + " failed to start - it exited within 3 seconds (exit code " + exitCode + "). See " + logPath + ".";
+                }
+            }
+
+            response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSimulatorsStartAll(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            int started = 0;
+            int failed = 0;
+
+            if (request.HttpMethod == "POST")
+            {
+                foreach (var s in DiscoverSimulators())
+                {
+                    int? port = GetSimulatorPort(s.SimulatorFolder);
+                    bool alreadyRunning = port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
+                    if (alreadyRunning)
+                        continue;
+
+                    // TryStartRegionProcess's own 3-second liveness check
+                    // already staggers these launches - no extra delay
+                    // needed between calls in this loop.
+                    if (TryStartRegionProcess(s.SimulatorFolder, out _, out _))
+                        started++;
+                    else
+                        failed++;
+                }
+            }
+
+            string message = started == 0 && failed == 0
+                    ? "Nothing to start - everything discovered is already running."
+                    : "Started " + started + ", failed " + failed + ".";
+            response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        #endregion Admin: Simulators
 
         // Self-service password reset (task #22 from the WhiteCore-Dev
         // re-audit's "all of it" list). Always shows the same generic
