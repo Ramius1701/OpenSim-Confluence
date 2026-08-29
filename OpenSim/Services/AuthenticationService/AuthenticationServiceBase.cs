@@ -104,6 +104,19 @@ namespace OpenSim.Services.AuthenticationService
             return m_Database.CheckToken(principalID, token, lifetime);
         }
 
+        // Not part of IAuthenticationService - only makes sense as an admin
+        // account-decommission action from Robust's own WebUI, never
+        // something a region should be able to trigger remotely. Lives on
+        // this shared base (not just WebkeyOrPasswordAuthenticationService)
+        // so it works no matter which concrete [AuthenticationService]
+        // LocalServiceModule a deployment actually has configured -
+        // PasswordAuthenticationService is at least as common as the
+        // Webkey-aware one.
+        public bool DeleteAuthInfo(UUID principalID)
+        {
+            return m_Database.Delete(principalID);
+        }
+
         public virtual bool Release(UUID principalID, string token)
         {
             return m_Database.CheckToken(principalID, token, 0);

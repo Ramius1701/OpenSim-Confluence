@@ -8141,7 +8141,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             (m_InventoryService as OpenSim.Services.InventoryService.XInventoryService)?.DeleteAllUserInventory(principalID);
                             (m_CurrencyService as OpenSim.Services.CurrencyService.CurrencyService)?.DeleteAccountData(principalID);
                             (m_GridUserService as OpenSim.Services.UserAccountService.GridUserService)?.DeleteGridUserInfo(principalID.ToString());
-                            (m_AuthenticationService as OpenSim.Services.AuthenticationService.WebkeyOrPasswordAuthenticationService)?.DeleteAuthInfo(principalID);
+                            (m_AuthenticationService as OpenSim.Services.AuthenticationService.AuthenticationServiceBase)?.DeleteAuthInfo(principalID);
                             m_AvatarService?.ResetAvatar(principalID);
                             (m_UserAccountService as OpenSim.Services.UserAccountService.UserAccountService)?.DeleteUserAccount(principalID);
                             m_UserAccountService.InvalidateCache(principalID);

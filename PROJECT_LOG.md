@@ -15069,3 +15069,49 @@ real account** - same posture as Remove Simulator before the user's own
 test: this needs the user's own go-ahead against a real (test) account,
 not something to try unprompted against live data.
 
+## Remove Avatar's first real test found a real bug: one silent cast miss (2026-08-29)
+
+User tested Remove against a real test account ("ClaudeSidebar Verify2",
+`f95896f1-33e6-46db-b4d6-8edcc196913f`). Checked every table the
+feature is supposed to clean up rather than trusting it worked -
+`useraccounts`/`griduser`/`friends`(both directions)/`inventoryfolders`/
+`inventoryitems`/`currency_balances`/`currency_transactions`/
+`currency_purchases`/`avatars` all came back clean, but **`auth` still
+had a row**. `DeleteAuthInfo` was silently never called.
+
+Root cause: the WebUI connector cast `m_AuthenticationService as
+WebkeyOrPasswordAuthenticationService`, but Casperia-Dev's
+`[AuthenticationService] LocalServiceModule` is actually configured to
+`PasswordAuthenticationService` - a sibling class, not that one -  so
+the cast returned `null` and the `?.DeleteAuthInfo(...)` call was a
+silent no-op, exactly the same *class* of bug as the earlier
+`RunRegionConsoleCommand` public-hostname-vs-loopback issue: an
+assumption about which concrete type is actually running, never
+verified against the real deployed config. Checked the other four
+casts (`XInventoryService`, `UserAccountService`, `GridUserService`,
+`CurrencyService`) against `Robust.HG.ini`'s actual
+`LocalServiceModule` lines after finding this - all four matched
+exactly, so this was an isolated miss, not a systemic one.
+
+Real fix, not a patch: both `PasswordAuthenticationService` and
+`WebkeyOrPasswordAuthenticationService` extend the same
+`AuthenticationServiceBase`, so moved `DeleteAuthInfo` onto that shared
+base instead of the one derived class - now correct regardless of
+which concrete auth service a deployment has configured, not just the
+one this deployment happens to run. Updated the WebUI connector's cast
+to target `AuthenticationServiceBase` accordingly.
+
+Manually deleted the one leftover `auth` row for the test account
+(the only artifact the bug left behind) once the fix was confirmed.
+Full solution build clean (0 errors). Foundational base class changed -
+full stop/sync/restart-staggered cycle for Robust + all 15 regions.
+
+**Lesson for this codebase specifically**: when adding a method to a
+concrete class *because* the type has multiple siblings behind one
+interface (the whole reason for bypassing the service interface in the
+first place - see the entry above), always grep the real ini for which
+sibling is actually configured before picking which one to extend -
+don't assume the "more featureful-sounding" one (Webkey-or-Password)
+is the one running. Casperia-Dev runs the plainer
+`PasswordAuthenticationService`.
+
