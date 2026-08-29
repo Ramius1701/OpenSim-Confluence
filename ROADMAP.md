@@ -33,12 +33,6 @@ gap today. For what already exists, see `FEATURES.md`.
   clients rather than mainstream viewers. No client in this project's
   own stack currently speaks it, so it isn't scheduled until there's a
   concrete reason to build it.
-- **True hard account deletion.** Today, deleting an account
-  scrambles its password and blocks login (soft delete) rather than
-  removing the row outright, since a hard delete would orphan
-  references across inventory, groups, presence, currency, and estate
-  data. A real hard-delete would need a deliberate cleanup pass across
-  all of those first.
 - **Halcyon/InWorldz Bot/NPC framework.** A complete, mature LSL-scriptable
   bot framework exists in Halcyon's open C# layer (its scripting engine
   and physics core are closed-source and not portable, but this part

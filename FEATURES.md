@@ -62,23 +62,42 @@ support ticket needed — and switch between every avatar linked to the
 account. Backup (save) only, by design — see `ROADMAP.md`.
 
 **Admin console:** user management (search, create, edit, ban with
-optional auto-expiry, soft-delete, kick/message an online resident,
-admin-set password reset, login-as-user for support), estate
+optional auto-expiry, soft-delete (reversible lockout — scrambles the
+password and marks the account Deleted, recoverable by un-banning plus
+a fresh password reset) or a separate permanent Remove (deletes the
+account, credentials, home/last location, friendships, inventory
+structure, appearance, and currency history outright — refuses if the
+resident is online or owns an estate; anything they ever uploaded stays
+in the asset store untouched either way), kick/message an online
+resident, admin-set password reset, login-as-user for support), estate
 management (create estates, edit settings, manage managers/access/ban/
 group lists), grid-wide group oversight (list every group, moderate
 visibility/enrollment flags, delete a group), abuse report review,
 financial/transaction reporting, grid statistics, static page and
-news/events content management, grid settings, a web-based region
-console, per-region Hypergrid open/close toggling, on-demand map-tile
-regeneration, a region config file browser/editor (every region's raw
-`.ini`, discovered automatically — no filesystem/RDP access needed —
-with a restart button for changes that need one to take effect), a
-Simulators page to start any region process directly from the WebUI
-(individually or all stopped ones at once — only Robust itself needs
-to be running for the WebUI to work, regions are separate), and
-a settable Banker Avatar (Grid Settings) — an account fee/purchase
-transfers actually flow through instead of an untracked void, same
-concept as the classic MoneyServer's own BankerAvatar setting.
+news/events content management, grid settings (including an opt-in
+"clear all map tiles on next restart" toggle, for the rare case tiles
+have gone stale — off by default, since tiles only ever refresh when a
+region re-uploads one), a web-based region console, per-region
+Hypergrid open/close toggling, on-demand map-tile regeneration, a
+region config file browser/editor (every region's raw `.ini`,
+discovered automatically — no filesystem/RDP access needed — with a
+restart button for changes that need one to take effect), a Simulators
+page listing every discovered region process with live Running/Stopped
+status and per-row Start, graceful Stop (with a pre-flight check that
+refuses if the region is mid-backup, so a shutdown can never land on
+top of one in progress), and permanent Remove actions — plus Start
+All/Stop All for everything at once, both running in the background so
+a full-grid bulk action can't time out a reverse proxy sitting in front
+of the WebUI. Remove works the same way for any region, self-service
+Store order or originally static — it deletes the simulator's config
+folder and any grid-registration rows referencing it (never the
+region's actual content or any asset), and releases a Store order's
+held port/grid-location for reuse if there was one. Only Robust itself
+needs to be running for the WebUI to work — regions are separate
+processes. A settable Banker Avatar (Grid Settings) rounds this out —
+an account fee/purchase transfers actually flow through instead of an
+untracked void, same concept as the classic MoneyServer's own
+BankerAvatar setting.
 
 **Store:** residents spend in-world currency — ConfluenceCurrency or
 Gloebit, their choice at checkout — on an admin-managed catalog of
