@@ -54,7 +54,6 @@ namespace OpenSim.Region.CoreModules.World.Currency
     //       ConnectionString = "<same connection string as the rest of the grid's MySQL>"
     //
     //   [Economy]
-    //       EconomyModule = ConfluenceCurrencyModule
     //       economymodule = ConfluenceCurrencyModule
     //       PriceUpload = 0
     //       PriceGroupCreate = 0
@@ -65,9 +64,13 @@ namespace OpenSim.Region.CoreModules.World.Currency
         private static readonly ILog m_log =
                 LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
-        // True only when [Economy] EconomyModule actually names this module - same
-        // selector key DTLNSLMoneyModule/Gloebit already read, so operators pick
-        // exactly one active money module the same way they always have.
+        // True only when [Economy] economymodule actually names this module.
+        // Lowercase to match GloebitMoneyModule's own key read (a third-party
+        // addon we don't control) rather than carrying a second, PascalCase-only
+        // key in every region ini just for this module - one canonical selector
+        // key per grid, same as before Confluence added a second money module
+        // option. DTLNSLMoneyModule reads "EconomyModule" (PascalCase) instead,
+        // but it's legacy/unused on this grid, so it isn't a live conflict here.
         private bool m_isSelectedEconomyModule = false;
         private static bool m_xmlRpcHandlersRegistered = false;
 
@@ -91,9 +94,9 @@ namespace OpenSim.Region.CoreModules.World.Currency
             m_config = config;
 
             IConfig economyConfig = config.Configs["Economy"];
-            if (economyConfig == null || economyConfig.GetString("EconomyModule") != Name)
+            if (economyConfig == null || economyConfig.GetString("economymodule") != Name)
             {
-                // Not the configured [Economy] EconomyModule (e.g. DTLNSLMoneyModule or
+                // Not the configured [Economy] economymodule (e.g. DTLNSLMoneyModule or
                 // Gloebit is selected instead) - stay completely inert. Registering
                 // OnValidateLandBuy/OnLandBuy/IMoneyModule here regardless would silently
                 // take over money handling out from under whichever module IS selected.
