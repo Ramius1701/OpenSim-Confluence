@@ -14984,3 +14984,88 @@ the fact via direct DB check: `Simulators\test_region-b5014578\` gone,
 graceful stop. First real end-to-end exercise of both this and the
 underlying release-valve logic originally built for Cancel Order.
 
+## Remove Avatar - the same decommission shape, applied to accounts (2026-08-29)
+
+Direct follow-on from Remove Simulator: "Now that's verified, we can do
+the same thing for removing an Avatar." Soft Delete already existed
+(scrambles the password, marks `DeletedUserLevel` - reversible lockout,
+recoverable by an admin un-banning + a fresh password reset) with its
+own comment explaining a true hard delete was deliberately out of
+scope: `IUserAccountService` has no Delete method, and hard-removing
+the account row would orphan Inventory/Groups/Grid/Presence/Currency/
+Estate rows referencing the PrincipalID. That's exactly the gap Remove
+Simulator's pattern (clean up everything that actually references the
+thing, leave shared/durable data alone) already solves - built the
+real thing instead of routing around it.
+
+**Scoped with the user via 4 explicit decisions before writing any
+code** (same discipline as Remove Simulator's folder-handling
+question): (1) keep Soft Delete as the separate, reversible lockout
+action - Remove is new, permanent, alongside it; (2) delete scope =
+account + relationships + currency history (not just account +
+relationships); (3) refuse if they own an estate (Robust can check
+this via `IEstateDataService`; land/parcels can't be checked at all -
+that data lives per-region, not centrally); (4) refuse if currently
+online.
+
+**What Remove actually deletes**, confirmed via a real design pass
+through every touched service (not assumed): UserAccounts,
+Authentication credentials, GridUser (home/last location - checked via
+its existing `Online` bool for the online-refusal), Friends rows in
+*both* directions (the schema mirrors each friendship as two rows),
+inventory folder/item structure (not the underlying assets), avatar
+appearance, and currency balance/transaction/purchase history. Leaves
+alone: Store order history (audit trail) and every asset - restated by
+the user as the same policy already applied to Remove Simulator, not a
+one-off choice ("Once assets are uploaded to the grid, they are not
+removed... When removing an Avatar, its basically the same process, We
+delete the Avatar from the DB, but the assets remain") - see
+`casperia-asset-retention-policy` memory, now explicitly covering both
+features.
+
+**New Delete primitives added, one interface-design decision per
+service** (not blindly uniform): `IAuthenticationData`/`IGridUserData`/
+`ICurrencyData` (data layer) all gained real `Delete`/`DeleteAccountData`
+methods across every provider (MySQL/PGSQL/SQLite, +Null for
+Authentication) - `IGridUserData`'s needed zero new SQL, since MySQL/
+PGSQL/SQLite already inherit a generic `Delete(field,val)` from their
+shared table-handler base classes, just never exposed through the
+interface. `IAvatarService.ResetAvatar` and `IFriendsService.Delete`
+already did exactly what was needed - reused directly, no changes.
+Deliberately did NOT add `DeleteUserAccount`/`DeleteAuthInfo`/
+`DeleteGridUserInfo`/`DeleteAccountData`/`DeleteAllUserInventory` to
+their *service* interfaces (`IUserAccountService` has 4 implementers,
+`IAuthenticationService` 3, `IGridUserService` 4, `ICurrencyService` 2,
+`IInventoryService` 8) - almost all of them region-side remote
+connectors that would need pointless stub implementations for an
+operation that only ever makes sense from Robust's own admin WebUI.
+Added the methods directly on the concrete classes instead
+(`UserAccountService`, `WebkeyOrPasswordAuthenticationService`,
+`GridUserService`, `CurrencyService`, `XInventoryService`) and cast to
+them from the WebUI connector - required 3 new `ProjectReference`s in
+`OpenSim.Server.Handlers.csproj` (Inventory/Currency/Authentication
+service projects weren't referenced at all before), same documented
+precedent as the existing Gloebit-client reference.
+`XInventoryService.DeleteAllUserInventory` specifically bypasses the
+existing `DeleteFolders(principalID, folderIDs)` business method - that
+one refuses anything outside Trash/Lost by design (`onlyIfTrash`), the
+wrong rule for a full account wipe - and goes straight to
+`IXInventoryData.DeleteItems`/`DeleteFolders` by owner field
+(`avatarID`/`agentID`) instead.
+
+New "Remove account permanently" section on `/admin/users`'s account
+detail view (`/admin/users/remove`), right below Soft Delete, its own
+strong confirm dialog, refusing with a specific reason if online or
+estate-owning.
+
+Full solution build clean (0 errors). Foundational data-layer
+interfaces changed again - full `bin/` sync. Deployed with a completely
+fresh Robust + all 15 remaining regions (TesT Region stays gone from
+the earlier Remove Simulator test). Confirmed clean startup (no new
+errors in `Robust.log`, `AvatarService` loads without issue) and both
+new routes respond correctly unauthenticated (`/admin/users` 302,
+`/admin/users/remove` 403 POST-only). **Not yet exercised against a
+real account** - same posture as Remove Simulator before the user's own
+test: this needs the user's own go-ahead against a real (test) account,
+not something to try unprompted against live data.
+

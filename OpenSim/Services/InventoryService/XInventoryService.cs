@@ -460,6 +460,24 @@ namespace OpenSim.Services.InventoryService
             return DeleteFolders(principalID, folderIDs, true);
         }
 
+        // Not part of IInventoryService - only makes sense as an admin
+        // account-decommission action from Robust's own WebUI, never
+        // something a region should be able to trigger remotely. Goes
+        // straight to the data layer rather than DeleteFolders(principalID,
+        // folderIDs) above, which refuses anything outside Trash/Lost by
+        // design (onlyIfTrash) - the wrong rule for a full account wipe.
+        // Deletes the inventory structure (folders/items) only - the
+        // underlying assets those items point to are never touched here.
+        public virtual bool DeleteAllUserInventory(UUID principalID)
+        {
+            if (!m_AllowDelete)
+                return false;
+
+            m_Database.DeleteItems("avatarID", principalID.ToString());
+            m_Database.DeleteFolders("agentID", principalID.ToString());
+            return true;
+        }
+
         public virtual bool DeleteFolders(UUID principalID, List<UUID> folderIDs, bool onlyIfTrash)
         {
             if (!m_AllowDelete)

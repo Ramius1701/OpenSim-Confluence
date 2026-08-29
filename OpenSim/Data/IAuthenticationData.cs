@@ -52,5 +52,12 @@ namespace OpenSim.Data
         bool SetToken(UUID principalID, string token, int lifetime);
 
         bool CheckToken(UUID principalID, string token, int lifetime);
+
+        /// <summary>
+        /// Remove this principal's authentication row entirely - for
+        /// decommissioning an account, not for a routine password reset
+        /// (use Store/SetDataItem for that).
+        /// </summary>
+        bool Delete(UUID principalID);
     }
 }

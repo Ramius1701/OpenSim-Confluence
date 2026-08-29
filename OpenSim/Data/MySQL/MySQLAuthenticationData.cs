@@ -177,6 +177,24 @@ namespace OpenSim.Data.MySQL
             return false;
         }
 
+        public bool Delete(UUID principalID)
+        {
+            using (MySqlCommand cmd = new MySqlCommand("delete from `" + m_Realm + "` where UUID = ?principalID"))
+            {
+                cmd.Parameters.AddWithValue("?principalID", principalID.ToString());
+
+                bool deleted = ExecuteNonQuery(cmd) > 0;
+
+                using (MySqlCommand tokenCmd = new MySqlCommand("delete from tokens where UUID = ?principalID"))
+                {
+                    tokenCmd.Parameters.AddWithValue("?principalID", principalID.ToString());
+                    ExecuteNonQuery(tokenCmd);
+                }
+
+                return deleted;
+            }
+        }
+
         public bool SetToken(UUID principalID, string token, int lifetime)
         {
             if (System.Environment.TickCount - m_LastExpire > 30000)

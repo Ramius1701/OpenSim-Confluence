@@ -384,6 +384,14 @@ namespace OpenSim.Services.CurrencyService
             return m_Database.GetTopBalances(count);
         }
 
+        // Not part of ICurrencyService - only makes sense as an admin
+        // account-decommission action from Robust's own WebUI, never
+        // something a region should be able to trigger remotely.
+        public void DeleteAccountData(UUID agentID)
+        {
+            m_Database.DeleteAccountData(agentID);
+        }
+
         #region Console commands
 
         private void HandleMoneyAdd(string module, string[] cmdparams)

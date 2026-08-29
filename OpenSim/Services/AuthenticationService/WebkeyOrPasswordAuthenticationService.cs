@@ -101,5 +101,13 @@ namespace OpenSim.Services.AuthenticationService
 
             return result;
         }
+
+        // Not part of IAuthenticationService - only makes sense as an admin
+        // account-decommission action from Robust's own WebUI, never
+        // something a region should be able to trigger remotely.
+        public bool DeleteAuthInfo(UUID principalID)
+        {
+            return m_Database.Delete(principalID);
+        }
     }
 }

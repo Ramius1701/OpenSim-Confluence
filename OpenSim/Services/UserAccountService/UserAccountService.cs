@@ -420,6 +420,14 @@ namespace OpenSim.Services.UserAccountService
         {
         }
 
+        // Not part of IUserAccountService - only makes sense as an admin
+        // account-decommission action from Robust's own WebUI, never
+        // something a region should be able to trigger remotely.
+        public bool DeleteUserAccount(UUID userID)
+        {
+            return m_Database.Delete("PrincipalID", userID.ToString());
+        }
+
         public bool StoreUserAccount(UserAccount data)
         {
             //            m_log.DebugFormat(

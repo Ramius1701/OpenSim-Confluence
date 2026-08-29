@@ -379,6 +379,32 @@ namespace OpenSim.Data.MySQL
             return results;
         }
 
+        public void DeleteAccountData(UUID agentID)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand("delete from `currency_balances` where `PrincipalID` = ?PrincipalID", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?PrincipalID", agentID.ToString());
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (MySqlCommand cmd = new MySqlCommand("delete from `currency_transactions` where `ToAgent` = ?AgentID or `FromAgent` = ?AgentID", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?AgentID", agentID.ToString());
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (MySqlCommand cmd = new MySqlCommand("delete from `currency_purchases` where `PrincipalID` = ?PrincipalID", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?PrincipalID", agentID.ToString());
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
         // Builds "where ..."/"and ..." clauses for optional to/from agent filters -
         // UUID.Zero means "don't filter on this side", matching how the region-edge
         // IMoneyModule already treats a zero agent as "system", not a real principal.

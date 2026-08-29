@@ -52,5 +52,11 @@ namespace OpenSim.Data
         GridUserData Get(string userID);
         GridUserData[] GetAll(string query);
         bool Store(GridUserData data);
+
+        /// <summary>
+        /// Remove this user's grid-user row entirely (home/last location,
+        /// online state) - for decommissioning an account.
+        /// </summary>
+        bool Delete(string field, string val);
     }
 }

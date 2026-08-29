@@ -270,6 +270,15 @@ namespace OpenSim.Services.UserAccountService
             return info;
         }
 
+        // Not part of IGridUserService - only makes sense as an admin
+        // account-decommission action from Robust's own WebUI, never
+        // something a region should be able to trigger remotely.
+        public virtual bool DeleteGridUserInfo(string userID)
+        {
+            cache.Remove(userID);
+            return m_Database.Delete("UserID", userID);
+        }
+
         public virtual GridUserInfo GetGridUserInfo(string userID)
         {
             GridUserData d = GetGridUserData(userID);

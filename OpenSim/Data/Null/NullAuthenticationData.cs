@@ -70,5 +70,10 @@ namespace OpenSim.Data.Null
         {
             return m_Tokens.TryGetValue(principalID, out string tk) ? tk == token : false;
         }
+
+        public bool Delete(UUID principalID)
+        {
+            return m_Tokens.Remove(principalID);
+        }
     }
 }

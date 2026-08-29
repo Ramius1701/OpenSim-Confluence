@@ -348,6 +348,30 @@ namespace OpenSim.Data.SQLite
             return results;
         }
 
+        public void DeleteAccountData(UUID agentID)
+        {
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand("DELETE FROM currency_balances WHERE PrincipalID = :id", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":id", agentID.ToString()));
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (SQLiteCommand cmd = new SQLiteCommand("DELETE FROM currency_transactions WHERE ToAgent = :id OR FromAgent = :id", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":id", agentID.ToString()));
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (SQLiteCommand cmd = new SQLiteCommand("DELETE FROM currency_purchases WHERE PrincipalID = :id", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":id", agentID.ToString()));
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
         private bool AppendAgentFilters(StringBuilder where, List<SQLiteParameter> parms, UUID toAgentID, UUID fromAgentID)
         {
             bool haveClause = false;

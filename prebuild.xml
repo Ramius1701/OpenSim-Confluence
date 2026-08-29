@@ -1517,6 +1517,13 @@
            concrete class WebInterfaceServiceConnector constructs directly,
            not reflection-loaded like the other IXService interfaces above. -->
       <Reference name="OpenSim.Services.StoreService"/>
+      <!-- Needed for the concrete XInventoryService/CurrencyService/
+           WebkeyOrPasswordAuthenticationService casts Remove Avatar uses to
+           call Delete methods that are deliberately not on the public
+           IXService interfaces (admin-WebUI-only, not for region connectors). -->
+      <Reference name="OpenSim.Services.InventoryService"/>
+      <Reference name="OpenSim.Services.CurrencyService"/>
+      <Reference name="OpenSim.Services.AuthenticationService"/>
       <Reference name="XMLRPC"/>
       <Reference name="Nini"/>
       <Reference name="log4net"/>

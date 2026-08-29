@@ -120,6 +120,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IEstateDataService m_EstateDataService;
         private IAbuseReportsService m_AbuseReportsService;
         private IInventoryService m_InventoryService;
+        private IAvatarService m_AvatarService;
         private INewsService m_NewsService;
         private IEventsService m_EventsService;
         private ISupportTicketService m_SupportTicketService;
@@ -189,6 +190,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_EstateDataService = LoadReusedPlugin<IEstateDataService>(config, "EstateService", args);
             m_AbuseReportsService = LoadReusedPlugin<IAbuseReportsService>(config, "AbuseReportsService", args);
             m_InventoryService = LoadReusedPlugin<IInventoryService>(config, "InventoryService", args);
+            m_AvatarService = LoadReusedPlugin<IAvatarService>(config, "AvatarService", args);
             m_NewsService = LoadReusedPlugin<INewsService>(config, "NewsService", args);
             m_EventsService = LoadReusedPlugin<IEventsService>(config, "EventsService", args);
             // Same [AuctionService] LocalServiceModule the region-side
@@ -759,6 +761,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/admin/users/soft-delete":
                         HandleAdminUsersSoftDelete(request, response);
+                        break;
+                    case BasePath + "/admin/users/remove":
+                        HandleAdminUsersRemove(request, response);
                         break;
                     case BasePath + "/admin/users/kick":
                         HandleAdminUsersKick(request, response);
@@ -7645,6 +7650,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                                 + "<button type=\"submit\">Delete this account</button>"
                                 + "</form>"
                                 : string.Empty)
+                            + "<h2>Remove account permanently</h2>"
+                            + "<p class=\"news-meta\">Unlike Delete above, this is permanent and cannot be undone. Removes the account, "
+                            + "login credentials, home/last-location, friendships (both directions), inventory structure, and appearance. "
+                            + "Currency balance and transaction history are also removed. Assets this resident ever uploaded are never touched - "
+                            + "other things may still reference them. Refuses if the account is currently online, or owns an estate.</p>"
+                            + "<form method=\"post\" action=\"" + BasePath + "/admin/users/remove\" onsubmit=\"return confirm('Permanently remove "
+                                + Html(account.Name).Replace("'", "\\'") + "? This cannot be undone.');\">"
+                            + "<input type=\"hidden\" name=\"principal_id\" value=\"" + account.PrincipalID + "\">"
+                            + "<button type=\"submit\">Remove account permanently</button>"
+                            + "</form>"
                             + "<h2>Log in as this user</h2>"
                             + "<p class=\"news-meta\">Opens a dashboard session as this account, for support/troubleshooting. Logged server-side for audit purposes.</p>"
                             + "<form method=\"post\" action=\"" + BasePath + "/admin/users/login-as\">"
@@ -8056,6 +8071,91 @@ namespace OpenSim.Server.Handlers.WebInterface
             return m_UserAccountService.StoreUserAccount(account)
                     ? "Account deleted."
                     : "Password was scrambled, but the account level could not be updated.";
+        }
+
+        // Permanent counterpart to Soft Delete above. User's own design
+        // decisions (2026-08-29), same shape as the earlier Remove Simulator
+        // generalization: delete the account's own rows/relationships, never
+        // touch assets - a resident's uploads are shared/dedup'd grid data,
+        // not something removing the account gets to decide the fate of.
+        // Deletes: UserAccounts, Authentication credentials, GridUser (home/
+        // last location), Friends (both directions), inventory structure,
+        // avatar appearance, and currency balance/transaction/purchase
+        // history. Leaves alone: Store order history (audit trail) and every
+        // asset. Refuses if currently online or if they own an estate - both
+        // real messes to leave behind, fail closed rather than orphan them.
+        // Casts to concrete service types throughout because these Delete
+        // methods are deliberately NOT part of their public service
+        // interfaces - region-side remote connectors have no business
+        // triggering a full account wipe, only Robust's own admin WebUI does.
+        private void HandleAdminUsersRemove(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_UserAccountService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Account not found.";
+            string principalId = string.Empty;
+
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                principalId = FormValue(form, "principal_id");
+
+                if (UUID.TryParse(principalId, out UUID principalID))
+                {
+                    UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, principalID);
+                    if (account == null)
+                    {
+                        message = "Account not found.";
+                    }
+                    else
+                    {
+                        bool online = m_GridUserService?.GetGridUserInfo(principalID.ToString())?.Online == true;
+                        int estateCount = m_EstateDataService?.GetEstatesByOwner(principalID)?.Count ?? 0;
+
+                        if (online)
+                        {
+                            message = account.Name + " is currently online - they must log out (or be kicked) before their account can be removed.";
+                        }
+                        else if (estateCount > 0)
+                        {
+                            message = account.Name + " owns " + estateCount + " estate(s) - reassign or delete " + (estateCount == 1 ? "it" : "them")
+                                    + " first, then remove the account.";
+                        }
+                        else
+                        {
+                            if (m_FriendsService != null)
+                            {
+                                foreach (OpenSim.Services.Interfaces.FriendInfo f in m_FriendsService.GetFriends(principalID))
+                                {
+                                    m_FriendsService.Delete(principalID, f.Friend);
+                                    if (UUID.TryParse(f.Friend, out UUID friendID))
+                                        m_FriendsService.Delete(friendID, principalID.ToString());
+                                }
+                            }
+
+                            (m_InventoryService as OpenSim.Services.InventoryService.XInventoryService)?.DeleteAllUserInventory(principalID);
+                            (m_CurrencyService as OpenSim.Services.CurrencyService.CurrencyService)?.DeleteAccountData(principalID);
+                            (m_GridUserService as OpenSim.Services.UserAccountService.GridUserService)?.DeleteGridUserInfo(principalID.ToString());
+                            (m_AuthenticationService as OpenSim.Services.AuthenticationService.WebkeyOrPasswordAuthenticationService)?.DeleteAuthInfo(principalID);
+                            m_AvatarService?.ResetAvatar(principalID);
+                            (m_UserAccountService as OpenSim.Services.UserAccountService.UserAccountService)?.DeleteUserAccount(principalID);
+                            m_UserAccountService.InvalidateCache(principalID);
+
+                            m_log.InfoFormat("[WEB INTERFACE]: Admin {0} ({1}) permanently removed account {2} ({3})",
+                                    session.Name, session.PrincipalID, account.Name, account.PrincipalID);
+                            message = account.Name + " removed. Assets they uploaded were left untouched.";
+                            principalId = string.Empty;
+                        }
+                    }
+                }
+            }
+
+            response.Redirect(BasePath + "/admin/users?principal=" + Uri.EscapeDataString(principalId) + "&message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
         // "Login as user" - CreateSession just needs the target's

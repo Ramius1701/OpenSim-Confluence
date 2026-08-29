@@ -212,6 +212,18 @@ namespace OpenSim.Data.SQLite
             return false;
         }
 
+        public bool Delete(UUID principalID)
+        {
+            bool deleted;
+            using (SQLiteCommand cmd = new SQLiteCommand("delete from `" + m_Realm + "` where UUID = '" + principalID.ToString() + "'"))
+                deleted = ExecuteNonQuery(cmd, m_Connection) > 0;
+
+            using (SQLiteCommand cmd = new SQLiteCommand("delete from tokens where UUID = '" + principalID.ToString() + "'"))
+                ExecuteNonQuery(cmd, m_Connection);
+
+            return deleted;
+        }
+
         public bool SetToken(UUID principalID, string token, int lifetime)
         {
             if (System.Environment.TickCount - m_LastExpire > 30000)

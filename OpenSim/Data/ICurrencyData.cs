@@ -44,5 +44,12 @@ namespace OpenSim.Data
         // funded accounts) - same filter OpenSim-Grid-Interface's own
         // economy.php leaderboard query uses.
         List<CurrencyBalanceEntry> GetTopBalances(int count);
+
+        /// <summary>
+        /// Remove this agent's balance row, transaction ledger entries (as
+        /// either party), and purchase history - for decommissioning an
+        /// account, not a routine zero-out (use SetBalance for that).
+        /// </summary>
+        void DeleteAccountData(UUID agentID);
     }
 }

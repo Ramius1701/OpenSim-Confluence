@@ -189,6 +189,29 @@ namespace OpenSim.Data.PGSQL
             return false;
         }
 
+        public bool Delete(UUID principalID)
+        {
+            string sql = string.Format("delete from {0} where uuid = :principalID", m_Realm);
+            bool deleted;
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_ConnectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(sql, conn))
+            {
+                cmd.Parameters.Add(m_database.CreateParameter("principalID", principalID));
+                conn.Open();
+                deleted = cmd.ExecuteNonQuery() > 0;
+            }
+
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_ConnectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand("delete from tokens where uuid = :principalID", conn))
+            {
+                cmd.Parameters.Add(m_database.CreateParameter("principalID", principalID));
+                conn.Open();
+                cmd.ExecuteNonQuery();
+            }
+
+            return deleted;
+        }
+
         public bool SetToken(UUID principalID, string token, int lifetime)
         {
             if (System.Environment.TickCount - m_LastExpire > 30000)

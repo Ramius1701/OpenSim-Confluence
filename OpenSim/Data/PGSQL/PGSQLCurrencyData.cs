@@ -344,6 +344,32 @@ namespace OpenSim.Data.PGSQL
             return results;
         }
 
+        public void DeleteAccountData(UUID agentID)
+        {
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            {
+                conn.Open();
+
+                using (NpgsqlCommand cmd = new NpgsqlCommand("DELETE FROM currency_balances WHERE \"PrincipalID\" = :id", conn))
+                {
+                    cmd.Parameters.AddWithValue(":id", agentID.ToString());
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (NpgsqlCommand cmd = new NpgsqlCommand("DELETE FROM currency_transactions WHERE \"ToAgent\" = :id OR \"FromAgent\" = :id", conn))
+                {
+                    cmd.Parameters.AddWithValue(":id", agentID.ToString());
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (NpgsqlCommand cmd = new NpgsqlCommand("DELETE FROM currency_purchases WHERE \"PrincipalID\" = :id", conn))
+                {
+                    cmd.Parameters.AddWithValue(":id", agentID.ToString());
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
         private bool AppendAgentFilters(StringBuilder where, List<NpgsqlParameter> parms, UUID toAgentID, UUID fromAgentID)
         {
             bool haveClause = false;
