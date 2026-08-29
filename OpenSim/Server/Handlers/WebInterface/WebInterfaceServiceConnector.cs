@@ -571,9 +571,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/store/orders/start":
                         HandleAdminStoreOrdersStart(request, response);
                         break;
-                    case BasePath + "/admin/store/orders/cancel":
-                        HandleAdminStoreOrdersCancel(request, response);
-                        break;
                     case BasePath + "/admin/regions/ini":
                         HandleAdminRegionIniList(request, response);
                         break;
@@ -597,6 +594,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/admin/simulators/stop-all":
                         HandleAdminSimulatorsStopAll(request, response);
+                        break;
+                    case BasePath + "/admin/simulators/remove":
+                        HandleAdminSimulatorsRemove(request, response);
                         break;
                     case BasePath + "/viewers":
                         HandleViewers(request, response);
@@ -11532,11 +11532,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     }
                     if (order.OrderType == "RegionOrder" && (order.Status == "AwaitingStart" || order.Status == "Active"))
                     {
-                        sb.Append("<form method=\"post\" action=\"").Append(BasePath)
-                          .Append("/admin/store/orders/cancel\" style=\"display:inline\" onsubmit=\"return confirm('Cancel this order and free its port/grid location for reuse? "
-                                + "The region itself must already be stopped - this does not stop it for you.');\">");
-                        sb.Append("<input type=\"hidden\" name=\"order_id\" value=\"").Append(order.ID).Append("\">");
-                        sb.Append("<button type=\"submit\">Cancel Order</button></form>");
+                        sb.Append("<small>Removed from the <a href=\"").Append(BasePath).Append("/admin/simulators\">Simulators</a> page, not here.</small>");
                     }
                     if (!string.IsNullOrEmpty(order.Notes))
                         sb.Append("<br><small>").Append(Html(order.Notes)).Append("</small>");
@@ -11546,70 +11542,6 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             WritePage(request, response, PageTitle("Store Orders"), sb.ToString());
-        }
-
-        // Real gap found live (2026-08-26): AllocateRegionOrderPort/
-        // AllocateRegionOrderLocation treat any order with Status
-        // AwaitingStart/Active as permanently holding its port and grid
-        // location - stopping the region process alone (even a clean
-        // graceful shutdown) never touches the order row, so the port
-        // stayed reserved forever with no way to release it short of
-        // editing the database directly. This is that release valve.
-        // Deliberately does NOT stop the region itself - Cancel and Stop
-        // are kept as separate, single-purpose actions rather than one
-        // button with two different blast radii; refuses instead if the
-        // region still answers on its allocated port, so an admin can't
-        // accidentally cancel the order out from under a still-running,
-        // still-serving region with nothing left tracking it.
-        private void HandleAdminStoreOrdersCancel(IOSHttpRequest request, IOSHttpResponse response)
-        {
-            WebSession session = GetSession(request);
-            if (session == null || !session.IsAdmin || m_StoreService == null)
-            {
-                response.StatusCode = (int)HttpStatusCode.Forbidden;
-                return;
-            }
-
-            string message = "Order not found.";
-            if (request.HttpMethod == "POST")
-            {
-                Dictionary<string, string> form = ReadForm(request);
-                if (UUID.TryParse(FormValue(form, "order_id"), out UUID orderId))
-                {
-                    StoreOrder order = m_StoreService.GetOrder(orderId);
-                    if (order == null || order.OrderType != "RegionOrder")
-                    {
-                        message = "Order not found.";
-                    }
-                    else if (order.Status != "AwaitingStart" && order.Status != "Active")
-                    {
-                        message = "This order isn't holding a port or grid location (status: " + order.Status + ") - nothing to cancel.";
-                    }
-                    else
-                    {
-                        bool running = order.AllocatedPort.HasValue
-                                && Util.IsHostAlive("http://127.0.0.1:" + order.AllocatedPort.Value + "/", 1000);
-                        if (running)
-                        {
-                            message = order.RequestedRegionName + " is still running - stop it from the Simulators page first, "
-                                    + "then cancel this order. Cancelling while it's still up would leave a live region with no order tracking it.";
-                        }
-                        else
-                        {
-                            order.Status = "Cancelled";
-                            order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
-                                    + "Cancelled by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC - "
-                                    + "port " + order.AllocatedPort + " and grid location ("
-                                    + order.AllocatedLocationX + "," + order.AllocatedLocationY + ") released for reuse.";
-                            order.Updated = DateTime.UtcNow;
-                            m_StoreService.StoreOrder(order);
-                            message = order.RequestedRegionName + " cancelled - its port and grid location are now free for a future order.";
-                        }
-                    }
-                }
-            }
-
-            response.Redirect(BasePath + "/admin/store/orders?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
         }
 
         // Just pushes ExpiresAt forward, no re-charge - per the confirmed
@@ -12165,7 +12097,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     {
                         sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/start\" style=\"display:inline\">");
                         sb.Append("<input type=\"hidden\" name=\"folder\" value=\"").Append(Html(s.SimulatorFolder)).Append("\">");
-                        sb.Append("<button type=\"submit\">Start</button></form>");
+                        sb.Append("<button type=\"submit\">Start</button></form> ");
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/remove\" style=\"display:inline\" ")
+                          .Append("onsubmit=\"return confirm('Remove ").Append(Html(s.RegionName).Replace("'", "\\'"))
+                          .Append("? Its config folder is deleted and it can no longer be started or discovered. Its content in the database and any assets it holds are NOT touched.');\">");
+                        sb.Append("<input type=\"hidden\" name=\"folder\" value=\"").Append(Html(s.SimulatorFolder)).Append("\">");
+                        sb.Append("<button type=\"submit\">Remove</button></form>");
                     }
                     else
                     {
@@ -12351,6 +12288,93 @@ namespace OpenSim.Server.Handlers.WebInterface
                     message = "That simulator wasn't found by the current discovery scan.";
                 else
                     TryStopRegion(match.RegionID, match.RegionName, out message);
+            }
+
+            response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Generalized decommission action - any discovered simulator, not
+        // just Store orders. User's own correction (2026-08-29): the earlier
+        // Cancel Order was scoped too narrowly to Store's port/location gap;
+        // any region (static or Store-ordered) should be removable the same
+        // way. Deleting the folder only removes its OpenSim.ini/Regions.ini
+        // (config), not the region's actual world content - that lives in
+        // the database, keyed by RegionID, and is deliberately left alone
+        // here, same as every asset a resident ever uploaded: both are
+        // shared/durable data this action has no business touching, not a
+        // decision this button gets to make unilaterally. DeregisterRegion
+        // and UnlinkRegion clean up the two grid-registration artifacts
+        // (regions row, estate_map row) that would otherwise dangle - a
+        // graceful Stop already clears the regions row, so that call is
+        // normally a no-op safety net, not the primary mechanism.
+        private void HandleAdminSimulatorsRemove(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Simulator not found.";
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                string requestedFolder = FormValue(form, "folder");
+
+                // Same re-verification discipline as Start/Stop - never act
+                // on a client-supplied folder name that isn't backed by a
+                // real, freshly-discovered simulator.
+                var match = DiscoverSimulators().FirstOrDefault(s => string.Equals(s.SimulatorFolder, requestedFolder, StringComparison.OrdinalIgnoreCase));
+                if (match.SimulatorFolder == null)
+                {
+                    message = "That simulator wasn't found by the current discovery scan.";
+                }
+                else
+                {
+                    int? port = GetSimulatorPort(match.SimulatorFolder);
+                    bool running = port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
+                    if (running)
+                    {
+                        message = match.RegionName + " is still running - stop it first, then remove it.";
+                    }
+                    else
+                    {
+                        m_GridService?.DeregisterRegion(match.RegionID);
+                        m_EstateDataService?.UnlinkRegion(match.RegionID);
+
+                        if (m_StoreService != null)
+                        {
+                            StoreOrder order = m_StoreService.GetAllOrders()
+                                    .FirstOrDefault(o => o.OrderType == "RegionOrder"
+                                            && string.Equals(o.SimulatorFolderName, match.SimulatorFolder, StringComparison.OrdinalIgnoreCase)
+                                            && (o.Status == "AwaitingStart" || o.Status == "Active"));
+                            if (order != null)
+                            {
+                                order.Status = "Cancelled";
+                                order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                                        + "Removed by " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC - "
+                                        + "port " + order.AllocatedPort + " and grid location ("
+                                        + order.AllocatedLocationX + "," + order.AllocatedLocationY + ") released for reuse.";
+                                order.Updated = DateTime.UtcNow;
+                                m_StoreService.StoreOrder(order);
+                            }
+                        }
+
+                        string simPath = Path.Combine(m_regionOrderGridRoot, "Simulators", match.SimulatorFolder);
+                        try
+                        {
+                            if (Directory.Exists(simPath))
+                                Directory.Delete(simPath, true);
+                            message = match.RegionName + " removed - its config folder is gone and it will no longer be discovered. "
+                                    + "Its region content in the database and any assets it holds were left untouched.";
+                        }
+                        catch (Exception ex)
+                        {
+                            message = match.RegionName + ": grid-registration cleanup succeeded, but deleting " + simPath + " failed - " + ex.Message;
+                        }
+                    }
+                }
             }
 
             response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);

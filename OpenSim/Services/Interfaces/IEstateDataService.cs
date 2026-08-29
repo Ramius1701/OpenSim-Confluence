@@ -111,5 +111,14 @@ namespace OpenSim.Services.Interfaces
         /// <param name="estateID"></param>
         /// <returns>true if the delete succeeded, false otherwise</returns>
         bool DeleteEstate(int estateID);
+
+        /// <summary>
+        /// Remove a region's estate_map row without linking it to a
+        /// replacement estate - for decommissioning a region entirely,
+        /// not for moving it to a different estate (use LinkRegion for that).
+        /// </summary>
+        /// <param name="regionID"></param>
+        /// <returns>true if a row was actually removed, false otherwise</returns>
+        bool UnlinkRegion(UUID regionID);
     }
 }

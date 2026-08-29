@@ -132,5 +132,10 @@ namespace OpenSim.Services.EstateService
         {
             return m_database.DeleteEstate(estateID);
         }
+
+        public bool UnlinkRegion(UUID regionID)
+        {
+            return m_database.UnlinkRegion(regionID);
+        }
     }
 }

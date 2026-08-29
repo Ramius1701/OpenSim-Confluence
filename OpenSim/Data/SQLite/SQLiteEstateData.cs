@@ -499,6 +499,17 @@ namespace OpenSim.Data.SQLite
             }
         }
 
+        public bool UnlinkRegion(UUID regionID)
+        {
+            using(SQLiteCommand cmd = (SQLiteCommand)m_connection.CreateCommand())
+            {
+                cmd.CommandText = "delete from estate_map where RegionID = :RegionID";
+                cmd.Parameters.AddWithValue(":RegionID", regionID.ToString());
+
+                return cmd.ExecuteNonQuery() != 0;
+            }
+        }
+
         public List<UUID> GetRegions(int estateID)
         {
             return new List<UUID>();

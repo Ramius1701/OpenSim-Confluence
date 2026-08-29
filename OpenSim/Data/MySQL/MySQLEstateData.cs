@@ -574,6 +574,22 @@ namespace OpenSim.Data.MySQL
             return false;
         }
 
+        public bool UnlinkRegion(UUID regionID)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = dbcon.CreateCommand())
+                {
+                    cmd.CommandText = "delete from estate_map where RegionID = ?RegionID";
+                    cmd.Parameters.AddWithValue("?RegionID", regionID.ToString());
+
+                    return cmd.ExecuteNonQuery() != 0;
+                }
+            }
+        }
+
         public List<UUID> GetRegions(int estateID)
         {
             List<UUID> result = new List<UUID>();

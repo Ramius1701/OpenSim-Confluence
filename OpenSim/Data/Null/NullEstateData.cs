@@ -139,6 +139,11 @@ namespace OpenSim.Data.Null
             return false;
         }
 
+        public bool UnlinkRegion(UUID regionID)
+        {
+            return false;
+        }
+
         #region IEstateDataStore Members
 
 

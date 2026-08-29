@@ -331,6 +331,17 @@ namespace OpenSim.Server.Handlers
                     result["Result"] = m_EstateService.LinkRegion(regionID, id);
                 }
             }
+            else if (!string.IsNullOrEmpty(region) && string.IsNullOrEmpty(eid) &&
+                requestData.ContainsKey("OP") && requestData["OP"] != null && "UNLINK".Equals(requestData["OP"]))
+            {
+                UUID regionID = UUID.Zero;
+                if (UUID.TryParse(region, out regionID))
+                {
+                    m_log.DebugFormat("[EstateServerPostHandler]: Unlink region {0}", regionID);
+                    httpResponse.StatusCode = (int)HttpStatusCode.OK;
+                    result["Result"] = m_EstateService.UnlinkRegion(regionID);
+                }
+            }
             else
                 m_log.WarnFormat("[EstateServerPostHandler]: something wrong with POST request {0}", httpRequest.RawUrl);
 

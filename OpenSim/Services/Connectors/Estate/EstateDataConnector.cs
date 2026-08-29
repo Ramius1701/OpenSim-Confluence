@@ -252,6 +252,18 @@ namespace OpenSim.Services.Connectors
             return PostRequest(uri, formdata);
         }
 
+        public bool UnlinkRegion(UUID regionID)
+        {
+            // /estates/estate/?region=uuid
+            string uri = m_ServerURI + $"/estates/estate/?region={regionID}";
+
+            Dictionary<string, object> formdata = new()
+            {
+                ["OP"] = "UNLINK"
+            };
+            return PostRequest(uri, formdata);
+        }
+
         private bool PostRequest(string uri, Dictionary<string, object> sendData)
         {
             string reqString = ServerUtils.BuildQueryString(sendData);

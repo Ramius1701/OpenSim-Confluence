@@ -14927,4 +14927,60 @@ it is up` on both sides, replacing the prior warning. All 16 regions
 confirmed reaching `RegionReady`'s "is ready" log line after the
 restart - full clean redeploy, not just the two affected regions.
 
-Not yet committed/pushed to git as of this entry.
+## Cancel Order generalized into "Remove Simulator" (2026-08-29)
+
+User pushback, and rightly so: "Why are we making this a cancel order?
+Any sim should be able to be removed. not just recent orders." Cancel
+Order was scoped to `store_orders` specifically because that's where
+the port/location-stuck-forever bug lived - but that was a reason the
+*symptom* was Store-specific, not a reason removal itself should be.
+Replaced it with a single **Remove** action on `/admin/simulators`
+(which already lists every discovered simulator, static or
+Store-ordered alike), and deleted the old Cancel Order button/route/
+handler from `/admin/store/orders` entirely.
+
+**What Remove actually does, confirmed against two rounds of the user's
+own design corrections:**
+1. Refuses if the simulator is still running (same port-probe pattern
+   as Stop) - must be stopped first.
+2. `IGridService.DeregisterRegion` - safety-net cleanup of a stale
+   `regions` row (normally already a no-op, since a graceful Stop
+   already clears this).
+3. New `IEstateDataStore`/`IEstateDataService.UnlinkRegion(regionID)` -
+   deletes the orphaned `estate_map` row, the real gap identified
+   earlier this session. Added across every provider (MySQL, PGSQL,
+   SQLite, Null) plus the remote estate connector + Robust-side HTTP
+   handler (`OP=UNLINK`, mirroring `LinkRegion`'s existing `OP=LINK`
+   round trip) - full interface implementation, not just the path this
+   deployment happens to use.
+4. If it's a Store order, cancels it the same way the old Cancel Order
+   did (status + Notes + port/location release) - folded in as a step,
+   not a separate button anymore.
+5. Deletes `Simulators\<folder>\` entirely.
+
+**What it deliberately does NOT touch, per the user's explicit
+correction:** the region's own DB content (parcels, prims, land - not
+config, real world data) and any assets it holds. User's own framing:
+"Once assets are uploaded to the grid, they are not removed. Others
+may be using those assets" - and drew the same parallel to avatar
+removal (delete the account's own DB footprint, never the shared asset
+store) as the general policy this repo should follow for any future
+"remove X" action, not a one-off choice here. Saved as
+`casperia-asset-retention-policy` memory. Deleting the folder is safe
+specifically because it's just `OpenSim.ini`/`Regions.ini` - the
+region's actual content was never stored there to begin with.
+
+Full solution build clean (0 errors). Foundational interfaces changed
+(`IEstateDataStore`, `IEstateDataService`) - full `bin/` sync rather
+than targeted files, per this session's established rule for
+foundational assemblies. Deployed with TesT Region deliberately left
+stopped (not restarted) so the user could exercise Remove against a
+real order for the first time. **Live-verified end to end**: user
+clicked Remove on TesT Region through the real WebUI - confirmed after
+the fact via direct DB check: `Simulators\test_region-b5014578\` gone,
+`store_orders.Status` = `Cancelled` with the expected Notes entry
+("port 9050 and grid location (1050,1050) released for reuse"),
+`estate_map` row gone, `regions` row already clean from the earlier
+graceful stop. First real end-to-end exercise of both this and the
+underlying release-valve logic originally built for Cancel Order.
+

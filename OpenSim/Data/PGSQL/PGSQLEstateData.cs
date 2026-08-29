@@ -576,6 +576,22 @@ namespace OpenSim.Data.PGSQL
             return false;
         }
 
+        public bool UnlinkRegion(UUID regionID)
+        {
+            string deleteSQL = "delete from estate_map where \"RegionID\" = :RegionID";
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            {
+                conn.Open();
+
+                using (NpgsqlCommand cmd = new NpgsqlCommand(deleteSQL, conn))
+                {
+                    cmd.Parameters.AddWithValue("RegionID", regionID.Guid);
+
+                    return cmd.ExecuteNonQuery() != 0;
+                }
+            }
+        }
+
         public List<UUID> GetRegions(int estateID)
         {
             List<UUID> result = new List<UUID>();
