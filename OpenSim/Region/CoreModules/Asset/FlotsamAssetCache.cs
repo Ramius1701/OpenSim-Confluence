@@ -560,6 +560,18 @@ namespace OpenSim.Region.CoreModules.Asset
                 // delete it and re-cache
                 File.Delete(filename);
             }
+            catch (InvalidOperationException e)
+            {
+                // m_assetSerializer is an XmlSerializer, not a
+                // DataContractSerializer/BinaryFormatter - malformed XML (a
+                // corrupt or partially-written cache file) surfaces here as
+                // InvalidOperationException wrapping an XmlException, not as
+                // SerializationException. Same corrupt-file recovery as above:
+                // delete so the next request re-fetches and re-caches cleanly,
+                // rather than failing on this exact file forever.
+                m_log.Warn($"[FLOTSAM ASSET CACHE]: Failed to get file {filename} for asset {id}: {e.Message}");
+                File.Delete(filename);
+            }
             catch (Exception e)
             {
                 m_log.Warn($"[FLOTSAM ASSET CACHE]: Failed to get file {filename} for asset {id}: {e.Message}");
