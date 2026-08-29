@@ -15115,3 +15115,71 @@ don't assume the "more featureful-sounding" one (Webkey-or-Password)
 is the one running. Casperia-Dev runs the plainer
 `PasswordAuthenticationService`.
 
+## "Gunthar 4 OpenSim" showing as the region Version in Firestorm (2026-08-29)
+
+User noticed Firestorm's Region/Estate floater showing "Version: Gunthar
+4 OpenSim" on UFPGC, Sector 001, and Welcome Center - asked why a name
+that "should be nowhere in this GitHub build" was showing up, grid-wide.
+
+**First pass was wrong and too narrow.** Assumed it was a viewer-side
+placeholder for an unrecognized simulator string, based on tracing only
+`VersionInfo.cs` -> `Scene.GetSimulatorVersion()` -> `LLClientView.
+GetViewerSimulatorVersion()` (none of which contain "Gunthar" anywhere)
+plus a single region's own `OpenSim.ini` (which only has the setting
+commented out, matching the code default). A live log line
+("OpenSim-Confluence 0.9.3.1 (Build 379) Dev") confirmed that trace was
+accurate as far as it went - the C# code genuinely can't produce that
+string. But "as far as it went" wasn't far enough, and the user was
+right to push back rather than accept a plausible-sounding guess.
+
+**Verified the viewer side directly against the actual Firestorm source
+checked out at `S:\Github\phoenix-firestorm`** rather than guessing
+about viewer internals from outside the code: `panel_region_general.xml`
+'s `version_channel_text` control (the exact field shown, confirmed by
+its "Grid Position"/"Estate ID" siblings matching the screenshot) is
+set from `gLastVersionChannel`
+(`llfloaterregioninfo.cpp:542`), which is itself set with **zero
+transformation** from the raw `ChannelVersion` string field of the
+`AgentMovementComplete` packet's `SimData` block
+(`llviewermessage.cpp:3873`). No lookup table, no fork-recognition
+fallback, no placeholder logic anywhere in this path - Firestorm
+displays exactly what the server sends, byte for byte. This fully
+overturned the first-pass theory.
+
+**Real root cause, found by searching the actual live deployment's
+config tree, not just one region's own `.ini`:**
+`ViewerSimulatorVersionOverride = "Gunthar 4 OpenSim"`, uncommented, in
+`OpenSimDefaults.ini` - a *shared* config file every region includes,
+which is why it was identical on all three regions checked (and
+presumably all 16). Missed on the first pass because only each
+region's own `OpenSim.ini` was checked, never the shared defaults file
+layered underneath it. **This exists in the actual GitHub repo too**,
+not just live-deployment drift - `bin/OpenSimDefaults.ini` ships with
+the exact same uncommented line, tracked in git. Almost certainly a
+carried-over leftover from whatever template this defaults file was
+originally adapted from - this project has openly ported several
+features from GuntharDeNiro's fork (see `CONTRIBUTORS.txt`), and this
+looks like branding that came along for the ride with one of those
+ports rather than a deliberate choice.
+
+The surrounding design intent is actually sound, not a bug in itself:
+`SendSimulatorVersionToViewer = true` with a *fixed* override string is
+a deliberate choice (per the ini's own comment) to avoid noisy
+"different simulator version" warnings when neighboring regions happen
+to be on slightly different builds - overriding to a real, fixed
+string is the right call; the bug was narrowly what that string said.
+Changed to `"OpenSim-Confluence"` (user's choice) in both
+`bin/OpenSimDefaults.ini` (the shipped repo template - fixes this for
+any future deployment, not just Casperia-Dev) and the live
+`S:\Opensim\Casperia-Dev\OpenSimDefaults.ini`.
+
+Config-only change, no rebuild needed - but `IConfigSource`/Nini loads
+ini files once at process startup and doesn't hot-reload, so it only
+takes effect on a fresh region process. Confirmed no one was logged in
+first (`griduser.Online` showed 2 stale/unidentified entries with no
+matching `useraccounts` row - likely leftover flags from an earlier
+ungraceful shutdown, not real sessions, but asked before touching
+anything regardless), then restarted only the 15 region processes
+(Robust doesn't need to - `ClientStack.LindenUDP` settings are
+region-side only). All 15 confirmed back to `RegionReady`.
+
