@@ -16198,3 +16198,59 @@ else in the Legion-Grid-Code review. Whoever debugs this next should
 start by instrumenting/stepping through `Play()`'s synchronous section
 line by line (not just assuming DNS) since the actual blocking call
 hasn't been isolated yet.
+
+## osPlaySoundURL — removed entirely (2026-08-31)
+
+The hang reproduced a second time, identically, during a controlled
+retest with diagnostic breadcrumb logging added throughout
+`RemoteSoundFetcher.Play()`'s synchronous path. Real evidence this
+time, not just "it didn't work": `DIAG Play() entered` logged at
+08:01:54, then complete silence - no further breadcrumb, no exception,
+nothing - until a clean `[SHUTDOWN]` sequence began 48 seconds later
+(not initiated by Claude; someone/something else issued it, most
+likely the user restarting the stuck region themselves).
+
+That silence is the genuinely strange part: the only code between the
+two breadcrumbs that would have bracketed it is a bool check, a null
+check, `Math.Clamp`, a string-length check, and `Uri.TryCreate` - pure,
+synchronous, in-memory operations, no I/O, no locks, nothing capable of
+hanging under normal .NET semantics. Every concrete hypothesis raised
+during debugging was checked and ruled out:
+- DNS resolution - tested twice, two different ways
+  (`Resolve-DnsName`: 0.75s; the exact `System.Net.Dns.GetHostAddresses`
+  API the code uses, called directly: 22ms).
+- The `ThreatLevel.High` permission check - confirmed it passed (the
+  `RemoteSoundFetcher`/`OutboundUrlFilter` constructor only logs once,
+  on first-ever construction, and it fired both times, meaning
+  `CheckThreatLevel` didn't throw).
+- Constructor/`HttpClient`/`SocketsHttpHandler` setup - confirmed
+  complete (if it hadn't finished, `Play()` - called after
+  construction returns - would never have been reached and logged
+  "entered" at all).
+- `CheckThreatLevel`'s own implementation - read directly, confirmed
+  purely synchronous with no interactive dialog/console-prompt
+  mechanism that could block waiting on a response.
+
+No further hypothesis was identified worth testing live given the time
+already spent (multiple hours across two sessions). Per the user's
+explicit call, **removed entirely rather than left disabled-and-broken**:
+`RemoteSoundFetcher.cs` deleted, the `osPlaySoundURL` registrations
+reverted from `OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs`, the
+`[RemoteSound]` section reverted from `bin/OpenSim.ini.example`, the
+`Allow_osPlaySoundURL` entry reverted from
+`bin/config-include/osslDefaultEnable.ini`, and the same three live
+config changes reverted on Casperia Prime itself
+(`Simulators/Welcome_Center/OpenSim.ini`,
+`config-include/osslDefaultEnable.ini`). Full solution build confirmed
+clean after removal. Documented in `ROADMAP.md`'s "Explicitly out of
+scope" section (not "Known limitations", since the feature no longer
+exists) so a future session doesn't re-port this blind without the
+diagnostic history.
+
+**Still outstanding, not yet done as of this entry:** redeploy the
+clean (feature-removed) build to live, and check whether the original
+test object (with the script that triggers the hang) still exists
+in-world - if so, it should be deleted, since any script still
+referencing the now-nonexistent `osPlaySoundURL` function will get a
+normal compile error rather than the hang, but it's still leftover
+clutter worth cleaning up.

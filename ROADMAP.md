@@ -68,6 +68,18 @@ gap today. For what already exists, see `FEATURES.md`.
 
 ## Explicitly out of scope for now
 
+- **`osPlaySoundURL`** (play audio from an arbitrary external URL,
+  ported from Legion-Grid-Code). Built, deployed, and tested live on
+  2026-08-30/31 - reproducibly hung the calling script's execution
+  (isolated to that one script, not a region-wide freeze) somewhere in
+  a handful of lines of pure synchronous, in-memory code with no
+  identifiable blocking call after hours of live troubleshooting (DNS
+  resolution ruled out twice via two different methods, the permission
+  check confirmed passing, constructor/HttpClient setup confirmed
+  completing). Root cause never found. Fully removed rather than left
+  disabled-and-broken - see `PROJECT_LOG.md`'s "osPlaySoundURL" entries
+  for the complete diagnostic trail before attempting this again;
+  don't re-port it blind.
 - **Self-service OAR/IAR restore through the web UI** (upload a file
   and have it applied). Backup/save through the web UI is supported;
   restore is not, and is done from the region's own console instead.
@@ -168,17 +180,6 @@ reimplementation, but well-documented design rationale):
 - **Aurora** (`OpenSimWeather`'s northern-lights effect) is built and
   deployed but not yet visually confirmed working in a live viewer —
   same present-but-unverified caveat as WebRTC voice above.
-- **`osPlaySoundURL`** (ported from Legion-Grid-Code) builds clean but
-  **is confirmed broken, not just unverified**: a live test on
-  2026-08-30 showed the calling script's execution hangs completely
-  (no return value, unresponsive object) somewhere in
-  `RemoteSoundFetcher.Play()`'s synchronous validation path - DNS
-  resolution itself was ruled out as the cause, root cause not yet
-  found. Isolated to the calling script only, not a region-wide freeze.
-  Off by default (`[RemoteSound] Enabled = false`) and must stay that
-  way until this is root-caused and fixed - do not re-enable on any
-  region. See `PROJECT_LOG.md`'s "osPlaySoundURL — real live bug
-  found" entry for the full diagnostic trail.
 - Some database migrations remain MySQL-specific in places PostgreSQL/
   SQLite parity hasn't caught up yet.
 - Experience Tools is not full Second Life Experience-service

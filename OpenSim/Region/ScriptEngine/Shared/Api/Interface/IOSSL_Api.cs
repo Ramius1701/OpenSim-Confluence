@@ -158,8 +158,6 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
               bool osConsoleCommand(string Command);
         //ApiDesc Sets the current parcel music URL.
               void osSetParcelMusicURL(LSL_String url);
-        //ApiDesc Fetches an external Ogg Vorbis file and plays it as a temporary sound to nearby avatars. Returns "" on accept, else a reason string.
-              LSL_String osPlaySoundURL(LSL_Key target, LSL_String url, LSL_Float volume);
         //ApiDesc Sets the current parcel media URL.
               void osSetParcelMediaURL(LSL_String url);
         //ApiDesc Sets whether the object should float on water.
