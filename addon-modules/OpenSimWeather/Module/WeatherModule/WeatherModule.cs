@@ -218,6 +218,27 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private bool m_thunderEnabled;
         private UUID m_thunderSound = UUID.Zero;
         private float m_thunderVolume;
+
+        // Aurora is deliberately independent of the WeatherKind cycle - a real
+        // aurora can happen on a clear night regardless of rain/snow/storm
+        // state, so it's its own timer/emitter rather than another weather
+        // kind. Server-side equivalent of a client-rendered aurora shader
+        // (e.g. AyaneStorm's asaurora.cpp): same sun-elevation daylight-fade
+        // concept, reimplemented here against a real particle emitter since
+        // there's no way to push a custom shader to an arbitrary viewer -
+        // this renders identically on any OpenSim-compatible client.
+        private bool m_auroraEnabled;
+        private float m_auroraIntensity;
+        private float m_auroraCoverage;
+        private float m_auroraSunFadeAngle;
+        private float m_auroraHeight;
+        private int m_auroraUpdateSeconds;
+        private UUID m_auroraTexture = Util.BLANK_TEXTURE_UUID;
+        private Vector4 m_auroraLowColor = new Vector4(0.15f, 0.85f, 0.45f, 0.55f);
+        private Vector4 m_auroraHighColor = new Vector4(0.25f, 0.35f, 0.95f, 0.35f);
+        private Timer m_auroraTimer;
+        private int m_auroraBusy;
+        private SceneObjectGroup m_auroraEmitter;
         private bool m_autoCycleEnabled;
         private float m_autoCycleHours;
         private int m_autoCycleStartupDelaySeconds;
@@ -396,6 +417,19 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 m_log.Info("[WEATHER]: ThunderEnabled=true but ThunderSound is empty; visual lightning will continue without thunder audio.");
             }
 
+            m_auroraEnabled = config.GetBoolean("AuroraEnabled", false);
+            m_auroraIntensity = Clamp(config.GetFloat("AuroraIntensity", 1f), 0f, 4f);
+            m_auroraCoverage = Clamp(config.GetFloat("AuroraCoverage", 0.35f), 0f, 1f);
+            // Same range/shape as AyaneStorm's ASAuroraSunFadeAngle: sun
+            // elevation (degrees) where the fade-in starts, faded fully in by
+            // 6 degrees further below the horizon.
+            m_auroraSunFadeAngle = Clamp(config.GetFloat("AuroraSunFadeAngle", -6f), -18f, 5f);
+            m_auroraHeight = Clamp(config.GetFloat("AuroraHeight", 220f), 20f, 4096f);
+            m_auroraUpdateSeconds = Clamp(config.GetInt("AuroraUpdateSeconds", 30), 5, 3600);
+            m_auroraTexture = ReadTexture(config, "AuroraTexture", Util.BLANK_TEXTURE_UUID);
+            m_auroraLowColor = ReadVector4(config, "AuroraLowColor", m_auroraLowColor);
+            m_auroraHighColor = ReadVector4(config, "AuroraHighColor", m_auroraHighColor);
+
             m_autoCycleEnabled = config.GetBoolean("AutoCycleEnabled", false);
             m_autoCycleHours = Clamp(config.GetFloat("AutoCycleHours", 6f), 0.01f, 596f);
             m_autoCycleStartupDelaySeconds = Clamp(config.GetInt("AutoCycleStartupDelaySeconds", 30), 1, 86400);
@@ -519,6 +553,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             StopActiveAreaRefresh();
             StopWanderingRefresh();
             StopSurfaceTimer();
+            StopAuroraTimer();
+            RemoveAuroraEmitter();
 
             Scene activeScene = m_scene;
             if (activeScene != null)
@@ -575,6 +611,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             RefreshExclusionVolumes(true);
             StartAutoCycle();
             StartSurfaceTimer();
+            StartAuroraTimer();
         }
 
         public void Close()
@@ -583,6 +620,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             StopActiveAreaRefresh();
             StopWanderingRefresh();
             StopSurfaceTimer();
+            StopAuroraTimer();
+            RemoveAuroraEmitter();
 
             lock (m_weatherChangeSync)
             {
@@ -2159,6 +2198,178 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             Timer timer = Interlocked.Exchange(ref m_surfaceTimer, null);
             if (timer != null)
                 timer.Dispose();
+        }
+
+        private void StartAuroraTimer()
+        {
+            if (!m_auroraEnabled || m_scene == null)
+                return;
+
+            StopAuroraTimer();
+            int period = m_auroraUpdateSeconds * 1000;
+            m_auroraTimer = new Timer(AuroraTimerElapsed, null, 2000, period);
+        }
+
+        private void StopAuroraTimer()
+        {
+            Timer timer = Interlocked.Exchange(ref m_auroraTimer, null);
+            if (timer != null)
+                timer.Dispose();
+        }
+
+        private void AuroraTimerElapsed(object state)
+        {
+            if (Interlocked.Exchange(ref m_auroraBusy, 1) != 0)
+                return;
+
+            try
+            {
+                UpdateAurora();
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[WEATHER]: Aurora update failed: {0}", e.Message);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref m_auroraBusy, 0);
+            }
+        }
+
+        // Same daylight-fade shape AyaneStorm's client-rendered aurora uses
+        // (ASAuroraSunFadeAngle, 6-degree fade band) - reimplemented here
+        // against IEnvironmentModule.GetRegionSunDir instead of the viewer's
+        // own sky-dome sun direction, since this runs server-side.
+        private float CurrentAuroraDaylightFade()
+        {
+            if (m_environmentModule == null)
+                return 0f;
+
+            Vector3 sunDir = m_environmentModule.GetRegionSunDir(0f);
+            float sunElevationDeg = (float)(Math.Asin(Clamp(sunDir.Z, -1f, 1f)) * (180.0 / Math.PI));
+            return 1f - Clamp((sunElevationDeg - m_auroraSunFadeAngle) / 6f, 0f, 1f);
+        }
+
+        private void UpdateAurora()
+        {
+            if (!m_auroraEnabled || m_scene == null || m_environmentModule == null)
+            {
+                RemoveAuroraEmitter();
+                return;
+            }
+
+            float daylightFade = CurrentAuroraDaylightFade();
+            if (daylightFade <= 0.01f)
+            {
+                RemoveAuroraEmitter();
+                return;
+            }
+
+            float effectiveIntensity = m_auroraIntensity * daylightFade;
+
+            if (m_auroraEmitter == null || m_auroraEmitter.IsDeleted)
+                CreateAuroraEmitter(effectiveIntensity);
+            else
+                m_auroraEmitter.RootPart.AddNewParticleSystem(CreateAuroraParticleSystem(effectiveIntensity), false);
+        }
+
+        private void CreateAuroraEmitter(float effectiveIntensity)
+        {
+            if (m_scene == null)
+                return;
+
+            Vector3 regionCenter = new Vector3(
+                m_scene.RegionInfo.RegionSizeX / 2f,
+                m_scene.RegionInfo.RegionSizeY / 2f,
+                0f);
+            float groundHeight = m_scene.Heightmap.GetHeight(regionCenter.X, regionCenter.Y);
+            Vector3 position = new Vector3(regionCenter.X, regionCenter.Y, groundHeight + m_auroraHeight);
+
+            PrimitiveBaseShape shape = PrimitiveBaseShape.CreateSphere();
+            shape.Scale = new Vector3(0.1f, 0.1f, 0.1f);
+            Primitive.TextureEntry textures = shape.Textures;
+            textures.DefaultTexture.RGBA = new Color4(1f, 1f, 1f, 0f);
+            shape.Textures = textures;
+
+            SceneObjectPart root = new SceneObjectPart(m_weatherOwnerId, shape, position, Quaternion.Identity, Vector3.Zero);
+            root.Name = GeneratedNamePrefix + " Aurora emitter";
+            root.Description = GeneratedDescription;
+            root.Scale = shape.Scale;
+            root.AddFlag(PrimFlags.Phantom);
+            root.AddNewParticleSystem(CreateAuroraParticleSystem(effectiveIntensity), false);
+
+            SceneObjectGroup group = new SceneObjectGroup(root);
+            group.SetGroup(UUID.Zero, null);
+
+            if (!m_scene.AddNewSceneObject(group, false))
+            {
+                m_log.Warn("[WEATHER]: Failed to add aurora emitter to the scene.");
+                return;
+            }
+
+            m_auroraEmitter = group;
+        }
+
+        private Primitive.ParticleSystem CreateAuroraParticleSystem(float effectiveIntensity)
+        {
+            // A wide, sparse, slow-drifting burst high above the region -
+            // large soft glow patches rather than a dense falling effect,
+            // deliberately unlike the rain/snow emitters this pattern is
+            // otherwise modeled on.
+            float coverageRadius = Math.Max(
+                32f,
+                Math.Min(m_scene.RegionInfo.RegionSizeX, m_scene.RegionInfo.RegionSizeY) * 0.6f);
+            coverageRadius = Math.Min(coverageRadius, 50f); // PSYS_SRC_BURST_RADIUS viewer clamp
+
+            Primitive.ParticleSystem particles = new Primitive.ParticleSystem
+            {
+                CRC = 1,
+                PartDataFlags = (Primitive.ParticleSystem.ParticleDataFlags)ParticleFlags,
+                Pattern = (Primitive.ParticleSystem.SourcePattern)2, // PSYS_SRC_PATTERN_EXPLODE
+                Texture = m_auroraTexture,
+                BurstRadius = coverageRadius,
+                MaxAge = 0f,
+                InnerAngle = 0f,
+                OuterAngle = 0f,
+                BlendFuncSource = 7, // PSYS_PART_BF_SOURCE_ALPHA
+                BlendFuncDest = 1,   // PSYS_PART_BF_ONE - additive glow, not alpha-composited like rain/snow
+                PartStartColor = new Color4(m_auroraLowColor.X, m_auroraLowColor.Y, m_auroraLowColor.Z, Clamp(m_auroraLowColor.W * effectiveIntensity, 0f, 1f)),
+                PartEndColor = new Color4(m_auroraHighColor.X, m_auroraHighColor.Y, m_auroraHighColor.Z, Clamp(m_auroraHighColor.W * effectiveIntensity, 0f, 1f)),
+                PartStartScaleX = 14f,
+                PartStartScaleY = 22f,
+                PartEndScaleX = 22f,
+                PartEndScaleY = 34f,
+                BurstSpeedMin = 0.01f,
+                BurstSpeedMax = 0.05f,
+                PartMaxAge = 22f,
+                PartAcceleration = new Vector3(RandomRange(-0.02f, 0.02f), RandomRange(-0.02f, 0.02f), 0f)
+            };
+
+            float coverageDensity = Math.Max(0.05f, m_auroraCoverage);
+            particles.BurstRate = RandomRange(1.4f, 2.2f) / coverageDensity;
+            particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(2f * coverageDensity), 1, 6);
+
+            return particles;
+        }
+
+        private void RemoveAuroraEmitter()
+        {
+            if (m_auroraEmitter == null)
+                return;
+
+            if (m_scene != null && !m_auroraEmitter.IsDeleted)
+            {
+                try
+                {
+                    m_scene.DeleteSceneObject(m_auroraEmitter, false, false);
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEATHER]: Failed to remove aurora emitter: {0}", e.Message);
+                }
+            }
+
+            m_auroraEmitter = null;
         }
 
         private void QueueSurfaceUpdate(bool immediate)

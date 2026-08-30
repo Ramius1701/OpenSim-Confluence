@@ -54,4 +54,16 @@
     <Key Name="fileName" Value="weather_thunder.ogg" />
   </Section>
 
+  <!-- Not part of the Manfred Zainhofer set above - a procedurally
+       generated placeholder (soft radial glow, alpha-shaped) for the
+       Aurora feature. Swap for real art by re-registering this same
+       assetID with a better texture; the module only cares about the
+       UUID. -->
+  <Section Name="Weather Aurora Texture">
+    <Key Name="assetID" Value="b9356be8-28ae-46bc-bb04-3908867b131d" />
+    <Key Name="name" Value="Weather Aurora Texture" />
+    <Key Name="assetType" Value="0" />
+    <Key Name="fileName" Value="weather_aurora.jp2" />
+  </Section>
+
 </Nini>
