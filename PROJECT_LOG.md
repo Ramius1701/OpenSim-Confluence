@@ -16145,3 +16145,56 @@ this session's own standing rule, "compiles clean" is not the same
 claim as "verified working." Added to ROADMAP.md's "Known
 limitations" with the same present-but-unverified framing already
 used for WebRTC voice and Aurora.
+
+## osPlaySoundURL — real live bug found: hangs the calling script (2026-08-30)
+
+Deployed and tested on live (Welcome Center, single-region test,
+grid otherwise down for the deploy window). Real, concrete result -
+not what was hoped for, but real:
+
+- Confirmed via server log that `osPlaySoundURL` genuinely executed
+  and passed the `ThreatLevel.High` permission check (the
+  `RemoteSoundFetcher`/`OutboundUrlFilter` constructor only logs once,
+  on first-ever call for a scene - it fired at 21:51:45, matching the
+  test).
+- The calling script's execution then hung completely - no further
+  script output (`llOwnerSay` never printed, not even an error
+  string), object became unresponsive to clicks, on a second attempt
+  the same thing happened again.
+- **Isolated to that one script's execution thread** - confirmed with
+  the user directly: avatar movement and every other object in the
+  region kept working normally throughout. Not a region-wide freeze.
+- Ruled out DNS resolution as the cause: `Resolve-DnsName` for the
+  test host from the same machine the region process runs on
+  completed in 0.75s.
+- Root cause NOT YET FOUND. Something in `RemoteSoundFetcher.Play()`'s
+  synchronous validation path (URL parsing, scheme check, domain
+  policy, `TryResolveAndValidate`'s `Dns.GetHostAddresses` +
+  `OutboundUrlFilter.CheckAllowed`, rate-limit token buckets, or the
+  cache check) blocks indefinitely under conditions DNS-timing alone
+  doesn't explain. Notably, Legion's own commit for the YEngine
+  registration says "Build-verified. In-world runtime test pending
+  (viewer session)" - i.e. this exact path was never actually verified
+  live upstream either; this may be the first real in-world exercise
+  of this code anywhere.
+
+**Mitigated immediately, not left running broken:** `[RemoteSound]
+Enabled` reverted to `false` in Welcome Center's `OpenSim.ini`
+(matching the shipped default everywhere else). Important
+implementation detail learned the hard way: `RemoteSoundFetcher` is a
+per-scene singleton (`ConcurrentDictionary<UUID, RemoteSoundFetcher>`)
+that reads its config ONCE at first construction - editing the ini
+file does NOT retroactively change an already-running instance's
+`m_enabled` field. The region had to be restarted (force-stopped,
+since a script thread was known-hung and a graceful shutdown risked
+blocking on it too) for the disable to actually take effect. Restarted
+cleanly, `RegionReady` confirmed, only the same two pre-existing
+benign content errors from earlier tonight.
+
+**Status: real bug, feature disabled pending a fix. Not safe to
+re-enable anywhere until the hang is root-caused** - this is now the
+top priority the next time this feature is touched, ahead of anything
+else in the Legion-Grid-Code review. Whoever debugs this next should
+start by instrumenting/stepping through `Play()`'s synchronous section
+line by line (not just assuming DNS) since the actual blocking call
+hasn't been isolated yet.
