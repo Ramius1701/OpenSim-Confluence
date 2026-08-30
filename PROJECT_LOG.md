@@ -15318,3 +15318,131 @@ alternative WebRTC voice backend, not yet evaluated), `sasquatch`
 and found fully subsumed by the existing `tranquillity` remote, no
 unique content).
 
+
+## Halcyon systematic commit review — in progress, keyword-scan phase (2026-08-30)
+
+Continuing the oldest-first fork review (Mobius and Tranquillity both
+done, see their own entries above) into Halcyon
+(`HalcyonGrid/halcyon`, 1609 unique commits vs `origin/master` -
+`git rev-list --count origin/master..halcyon/master`). After an
+initial ~480-commit chronological batch pass, switched to targeted
+keyword scanning (`git log origin/master..halcyon/master --oneline -i
+--grep=...`) for efficiency across the remaining history. This is a
+running log - append new findings here each time this review resumes,
+don't let them live only in conversation.
+
+**Real finding, fixed and pushed already tonight:** `llGetObjectDetails`
+`OBJECT_OWNER` didn't return `NULL_KEY` for group-deeded objects (SL's
+documented behavior, since `OwnerID == GroupID` on a deeded object would
+otherwise leak the group ID disguised as an owner ID) - see
+`LSL_Api.cs`, commit `1c2376e46f`.
+
+**Checked and confirmed NOT applicable** (real Halcyon bugs, but the
+underlying code/architecture they fixed doesn't exist in Confluence,
+verified directly against current source each time rather than
+assumed):
+- Two Phlox-internal fixes (`KeyOrName()` exploit, `IsLindenPlant()`) -
+  Phlox-specific, and Confluence's own equivalent non-Phlox code was
+  independently checked and found already safe.
+- `dcbde743e9` (NRE in `CheckForSignificantMovement`) - fixes a null
+  `m_sceneView` (Halcyon's `InWorldz.Testing` SceneView culling
+  system), which doesn't exist in Confluence at all.
+- `c38141d0c9` (region-crashing stack overflow) - in
+  `InWorldz/InWorldz.Phlox.Engine/LSLSystemAPI.cs`
+  (`GetAvatarAsPrimParam` self-recursion), Phlox-only file, doesn't
+  exist here (Confluence uses YEngine/`LSL_Api.cs`).
+- `ac7a6ba0d8` (deadlock in `MakeRootAgent`/`m_posInfo` lock) -
+  `ScenePresence.cs`'s root-agent/crossing logic has been completely
+  rewritten since this 2016 fix; none of `m_posInfo`,
+  `SetAgentPositionInfo`, `PostProcessMakeRootAgent` exist in current
+  Confluence code (`MakeRootAgent` itself now has a different
+  signature entirely).
+- `bb51d4e8a2` (null ref gathering UUIDs from a damaged object asset in
+  `UuidGatherer.cs`) - checked Confluence's current
+  `AddForInspection`/gather code directly: the whole per-asset gather
+  is already wrapped in a broad `try/catch (Exception e)` that logs,
+  removes the UUID, and marks it failed rather than crashing - the
+  exact NRE-crash scenario this fix addressed is already structurally
+  prevented by more robust modern error handling, no micro-level null
+  check needed.
+- `120bbd1ec1` (`IsAgentInGroup` null-ref) - `FlexiGroupsModule.cs`
+  doesn't exist in Confluence at all (confirmed via direct file
+  search); Halcyon/InWorldz-specific groups module.
+
+**Still open from the earlier batch pass, not yet resolved:**
+- Appearance-serial `-1` vs `0` discrepancy - flagged as real but risky
+  (spans ~5 call sites), not yet fixed.
+- Estate-Manager ban-target-protection question - unconfirmed, needs a
+  real check against Confluence's current `EstateModule.cs`/ban logic.
+- `llGetAgentInfo` `AGENT_FLYING`/`AGENT_SITTING` possible race
+  condition - unconfirmed, lower confidence.
+- Possible duplicate-calling-card gap - low confidence, deprioritized.
+
+**Status:** keyword scan so far this pass covered
+`race condition|null.ref|deadlock|overflow|exploit|duplicate|crash
+fix|memory leak|permission bypass|god.*mode|sql injection|buffer|dupe`
+(110 total hits, ~9 inspected in detail so far - the rest of this
+specific grep's hits are still unreviewed). Next: keep working through
+the remaining hits from this grep, then move to fresh keyword
+categories not yet run (security/permission-specific terms, economy/
+currency, inventory, teleport/region-crossing, physics).
+
+### Halcyon review — batch 2 results, same 2026-08-30 session
+
+**Real finding, fixed:** `llGetAgentInfo` set `AGENT_FLYING`/`AGENT_IN_AIR`
+unconditionally from the fly control flag, completely independent of
+the sitting check that runs later in the same method - so an avatar
+could end up flagged both `AGENT_FLYING` and `AGENT_SITTING`
+simultaneously (impossible per SL's model), most visible when a script
+reads it from the `changed`/`CHANGED_ANIMATION` event right as an
+avatar sits while the fly control flag is still latched. Confirmed
+against Confluence's own current `LSL_Api.cs` directly (not assumed -
+the exact same unconditional check was present at the exact same
+relative position). Fixed the same way Halcyon did (commit
+`21d58a445e`, though that one lived in Phlox-only code so wasn't
+directly portable - the fix logic is): moved the fly-flag check to
+after the sitting flags are computed, gated on `(flags &
+AGENT_SITTING) == 0`. This resolves the "possible race condition,
+unconfirmed" item that had been open since the earlier batch pass.
+
+**Checked, not applicable:**
+- Duplicate calling cards (`a979487e81`/`ea425eadb4`) - resolves the
+  other open item from the earlier batch pass. `CachedUserInfo.cs`
+  (the file this fix lives in) doesn't exist in Confluence at all -
+  legacy inventory-caching architecture that's gone. Also a decade-old
+  workaround for specific v3-viewer client behavior from 2015
+  (cites a cinderblocks/inworldz bitbucket commit as the root cause),
+  likely obsolete given how much viewer client behavior has moved on
+  since. Not pursued further.
+- No-mod-objects-sometimes-modifiable permissions bug
+  (`cc1f613121`/`b4d492b183`, Mantis #3115) - a real, substantial 2015
+  security fix reworking `CanEditObject` to take a specific permission
+  mask per caller instead of a generic ownership check, across 6
+  files. Checked Confluence's current `PermissionsModule.cs`
+  `CanEditObject`: already explicitly gates on the `Modify` permission
+  bit via `GetObjectPermissions`, not a generic ownership-only check -
+  doesn't reproduce the flaw the historical fix describes. Given this
+  is a well-known, old OpenSim-wide bug (Mantis #3115 predates
+  Halcyon's own fork), most likely already addressed independently
+  upstream over the following decade rather than needing Halcyon's
+  specific patch ported. Not pursued further into the other 5 files'
+  worth of historical diff - diminishing returns once the core check
+  was confirmed already correct.
+
+**Both prior "open from earlier batch pass" candidates are now
+resolved** (one fixed, one ruled out) - only the appearance-serial
+`-1`/`0` discrepancy and the Estate-Manager ban-target-protection
+question remain genuinely open from that list.
+
+**Status:** still mid-way through the same 110-hit grep from batch 1;
+~13 of 110 hits inspected across both batches so far. Untouched from
+this same grep, worth checking next time this resumes: `7404575a34`
+(null ref, no home region), `f99f325d2d`/`d3af9f0cd6`
+(GetLandObject-nullchecks - parcel-related, same theme as tonight's
+live incident), `dee4ad731b` (throttle defaults NRE if config
+missing), `cae59e7d92` (deadlock, `scriptedcontrols` vs `m_items` -
+`scriptedcontrols` field name confirmed to still exist in Confluence's
+`ScenePresence.cs`, worth checking), `5135605e6f`/bot-related deadlock
+cluster (`6815e5bf6a`/`623f8f5a34`/`7a94990d89` - likely
+Halcyon-bot-framework-specific, lower priority), `1908c37b84`/
+`58753be02d` (two more sandbox deadlocks, unexamined).

@@ -7472,12 +7472,6 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                         flags |= ScriptBaseClass.AGENT_SCRIPTED;
                 }
 
-                if ((agent.AgentControlFlags & (uint)AgentManager.ControlFlags.AGENT_CONTROL_FLY) != 0)
-                {
-                    flags |= ScriptBaseClass.AGENT_FLYING;
-                    flags |= ScriptBaseClass.AGENT_IN_AIR; // flying always implies in-air, even if colliding with e.g. a wall
-                }
-
                 if ((agent.AgentControlFlags & (uint)AgentManager.ControlFlags.AGENT_CONTROL_AWAY) != 0)
                 {
                     flags |= ScriptBaseClass.AGENT_AWAY;
@@ -7532,6 +7526,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                  {
                      flags |= ScriptBaseClass.AGENT_SITTING;
                  }
+
+                // A seated avatar cannot be flying or in the air - checking this after the sitting
+                // flags above avoids a race where the fly control flag is still latched right as the
+                // avatar sits, which would otherwise set AGENT_FLYING/AGENT_IN_AIR alongside AGENT_SITTING.
+                if ((flags & ScriptBaseClass.AGENT_SITTING) == 0 &&
+                    (agent.AgentControlFlags & (uint)AgentManager.ControlFlags.AGENT_CONTROL_FLY) != 0)
+                {
+                    flags |= ScriptBaseClass.AGENT_FLYING;
+                    flags |= ScriptBaseClass.AGENT_IN_AIR; // flying always implies in-air, even if colliding with e.g. a wall
+                }
 
                  if (agent.Appearance.VisualParams[(int)AvatarAppearance.VPElement.SHAPE_MALE] > 0)
                  {
