@@ -16376,3 +16376,100 @@ consistent "Confluence is ahead" signal from every other file. Full
 line-by-line read of that file, plus deciding whether to fix the
 shared participant-id/session-id `.AsLong()` bug, are the two real
 remaining threads if this resumes.
+
+## New audit initiative: ported/cherry-picked code vs. real viewer source (2026-08-31)
+
+The user's explicit direction: don't audit vanilla-OpenSim-inherited
+code (that's the working upstream default) - focus specifically on
+code Confluence has added via cherry-picking/porting from other forks
+across the project's history (Experience Tools, Combat2, EEP scripting,
+Pathfinding, PBR materials, Display Names, Abuse Reports, Bot
+framework, WebRTC voice, currency/search, and the many individual
+LSL/OSSL ports found across tonight's fork reviews), verified against
+real viewer source (Firestorm/CoolVL/AyaneStorm) for what the viewer
+actually expects - since "mimicking Second Life" is the whole point,
+and the viewers are the concrete spec for what that means.
+
+### Experience Tools — first area checked, one real gap found and fixed
+
+Got the definitive list of all 13 Experience-related capabilities
+Firestorm requests from `llviewerregion.cpp` (`GetExperiences`,
+`AgentExperiences`, `FindExperienceByName`, `GetExperienceInfo`,
+`GetAdminExperiences`, `GetCreatorExperiences`, `ExperiencePreferences`,
+`GroupExperiences`, `UpdateExperience`, `IsExperienceAdmin`,
+`IsExperienceContributor`, `RegionExperiences`, `ExperienceQuery`).
+Confluence's `ExperienceModule.cs` had 12 of 13 registered -
+`ExperienceQuery` was missing.
+
+Traced its real purpose and exact wire protocol directly from
+`llenvironment.cpp`'s `DayInjection::testExperiencesOnParcelCoro`: the
+viewer periodically re-validates active experience-pushed EEP
+environments (`llSetAgentEnvironment`/`llReplaceAgentEnvironment`) by
+asking `GET .../ExperienceQuery?parcelid=<id>&experiences=<uuid>,...`
+and clearing any that come back `false` in the
+`{"experiences": {<uuid>: bool}}` response. The viewer degrades
+gracefully without the cap (skips the check, logs a warning, doesn't
+break the initial push) - so this was a real gap but not a hard break.
+
+Implemented `ExperienceQueryGetHandler` (commit `feeeb76ceb`), mirroring
+the exact same `GetExperiencePermission(...) == ExperiencePermission.
+Allowed` check that `llSetAgentEnvironment`/`llReplaceAgentEnvironment`
+already gate the push on - confirmed by reading those two LSL function
+implementations directly rather than guessing at what "still valid"
+should mean. `parcelid` is accepted but not used for the validity
+check, matching the push-side logic which is agent-trust-only, not
+parcel-scoped.
+
+**Status:** Experience Tools' capability surface is now 13/13 against
+real Firestorm requests. Not yet checked: whether the OTHER 12
+handlers' actual RESPONSE FIELDS match what the viewer's C++ parsing
+code expects field-for-field (only the cap *names* were verified this
+pass) - that's a deeper, still-open check for this same area if it
+resumes. Other ported feature areas (Combat2, EEP beyond the
+environment-push angle, Pathfinding, PBR materials, Display Names,
+Abuse Reports, Bot framework, currency/search) remain entirely
+unchecked under this new initiative.
+
+### Experience Tools — deeper pass, two more real bugs found and fixed (2026-08-31)
+
+Continued past capability-name checking into actual field-level
+verification for the two most complex handlers.
+
+**`GetExperienceInfoGetHandler` - hardcoded fake quota, fixed** (commit
+`258948ac03`). Every experience's profile always reported
+`quota=128` regardless of its real `ExperienceInfo.quota` value
+(default 16, and genuinely enforced elsewhere -
+`LSL_Api.cs`'s KV-store size check does `1024 * 1024 * info.quota`).
+Found by comparing this handler against its two siblings
+(`FindExperienceByNameGetHandler`, `UpdateExperiencePostHandler`),
+which both already used the real `info.quota`/`currentInfo.quota`
+correctly - this was the one handler out of sync with its own
+codebase's established pattern, not a viewer-vs-Confluence mismatch
+in the traditional sense, but a real, confirmed bug all the same.
+
+**`UpdateExperiencePostHandler` - silently dropped the "Private"
+toggle, fixed** (commit `01b94682a8`). Traced the viewer's actual
+save logic in `llfloaterexperienceprofile.cpp`: the properties
+bitmask it sends toggles BOTH `PROPERTY_DISABLED` and
+`PROPERTY_PRIVATE` (the Enable and Private checkboxes). Confluence's
+handler only merged the `Disabled` bit into the stored
+`ExperienceInfo.properties` - a resident toggling "Private" and
+saving had that specific change silently discarded, no error shown,
+save otherwise succeeding normally. Added the identical merge-in
+logic for `Private`, matching the existing `Disabled` handling
+pattern exactly.
+
+**Also verified, not a bug:** the `experience_keys` (full-record
+array) vs `experience_ids` (plain UUID-list array) key-name split
+across different handlers - confirmed via
+`llexperiencecache.cpp`/`llfloaterexperienceprofile.cpp`/
+`llpanelexperiencepicker.cpp` that this is a real, deliberate protocol
+distinction in SL itself, and Confluence already gets it right
+throughout.
+
+**Experience Tools running total this session: 3 real fixes**
+(`ExperienceQuery` cap, quota field, Private flag) out of everything
+checked so far. Still not done: `AgentExperiences`'s create path,
+`GroupExperiences`, `GetAdminExperiences`/`GetCreatorExperiences`,
+and `ExperiencePreferences` haven't had their field-level content
+verified yet (only cap names/response-key conventions spot-checked).
