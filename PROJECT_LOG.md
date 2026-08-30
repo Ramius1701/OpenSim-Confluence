@@ -16254,3 +16254,125 @@ in-world - if so, it should be deleted, since any script still
 referencing the now-nonexistent `osPlaySoundURL` function will get a
 normal compile error rather than the hang, but it's still leftover
 clutter worth cleaning up.
+
+## os-webrtc-janus vs. real upstream — started (2026-08-31)
+
+New fork/review target after Legion-Grid-Code paused: reconciling
+`OpenSim/Addons/os-webrtc-janus` against its real upstream
+(`Misterblue/os-webrtc-janus`, remote `webrtc-upstream`). No shared
+git history (this is a vendored addon, not a real fork with common
+ancestry) - `git rev-list --count origin/master..webrtc-upstream/main`
+returns 54, but that's just upstream's whole history since nothing is
+reachable from `origin/master`, not a meaningful "unique commits"
+count. Confirmed the two trees map 1:1 (`Janus/`, `WebRtcVoice/`,
+`WebRtcVoiceRegionModule/`, `WebRtcVoiceServiceModule/` folders match
+exactly), so this needs a direct file-tree diff, not a commit-log
+review.
+
+**Methodology note for next time:** raw `diff` line counts are
+misleading here - Confluence's copy has a different license header
+(BSD/OpenSimulator-style vs upstream's MPL 2.0 Misterblue header) and
+a renamed namespace (`WebRtcVoice` -> `osWebRtcVoice`) throughout,
+which alone inflates every file's diff count substantially. Stripping
+the header and normalizing the namespace before diffing
+(`/tmp/webrtc_norm/` in this session, not persisted) cuts the noise
+dramatically - e.g. `BHasher.cs` dropped from 46 diff lines to 5 once
+normalized, revealing the real content was just two unused `using`
+additions upstream made.
+
+**Checked all three specific gaps this fork's entry in ROADMAP.md
+used to name (from an earlier, less-detailed investigation pass):**
+- **Long-poll cancellation - real gap, fixed** (commit `830b0ffef9`).
+  `JanusSession.cs`'s `_CancelTokenSource` field and its `.Cancel()`
+  call in `DestroySession` were both fully commented out, and none of
+  the three `HttpClient.SendAsync` calls (including the one behind the
+  shared `GetFromJanus` GET helper the long-poll itself uses) passed
+  any cancellation token. Restored to match upstream exactly - a
+  session's long-poll now actually gets cancelled when the session is
+  torn down, instead of lingering until Janus times it out
+  server-side.
+- **Double-destroy guard - already present, not a gap.** The Janus
+  error-code-based guard (458 = session already destroyed, 459 =
+  handle already destroyed) in `DestroySession`'s catch/switch was
+  already there, matching upstream line for line.
+- **Session/handle ID handling - not a gap, Confluence is actually
+  ahead here.** `CreateSession`'s ID-assignment checks have an added
+  `!admin &&` condition upstream doesn't have - a real refinement on
+  Confluence's side, not something missing.
+
+**Status:** one real fix applied. The wider file-tree still has
+substantial, unreviewed divergence beyond these three named items -
+`JanusMessages.cs` (326 normalized diff lines), `WebRtcJanusService.cs`
+(880), `JanusRoom.cs` (203), `WebRtcVoiceRegionModule.cs` (724), and
+several more mid-size files - none of these have been triaged yet for
+real-vs-cosmetic content. Given WebRTC voice is itself still
+present-but-unverified (never end-to-end tested with a real client),
+reconciling the rest of this diff is worthwhile but not urgent -
+resume with the same normalize-then-diff methodology on the remaining
+large files.
+
+## os-webrtc-janus vs. real upstream — investigation concluded (2026-08-31)
+
+Checked all 8 addon files (7 in full via normalize-then-diff, one via
+structural/pattern indicators only given its size). The corrected
+picture is very different from ROADMAP.md's original "52-54 commits
+behind" framing, which was based on a shallower pass:
+
+**Real fixes found and applied (2 total):**
+1. `JanusSession.cs` - long-poll HTTP cancellation was fully commented
+   out (commit `830b0ffef9`).
+2. `JanusMessages.cs` - `OSDToLong` helper was missing entirely; six
+   call sites (session_id, error code, room/handle id x2, plus a
+   Confluence-only `PluginRespDataLong` with the same bug pattern)
+   used a plain `.AsLong()` that mishandles the case where the JSON
+   parser represents a large number as an `OSDArray` instead of a
+   plain `OSDInteger` (commit `1b977ee789`).
+
+**Confirmed NOT gaps, despite ROADMAP.md naming them:**
+- Double-destroy guard (Janus error codes 458/459) - already present,
+  matches upstream exactly.
+- Session/handle ID handling - Confluence is actually ahead (an added
+  `!admin` guard upstream lacks).
+
+**The dominant finding across every file checked:** Confluence's copy
+isn't behind upstream in any meaningful sense - it's substantially
+*ahead*, with real independent hardening upstream doesn't have:
+- `JanusViewerSession.cs`: a thread-safe `TryStartDisconnect` guard
+  (`Interlocked.CompareExchange`-based, prevents concurrent double-
+  disconnects), a `_provisionLock` semaphore, null-checks before
+  `DestroySession()`/`Dispose()` that upstream calls unconditionally
+  (a latent NRE risk in upstream itself).
+- `JanusRoom.cs`: a real "already in room" error-recovery mechanism
+  (Janus error codes 490/491 -> `RecoverAlreadyInRoomAndLeave` ->
+  retry the join with a fresh offer) that upstream has no equivalent
+  of at all.
+- `JanusAudioBridge.cs`: an extended `CreateRoom` signature (extra
+  `credentials` parameter) plus a null-check upstream lacks.
+- `WebRtcJanusService.cs`: 42 methods/members vs upstream's 25 (68%
+  more), plus a lock/semaphore upstream has zero of.
+- `WebRtcVoiceRegionModule.cs`: 27 vs 20 methods (35% more).
+
+**One separate, non-reconciliation finding, flagged but not fixed**
+(out of scope - a shared bug, not something upstream already solved
+that Confluence is missing): `WebRtcJanusService.cs` has 5 more
+`.AsLong()` call sites with the identical OSDArray-mishandling bug
+pattern (`sdpMLineIndex`, `participant id` x2, session id) - but
+upstream has the SAME bug at 2 of these exact spots (checked
+directly), so this isn't "catch up to upstream," it's "a latent bug
+neither codebase has fixed yet." `sdpMLineIndex` is low real-world
+risk (always a small single-digit value in practice); `participant
+id`/session id are the more plausible risk given they're often large
+random numbers. Would need `OSDToLong` made accessible outside the
+`JanusMessage` class hierarchy (currently `protected static`) to fix
+cleanly - a real scope/design decision, not folded into this pass.
+
+**Methodology preserved for any future resume:** normalize each file
+(strip the MPL/BSD license-header difference, rename
+`WebRtcVoice`->`osWebRtcVoice`) before diffing, or raw line counts are
+90%+ noise. `WebRtcVoiceRegionModule.cs`'s remaining ~600 normalized
+diff lines were not read in full - only structural indicators checked
+(method count, known bug-class patterns) given the extremely
+consistent "Confluence is ahead" signal from every other file. Full
+line-by-line read of that file, plus deciding whether to fix the
+shared participant-id/session-id `.AsLong()` bug, are the two real
+remaining threads if this resumes.

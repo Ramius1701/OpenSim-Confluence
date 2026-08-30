@@ -173,10 +173,28 @@ reimplementation, but well-documented design rationale):
   actually connecting to voice through Janus. Code existing and
   compiling is not the same claim as confirmed working; treat as
   present-but-unverified until someone actually tests it. Separately,
-  this project's copy has drifted from the real upstream
-  (`Misterblue/os-webrtc-janus`) by 52-54 commits containing real
-  hardening fixes (long-poll cancellation, session/handle ID handling,
-  double-destroy guards) that haven't been reconciled in.
+  this project's copy was believed to have drifted behind the real
+  upstream (`Misterblue/os-webrtc-janus`) by 52-54 commits - a full
+  file-tree reconciliation (no shared git history with upstream, so
+  this meant a direct diff rather than a commit-log review; see
+  `PROJECT_LOG.md` for the normalize-then-diff methodology) found that
+  framing was wrong. Across all 8 addon files, only two real gaps
+  turned up and both are now fixed: long-poll HTTP cancellation was
+  fully commented out in `JanusSession.cs`, and a `long`-value OSD
+  parsing helper (`OSDToLong`) was missing from `JanusMessages.cs`,
+  affecting six numeric-ID call sites (session_id, room/handle id,
+  error code). Everything else checked - the double-destroy guard,
+  session/handle ID handling, and substantial independent hardening in
+  `JanusViewerSession.cs` (a thread-safe disconnect-once guard, a
+  provisioning semaphore), `JanusRoom.cs` (a real "already in room"
+  error-recovery/retry mechanism upstream has no equivalent of),
+  `JanusAudioBridge.cs`, and `WebRtcJanusService.cs` (68% more methods
+  than upstream) - shows Confluence's copy is ahead of upstream, not
+  behind it. One separate, non-reconciliation finding was flagged but
+  not fixed: `WebRtcJanusService.cs` has a few more `.AsLong()` call
+  sites with the same OSD-parsing bug pattern, but upstream has the
+  identical bug at some of the same spots - not something to "catch up
+  on," a latent bug neither codebase has fixed yet.
 - **Aurora** (`OpenSimWeather`'s northern-lights effect) is built and
   deployed but not yet visually confirmed working in a live viewer —
   same present-but-unverified caveat as WebRTC voice above.
