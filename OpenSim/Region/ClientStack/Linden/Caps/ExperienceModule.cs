@@ -1100,6 +1100,18 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                     currentInfo.properties &= ~(int)ExperienceFlags.Disabled;
                 }
 
+                // The viewer's editor also toggles PROPERTY_PRIVATE (the "Private" checkbox,
+                // llfloaterexperienceprofile.cpp's BTN_PRIVATE) alongside Disabled - was only
+                // merging Disabled, so a resident's Private toggle was silently dropped.
+                if((properties & (int)ExperienceFlags.Private) != 0)
+                {
+                    currentInfo.properties |= (int)ExperienceFlags.Private;
+                }
+                else
+                {
+                    currentInfo.properties &= ~(int)ExperienceFlags.Private;
+                }
+
                 var updated_info = m_ExperienceModule.UpdateExperienceInfo(currentInfo);
                 if(updated_info != null)
                 {
