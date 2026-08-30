@@ -3398,7 +3398,7 @@ namespace OpenSim.Framework
         /// </remarks>
         /// <param name="dllToLoad"></param>
         /// <returns></returns>
-        [DllImport("kernel32.dll")]
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr LoadLibrary(string dllToLoad);
 
         /// <summary>
