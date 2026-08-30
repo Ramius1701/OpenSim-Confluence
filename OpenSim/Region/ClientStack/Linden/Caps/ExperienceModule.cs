@@ -1375,7 +1375,7 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                         "<key>public_id</key><uuid>{0}</uuid>" +
                         "<key>description</key><string>{1}</string>" +
                         "<key>name</key><string>{2}</string>" +
-                        "<key>quota</key><integer>128</integer>" +
+                        "<key>quota</key><integer>{9}</integer>" +
                         "<key>slurl</key><string>{6}</string>" +
                         "<key>maturity</key><integer>{7}</integer>" +
                         "<key>expiration</key><integer>600</integer>" +
@@ -1383,7 +1383,7 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                         "<key>group_id</key><uuid>{3}</uuid>" +
                         "<key>properties</key><integer>{8}</integer>" +
                         "<key>agent_id</key><uuid>{4}</uuid>" +
-                        "</map>", info.public_id, info.description, info.name, info.group_id, info.owner_id, HttpUtility.HtmlEncode(extended_meta), info.slurl, info.maturity, info.properties);
+                        "</map>", info.public_id, info.description, info.name, info.group_id, info.owner_id, HttpUtility.HtmlEncode(extended_meta), info.slurl, info.maturity, info.properties, info.quota);
                 }
             }
 
