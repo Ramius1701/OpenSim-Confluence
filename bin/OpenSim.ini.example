@@ -1431,6 +1431,47 @@
     Include-osslDefaultEnable = "config-include/osslDefaultEnable.ini"
 
 
+[RemoteSound]
+    ;; Backs the osPlaySoundURL(key target, string url, float volume) script function,
+    ;; which fetches an external Ogg Vorbis file and plays it as a temporary sound to
+    ;; nearby avatars. Opt-in and OFF by default; the function returns "disabled" until
+    ;; Enabled = true here.
+    ;;
+    ;; Ogg Vorbis is the ONLY format accepted, because that is the only sound format SL/OpenSim
+    ;; viewers decode for playback (AssetType.Sound = Ogg); the fetched bytes are stored as-is
+    ;; as AssetType.Sound, exactly like a normal uploaded sound. WAV/MP3 are rejected (no
+    ;; server-side transcoder). The URL must serve Content-Type audio/ogg (or application/ogg)
+    ;; and the payload must begin with the Ogg "OggS" signature.
+    ;;
+    ;; Security floor is OutboundUrlFilter (the same SSRF guard llHTTPRequest uses) --
+    ;; loopback/private/link-local/metadata IPs are always rejected, and the connection
+    ;; is pinned to the exact validated IP (no DNS-rebinding).
+    ;
+    ;# {Enabled} {} {Enable osPlaySoundURL?} {true false} false
+    Enabled = false
+    ;
+    ;# {AllowHttp} {} {Allow plain http:// URLs (else HTTPS only)} {true false} false
+    AllowHttp = false
+    ;
+    ;# {MaxSizeBytes} {} {Maximum audio file size in bytes} {} 10485760
+    MaxSizeBytes = 10485760
+    ;
+    ;# {PerObjectRatePerMinute} {} {Max plays per minute per object} {} 6
+    PerObjectRatePerMinute = 6
+    ;
+    ;# {PerRegionRatePerMinute} {} {Max plays per minute per region} {} 60
+    PerRegionRatePerMinute = 60
+    ;
+    ;# {CacheSeconds} {} {How long a fetched sound is cached (url->asset)} {} 300
+    CacheSeconds = 300
+    ;
+    ;; Optional domain policy LAYERED ON TOP of OutboundUrlFilter (the filter is the
+    ;; security floor; these are convenience policy). Comma/semicolon separated hostnames.
+    ;; DeniedDomains always wins. If AllowedDomains is non-empty, ONLY those hosts are permitted.
+    ; AllowedDomains = "sounds.example.com,cdn.example.org"
+    ; DeniedDomains = ""
+
+
 [FreeSwitchVoice]
     ;; In order for this to work you need a functioning FreeSWITCH PBX set up.
     ;; Configuration details at http://opensimulator.org/wiki/Freeswitch_Module

@@ -272,6 +272,12 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String osPlaySoundURL(LSL_Key target, LSL_String url, LSL_Float volume)
+        {
+            return m_OSSL_Functions.osPlaySoundURL(target, url, volume);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void osSetParcelMediaURL(LSL_String url)
         {
             m_OSSL_Functions.osSetParcelMediaURL(url);
