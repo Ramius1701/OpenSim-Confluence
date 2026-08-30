@@ -152,6 +152,7 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             caps.RegisterHandler("IsExperienceAdmin", new IsExperienceAdminGetHandler(agent, this));
             caps.RegisterHandler("IsExperienceContributor", new IsExperienceContributorGetHandler(agent, this));
             caps.RegisterHandler("RegionExperiences", new RegionExperiencesGetHandler(agent, this));
+            caps.RegisterHandler("ExperienceQuery", new ExperienceQueryGetHandler(agent, this));
             caps.RegisterHandler("UpdateExperience", new UpdateExperiencePostHandler(agent, this));
             caps.RegisterHandler("GetMetadata", new GetMetadataPostHandler(agent, this, m_scene));
             caps.RegisterHandler("GroupExperiences", new GroupExperiencesGetHandler(agent, this));
@@ -1273,6 +1274,57 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             else response_str += "<undef />";
 
             response_str += "</map></llsd>";
+
+            return Encoding.UTF8.GetBytes(response_str);
+        }
+    }
+
+    // Backs the viewer's periodic re-check of experience-pushed EEP environments
+    // (llSetAgentEnvironment/llReplaceAgentEnvironment): "of these active
+    // experience-pushed environments, which are still valid for me?" so it can
+    // clear any whose grant has since been revoked. Request:
+    // GET .../ExperienceQuery?parcelid=<id>&experiences=<uuid>,<uuid>,...
+    // Response: <llsd><map><key>experiences</key><map><key>{uuid}</key>
+    //     <boolean>true|false</boolean>...</map></map></llsd>
+    // Mirrors the exact same permission check llSetAgentEnvironment/
+    // llReplaceAgentEnvironment gate the push on (GetExperiencePermission ==
+    // Allowed) - parcelid isn't otherwise used, since the push-side check is
+    // agent-trust-only, not parcel-scoped.
+    public class ExperienceQueryGetHandler : BaseStreamHandler
+    {
+        private UUID m_AgentID = UUID.Zero;
+        private IExperienceModule m_ExperienceModule = null;
+
+        public ExperienceQueryGetHandler(UUID agent_id, IExperienceModule experienceModule)
+            : this(string.Format("/caps/{0}", UUID.Random()), agent_id, experienceModule)
+        {
+        }
+
+        public ExperienceQueryGetHandler(string path, UUID agent_id, IExperienceModule experienceModule)
+            : base("GET", path, null, null)
+        {
+            m_AgentID = agent_id;
+            m_ExperienceModule = experienceModule;
+        }
+
+        protected override byte[] ProcessRequest(string path, Stream request, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
+        {
+            NameValueCollection query = HttpUtility.ParseQueryString(httpRequest.Url.Query);
+
+            string experiencesParam = query.Get("experiences") ?? string.Empty;
+
+            string response_str = "<?xml version=\"1.0\" ?><llsd><map><key>experiences</key><map>";
+
+            foreach (string idStr in experiencesParam.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!UUID.TryParse(idStr.Trim(), out UUID experienceID))
+                    continue;
+
+                bool stillValid = m_ExperienceModule.GetExperiencePermission(m_AgentID, experienceID) == ExperiencePermission.Allowed;
+                response_str += string.Format("<key>{0}</key><boolean>{1}</boolean>", experienceID, stillValid ? "true" : "false");
+            }
+
+            response_str += "</map></map></llsd>";
 
             return Encoding.UTF8.GetBytes(response_str);
         }
