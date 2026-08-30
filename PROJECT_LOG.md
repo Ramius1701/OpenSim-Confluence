@@ -15446,3 +15446,702 @@ missing), `cae59e7d92` (deadlock, `scriptedcontrols` vs `m_items` -
 cluster (`6815e5bf6a`/`623f8f5a34`/`7a94990d89` - likely
 Halcyon-bot-framework-specific, lower priority), `1908c37b84`/
 `58753be02d` (two more sandbox deadlocks, unexamined).
+
+### Halcyon review — batch 3 results, same 2026-08-30 session
+
+**Checked, not applicable (all four):**
+- `cae59e7d92` (deadlock, `scriptedcontrols` vs `m_items`) - Confluence's
+  `ScenePresence.SendControlsToScripts()` still calls
+  `TriggerControlEvent` while holding `lock (scriptedcontrols)` (same
+  shape as the vulnerable pattern), but traced the full modern call
+  chain: `TriggerControlEvent` -> YEngine's `XMREvents.control()` ->
+  `PostScriptEvent` -> `TryGetInstance` (YEngine's own instance
+  registry) -> `instance.PostEvent` (a queue post). The specific lock
+  partner Halcyon's fix defended against
+  (`SceneObjectPartInventory.GetScripts()`'s `lock (m_items)`) isn't
+  in this call chain at all anymore - `ThrottleRates.cs`/the old
+  script engine architecture from 2015 is long gone, replaced by
+  YEngine. Not currently reproducible.
+- `dee4ad731b` (throttle defaults NRE if `ClientStack.LindenUDP`
+  config missing) - `OpenSim/Region/ClientStack/LindenUDP/
+  ThrottleRates.cs` doesn't exist at that path anymore, consistent
+  with the earlier-established finding this session that the whole
+  old UDP throttle subsystem has been superseded by newer upstream
+  work.
+- `f99f325d2d` (NRE dereferencing `GetLandObject(...)` without a null
+  check, InWorldz mantis #3170) - checked both Confluence LSL
+  equivalents directly: `llGetLandOwnerAt` already explicitly
+  null-checks `land` before use. `llOverMyLand` doesn't explicitly
+  null-check the same call, but the whole method body is wrapped in a
+  `try {} catch {} return 0` - a null-ref there is already silently
+  caught and produces the same sensible fallback (0 = not over my
+  land) the explicit check would give. No functional bug, not worth
+  a style-only change.
+
+**Status:** ~17 of 110 hits from this grep now inspected across three
+batches. Good stopping point for a check-in - remaining unexamined
+from the "next to check" list: `7404575a34` (null ref, no home
+region), the bot-related deadlock cluster
+(`5135605e6f`/`6815e5bf6a`/`623f8f5a34`/`7a94990d89` - likely
+Halcyon-bot-framework-specific given Confluence already uses
+Tranquillity's bot framework instead, lower priority), two more
+unexamined sandbox deadlocks (`1908c37b84`/`58753be02d`), plus the
+~93 hits from this grep not yet looked at, and the fresh keyword
+categories (security/permission terms, economy/currency, inventory,
+teleport/region-crossing, physics) never run at all yet.
+
+### Halcyon review — batch 4 results, same 2026-08-30 session
+
+**Checked, not applicable (six more):**
+- `58753be02d`/`1908c37b84` (two more `m_posInfo`-based deadlock fixes
+  in `ScenePresence.cs`) - same as `ac7a6ba0d8` from batch 1:
+  `m_posInfo` doesn't exist in Confluence's current `ScenePresence.cs`
+  at all, confirmed via direct grep (zero matches). This whole family
+  of 2015 Halcyon `ScenePresence` locking fixes targets an
+  architecture Confluence has since completely replaced.
+- `7404575a34` (NRE if user has no home region) -
+  `OpenSim/Framework/Communications/Services/LoginService.cs` (the old
+  XML-RPC login path) doesn't exist anymore, superseded by
+  `OpenSim.Services.LLLoginService`. Checked the modern replacement
+  directly: it already has an explicit `if (home is null)` guard
+  (`LLLoginService.cs:622`) - already safe.
+- `e5dd9ece66` (missing `return` after a null sender check on money
+  transfers) - `AvatarCurrency.cs` doesn't exist in Confluence,
+  superseded by the native `ConfluenceCurrencyModule`.
+- `3de186db0f` (NRE in `GetObjectFromItem` on asset load
+  error/timeout) - that method no longer exists under that name in
+  `Scene.Inventory.cs`; the rez-from-inventory pathway has been
+  restructured since 2016.
+- `827b748a34` (inconsistent ownership after in-world object copies,
+  adds a `ChangeOwner` method) - checked Confluence's current
+  `DuplicateObject` (`SceneGraph.cs:2181`) directly: it already
+  implements the exact pattern this fix was going for - clone with
+  the original owner first, then conditionally `SetOwner` +
+  propagate inventory ownership + `ApplyNextOwnerPermissions()` +
+  `InvalidateEffectivePerms()` - arguably more complete than
+  Halcyon's 2016 version (has `TriggerScriptChangedEvent(Changed.OWNER)`
+  and effective-perms invalidation Halcyon's didn't).
+
+**Strategic observation worth remembering:** every commit checked
+from roughly the 2015-2016 era so far in this specific keyword scan
+has hit the same wall - the file/method/field it touches has since
+been superseded by later upstream OpenSim development that Confluence
+inherited (`m_posInfo`, the old XML-RPC `LoginService`,
+`AvatarCurrency.cs`, `GetObjectFromItem`, `ThrottleRates.cs`,
+`CachedUserInfo.cs` are all gone). The hits that DID turn out to be
+real, current bugs (`OBJECT_OWNER`, `AGENT_FLYING`/`AGENT_SITTING`)
+were both small, self-contained LSL-API-level protocol-correctness
+issues - the kind of thing that persists precisely because it's
+script-facing behavior nobody happened to independently fix upstream,
+not core-engine plumbing that gets naturally swept up in bigger
+refactors. Worth weighting future batches toward LSL/OSSL API-level
+commits over core-engine locking/architecture commits given this
+pattern, though not worth abandoning the broader scan entirely.
+
+**Status:** ~23 of 110 hits from this specific grep now inspected
+across four batches (2 real fixes: `OBJECT_OWNER`,
+`AGENT_FLYING`/`AGENT_SITTING`). Remaining from this grep: the
+bot-related deadlock cluster (lower priority - Confluence already
+uses Tranquillity's bot framework), flatbuffers-era commits (feature
+work not bug fixes, skip), ByteBufferPool commits (infrastructure
+feature work, skip), and roughly 75 more hits not yet individually
+triaged. Five fresh keyword categories (security/permission terms,
+economy/currency, inventory, teleport/region-crossing, physics) still
+entirely unrun.
+
+### Halcyon review — fresh keyword categories, same 2026-08-30 session
+
+Switched from the original 110-hit grep to fresh categories:
+`security|vulnerab|permission|unauthorized|access control|economy|
+currency|money|teleport|crossing|physics|collision` (140 total hits).
+Narrow security-specific terms only returned 3 low-value hits (a
+removed unused JWT package, a User-Agent header change) - not pursued.
+Focused instead on the richer `permission` and `economy/currency`
+subsets, plus one parcel-entry commit given tonight's live incident.
+
+**Checked, not applicable (all real historical bugs, none reproduce):**
+- `29b395a30d` (RenderMaterials modify-permission check used the
+  wrong object reference, `sop.UUID` instead of `sop.ParentGroup.UUID`)
+  - `RenderMaterialsModule.cs` doesn't exist in Confluence.
+- `01df1bbca5` (missing return-permission test for
+  `ObjectReturnType.List`, letting Plus parcel owners bypass
+  Plus-specific return checks) - Confluence's whole
+  `ObjectReturnType`-switch-based return-permission architecture is
+  gone, replaced by a unified `CanReturnObjects(land, sp, objects)`
+  that applies one real per-object land/ownership check to every
+  object regardless of return type - checked directly
+  (`PermissionsModule.cs:1701`), the specific "one case falls through
+  to a no-op" bug class can't reproduce in this structure.
+- `ae1ba595e9` (friends' `CanSeeOnline` checks reversed between
+  `FriendListOwnerPerms`/`FriendPerms`) - Confluence's
+  `FriendsModule.cs` uses clearer `TheirFlags`/`MyFlags` naming;
+  checked both relevant call sites (`GetOnlineFriends` line 517,
+  `StatusChange` line 587) and both are semantically correct, not
+  reversed.
+- `5046046be8` (`ObjectGiveMoney` should reject `amount <= 0`, not
+  just `< 0`, to match SL) - `AvatarCurrency.cs` doesn't exist, but
+  checked the underlying logic against Confluence's native
+  `ConfluenceCurrencyModule.ObjectGiveMoney`: already has `amount <=
+  0` (line 625). Already correct.
+- `693c17b47f` (avatar-forced-above-banned-parcel physics feature +
+  concurrency fixes for `lastKnownAllowedPosition`) - a substantial,
+  multi-file physics-architecture feature (adds `ForceAboveParcel` to
+  the whole physics-plugin interface: PhysX, BasicPhysicsPlugin,
+  `PhysicsActor`), not a quick portable bug fix - would need scoping
+  as its own feature if ever prioritized, not pursued further here.
+
+**Real follow-up worth flagging, not yet acted on:** while checking
+`693c17b47f`'s modern equivalent, noticed `LandManagementModule.cs`
+has ~20 `GetLandObject(...)` call sites, most properly null-checked
+(spot-checked one near `EnforceBans`, line 1626 - correctly guarded)
+but tonight's real, fixed bug
+(`EventManagerOnAvatarEnteringNewParcel`'s `m_landList[localLandID]`,
+see the earlier "SCENEGRAPH error on GFC" incident entry) shows at
+least one gap existed in this exact family. Worth a dedicated,
+focused audit of all `GetLandObject`/`m_landList[...]` call sites for
+similar unguarded dereferences at some point - not done here, this
+was a spot-check only, not exhaustive.
+
+**Status:** ~10 of 140 hits from this fresh grep inspected. Good
+stopping point - remaining ~130 hits (teleport/crossing specifically,
+~52 of the 140, entirely unexamined) available for a future resume.
+
+## opensim-lickx review — done, low yield (2026-08-30)
+
+Local clone is a single-commit archival snapshot (no real git history
+to keyword-scan), so this was a direct source-tree/feature audit
+instead: custom `Lickx_Api.cs` scripting namespace (one function,
+`lxGetAgentViewer` - already have the identical, better-secured
+`osGetAgentViewer` in `OSSL_Api.cs:1322`, complete with
+`CheckThreatLevel` gating lickx's version lacks), the
+`opensim.currency-lickx` addon module (same legacy
+`DTLNSLMoneyModule`/MoneyServer architecture already superseded by
+`ConfluenceCurrencyModule`), `IMuteLIstService.cs` (older/less-complete
+than Confluence's own, missing an `IsMuted` method Confluence already
+has), `OpenSimSearch`'s `OpenSearch.cs` (trivial stylistic diff only,
+and that whole addon is already legacy in Confluence's own usage), and
+`OpenSimDefaults.ini` maptile config (Confluence's own maptile
+renderer is far more advanced - volume shading, water depth, shadows -
+lickx's is stock/basic). Every angle checked came up empty or already
+superseded. Only real finding from this fork remains the one already
+in `ROADMAP.md` (region-manager bypass power, a deliberate default
+difference, not changed). Not pursued further - see
+[[casperia-fork-review-status]].
+
+## WhiteCore-Dev systematic review — started (2026-08-30)
+
+1497 unique commits vs `origin/master` (real history from
+2013-12-23, "Initial refactor from Aurora"). Started with a keyword
+scan targeting LSL/OSSL-API-level and security/null-ref terms (69
+hits) given the established pattern that this category has the
+highest hit rate. WhiteCore did a large internal Coverity-driven
+null-reference/data-race cleanup sweep across dozens of its own
+modules at some point - most of those are WhiteCore's own unique
+architecture (different namespace root `WhiteCore/` vs `OpenSim/`,
+its own data-service layer) and not directly portable/comparable by
+file path, so file-existence checks don't work the same way here;
+had to search by class/method name instead.
+
+**Checked, not applicable (all already implemented/correct in
+Confluence):**
+- `08f88af9d9` (missing `OBJECT_*` constants for `llGetObjectDetails`:
+  `OBJECT_PHYSICS`/`PHANTOM`/`TEMP_ON_REZ`/`RENDER_WEIGHT`/
+  `HOVER_HEIGHT`/`BODY_SHAPE_TYPE`/`LAST_OWNER_ID`) - Confluence's
+  `LSL_Api.cs` already handles `OBJECT_RENDER_WEIGHT`/
+  `OBJECT_HOVER_HEIGHT`/`OBJECT_LAST_OWNER_ID` in two separate
+  locations (~17114, ~17408).
+- `127145402d` (`llGetStartParameter` correction) - diff was a
+  whole-file rewrite (hard to isolate the real change), but
+  Confluence's current implementation is a clean one-line delegation
+  to `m_ScriptEngine.GetStartParameter(...)` - looks already correct,
+  not pursued further given the noisy diff.
+- `f79e67f62d` (`llSetTextureAnim`/`AddTextureAnimation` should send
+  empty data on `ANIM_OFF`, not a full data packet with the OFF flag)
+  - Confluence's `SceneObjectPart.AddTextureAnimation` (line 2237)
+  already checks `if (pTexAnim.Flags == ANIM_OFF)` and sends
+  `Utils.EmptyBytes`.
+- `23433d1e6e` (add `osIsNpc` to OSSL) - already exists
+  (`OSSL_Api.cs:3032`).
+- `d78c756807`/`c3c587e30f` (`llGetEnv` add `region_max_prims`/
+  `estate_id`) - both already present (`LSL_Api.cs:7093`/`7052`).
+
+**Real feature gap found, not a bug - flagging for the user's own
+call per the standing rule ([[casperia-project-mission]]'s "flag it
+and wait for their assessment" requirement), not building it
+unprompted:**
+- `669f6791d2` - WhiteCore's `ChatModule.cs` implements **private-
+  parcel chat containment**: chat said on a parcel with
+  `LandData.Private` set doesn't leak to avatars outside that parcel
+  (and the commit itself was fixing backwards boolean logic in that
+  containment check). Confluence's own `ChatModule.cs` has no
+  `LandData.Private`-based isolation concept at all - checked directly,
+  zero matches. A real, currently-missing privacy feature, not
+  something ported from this specific buggy commit (would need
+  building fresh, matching the *fixed* logic, not the buggy original).
+
+**Status:** ~10 of 69 hits from this keyword scan inspected. Good
+early stopping point given the pattern (Confluence already ahead on
+nearly everything checked) - remaining ~59 hits, plus the large
+Coverity-cleanup commit cluster (WhiteCore-architecture-specific,
+lower expected portability), available for a future resume. See
+[[casperia-fork-review-status]] for the overall review order.
+
+### WhiteCore-Dev review — batch 1 continued, same 2026-08-30 session
+
+Five more LSL/OSSL-level candidates checked, all already correct in
+Confluence:
+- `2c7c47ef8b` (`llGetObjectPrimCount` used throwing `new UUID(string)`
+  instead of safe `TryParse`) - Confluence already uses
+  `UUID.TryParse` (`LSL_Api.cs:16883`).
+- `4aef37f7eb` (`llJson2List` should catch parse exceptions and return
+  `JSON_INVALID`) - Confluence's version already wraps both the
+  `JsonMapper.ToObject` and `JsonParseTop` calls in their own
+  try/catch, already returns `JSON_INVALID` on the second failure
+  (`LSL_Api.cs:22860-22878`).
+- `ab06723d6d` (add `osGetRezzingObject`) - already exists
+  (`OSSL_Api.cs:5498`), and WhiteCore's own version is self-admittedly
+  "a hack for the present and may not work correctly" per its own
+  commit - Confluence's is almost certainly the more correct
+  implementation regardless.
+- `5408642004` (`llAvatarOnLinkSitTarget` was missing its `link`
+  parameter entirely, just duplicating `llAvatarOnSitTarget`'s
+  behavior) - Confluence's already has the correct
+  `llAvatarOnLinkSitTarget(LSL_Integer linknum)` signature
+  (`LSL_Api.cs:8907`).
+- `004c475ffd` (`llTeleportAgent` constructed `AssetLandmark` from a
+  possibly-null asset before checking it, so the subsequent null
+  check on the landmark object itself was ineffective) - Confluence
+  already checks `lma == null || lma.Data == null || lma.Data.Length
+  == 0` before constructing `AssetLandmark` (`LSL_Api.cs:6079-6086`),
+  more thorough than WhiteCore's own fix.
+
+**Status:** 12 of 69 hits from this keyword scan now inspected across
+both batches, all already correct except the one real feature gap
+already flagged (private-parcel chat containment, see the prior
+entry). Given the very consistent "already implemented, often more
+thoroughly" signal on every LSL/OSSL-level check so far, and that the
+remaining ~57 hits are mostly WhiteCore's own internal Coverity-
+cleanup sweep across architecture that doesn't map onto Confluence's
+(different data-service layer, minimodules, archivers - lower expected
+portability per the pattern established in the Halcyon review), this
+is a reasonable stopping point for this batch. Remaining if this
+resumes: the Coverity-cleanup cluster (~40 commits, lower priority),
+`fb34a8e8f1`/`438f170f50`/`e09130a0c7` (three "security" commits,
+unexamined), `6268b246b8` (WebUI grid-status security/spam tweak,
+unexamined), `55bec1f640` (Util.cs ApproxEqual/ApproxZero helpers,
+unexamined), `8f37faa1d5`/`7559449468` (two "LSL_Api.cs new functions"
+commits, unexamined - worth checking for any genuinely missing LL
+functions), and `9802b3a57b` (PollService data-race fix - PollService
+is a shared concept with Confluence's own EventQueue polling, worth a
+look). The broader `teleport|crossing|physics|collision` keyword
+categories from the original 140-hit fresh scan (see the
+"fresh keyword categories" entry above) also remain entirely unrun for
+WhiteCore-Dev specifically - that scan was against Halcyon only.
+
+### WhiteCore-Dev review — batch 1 wrap-up, same 2026-08-30 session
+
+**Real fix found and applied:** `Util.cs`'s `LoadLibrary` P/Invoke
+declaration (`[DllImport("kernel32.dll")]`) had no explicit
+`CharSet`, which can mis-marshal non-ASCII paths on Windows - found
+via WhiteCore's own `e09130a0c7` "C# Security upgrade" commit fixing
+the identical declaration. Added `CharSet = CharSet.Unicode`.
+Currently unused anywhere in Confluence's own codebase (confirmed via
+search, zero call sites), but it's a documented public utility meant
+for future native-library loading, so visibility was left `public`
+rather than narrowed to `private` the way WhiteCore did - that's a
+more deliberate API-surface choice, not a proven bug. Committed as
+`a61a45d1f4`.
+
+**Checked, not applicable (rest of this batch):**
+- `fb34a8e8f1`/`438f170f50` (Mono 4.x randomizer password-length
+  workaround) - `SystemAccountService.cs` is WhiteCore's own
+  system-account architecture, doesn't exist in Confluence.
+- `6268b246b8` (WebUI grid-status CSS/HTML security & spam tweak) -
+  `WhiteCoreSim/bin/html/` is WhiteCore's own static WebUI, unrelated
+  to Confluence's native C#-generated WebUI architecture (see
+  [[casperia-webui-content-parity-decision]]).
+- `8f37faa1d5` (added several SL-wiki LL function stubs:
+  `llGetMaxScaleFactor`/`llGetMinScaleFactor`/`llGetStaticPath`/
+  `llReturnObjectsByID`/`llReturnObjectsByOwner`/`llScaleByFactor`/
+  `llXorBase64`) - all except the `llReturnObjects*` pair (already a
+  known, deliberately-deprioritized ROADMAP.md entry) already exist in
+  Confluence with real implementations, not stubs. The same commit
+  also added `llLinkLookAt`/`llLinkRotLookAt`, genuinely absent from
+  Confluence - but flagged low-confidence: WhiteCore's own commit
+  comment calls them "Function unknown on the SL Wiki," i.e. even
+  their own author wasn't sure these are real, documented LL
+  functions rather than an unofficial WhiteCore-only extension. Not
+  pursued without confirming they're real first.
+- `7559449468` (2006-line LSL_Api.cs reformat/cleanup) - too noisy to
+  extract a real diff from; skipped given the small, clean commit
+  right next to it (`8f37faa1d5`) already covered the actual new
+  functions.
+- `9802b3a57b` (`PollServiceRequestManager.Stop()` iterated/cleared
+  `m_requests` without the same lock `Enqueue()` uses - a real data
+  race) - Confluence's `PollServiceRequestManager.cs` has been
+  completely rearchitected to use `System.Collections.Concurrent.
+  ConcurrentQueue` instead of a manually-locked `Queue` - the whole
+  class of race this fix addressed can't occur with a lock-free
+  concurrent collection.
+
+**Status:** This closes out the first 69-hit LSL/OSSL/security
+keyword-scan batch for WhiteCore-Dev - 19 of 69 hits inspected across
+three sub-batches, one real fix applied, one real feature gap flagged
+for the user (private-parcel chat containment). Remaining if this
+resumes: the ~50 hits not yet triaged (mostly the internal
+Coverity-cleanup cluster across WhiteCore's own data-service/
+minimodule/archiver architecture - lower expected portability), plus
+`55bec1f640` (Util.cs `ApproxEqual`/`ApproxZero` helpers - genuinely
+still unchecked, low priority), and the `teleport|crossing|physics|
+collision` keyword categories, never run against WhiteCore-Dev
+specifically (only against Halcyon so far). See
+[[casperia-fork-review-status]].
+
+### WhiteCore-Dev review — Coverity-cleanup cluster sample, same 2026-08-30 session
+
+Sampled four commits from the ~50-commit internal Coverity-cleanup
+cluster to test the "lower expected portability" prediction from the
+last entry:
+- `55bec1f640` (adds `Util.ApproxEqual`/`ApproxZero`, replaces several
+  exact `== 0f` float-equality checks in sit-target detection with
+  them) - real bug CLASS (exact float equality is unreliable), but
+  Confluence's sit-target logic has already moved past the specific
+  messy pattern this fixed: a single centralized `IsSitTargetSet`
+  property (`SceneObjectPart.cs:171`) built on OpenMetaverse's own
+  `Vector3.IsZero()`/`Quaternion.IsIdentityOrZero()`, not scattered
+  inline hand-rolled comparisons across multiple methods the way
+  WhiteCore's `ScenePresence.cs` had. Different enough architecture
+  not to pursue further.
+- `c9823048fd` (RenderMaterials CAP null-ref on `materialAsset.Dispose()`)
+  and `13c67462dc` (SimulatorFeatures CAP null-ref on `gods` foreach) -
+  both live in WhiteCore's own CAP-handler classes
+  (`WhiteCore.Modules.Caps.RenderMaterials`,
+  `WhiteCore.Services.GenericServices.CapsService...SimulatorFeatures`)
+  which are architecturally unrelated to Confluence's own
+  `SimulatorFeaturesModule.cs` (already-established `RenderMaterialsModule.cs`
+  doesn't exist here at all).
+
+**Conclusion: the prediction held.** All four sampled Coverity-cleanup
+commits hit the same wall as expected - WhiteCore's own internal
+architecture, not portable. Not worth exhaustively checking the
+remaining ~46 in this cluster; if this review resumes, better ROI is
+in a fresh LSL/OSSL-level keyword scan (the category that actually
+found real fixes both times) rather than continuing this cluster.
+
+**Status:** WhiteCore-Dev's first 69-hit batch is now considered
+closed - 23 of 69 hits inspected (19 targeted + 4 Coverity-cluster
+sample), one real fix applied (`a61a45d1f4`), one real feature gap
+flagged (private-parcel chat containment). See
+[[casperia-fork-review-status]] for next-session resume guidance.
+
+### Correction: private-parcel chat containment already exists (2026-08-30)
+
+The "real feature gap" flagged in the WhiteCore-Dev batch above
+(`669f6791d2`, private-parcel chat containment) was wrong - a
+surface-level grep miss, not a real gap. Confluence's `ChatModule.cs`
+(lines 270-309) already implements the same containment concept, just
+under SL's *current* terminology: `LandData.SeeAVs` (the modern "See
+Avatars" parcel checkbox that replaced the old "Private" checkbox
+WhiteCore's fork still uses) - when a source parcel has `SeeAVs ==
+false`, chat from avatars/attachments on it is only delivered to other
+presences on that same parcel (`sourceParcelID` match), matching
+exactly what WhiteCore's fix was trying to achieve. Confirmed by
+reading the live SL protocol field list Confluence's own
+`ParcelPropertiesUpdateMessage` handler already parses
+(`LandManagementModule.cs:2079-2089`): `see_avs`/`any_av_sounds`/
+`group_av_sounds` are the modern three-way replacement for the old
+single "Private" boolean.
+
+Lesson: don't conclude a feature is missing from a literal string-name
+grep miss against a legacy fork's outdated field name - check whether
+the same underlying concept exists under the current/renamed
+terminology first. Nothing to build; this is closed.
+
+## Legion-Grid-Code systematic review — started (2026-08-30)
+
+New fork, oldest-first order continued after WhiteCore-Dev (paused,
+see its own entries above). Real git history via `legion` remote:
+`main` (35 unique commits vs `origin/master`), plus much larger
+branches `slua-tier2-tables` (237), `slua-tier1` (44), and
+`bot-event-fix` (43) - the SLua/Phlox port work already partially
+traced via the earlier Phlox provenance investigation lives mostly on
+`slua-tier2-tables`, not yet reviewed as its own thing. Started with
+`main`'s full 35-commit list (small enough to review in full rather
+than keyword-scan).
+
+**Two real fixes found and applied, both security/reliability-
+relevant, not Phlox-specific:**
+
+1. **Removed dead `BinaryFormatter` (de)serialization helpers**
+   (commit `f745aa16de`). `Util.SerializeToFile`/`DeserializeFromFile`
+   used `BinaryFormatter` - a Microsoft-obsoleted .NET API with a
+   well-known arbitrary-code-execution risk via deserialization
+   gadget chains. Found via Legion's own BinaryFormatter-removal
+   cluster (`a75104e516`/`38c2531177`/`ff1cb83c4b`/`bc9cd3cd2d`/
+   `4fbd5ed852` on their `main`). Checked all of Confluence's own
+   `BinaryFormatter` mentions first: `XMRInstAbstract.cs` (YEngine),
+   `KeyframeMotion.cs`, and `FlotsamAssetCache.cs` had *already* been
+   independently hardened (their mentions are all comments confirming
+   the legacy path is refused/replaced, matching Legion's own fix
+   almost exactly in the KeyframeMotion case - same "KFM1" format
+   name). `Util.cs`'s two helpers were the one live gap: actual,
+   active `new BinaryFormatter()` calls, confirmed zero call sites
+   anywhere in the codebase (genuinely dead code) - removed entirely
+   rather than hardened in place, matching Legion's own approach.
+
+2. **Fixed `FlotsamCache.ini.example` shipping cleanup disabled by
+   default** (commit `bfae37a894`). The example template set
+   `FileCleanupTimer = 0.0 ; disabled`, silently turning off file-tier
+   cache expiration for any grid owner who copies it as-is (an
+   append-only cache that grows forever). The code's own built-in
+   fallback default is a sane `1.0` hours - the shipped example was
+   actively worse than omitting the key. Found via Legion's
+   `b38f556ad4` ("Memory: Session C - FlotsamAssetCache size limits").
+   **Checked the live grid's own config too**: `S:\Opensim\Casperia\
+   config-include\FlotsamCache.ini` actually has `FileCleanupTimer =
+   24.0` (cleanup genuinely running every 24h, fine) but with a stale
+   `; disabled` trailing comment left over from an earlier edit -
+   cosmetic only, not fixed here since it's a live config file and
+   functionally correct; flagged for the user rather than touched
+   unprompted.
+
+**Real feature gap found, not built - flagging for the user's own
+call** per the standing rule ([[casperia-project-mission]]): the same
+`b38f556ad4` commit also adds `MaxMemoryCacheCount` (memory-tier item
+cap, drop-on-full) and `MaxFileCacheSizeMB` (file-tier disk-space cap,
+oldest-first eviction respecting in-world-referenced assets) to
+FlotsamAssetCache - genuinely missing in Confluence (confirmed via
+direct grep, zero matches), well-documented and already tested on a
+real grid per Legion's own commit message. Not a quick fix - a real,
+scoped feature addition (~67 lines in Legion's version) - not built
+without the user's go-ahead.
+
+**Status:** `main` branch's 35 commits partially reviewed - the
+non-Phlox ones checked (BinaryFormatter cluster, FlotsamAssetCache
+size limits). Still unreviewed from `main`: the Phlox-integration
+commits themselves (event wiring, race fixes, OSSL additions -
+relevant context for the already-scoped-but-not-started Phlox port,
+see [[casperia-project-mission]]'s Flagship future targets section),
+`0b4b72b685` (per-frame collision List allocations),
+`d15e123872` (owner-keyed HTTP request throttle cleanup),
+`f84237e862` (three quick-win allocation fixes), and the KFM1
+KeyframeMotion fix's exact match worth double-checking isn't a
+coincidence (possibly literally the same code, given identical format
+naming). The three much larger branches (`slua-tier1`,
+`slua-tier2-tables` at 237 commits, `bot-event-fix`) are entirely
+unreviewed - `slua-tier2-tables` in particular is likely where the
+bulk of real, substantial SLua/Phlox port work lives.
+
+### Legion-Grid-Code review — batch 2, same 2026-08-30 session
+
+Two more real fixes found and applied, both verified present in
+Confluence's current code first:
+
+1. **Fixed owner-keyed HTTP request throttle leak** (commit
+   `d6b530f045`). `ScriptsHttpRequests.cs`'s `m_OwnerRequestsThrottle`
+   (keyed by script owner UUID) was never cleaned up in
+   `StopHttpRequest` - only the per-prim `m_RequestsThrottle` was,
+   because `StopHttpRequest` only has `localID`/`itemID` in scope, not
+   `ownerID`. Confirmed the identical gap in Confluence's own copy of
+   this file (same structure, same missing cleanup). Ported Legion's
+   fix exactly: a `localID -> ownerID` reverse map populated where
+   `CheckThrottle` already has `ownerID` in scope, with the owner-entry
+   removal guarded by the same "only remove when fully recharged"
+   check already used for the per-prim entry - so active rate limiting
+   can never be loosened, only idle entries reclaimed. A real, slow
+   memory leak (one permanent entry per distinct script-owning
+   resident, for the region process's whole lifetime) - directly
+   relevant to a long-running production grid like this one.
+
+2. **Lazy-allocated `SceneObjectPart.m_scriptEvents`** (commit
+   `cb15aafe0c`). Every prim eagerly allocated this dictionary at
+   construction even though most prims on a region are never scripted
+   and it stays permanently empty (~100 bytes/prim wasted at scale).
+   Confirmed the same eager allocation in Confluence's current code
+   (`SceneObjectPart.cs:478` before the fix). Ported Legion's exact
+   pattern: null until first `SetScriptEvents` call, a separate
+   `m_scriptEventsLock` object (needed since the three access sites
+   used to lock the dictionary reference itself), unlocked null-check
+   before the aggregate read (safe since the field only transitions
+   null->non-null, never back).
+
+3. **`Scene.CheckMovingTransitions` (M-7)** - already fixed
+   independently in Confluence; already uses `ForEachSOG` instead of
+   allocating a fresh `List<SceneObjectGroup>` every frame. Not
+   applicable.
+
+**Real, substantial optimization found, NOT applied - flagging for
+the user's own call** given the invasiveness (unlike the two fixes
+above, small and localized): Legion's M-8 (`0b4b72b685`) eliminates
+~20,000+ short-lived `List` allocations/second on the heartbeat thread
+at scale by reusing per-object collision-tracking buffers instead of
+allocating four fresh `List`s on every `PhysicsCollision`/
+`RaiseCollisionScriptEvents` call, across both `SceneObjectPart.cs`
+and `ScenePresence.cs`. Confirmed Confluence's current collision code
+has the exact same "allocate 4 lists every call" starting point
+(`SceneObjectPart.cs:3053-3061`). Real and verified real
+(Legion tested in-world: balanced start/end collision counts across
+multiple contact cycles, confirmed no NRE from the lazy
+allocate-free-reallocate lifecycle) - but this touches hot-path code
+with real correctness subtleties (buffer freeing needed at TWO
+different unsubscribe sites or it leaks the buffers themselves; a
+specific Clear()-then-dispatch-then-swap ordering; a thread-safety
+assumption tied to collision dispatch never running in parall, which
+would need revisiting if that execution model ever changes). Higher
+blast-radius risk than the two fixes above if ported carelessly -
+worth doing, but as its own deliberate task with in-world
+verification, not silently folded into a review batch.
+
+**Status:** `main`'s 35 commits are now fully triaged except the
+Phlox-integration-specific commits themselves (event wiring, race
+fixes, OSSL additions inside `PhloxEngine.cs`/`InWorldz.Phlox.Engine` -
+relevant background for the not-yet-started Phlox port scoped in
+[[casperia-project-mission]], not immediately portable to Confluence's
+own YEngine). Three real fixes applied total from `main`
+(BinaryFormatter removal, FlotsamCache.ini.example default, HTTP
+throttle leak, lazy m_scriptEvents - four, correcting the count), one
+real feature gap flagged (FlotsamAssetCache size limits), one real
+optimization flagged (collision buffer reuse). The three much larger
+branches (`slua-tier1`, `slua-tier2-tables` at 237 commits,
+`bot-event-fix`) remain entirely unreviewed.
+
+## Legion-Grid-Code review — slua-tier1 branch, done (2026-08-30)
+
+Only 9 commits unique to `slua-tier1` beyond `main` (already reviewed
+above). 7 were bot-event delivery fixes to `BotManager.cs`
+(waypoint-arrival polling, multi-script-engine `bot_update` delivery,
+self-contained collision delivery avoiding an NPE on phantom-host
+bots, excluding a bot's own local ID from its own collision set,
+firing `collision_end` when a colliding object is deleted mid-contact
+via a remembered UUID, avatar/bot colliders reporting a real
+`ActiveGroupId` instead of `UUID.Zero`).
+
+**All 7 already present in Confluence's own `BotManager.cs`**,
+checked directly against each specific behavior, not assumed:
+- `bot_update` already posts to every registered `IScriptModule`
+  engine via a `foreach`, not just the first (matches `b9e47f6b75`
+  almost verbatim, including the exact same reasoning in the code
+  comment about multiple script engines).
+- Bot's own local ID already excluded from its collision set
+  (matches `49a84abad0`, comment at line 645).
+- `CollisionLast` is already `Dictionary<uint, UUID>` (localID ->
+  remembered UUID), not the old `HashSet<uint>`, so `collision_end`
+  already fires correctly for a collider deleted mid-contact (matches
+  `478b72dc41` exactly, including matching in-code comment language).
+
+**Notable:** `478b72dc41`'s own commit trailer reads
+`Co-Authored-By: Claude Opus 4.8 (1M context)` - this fix (or its
+lineage) was already built collaboratively with Claude, which likely
+explains why Confluence's own implementation matches so closely rather
+than being independent convergence.
+
+The other 2 unique commits (`33ef47cb33` Phlox linkset_data delivery,
+`9b00614236` SLua Tier-1 proof-of-concept) are Phlox/SLua-engine-
+specific, not portable to Confluence's own YEngine, same story as the
+rest of the Phlox-integration work on `main`.
+
+**`slua-tier1` branch is now fully triaged - nothing left to port.**
+Remaining: `slua-tier2-tables` (237 unique commits, largely unreviewed)
+and `bot-event-fix` (43 commits, likely heavily overlapping with the 7
+bot commits just confirmed already-present here - worth checking for
+non-overlapping content before assuming it's redundant, not done yet).
+
+## Legion-Grid-Code review — bot-event-fix branch, fully redundant (2026-08-30)
+
+Checked via `git log legion/slua-tier1..legion/bot-event-fix`: zero
+commits. `bot-event-fix` is a strict ancestor of `slua-tier1` (`git
+log legion/bot-event-fix..legion/slua-tier1` shows exactly the one
+commit `slua-tier1` adds beyond it, the Phlox/SLua proof-of-concept
+already noted as not portable). Nothing to review here beyond what
+the `slua-tier1` entry above already covered - no separate audit
+needed.
+
+**Remaining for Legion-Grid-Code: only `slua-tier2-tables` (237 unique
+commits) is genuinely unreviewed.**
+
+## Legion-Grid-Code review — slua-tier2-tables, paused (2026-08-30)
+
+193 commits unique to this branch beyond `slua-tier1` (already fully
+reviewed). Sampled ~6 so far - a clear, mixed picture emerged rather
+than one uniform pattern:
+
+- **Deep SLua/Phlox VM extension work** (tables, dynamic typing,
+  pattern matching, closures, metatables - roughly the first 14
+  commits) - genuinely substantial engine work, but Phlox-specific and
+  not portable to Confluence's own YEngine as-is, same story as all
+  the other Phlox-integration commits reviewed tonight across both
+  `main` and `slua-tier1`.
+- **DisplayNames/Experience/Search clusters** (large chunks of the
+  remaining ~180 commits) - Confluence already has independent,
+  apparently more architecturally sound implementations of all three
+  areas (`DisplayNameModule.cs`, Experience KV via `LSL_Api`,
+  `DirClassifiedQuery` in `ConfluenceSearchModule.cs`). Two commits
+  checked in real detail:
+  - `5d8a978ca1` ("DisplayNames FIX-1: don't leave a failed
+    SetDisplayName store poisoning the cached account") - Confluence's
+    `DisplayNameModule.cs` only mutates `userData.DisplayName`/
+    `NameChanged` INSIDE the `if (success)` block after the store call
+    succeeds, never speculatively before it - the whole bug class this
+    fix addresses can't occur in Confluence's architecture, nothing to
+    roll back.
+  - Notable: at least two of Legion's own commits in this cluster
+    carry Claude co-author trailers (`478b72dc41` on the earlier
+    `slua-tier1` branch: Claude Opus 4.8; `5d8a978ca1` here: Claude
+    Fable 5) - strongly suggests this DisplayNames/Experience/bot work
+    shares real collaborative lineage with Confluence's own
+    development rather than being independent convergence, explaining
+    the consistently-already-correct pattern.
+- **One genuinely new, real feature found, not built - flagged for the
+  user's own call**: `osPlaySoundURL` (`fac9451d4b`/`f01c870ffa`/
+  `0d4fcb43cf`) - lets a script play audio from an arbitrary external
+  URL rather than only an in-world asset UUID, backed by a dedicated
+  440-line `RemoteSoundFetcher.cs` with SSRF hardening, registered on
+  YEngine with `ThreatLevel.High` (appropriately gated as high-risk).
+  Neither the function nor the fetcher exist in Confluence at all -
+  confirmed via direct search.
+
+**Paused here by the user's explicit call** ("Pause the
+Legion-Grid-Code review for now"), not because the branch is
+exhausted - only ~6 of 193 commits actually inspected. If this
+resumes: the DisplayNames/Experience/Search clusters look like the
+lowest-yield remaining given the pattern above (2-for-2 already
+correct), so either sample a couple more for confidence or skip ahead
+to areas not yet touched at all (the 40-commit block after roughly
+"OPS-4" style infra/config commits, and whatever comes after
+`bdcd5b54d0` in the full 193-commit list - not yet even listed/seen).
+See [[casperia-fork-review-status]].
+
+## osPlaySoundURL — built, not yet in-world verified (2026-08-30)
+
+Scoped out and built per the user's explicit go-ahead, ported from
+Legion-Grid-Code's `slua-tier2-tables` branch (commit `2544d14193`).
+Full scoping detail already given directly to the user in
+conversation (not re-duplicated here); summary:
+
+- New file `OpenSim/Region/Framework/Scenes/RemoteSoundFetcher.cs`
+  (443 lines, engine-agnostic, self-contained) - the whole
+  implementation. Reuses Confluence's existing `OutboundUrlFilter`
+  (same SSRF guard `llHTTPRequest` already uses) as-is, no changes
+  needed there.
+- `osPlaySoundURL(key target, string url, float volume)` registered
+  in `OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs` at `ThreatLevel.High`.
+- New `[RemoteSound]` section in `bin/OpenSim.ini.example`,
+  `Enabled = false` by default (opt-in).
+- New `Allow_osPlaySoundURL` entry in
+  `bin/config-include/osslDefaultEnable.ini`, defaulting to
+  estate-manager/owner-only, matching the convention of every other
+  High-threat OSSL function in that file.
+- `prebuild.xml` needed no change (wildcard `*.cs` match already
+  covers the new file). The gitignored `.csproj` was edited locally
+  only, to make this session's direct `dotnet build` calls pick up
+  the new file - not committed, will regenerate correctly via
+  `runprebuild.bat` for anyone building fresh.
+
+Full solution build is clean (0 warnings, 0 errors). **Not yet
+in-world verified** - no real Ogg file has actually been played
+through this yet, and the SSRF rejection path (a loopback/internal
+URL genuinely being blocked) hasn't been exercised live either. Per
+this session's own standing rule, "compiles clean" is not the same
+claim as "verified working." Added to ROADMAP.md's "Known
+limitations" with the same present-but-unverified framing already
+used for WebRTC voice and Aurora.

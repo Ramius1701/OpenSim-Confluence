@@ -168,6 +168,11 @@ reimplementation, but well-documented design rationale):
 - **Aurora** (`OpenSimWeather`'s northern-lights effect) is built and
   deployed but not yet visually confirmed working in a live viewer —
   same present-but-unverified caveat as WebRTC voice above.
+- **`osPlaySoundURL`** (ported from Legion-Grid-Code) builds clean and
+  is off by default (`[RemoteSound] Enabled = false`), but no real Ogg
+  file has actually been played through it yet, and the SSRF-rejection
+  path hasn't been exercised live either — same present-but-unverified
+  caveat as WebRTC voice and Aurora above.
 - Some database migrations remain MySQL-specific in places PostgreSQL/
   SQLite parity hasn't caught up yet.
 - Experience Tools is not full Second Life Experience-service
