@@ -475,7 +475,12 @@ namespace OpenSim.Region.Framework.Scenes
 
         private int m_scriptAccessPin;
 
-        private Dictionary<UUID, scriptEvents> m_scriptEvents = new Dictionary<UUID, scriptEvents>();
+        // Lazy-allocated: most prims on a region are never scripted, so eagerly
+        // allocating this per-part dictionary wastes real memory at scale (see
+        // SetScriptEvents). m_scriptEventsLock is independent of the data so it
+        // stays valid while m_scriptEvents itself is still null.
+        private Dictionary<UUID, scriptEvents> m_scriptEvents = null;
+        private readonly object m_scriptEventsLock = new object();
         private Quaternion m_sitTargetOrientation = Quaternion.Identity;
         private Vector3 m_sitTargetPosition;
         private bool m_scriptedSitOnly = false;
@@ -2439,7 +2444,7 @@ namespace OpenSim.Region.Framework.Scenes
             if (userExposed)
                 dupe.UUID = UUID.Random();
 
-            dupe.m_scriptEvents = new Dictionary<UUID, scriptEvents>();
+            dupe.m_scriptEvents = null;
 
             dupe.PhysActor = null;
 
@@ -3250,7 +3255,9 @@ namespace OpenSim.Region.Framework.Scenes
 
         public void RemoveScriptEvents(UUID scriptid)
         {
-            lock (m_scriptEvents)
+            if (m_scriptEvents == null)
+                return;
+            lock (m_scriptEventsLock)
             {
                 if (m_scriptEvents.TryGetValue(scriptid, out scriptEvents ev))
                 {
@@ -4243,8 +4250,9 @@ namespace OpenSim.Region.Framework.Scenes
             //                "[SCENE OBJECT PART]: Set script events for script with id {0} on {1}/{2} to {3} in {4}",
             //                scriptid, Name, ParentGroup.Name, events, ParentGroup.Scene.Name);
             // scriptEvents oldparts;
-            lock (m_scriptEvents)
+            lock (m_scriptEventsLock)
             {
+                m_scriptEvents ??= new Dictionary<UUID, scriptEvents>();
                 if (m_scriptEvents.TryGetValue(scriptid, out scriptEvents ev))
                 {
                     if (ev == (scriptEvents)events)
@@ -5430,12 +5438,16 @@ namespace OpenSim.Region.Framework.Scenes
 
             AggregatedScriptEvents = 0;
 
-            // Aggregate script events
-            lock (m_scriptEvents)
+            // Aggregate script events. m_scriptEvents is only ever set null->non-null
+            // (SetScriptEvents), never back to null, so this read is safe unlocked.
+            if (m_scriptEvents != null)
             {
-                foreach (scriptEvents s in m_scriptEvents.Values)
+                lock (m_scriptEventsLock)
                 {
-                    AggregatedScriptEvents |= s;
+                    foreach (scriptEvents s in m_scriptEvents.Values)
+                    {
+                        AggregatedScriptEvents |= s;
+                    }
                 }
             }
 
