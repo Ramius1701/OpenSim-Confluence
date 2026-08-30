@@ -458,7 +458,7 @@ namespace OpenSim.Region.CoreModules.World.Land
                 ILandObject parcelAvatarIsEntering;
                 lock (m_landList)
                 {
-                    parcelAvatarIsEntering = m_landList[localLandID];
+                    m_landList.TryGetValue(localLandID, out parcelAvatarIsEntering);
                 }
 
                 if (parcelAvatarIsEntering is not null &&
