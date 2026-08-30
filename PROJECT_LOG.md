@@ -15183,3 +15183,138 @@ anything regardless), then restarted only the 15 region processes
 (Robust doesn't need to - `ClientStack.LindenUDP` settings are
 region-side only). All 15 confirmed back to `RegionReady`.
 
+---
+
+## Correction to "Phlox — audited, NOT ported" above: the closed-source finding was wrong (2026-08-30)
+
+The earlier entry's central claim - that `InWorldz.Phlox.Engine`
+"shipped as a closed-source binary DLL even in InWorldz's own
+repository... not portable, full stop" - does not hold up against the
+actual repository. Checked `https://github.com/HalcyonGrid/halcyon`
+directly (the `halcyon` remote already configured on this repo) rather
+than trusting that earlier conclusion:
+
+- Real, complete, buildable C# source for the engine exists at
+  `InWorldz/InWorldz.Phlox.Engine/*.cs` - `ExecutionScheduler.cs`,
+  `MasterScheduler.cs`, `LSLSystemAPI.cs`, `StateManager.cs`,
+  `EngineInterface.cs`, `EventRouter.cs`, and more, with its own
+  `InWorldz.Phlox.Engine.csproj`. This is not a stub or a header-only
+  shim - it's the actual engine.
+- `lib/InWorldz.Phlox.dll` also exists in the same repo, as a prebuilt
+  binary alongside the source, not instead of it. The earlier audit
+  most likely found only this file and never checked whether
+  `InWorldz/InWorldz.Phlox.Engine/` also existed in the same tree.
+- Licensing is clean and unambiguous: the repo's top-level `LICENSE`
+  file is a standard BSD-3-Clause ("Copyright (c) 2015, InWorldz
+  Inc."), and `ExecutionScheduler.cs`'s own file header carries the
+  identical BSD-3-Clause text, attributed to "InWorldz Halcyon
+  Developers." No separate or conflicting license anywhere in the
+  `InWorldz/` subtree. Same license family Confluence itself already
+  uses.
+
+This also explains Tranquillity's copy (see the original entry above):
+its ~50,000+ lines with no LICENSE file and no provenance explanation
+were most likely copied straight from this real Halcyon source
+(matching file-header attribution: "Adapted from InWorldz Halcyon
+`ExecutionScheduler.cs`") with the license notices simply dropped
+during that copy - not evidence the underlying code was ever actually
+closed-source.
+
+**Correction to the correction, found minutes later while starting to
+scope the actual port:** the "closed-source, full stop" conclusion
+turns out to still be right about what actually matters. The real BSD
+source at `InWorldz/InWorldz.Phlox.Engine/*.cs` is only the OpenSim/
+Halcyon *integration adapter* - `InWorldz.Phlox.Engine.csproj` itself
+references a separate binary, `InWorldz.Phlox.dll` (no `.Engine`
+suffix - a genuinely different assembly), as a prebuilt-only
+`<HintPath>` reference. That's the actual compiler/VM core. Searched
+the entire `halcyon/master` tree for any project literally named
+`InWorldz.Phlox` (not `.Engine`) - zero matches. No source for the core
+exists anywhere in this repository. Only the wrapper around it does.
+
+So: the original entry's core finding stands. What's real and new is
+narrower than first reported above - a genuine, cleanly BSD-licensed
+adapter layer exists and is readable, but it adapts a closed-source
+core that still has no available source anywhere found so far. That
+doesn't unblock porting Phlox itself. The "raise the provenance
+question with OpenSim-NGC" holding pattern from the original entry
+still applies for anyone wanting the actual engine; it does not apply
+to just reading the adapter layer for design ideas, which is now
+possible where it wasn't assumed to be before.
+
+Flagged here plainly: the "corrected" entry above was written after
+finding one promising piece of evidence and stopping too early -
+exactly the kind of premature "verified" claim this session's other
+work has been actively correcting for. Left both versions in the log
+rather than silently rewriting, per this file's own convention.
+
+## Second correction: the real core engine source does exist, in a separate dedicated repo (2026-08-30)
+
+Prompted by the user's observation that everything else checked this
+session turned out to be genuinely open source, and by the precedent
+just found with `os-webrtc-janus` (Confluence's copy came from
+Tranquillity, but the real upstream turned out to live in a separate
+repo, `Misterblue/os-webrtc-janus`, not in the tree it was vendored
+into) - checked whether the same pattern applied to Phlox instead of
+trusting the "no source anywhere" conclusion two entries up.
+
+It does. `HalcyonGrid/phlox` ("The Halcyon Phlox VM and LSL compiler")
+is a separate, actively-branched repository (5 branches, including
+feature branches like `phlox_EulerRotationFunctions`), sibling to
+`HalcyonGrid/halcyon` but never checked in either of the two prior
+passes. It contains `Source/Halcyon.Phlox/Halcyon.Phlox.csproj` - a
+real, complete compiler/VM project, 115 `.cs` files, 63,453 lines
+across the whole repo (source + `CompilerTests` + `Halcyon.Phlox.Tools`
++ `CompilerRunner`). Licensed Apache License 2.0 at the repo's top
+level - unambiguous, well-known, permissive.
+
+**Not yet confirmed:** this project is named `Halcyon.Phlox`, while the
+adapter layer found in the main `halcyon` repo
+(`InWorldz.Phlox.Engine`) references a binary called `InWorldz.Phlox`
+(no "Halcyon" prefix) - different name. Could be the same lineage
+renamed at some point in Halcyon's own history, or could need real
+reconciliation before the two actually fit together. Worth confirming
+before assuming compatibility, not assuming it away either.
+
+**Practical effect:** the licensing/provenance blocker that stopped any
+engineering investment two entries up is resolved, with real evidence
+this time (an actual Apache-2.0 LICENSE file in the actual repo that
+builds the actual engine, not an adjacent adapter). The "raise the
+provenance question with OpenSim-NGC" holding pattern no longer
+applies at all - there's a clean, real, directly-portable source
+available, independent of Tranquillity's undocumented copy or
+OpenSim-NGC's silence. Real scoping starts from here, checking the
+naming/version reconciliation first.
+
+**Naming reconciliation resolved too, same session.** User-supplied
+context: InWorldz built their grid *on top of* Halcyon, and the
+adapter's own file-header copyright ("InWorldz Halcyon Developers")
+matches that relationship - `InWorldz.Phlox` is InWorldz's own branded
+build of the same engine `HalcyonGrid/phlox` now ships under the base
+project's generic name. Confirmed structurally: `Halcyon.Phlox`'s
+actual folder/namespace layout
+(`Glue/`→`Halcyon.Phlox.Glue`, `Types/`→`Halcyon.Phlox.Types`,
+`VM/Interpreter.cs`→`Halcyon.Phlox.VM.Interpreter`) is an exact,
+file-for-file match against what `InWorldz.Phlox.Engine`'s adapter
+imports, just under the renamed root namespace.
+
+Better still: `HalcyonGrid/halcyon` already has a branch that did this
+exact rename - `iw_to_hal_scripting` ("InWorldz to Halcyon"). Diffed it
+against `master`: `InWorldz.Phlox.Glue`→`Halcyon.Phlox.Glue`,
+`InWorldz.Phlox.Types`→`Halcyon.Phlox.Types`, the `Engine` namespace
+itself, the `VM.Interpreter` type reference, and the `ScriptEngineName`/
+`Name` string literals all updated to match. This is a real,
+already-done adapter ready to pair directly with `HalcyonGrid/phlox`'s
+real core - not something Confluence would need to hand-patch itself.
+
+Git remotes added to this repo for ongoing reference: `halcyon`
+(`HalcyonGrid/halcyon`), `phlox-core` (`HalcyonGrid/phlox`),
+`webrtc-upstream` (`Misterblue/os-webrtc-janus`, real upstream of the
+already-merged `os-webrtc-janus` addon - found to be ~52-54 commits
+ahead with real hardening fixes Confluence's copy doesn't have, not yet
+reconciled), `wolfvoice` (`wolfsoftwaresystemsltd/wolfvoice`, an
+alternative WebRTC voice backend, not yet evaluated), `sasquatch`
+(`OpenSim-NGC/OpenSim-Sasquatch`, Mobius's nominal successor - checked
+and found fully subsumed by the existing `tranquillity` remote, no
+unique content).
+

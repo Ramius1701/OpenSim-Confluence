@@ -19,20 +19,41 @@ gap today. For what already exists, see `FEATURES.md`.
 - **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
   set**, to catch anything the current build missed. Ongoing,
   page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.
+- **Phlox script engine / SLua support.** Corrects both this file's
+  prior "not started, would need to be built from nothing" framing and
+  the earlier "closed-source, no clear license" conclusion in "out of
+  scope" below — neither holds up. Full real provenance chain traced
+  and license-checked at every link: Halcyon's own engine
+  (`HalcyonGrid/phlox`, Apache 2.0, ~63,000 lines, the actual
+  compiler/VM core) → InWorldz's branded build of it
+  (`HalcyonGrid/halcyon`, BSD, the OpenSim-integration adapter) →
+  Legion Grid's real port/SLua work (`JohnLegionH/Legion-Grid-Code`,
+  BSD, dated checkpoints) → Tranquillity, which is where this project
+  first found it. A namespace-rename branch already exists
+  (`halcyon/iw_to_hal_scripting`) that makes the InWorldz-branded
+  adapter match the current Halcyon-branded core exactly. Clean license
+  chain, real people, real dated work at every hop. OSSL support in the
+  ported engine is still only ~2 functions against this project's 312,
+  so real usability on live content needs a large follow-on effort
+  regardless of the licensing question being resolved — scoping the
+  actual port is the next real step, not yet started.
 
 ## Planned, not started
 
-- **SLua support.** Second Life's newer Luau-based scripting language
-  (faster than LSL/Mono, native tables, coroutines). No OpenSim fork
-  has built this yet. A real embeddable Luau runtime with early C#
-  bindings exists, so it's feasible, but the region-crossing-safe
-  state serialization, the LSL/OSSL bridge, and the upload/compile
-  pipeline would all need to be built from nothing. A genuinely large,
-  multi-month undertaking, not a quick add.
 - **RSA-key login authentication.** A protocol aimed at bot/proxy
   clients rather than mainstream viewers. No client in this project's
   own stack currently speaks it, so it isn't scheduled until there's a
-  concrete reason to build it.
+  concrete reason to build it. A real reference implementation exists
+  in Mobius (Beta 1.2, PEM-format public/private keys) if this is ever
+  prioritized — confirmed genuinely absent from this codebase, not
+  already covered under a different name.
+- **wolfvoice** (`wolfsoftwaresystemsltd/wolfvoice`) — an alternative
+  WebRTC voice backend for the already-merged `os-webrtc-janus` addon
+  (see "WebRTC voice" below), offering per-listener spatial audio
+  mixing without needing a separate Janus gateway server, and claiming
+  zero client-side configuration for Firestorm 7.1.10+. Not yet
+  evaluated for actual maturity/completeness — only the README has been
+  read so far.
 - **Halcyon/InWorldz Bot/NPC framework.** A complete, mature LSL-scriptable
   bot framework exists in Halcyon's open C# layer (its scripting engine
   and physics core are closed-source and not portable, but this part
@@ -54,11 +75,6 @@ gap today. For what already exists, see `FEATURES.md`.
   restore either — a large upload relayed through a typical reverse
   proxy runs into body-size and timeout limits that don't have a clean
   application-level fix.
-- **Phlox script engine.** A ~98,000-line alternative script engine
-  found in another fork was investigated and not adopted — its
-  provenance traces back to a closed-source engine with no clear
-  license or chain of custody. On hold pending clarification from the
-  original project, not something being built toward.
 - **Real-world money.** Every currency system in this project (native
   Currency Service, MoneyServer, RegionWeb's PayPal integration) is
   in-world virtual currency or a straight donation. None of it is a
@@ -138,6 +154,20 @@ reimplementation, but well-documented design rationale):
 
 ## Known limitations
 
+- **WebRTC voice** (`OpenSim/Addons/os-webrtc-janus`) is real, merged
+  code (5,471 lines, builds into the solution, has a real
+  `.ini.example`) — not documented in `FEATURES.md` as a working
+  feature because it has not been end-to-end tested with a real client
+  actually connecting to voice through Janus. Code existing and
+  compiling is not the same claim as confirmed working; treat as
+  present-but-unverified until someone actually tests it. Separately,
+  this project's copy has drifted from the real upstream
+  (`Misterblue/os-webrtc-janus`) by 52-54 commits containing real
+  hardening fixes (long-poll cancellation, session/handle ID handling,
+  double-destroy guards) that haven't been reconciled in.
+- **Aurora** (`OpenSimWeather`'s northern-lights effect) is built and
+  deployed but not yet visually confirmed working in a live viewer —
+  same present-but-unverified caveat as WebRTC voice above.
 - Some database migrations remain MySQL-specific in places PostgreSQL/
   SQLite parity hasn't caught up yet.
 - Experience Tools is not full Second Life Experience-service

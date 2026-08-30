@@ -238,7 +238,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private Vector4 m_auroraHighColor = new Vector4(0.25f, 0.35f, 0.95f, 0.35f);
         private Timer m_auroraTimer;
         private int m_auroraBusy;
-        private SceneObjectGroup m_auroraEmitter;
+        private readonly List<SceneObjectGroup> m_auroraEmitters = new List<SceneObjectGroup>();
         private bool m_autoCycleEnabled;
         private float m_autoCycleHours;
         private int m_autoCycleStartupDelaySeconds;
@@ -554,7 +554,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             StopWanderingRefresh();
             StopSurfaceTimer();
             StopAuroraTimer();
-            RemoveAuroraEmitter();
+            RemoveAuroraEmitters();
 
             Scene activeScene = m_scene;
             if (activeScene != null)
@@ -621,7 +621,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             StopWanderingRefresh();
             StopSurfaceTimer();
             StopAuroraTimer();
-            RemoveAuroraEmitter();
+            RemoveAuroraEmitters();
 
             lock (m_weatherChangeSync)
             {
@@ -2254,60 +2254,112 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         {
             if (!m_auroraEnabled || m_scene == null || m_environmentModule == null)
             {
-                RemoveAuroraEmitter();
+                RemoveAuroraEmitters();
                 return;
             }
 
             float daylightFade = CurrentAuroraDaylightFade();
             if (daylightFade <= 0.01f)
             {
-                RemoveAuroraEmitter();
+                RemoveAuroraEmitters();
                 return;
             }
 
             float effectiveIntensity = m_auroraIntensity * daylightFade;
 
-            if (m_auroraEmitter == null || m_auroraEmitter.IsDeleted)
-                CreateAuroraEmitter(effectiveIntensity);
+            if (m_auroraEmitters.Count == 0)
+            {
+                CreateAuroraEmitters(effectiveIntensity);
+            }
             else
-                m_auroraEmitter.RootPart.AddNewParticleSystem(CreateAuroraParticleSystem(effectiveIntensity), false);
+            {
+                foreach (SceneObjectGroup emitter in m_auroraEmitters)
+                {
+                    if (emitter == null || emitter.IsDeleted)
+                        continue;
+                    emitter.RootPart.AddNewParticleSystem(CreateAuroraParticleSystem(effectiveIntensity), false);
+                }
+            }
         }
 
-        private void CreateAuroraEmitter(float effectiveIntensity)
+        // Same grid-across-the-region shape GetEmitterLayout already uses for
+        // rain/snow (see the "Requested emitter layout NxN" log line), just
+        // with much wider spacing - a single centered emitter, capped at the
+        // viewer's ~50m PSYS_SRC_BURST_RADIUS like every other emitter here,
+        // is invisible from most of a var region (confirmed live on a 512x512
+        // region: nothing visible away from dead-center). AuroraCoverage
+        // scales sparsity by skipping cells, not by shrinking radius.
+        private void CreateAuroraEmitters(float effectiveIntensity)
         {
             if (m_scene == null)
                 return;
 
-            Vector3 regionCenter = new Vector3(
-                m_scene.RegionInfo.RegionSizeX / 2f,
-                m_scene.RegionInfo.RegionSizeY / 2f,
-                0f);
-            float groundHeight = m_scene.Heightmap.GetHeight(regionCenter.X, regionCenter.Y);
-            Vector3 position = new Vector3(regionCenter.X, regionCenter.Y, groundHeight + m_auroraHeight);
+            int sizeX = Math.Max(1, (int)m_scene.RegionInfo.RegionSizeX);
+            int sizeY = Math.Max(1, (int)m_scene.RegionInfo.RegionSizeY);
+            const float auroraSpacingMeters = 200f;
+            const int maxAuroraCells = 36;
 
-            PrimitiveBaseShape shape = PrimitiveBaseShape.CreateSphere();
-            shape.Scale = new Vector3(0.1f, 0.1f, 0.1f);
-            Primitive.TextureEntry textures = shape.Textures;
-            textures.DefaultTexture.RGBA = new Color4(1f, 1f, 1f, 0f);
-            shape.Textures = textures;
-
-            SceneObjectPart root = new SceneObjectPart(m_weatherOwnerId, shape, position, Quaternion.Identity, Vector3.Zero);
-            root.Name = GeneratedNamePrefix + " Aurora emitter";
-            root.Description = GeneratedDescription;
-            root.Scale = shape.Scale;
-            root.AddFlag(PrimFlags.Phantom);
-            root.AddNewParticleSystem(CreateAuroraParticleSystem(effectiveIntensity), false);
-
-            SceneObjectGroup group = new SceneObjectGroup(root);
-            group.SetGroup(UUID.Zero, null);
-
-            if (!m_scene.AddNewSceneObject(group, false))
+            int countX = Math.Max(1, (int)Math.Ceiling(sizeX / auroraSpacingMeters));
+            int countY = Math.Max(1, (int)Math.Ceiling(sizeY / auroraSpacingMeters));
+            while (countX * countY > maxAuroraCells)
             {
-                m_log.Warn("[WEATHER]: Failed to add aurora emitter to the scene.");
-                return;
+                if (countX >= countY && countX > 1)
+                    countX--;
+                else if (countY > 1)
+                    countY--;
+                else
+                    break;
             }
 
-            m_auroraEmitter = group;
+            float spacingX = sizeX / (float)countX;
+            float spacingY = sizeY / (float)countY;
+
+            for (int x = 0; x < countX; x++)
+            {
+                for (int y = 0; y < countY; y++)
+                {
+                    // Coverage thins out which cells actually spawn an
+                    // emitter, not each emitter's own radius - a sparse
+                    // aurora should still look full-strength where it does
+                    // appear, not faint everywhere.
+                    if (RandomRange(0f, 1f) > m_auroraCoverage)
+                        continue;
+
+                    float posX = Clamp((x + 0.5f) * spacingX + RandomRange(-spacingX * 0.2f, spacingX * 0.2f), 0f, sizeX - 1f);
+                    float posY = Clamp((y + 0.5f) * spacingY + RandomRange(-spacingY * 0.2f, spacingY * 0.2f), 0f, sizeY - 1f);
+                    float groundHeight = m_scene.Heightmap.GetHeight(posX, posY);
+                    Vector3 position = new Vector3(posX, posY, groundHeight + m_auroraHeight);
+
+                    PrimitiveBaseShape shape = PrimitiveBaseShape.CreateSphere();
+                    shape.Scale = new Vector3(0.1f, 0.1f, 0.1f);
+                    Primitive.TextureEntry textures = shape.Textures;
+                    textures.DefaultTexture.RGBA = new Color4(1f, 1f, 1f, 0f);
+                    shape.Textures = textures;
+
+                    SceneObjectPart root = new SceneObjectPart(m_weatherOwnerId, shape, position, Quaternion.Identity, Vector3.Zero);
+                    root.Name = GeneratedNamePrefix + " Aurora emitter";
+                    root.Description = GeneratedDescription;
+                    root.Scale = shape.Scale;
+                    root.AddFlag(PrimFlags.Phantom);
+                    root.AddNewParticleSystem(CreateAuroraParticleSystem(effectiveIntensity), false);
+
+                    SceneObjectGroup group = new SceneObjectGroup(root);
+                    group.SetGroup(UUID.Zero, null);
+
+                    if (!m_scene.AddNewSceneObject(group, false))
+                    {
+                        m_log.Warn("[WEATHER]: Failed to add an aurora emitter to the scene.");
+                        continue;
+                    }
+
+                    m_auroraEmitters.Add(group);
+                }
+            }
+
+            if (m_auroraEmitters.Count == 0)
+            {
+                m_log.Info("[WEATHER]: Aurora coverage roll skipped every grid cell this pass; will retry next update.");
+            }
         }
 
         private Primitive.ParticleSystem CreateAuroraParticleSystem(float effectiveIntensity)
@@ -2352,24 +2404,27 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             return particles;
         }
 
-        private void RemoveAuroraEmitter()
+        private void RemoveAuroraEmitters()
         {
-            if (m_auroraEmitter == null)
+            if (m_auroraEmitters.Count == 0)
                 return;
 
-            if (m_scene != null && !m_auroraEmitter.IsDeleted)
+            foreach (SceneObjectGroup emitter in m_auroraEmitters)
             {
+                if (m_scene == null || emitter == null || emitter.IsDeleted)
+                    continue;
+
                 try
                 {
-                    m_scene.DeleteSceneObject(m_auroraEmitter, false, false);
+                    m_scene.DeleteSceneObject(emitter, false, false);
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEATHER]: Failed to remove aurora emitter: {0}", e.Message);
+                    m_log.WarnFormat("[WEATHER]: Failed to remove an aurora emitter: {0}", e.Message);
                 }
             }
 
-            m_auroraEmitter = null;
+            m_auroraEmitters.Clear();
         }
 
         private void QueueSurfaceUpdate(bool immediate)
