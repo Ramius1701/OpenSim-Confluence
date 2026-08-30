@@ -109,16 +109,58 @@ namespace osWebRtcVoice
 
         // Note that the session_id is a long number in the JSON so we convert the string.
         public string sessionId
-        { 
+        {
             get
             {
                 return m_message.TryGetValue("session_id", out OSD sessionId) ?
-                    sessionId.AsLong().ToString() : string.Empty;
+                    OSDToLong(sessionId).ToString() : string.Empty;
             }
             set
             {
                 m_message["session_id"] = long.Parse(value);
             }
+        }
+
+        // Utility function to convert an OSD object to a long. The OSD object can be an OSDInteger
+        //    or an OSDArray of 4 or 8 integers.
+        // This exists because the JSON to OSD parser can return an OSDArray for a long number
+        //    since there is not an OSDLong type.
+        // The design of the OSD conversion functions kinda needs one to know how the number
+        //    is stored in order to extract it. Like, if it's stored as a long value (8 bytes)
+        //    and one fetches it with .AsInteger(), it will return the first 4 bytes as an integer
+        //    and not the long value. So this function looks at the type of the OSD object and
+        //    extracts the number appropriately.
+        protected static long OSDToLong(OSD pIn)
+        {
+            long ret = 0;
+            switch (pIn.Type)
+            {
+                case OSDType.Integer:
+                    ret = (long)(pIn as OSDInteger).AsInteger();
+                    break;
+                case OSDType.Binary:
+                    byte[] value = (pIn as OSDBinary).value;
+                    if (value.Length == 4)
+                    {
+                        ret = (long)(pIn as OSDBinary).AsInteger();
+                    }
+                    if (value.Length == 8)
+                    {
+                        ret = (pIn as OSDBinary).AsLong();
+                    }
+                    break;
+                case OSDType.Array:
+                    if ((pIn as OSDArray).Count == 4)
+                    {
+                        ret = (long)pIn.AsInteger();
+                    }
+                    if ((pIn as OSDArray).Count == 8)
+                    {
+                        ret = pIn.AsLong();
+                    }
+                    break;
+            }
+            return ret;
         }
 
         public bool hasSessionId { get { return m_message.ContainsKey("session_id"); } }
@@ -257,7 +299,7 @@ namespace osWebRtcVoice
             get
             {
                 return m_message.TryGetOSDMap("error", out OSDMap errMap) ?
-                    (int)errMap["code"].AsLong() : 0;
+                    (int)OSDToLong(errMap["code"]) : 0;
             }
         }
 
@@ -290,7 +332,7 @@ namespace osWebRtcVoice
         {
             get
             {
-                return dataSection.TryGetValue("id", out OSD oid) ? oid.AsLong().ToString() : string.Empty;
+                return dataSection.TryGetValue("id", out OSD oid) ? OSDToLong(oid).ToString() : string.Empty;
             }
         }  
     }
@@ -343,7 +385,7 @@ namespace osWebRtcVoice
         {
             get
             {
-                return dataSection.TryGetValue("id", out OSD oid) ? oid.AsLong().ToString() : string.Empty;
+                return dataSection.TryGetValue("id", out OSD oid) ? OSDToLong(oid).ToString() : string.Empty;
             }
         }
     }
@@ -457,7 +499,7 @@ namespace osWebRtcVoice
         {
             if (m_data is null)
                 return 0;
-            return m_data.TryGetValue(pKey, out OSD okey) ? (int)okey.AsLong(): 0;
+            return m_data.TryGetValue(pKey, out OSD okey) ? (int)OSDToLong(okey) : 0;
         }
 
         // Get an long value for a key in the response data or zero if not there
@@ -465,7 +507,7 @@ namespace osWebRtcVoice
         {
             if (m_data is null)
                 return 0L;
-            return m_data.TryGetValue(pKey, out OSD okey) ? okey.AsLong(): 0L;
+            return m_data.TryGetValue(pKey, out OSD okey) ? OSDToLong(okey) : 0L;
         }
 
         // Get a string value for a key in the response data or empty string if not there
