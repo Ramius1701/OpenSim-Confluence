@@ -17310,7 +17310,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                             ret.Add(new LSL_Vector(vel));
                             break;
                         case ScriptBaseClass.OBJECT_OWNER:
-                            ret.Add(new LSL_String(obj.OwnerID.ToString()));
+                            // Group-deeded objects have OwnerID == GroupID; SL's documented
+                            // behavior is to return NULL_KEY here rather than leak the group
+                            // ID disguised as an owner ID.
+                            if (obj.GroupID.IsNotZero() && obj.OwnerID == obj.GroupID)
+                                ret.Add(new LSL_String(ScriptBaseClass.NULL_KEY));
+                            else
+                                ret.Add(new LSL_String(obj.OwnerID.ToString()));
                             break;
                         case ScriptBaseClass.OBJECT_GROUP:
                             ret.Add(new LSL_String(obj.GroupID.ToString()));
