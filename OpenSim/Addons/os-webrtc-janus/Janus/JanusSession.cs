@@ -66,7 +66,7 @@ namespace osWebRtcVoice
 
         public string PluginId { get; set; }
 
-//        private CancellationTokenSource _CancelTokenSource = new();
+        private readonly CancellationTokenSource _CancelTokenSource = new();
 
         public bool IsConnected { get; set; }
 
@@ -173,7 +173,7 @@ namespace osWebRtcVoice
                 m_log.Error($"{LogHeader} DestroySession: exception ", e);
             }
             IsConnected = false;
-//            _CancelTokenSource.Cancel();
+            _CancelTokenSource.Cancel();
 
             return ret;
         }
@@ -285,7 +285,7 @@ namespace osWebRtcVoice
                 reqMsg.Content = new StringContent(reqStr, System.Text.Encoding.UTF8, MediaTypeNames.Application.Json);
                 reqMsg.Headers.TryAddWithoutValidation("Accept", "application/json");
 
-                HttpResponseMessage response = await httpClient.SendAsync(reqMsg).ConfigureAwait(false);
+                HttpResponseMessage response = await httpClient.SendAsync(reqMsg, _CancelTokenSource.Token).ConfigureAwait(false);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -355,7 +355,7 @@ namespace osWebRtcVoice
                 string reqStr = pReq.ToJson();
                 reqMsg.Content = new StringContent(reqStr, System.Text.Encoding.UTF8, MediaTypeNames.Application.Json);
                 reqMsg.Headers.TryAddWithoutValidation("Accept", "application/json");
-                HttpResponseMessage response = await httpClient.SendAsync(reqMsg).ConfigureAwait(false);
+                HttpResponseMessage response = await httpClient.SendAsync(reqMsg, _CancelTokenSource.Token).ConfigureAwait(false);
                 string respStr = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 ret = JanusMessageResp.FromJson(respStr);
             }
@@ -457,7 +457,7 @@ namespace osWebRtcVoice
                 HttpResponseMessage response = null;
                 try
                 {
-                    response = await httpClient.SendAsync(reqMsg).ConfigureAwait(false);
+                    response = await httpClient.SendAsync(reqMsg, _CancelTokenSource.Token).ConfigureAwait(false);
 
                     if (response is not null && response.IsSuccessStatusCode)
                     {
