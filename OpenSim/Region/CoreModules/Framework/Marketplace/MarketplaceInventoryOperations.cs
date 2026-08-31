@@ -192,8 +192,23 @@ public static class MarketplaceInventoryOperations
         };
     }
 
+    // Deliberately Scene-free (unlike Inventory/Inspect/Snapshot, which only
+    // ever run region-side backing the merchant's viewer cap): delivery is
+    // the one operation the Robust-hosted WebUI checkout also needs to
+    // trigger directly, for a buyer who may not be logged into any region
+    // at all - IInventoryService/IUserAccountService are grid-shared
+    // connectors either way, so no live Scene is actually required to reach
+    // them. Region callers (the old v2 addon, and DirectDeliveryModule's own
+    // internal delivery-trigger route) pass their own scene.InventoryService/
+    // UserAccountService/RegionInfo.ScopeID/Permissions.PropagatePermissions();
+    // pass notifyScene only when a live Scene is available and local
+    // in-viewer notification is wanted - null skips it silently (matching
+    // how an offline recipient was already handled either way).
     public static DeliveryResponse Deliver(
-        Scene scene,
+        IInventoryService inventory,
+        IUserAccountService userAccounts,
+        UUID scopeId,
+        bool propagatePermissions,
         UUID serviceAccountId,
         UUID sellerId,
         UUID snapshotFolderId,
@@ -203,7 +218,7 @@ public static class MarketplaceInventoryOperations
         int maxNodes,
         IDeliveryLedger ledger,
         ILog log,
-        bool notifyLocalUser)
+        Scene notifyScene)
     {
         if (ledger.TryGet(deliveryId, out DeliveryReceipt recorded))
         {
@@ -220,7 +235,7 @@ public static class MarketplaceInventoryOperations
             return DeliveryResponse.FromReceipt(recorded, true, "Delivery already completed.");
         }
 
-        if (!UserExists(scene, recipientId))
+        if (!UserExists(userAccounts, scopeId, recipientId))
             return DeliveryResponse.Error(
                 deliveryId,
                 "Recipient must be a local grid account.");
@@ -232,7 +247,6 @@ public static class MarketplaceInventoryOperations
 
         try
         {
-            IInventoryService inventory = scene.InventoryService;
             FolderSnapshot snapshot = CaptureFolder(
                 inventory,
                 serviceAccountId,
@@ -264,7 +278,7 @@ public static class MarketplaceInventoryOperations
 
             Dictionary<UUID, UUID> folderMap = new();
             InventoryFolderBase destination = CopyDeliveryFolderRecursive(
-                scene,
+                propagatePermissions,
                 inventory,
                 snapshot,
                 snapshot.RootFolderId,
@@ -289,8 +303,8 @@ public static class MarketplaceInventoryOperations
             if (!ledger.TryRecord(receipt, out string ledgerError))
                 return DeliveryResponse.Error(deliveryId, "Delivery completed but receipt ledger failed: " + ledgerError, true);
 
-            if (notifyLocalUser)
-                NotifyRecipient(scene, inventory, recipientId, destination, snapshot.Items.Count);
+            if (notifyScene != null)
+                NotifyRecipient(notifyScene, inventory, recipientId, destination, snapshot.Items.Count);
 
             log.InfoFormat(
                 "[OPENSIM MARKETPLACE]: Delivered snapshot {0} to {1}; delivery={2}, destination={3}",
@@ -441,7 +455,7 @@ public static class MarketplaceInventoryOperations
     }
 
     private static InventoryFolderBase CopyDeliveryFolderRecursive(
-        Scene scene,
+        bool propagatePermissions,
         IInventoryService inventory,
         FolderSnapshot snapshot,
         UUID sourceFolderId,
@@ -465,14 +479,14 @@ public static class MarketplaceInventoryOperations
         foreach (ItemNode sourceItem in snapshot.Items.Where(i => i.FolderId == sourceFolderId))
         {
             UUID itemId = CreateDeterministicUuid("delivery-item", deliveryId + "|" + sourceItem.Id);
-            InventoryItemBase item = sourceItem.CreateDeliveryItem(itemId, recipientId, destination.ID, scene);
+            InventoryItemBase item = sourceItem.CreateDeliveryItem(itemId, recipientId, destination.ID, propagatePermissions);
             AddOrVerifyItem(inventory, item);
         }
 
         foreach (FolderNode child in snapshot.Folders.Where(f => f.ParentId == sourceFolderId).OrderBy(f => f.Id))
         {
             CopyDeliveryFolderRecursive(
-                scene,
+                propagatePermissions,
                 inventory,
                 snapshot,
                 child.Id,
@@ -575,7 +589,14 @@ public static class MarketplaceInventoryOperations
     {
         if (scene.UserAccountService == null || scene.InventoryService == null)
             throw new MarketplaceInventoryException(HttpStatusCode.ServiceUnavailable, "User account or inventory service is unavailable.", true);
-        return scene.UserAccountService.GetUserAccount(scene.RegionInfo.ScopeID, userId) != null;
+        return UserExists(scene.UserAccountService, scene.RegionInfo.ScopeID, userId);
+    }
+
+    private static bool UserExists(IUserAccountService userAccounts, UUID scopeId, UUID userId)
+    {
+        if (userAccounts == null)
+            throw new MarketplaceInventoryException(HttpStatusCode.ServiceUnavailable, "User account service is unavailable.", true);
+        return userAccounts.GetUserAccount(scopeId, userId) != null;
     }
 
     private static void NotifyRecipient(
@@ -728,7 +749,7 @@ public static class MarketplaceInventoryOperations
             return copy;
         }
 
-        public InventoryItemBase CreateDeliveryItem(UUID id, UUID recipientId, UUID folderId, Scene scene)
+        public InventoryItemBase CreateDeliveryItem(UUID id, UUID recipientId, UUID folderId, bool propagatePermissions)
         {
             InventoryItemBase copy = new(id, recipientId)
             {
@@ -748,7 +769,7 @@ public static class MarketplaceInventoryOperations
                 CreationDate = m_item.CreationDate
             };
 
-            if (scene.Permissions.PropagatePermissions())
+            if (propagatePermissions)
                 ApplyNextOwnerPermissions(m_item, copy);
             else
             {

@@ -371,7 +371,10 @@ public sealed class MarketplaceModule : ISharedRegionModule
             try
             {
                 DeliveryResponse result = MarketplaceInventoryOperations.Deliver(
-                    scene,
+                    scene.InventoryService,
+                    scene.UserAccountService,
+                    scene.RegionInfo.ScopeID,
+                    scene.Permissions.PropagatePermissions(),
                     m_serviceAccountId,
                     sellerId,
                     snapshotFolderId,
@@ -381,7 +384,7 @@ public sealed class MarketplaceModule : ISharedRegionModule
                     m_maxInventoryNodes,
                     m_ledger,
                     Log,
-                    m_notifyLocalUser);
+                    m_notifyLocalUser ? scene : null);
                 Write(response, result.Ok ? 200 : (result.Retryable ? 503 : 422), result);
             }
             finally
