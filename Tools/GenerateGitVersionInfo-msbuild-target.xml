@@ -1,0 +1,57 @@
+<!--
+  Paste-back block for OpenSim/Framework/OpenSim.Framework.csproj.
+
+  prebuild.xml has no way to express a custom MSBuild <Target>, so this
+  block does not survive a runprebuild.bat/.sh regeneration and must be
+  manually pasted back into OpenSim.Framework.csproj, directly under its
+  opening <Project Sdk="Microsoft.NET.Sdk"> line, every time.
+
+  This used to live inline as prose inside an XML comment in prebuild.xml
+  itself, but the literal "--" in the git command lines below is illegal
+  inside an XML comment (<!-- cannot contain -- --> anywhere in its body)
+  and silently broke every runprebuild.bat/.sh run in this repo until this
+  was noticed and split out into its own real file - 2026-09-01, found
+  while regenerating the .csproj/.sln set for the marketplace rebuild.
+
+  History before that split (kept for context): first learned this Target
+  doesn't survive regeneration on 2026-08-16 (a missing-projects-gap fix
+  silently broke the build), then again on 2026-08-18 (regenerating just to
+  check whether Test projects would materialize - see TESTING.txt /
+  PROJECT_LOG.md for that separate, still-open gap: a fresh prebuild run
+  produces zero of the 20 real Test project stanzas this file defines,
+  not caused by anything in this repo's own edits - upstream's own
+  prebuild.xml has the identical same-path pattern for most of them, so
+  it looks like a limitation of this specific prebuild.dll build, not
+  investigated further).
+
+  Note the %3B escapes below: WriteLinesToFile's Lines attribute splits
+  item values on a literal ";" as an MSBuild list separator, so a real
+  semicolon in the generated C# has to be escaped this way or it gets
+  silently dropped.
+-->
+<Target Name="GenerateGitVersionInfo" BeforeTargets="BeforeCompile;CoreCompile">
+  <Exec Command="git rev-list --count origin/master..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
+    <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitsAhead" />
+  </Exec>
+  <Exec Command="git rev-parse --short=10 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
+    <Output TaskParameter="ConsoleOutput" PropertyName="GitShortHash" />
+  </Exec>
+  <PropertyGroup>
+    <GitCommitsAhead Condition="'$(GitCommitsAhead)' == ''">0</GitCommitsAhead>
+    <GitShortHash Condition="'$(GitShortHash)' == ''">unknown</GitShortHash>
+  </PropertyGroup>
+  <ItemGroup>
+    <GitVersionInfoLines Include="namespace OpenSim" />
+    <GitVersionInfoLines Include="{" />
+    <GitVersionInfoLines Include="public static class GitVersionInfo" />
+    <GitVersionInfoLines Include="{" />
+    <GitVersionInfoLines Include="public const string CommitsAheadOfMaster = &quot;$(GitCommitsAhead)&quot;%3B" />
+    <GitVersionInfoLines Include="public const string ShortHash = &quot;$(GitShortHash)&quot;%3B" />
+    <GitVersionInfoLines Include="}" />
+    <GitVersionInfoLines Include="}" />
+  </ItemGroup>
+  <WriteLinesToFile File="$(IntermediateOutputPath)GitVersionInfo.g.cs" Lines="@(GitVersionInfoLines)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  <ItemGroup>
+    <Compile Include="$(IntermediateOutputPath)GitVersionInfo.g.cs" />
+  </ItemGroup>
+</Target>

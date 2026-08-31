@@ -1,10 +1,12 @@
 #nullable enable annotations
 
 /*
- * OpenSim Marketplace
- * Version 2.1.0
+ * OpenSim Marketplace - Direct Delivery inventory operations.
  *
- * Direct Delivery inventory operations.
+ * Shared by both addon-modules/OpenSimMarketplace's legacy v2 HTTP API and the
+ * native DirectDelivery cap module / WebUI marketplace. Moved here from
+ * addon-modules so it can be referenced from core (LindenCaps, the WebUI
+ * connector) without a dependency on the addon assembly.
  *
  * The next-owner permission transformation is intentionally modelled on the
  * current OpenSimulator Scene.GiveInventoryItem implementation. Marketplace
@@ -24,9 +26,9 @@ using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
 using PermissionMask = OpenSim.Framework.PermissionMask;
 
-namespace OpenSim.Addons.Marketplace;
+namespace OpenSim.Region.CoreModules.Framework.Marketplace;
 
-internal static class MarketplaceInventoryOperations
+public static class MarketplaceInventoryOperations
 {
     private const string MarketplaceFolderName = "OpenSim Marketplace";
     private const string MerchantOutboxFolderName = "Merchant Outbox";
@@ -199,7 +201,7 @@ internal static class MarketplaceInventoryOperations
         string snapshotFingerprint,
         string deliveryId,
         int maxNodes,
-        DeliveryLedger ledger,
+        IDeliveryLedger ledger,
         ILog log,
         bool notifyLocalUser)
     {
@@ -805,7 +807,7 @@ internal static class MarketplaceInventoryOperations
     }
 }
 
-internal sealed class MarketplaceInventoryException : Exception
+public sealed class MarketplaceInventoryException : Exception
 {
     public MarketplaceInventoryException(HttpStatusCode statusCode, string message, bool retryable = false)
         : base(message)

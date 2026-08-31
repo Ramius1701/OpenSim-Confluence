@@ -11,10 +11,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using log4net;
+using OpenSim.Region.CoreModules.Framework.Marketplace;
 
 namespace OpenSim.Addons.Marketplace;
 
-internal sealed class DeliveryLedger
+internal sealed class DeliveryLedger : IDeliveryLedger
 {
     private readonly object m_sync = new();
     private readonly Dictionary<string, DeliveryReceipt> m_receipts = new(StringComparer.Ordinal);

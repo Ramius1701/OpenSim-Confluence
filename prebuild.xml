@@ -3,53 +3,20 @@
   <!-- WARNING: regenerating from this file (runprebuild.bat / prebuild.dll)
        overwrites every .csproj, including OpenSim/Framework/
        OpenSim.Framework.csproj's hand-added GenerateGitVersionInfo
-       MSBuild <Target> (build-number versioning) - this schema has no way
+       MSBuild Target (build-number versioning) - this schema has no way
        to express a custom Target, so that block does not survive
-       regeneration and must be manually re-added afterward. Learned this
-       the hard way twice now: 2026-08-16 (fixing a missing-projects gap
-       here silently broke the build) and again 2026-08-18 (regenerating
-       just to check whether Tests projects would materialize - see the
-       Test-project note further down - broke it a second time, and the
-       restore text wasn't saved anywhere git-tracked, since .csproj is
-       gitignored, so it had to be reconstructed from scratch by reading
-       the already-generated obj/Release/GitVersionInfo.g.cs on disk).
-       The exact block to paste back into OpenSim.Framework.csproj,
-       directly under its opening <Project Sdk="Microsoft.NET.Sdk"> line,
-       is embedded here now (in this git-tracked file) specifically so it
-       never has to be reconstructed a third time:
-
-  <Target Name="GenerateGitVersionInfo" BeforeTargets="BeforeCompile;CoreCompile">
-    <Exec Command="git rev-list --count origin/master..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
-      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitsAhead" />
-    </Exec>
-    <Exec Command="git rev-parse --short=10 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
-      <Output TaskParameter="ConsoleOutput" PropertyName="GitShortHash" />
-    </Exec>
-    <PropertyGroup>
-      <GitCommitsAhead Condition="'$(GitCommitsAhead)' == ''">0</GitCommitsAhead>
-      <GitShortHash Condition="'$(GitShortHash)' == ''">unknown</GitShortHash>
-    </PropertyGroup>
-    <ItemGroup>
-      <GitVersionInfoLines Include="namespace OpenSim" />
-      <GitVersionInfoLines Include="{" />
-      <GitVersionInfoLines Include="public static class GitVersionInfo" />
-      <GitVersionInfoLines Include="{" />
-      <GitVersionInfoLines Include="public const string CommitsAheadOfMaster = &quot;$(GitCommitsAhead)&quot;%3B" />
-      <GitVersionInfoLines Include="public const string ShortHash = &quot;$(GitShortHash)&quot;%3B" />
-      <GitVersionInfoLines Include="}" />
-      <GitVersionInfoLines Include="}" />
-    </ItemGroup>
-    <WriteLinesToFile File="$(IntermediateOutputPath)GitVersionInfo.g.cs" Lines="@(GitVersionInfoLines)" Overwrite="true" WriteOnlyWhenDifferent="true" />
-    <ItemGroup>
-      <Compile Include="$(IntermediateOutputPath)GitVersionInfo.g.cs" />
-    </ItemGroup>
-  </Target>
-
-       (note the %3B escapes: WriteLinesToFile's Lines attribute splits
-       item values on a literal ";" as an MSBuild list separator, so a
-       real semicolon in the generated C# has to be escaped this way or
-       it gets silently dropped - cost an extra build-fail-and-fix cycle
-       to discover on 2026-08-18.)
+       regeneration and must be manually re-added afterward, directly
+       under OpenSim.Framework.csproj's opening
+       Project-Sdk-Microsoft.NET.Sdk line. The exact block to paste back
+       is kept in Tools/GenerateGitVersionInfo-msbuild-target.xml (not
+       inlined here as XML comment text - it contains git command flags
+       with a literal double-hyphen, which an XML comment body cannot
+       contain; that exact mistake is what broke runprebuild.bat/.sh
+       silently for everyone on this codebase from 2026-08-18 until this
+       was noticed and split out on 2026-09-01 while regenerating for the
+       marketplace rebuild - always run runprebuild and read its own
+       output for a real "Unhandled error" line, don't assume a silent
+       exit means success).
 
        Separately: this file defines 20 real Test project stanzas
        (OpenSim.Framework.Tests, OpenSim.Region.CoreModules.Tests, etc.)
