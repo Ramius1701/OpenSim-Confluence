@@ -205,6 +205,23 @@ namespace OpenSim.Data.MySQL
             }
         }
 
+        public void ReleaseStock(int id)
+        {
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                    "update `marketplace_listings` set `CountOnHand` = `CountOnHand` + 1, `Updated` = ?Updated "
+                    + "where `ID` = ?ID and `CountOnHand` is not null", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?Updated", Utils.DateTimeToUnixTime(DateTime.UtcNow));
+                    cmd.Parameters.AddWithValue("?ID", id);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
         public bool TryGetDelivery(string deliveryId, out DeliveryReceipt receipt)
         {
             using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))

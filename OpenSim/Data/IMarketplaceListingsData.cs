@@ -36,6 +36,13 @@ namespace OpenSim.Data
         // or (finite stock) is already at zero.
         bool TryReserveStock(int id);
 
+        // Compensating action for a reservation that turned out not to lead
+        // to a completed sale (e.g. TryReserveStock succeeded but the
+        // subsequent currency charge failed) - increments CountOnHand back
+        // by one. A no-op for an unlimited listing (CountOnHand null),
+        // since TryReserveStock never decremented anything for one.
+        void ReleaseStock(int id);
+
         bool TryGetDelivery(string deliveryId, out DeliveryReceipt receipt);
 
         // Plain insert, not upsert - returns false on a delivery_id primary

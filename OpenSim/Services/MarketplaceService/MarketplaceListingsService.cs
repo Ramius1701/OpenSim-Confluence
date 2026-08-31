@@ -81,6 +81,11 @@ namespace OpenSim.Services.MarketplaceService
             return m_Database.TryReserveStock(id);
         }
 
+        public void ReleaseStock(int id)
+        {
+            m_Database.ReleaseStock(id);
+        }
+
         public bool TryGet(string deliveryId, out DeliveryReceipt receipt)
         {
             return m_Database.TryGetDelivery(deliveryId, out receipt);

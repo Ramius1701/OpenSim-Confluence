@@ -185,6 +185,11 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Marketplace
             return m_service.TryReserveStock(id);
         }
 
+        public void ReleaseStock(int id)
+        {
+            m_service.ReleaseStock(id);
+        }
+
         #endregion IMarketplaceListingsService
 
         #region IDeliveryLedger

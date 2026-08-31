@@ -35,5 +35,10 @@ namespace OpenSim.Services.Interfaces
         // See IMarketplaceListingsData.TryReserveStock - call this before
         // charging currency for a purchase, not after.
         bool TryReserveStock(int id);
+
+        // Compensating action if TryReserveStock succeeded but the purchase
+        // did not complete (e.g. the currency charge failed) - see
+        // IMarketplaceListingsData.ReleaseStock.
+        void ReleaseStock(int id);
     }
 }
