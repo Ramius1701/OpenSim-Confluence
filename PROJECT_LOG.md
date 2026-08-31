@@ -16558,3 +16558,62 @@ still entirely unchecked: Combat2 scripting, EEP environment scripting
 (beyond the environment-push angle already covered via
 `ExperienceQuery`), Pathfinding, PBR materials/GLTF overrides, Display
 Names, Abuse Reports, Bot/NPC framework.
+
+### Combat2 scripting — methodology gap identified, one real fix (2026-08-31)
+
+Moved to Combat2 (`llDamage`, `llAdjustDamage`, `llDetectedDamage`,
+`llDetectedRezzer`, plus persisted object-health, per `FEATURES.md`).
+
+**Important methodology finding:** unlike every capability checked so
+far, Combat2 has zero footprint in the real viewer's source -
+confirmed by grepping the entire Firestorm `indra` tree for
+`Combat2`/`llDamage`/`final_damage`/`on_death`/`DetectedDamage`: no
+matches anywhere. It's a purely server-side LSL scripting feature; the
+viewer has no protocol awareness of it beyond the one pre-existing,
+vanilla-lineage mechanism it happens to reuse - the avatar Health%
+status-bar readout, driven by the classic `HealthMessage` UDP packet
+(`process_health_message`/`gStatusBar->setHealth` on the viewer side,
+`ScenePresence.Health`/`ControllingClient.SendHealth` on the server
+side, both already correct and pre-existing). So the "trace the real
+viewer's C++ source, diff Confluence's response against it" method
+that drove every Experience Tools finding has no material to work
+with here.
+
+Given that, did a careful internal-consistency/logic read of the
+implementation instead (not protocol verification - there's no
+protocol to verify against). The Combat2 damage pipeline itself is a
+genuinely sophisticated, carefully-built transaction system: `llDamage`
+posts an `on_damage` event, then waits on a background thread pool
+(`WaitForFinalCombatDamage`) for a short quiet-window during which any
+listening script can call `llAdjustDamage` to modify the pending
+damage (mirroring real SL Combat2's documented "final_damage" damage-
+resolution model) before committing it and firing `final_damage`/
+`on_death`. Verified this reference-identity dictionary lookup
+(`m_combatDamageTransactions` keyed by the exact `DetectParams` object
+instance) is sound by tracing `XMRInstBackend.GetDetectParams` back to
+confirm the same object reference flows through `PostObjectEvent`
+into a script's event handler. Also verified `DetectParams.Populate`
+correctly attributes `on_damage`/`final_damage` detected-params to the
+damage SOURCE (the calling object/script), not the target - matching
+the intended "who hit me" semantics - and that `llDetectedRezzer`
+correctly reads the vanilla `RezzerID` field.
+
+**One real fix:** `CompleteDamageToPresence` computed
+`health = presence.Health - finalDamage` and clamped the upper bound
+(100) before sending it to the client via `setHealthWithUpdate`, but
+never clamped the lower bound - the parallel object-health path
+(`CompleteDamageToObject`, a few lines below) already does
+`if (health < 0f) health = 0f;`. A heavy hit could transiently put a
+negative value on the wire via `HealthMessage` before the death-branch
+resets health to 100 and teleports the avatar home a moment later.
+Added the matching floor clamp for internal consistency with the
+object-health path.
+
+Flagged the deeper uncertainty to the user directly: without a local
+copy of anything resembling SL's actual documented LSL semantics (no
+source to check llDamage's real permission requirements, exact
+`llDetectedDamage` field ordering guarantees, etc. against), further
+findings in this area would be lower-confidence than everything found
+in Experience Tools. **User's call: treat Combat2 as done with this
+one fix**, and move to a ported area that has real viewer-facing
+protocol to verify against.

@@ -5816,6 +5816,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 float health = presence.Health - finalDamage;
                 if (health > 100f)
                     health = 100f;
+                else if (health < 0f)
+                    health = 0f;
 
                 presence.setHealthWithUpdate(health);
 
