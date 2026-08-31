@@ -16923,3 +16923,75 @@ correctly the server stores it.
 
 **No bugs found in this pass** - this is the first area in this
 initiative with a clean bill of health across everything checked.
+
+### Bot/NPC framework — severe persistence bug found and fixed: every persistent bot was silently wiped on every region restart (2026-08-31)
+
+This is a large, entirely custom Confluence framework (58 `bot*` OSSL
+functions + `osNpc*`) with no real-SL protocol to check against - it's
+not modeled on anything Second Life has, so the Combat2 methodology
+applied: confirm the underlying avatar rendering is built on the
+already-proven vanilla `INPCModule`/`NPCAvatar` infrastructure (it is -
+`BotManager.CreateBot` delegates straight to `m_npcModule.CreateNPC`),
+then do an internal-consistency/logic review of the ~5000-line
+`BotManager.cs`/`NPCAvatar.cs`/`NPCModule.cs`/`BotPersistenceManager.cs`
+framework rather than a protocol trace.
+
+`BotManager.cs`'s locking (`m_bots` dictionary), timer lifecycle, and
+`NavPollTick` movement-advance loop all checked out solid - careful,
+already well-engineered code with no bugs found there.
+
+**`BotPersistenceManager` - a severe, confirmed bug: bot persistence
+across region restarts was completely non-functional, and silently
+destroyed every persisted bot's saved state on every restart.**
+Traced why: `BotManager.RegionLoaded()` called
+`m_persistence.LoadPersistentBots()` immediately - but
+`RegionLoaded()` fires from `RegionModulesControllerPlugin.
+AddRegionToModules()`, which `OpenSimBase.cs` calls line 478, and that
+file's own comment at line 512 says explicitly: "Prims have to be
+loaded after module configuration since some modules may be invoked
+during the load" - `scene.LoadPrimsFromStorage()` doesn't run until
+line 513, and `scene.loadAllLandObjectsFromStorage()` (line 510) is
+also after module loading. So at the moment `LoadPersistentBots()` ran:
+- Its own `RunCleanup()` call (run first, "1. Run cleanup first")
+  checked every active bot's `creator_object` against
+  `m_scene.GetSceneObjectPart()` - which could never find ANYTHING,
+  since zero prims were loaded yet - so it marked every single active
+  bot `active=0, deactivation_reason='orphaned'` in the SQLite store.
+- Even had that not run, the very next step's `ValidateForRespawn()`
+  calls `m_scene.LandChannel.GetLandObject()` for each bot's saved
+  position - which also always returns null before land objects load,
+  so `ValidateForRespawn` would independently fail every bot with
+  `"parcel_not_found"` and call `DeactivateRecord()` (same permanent
+  `active=0` write) on every one of them anyway.
+- Net result: the `SELECT ... WHERE active = 1` that's supposed to
+  find bots to respawn ran against a table where cleanup had *already*
+  deactivated everything moments earlier, so it always returned zero
+  rows. **No persistent bot has ever survived a region restart with
+  this code path, and every restart permanently discarded their saved
+  state** (not just skipped a respawn - the DB rows were actually
+  marked inactive, i.e. gone as far as the SELECT filter that finds
+  bots to respawn is concerned).
+- `LoadPersistentBots()`'s own doc comment already said "Call after
+  parcels are initialized and connections are accepted" - the fix
+  needed was to actually honor that, not patch around it.
+
+**Fix:** `BotManager.RegionLoaded()` now subscribes to
+`scene.EventManager.OnRegionReadyStatusChange` instead of calling
+`LoadPersistentBots()`/`StartTimers()` immediately, firing them only
+once `scene.Ready` actually becomes true (unsubscribing after, and
+also unsubscribing in `RemoveRegion` for the region-torn-down-before-
+ready edge case). Confirmed `Ready` reliably transitions to `true`
+after real startup completes in both configurations this codebase
+supports (the optional `RegionReadyModule`, and `Scene.cs`'s own
+fallback at its heartbeat `Frame == 20`, commented "Region ready
+should always be set"). Also hardened `RunCleanup()` itself with a new
+`checkOrphans` parameter (defaulting true for the periodic
+`m_cleanupTimer` path, explicitly used at its default since
+`LoadPersistentBots()` no longer runs before the scene is ready) so
+the orphan-detection half of cleanup can never again run against an
+unpopulated scene, as defense in depth beyond the timing fix.
+
+Build verified clean. Not yet live-tested in-world - would need a
+region with `[NPC] Enabled = true` and bot persistence configured,
+restarted with an actual persisted bot on it, to watch it correctly
+survive this time.

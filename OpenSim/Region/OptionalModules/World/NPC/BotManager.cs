@@ -162,17 +162,38 @@ namespace OpenSim.Region.OptionalModules.World.NPC
             m_persistence = new BotPersistenceManager();
             m_persistence.Initialize(scene, this, m_config);
 
-            // Load and respawn persistent bots (staggered)
-            m_persistence.LoadPersistentBots();
-            m_persistence.StartTimers();
+            // RegionLoaded() fires from AddRegionToModules(), which OpenSimBase.cs runs
+            // BEFORE Scene.loadAllLandObjectsFromStorage()/LoadPrimsFromStorage() (see that
+            // file's own "Prims have to be loaded after module configuration" comment).
+            // LoadPersistentBots()'s own doc comment says to call it "after parcels are
+            // initialized and connections are accepted" - calling it here instead would
+            // validate every persisted bot against an empty scene (no land objects, no
+            // prims loaded yet), permanently deactivating every one of them as
+            // "parcel_not_found"/orphaned before they ever got a chance to respawn. Defer
+            // to the region's real ready transition instead.
+            scene.EventManager.OnRegionReadyStatusChange += OnRegionReadyStatusChange;
 
             // Register console commands
             RegisterConsoleCommands(scene);
         }
 
+        private void OnRegionReadyStatusChange(IScene scene)
+        {
+            if (!scene.Ready || scene is not Scene realScene)
+                return;
+
+            realScene.EventManager.OnRegionReadyStatusChange -= OnRegionReadyStatusChange;
+
+            // Load and respawn persistent bots (staggered)
+            m_persistence.LoadPersistentBots();
+            m_persistence.StartTimers();
+        }
+
         public void RemoveRegion(Scene scene)
         {
             if (!m_enabled) return;
+            // In case the region never reached Ready (e.g. shut down mid-startup)
+            scene.EventManager.OnRegionReadyStatusChange -= OnRegionReadyStatusChange;
             // Save persistent bot state before cleanup
             m_persistence?.OnRegionShutdown();
             // Clean up bots on this scene

@@ -770,7 +770,18 @@ WHERE bot_id = @id AND active = 1";
         /// <summary>
         /// Expire old bots and check for orphaned scripts.
         /// </summary>
-        public void RunCleanup()
+        // checkOrphans must stay false when called from LoadPersistentBots() at region
+        // startup - AddRegionToModules() (and therefore every module's RegionLoaded(),
+        // including this one) runs before Scene.LoadPrimsFromStorage() (see
+        // OpenSimBase.cs's own comment: "Prims have to be loaded after module
+        // configuration since some modules may be invoked during the load"). Before that
+        // point m_scene.GetSceneObjectPart() can't find ANY object yet, so an orphan
+        // check here would find every single creator object "missing" and mark every
+        // persistent bot orphaned before LoadPersistentBots()'s own SELECT ... WHERE
+        // active = 1 even runs - wiping every persisted bot on every restart, silently,
+        // before it ever got a chance to respawn. The periodic m_cleanupTimer (started
+        // well after the region is fully up) still runs the real orphan check.
+        public void RunCleanup(bool checkOrphans = true)
         {
             if (!IsEnabled()) return;
 
@@ -793,45 +804,48 @@ WHERE region_id = @rid AND active = 1 AND expires_at IS NOT NULL AND expires_at 
                 }
 
                 // 2. Check for orphaned bots (creator object no longer exists)
-                List<string> toOrphan = new List<string>();
-                using (var cmd = m_db.CreateCommand())
+                if (checkOrphans)
                 {
-                    cmd.CommandText = @"
-SELECT bot_id, creator_object FROM persistent_bots
-WHERE region_id = @rid AND active = 1";
-                    cmd.Parameters.AddWithValue("@rid", regionID);
-
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            string creatorObjStr = reader.GetString(1);
-                            if (UUID.TryParse(creatorObjStr, out UUID creatorObj))
-                            {
-                                // Check if the object still exists in the scene
-                                SceneObjectPart part = m_scene.GetSceneObjectPart(creatorObj);
-                                if (part == null)
-                                    toOrphan.Add(reader.GetString(0));
-                            }
-                        }
-                    }
-                }
-
-                foreach (string orphanID in toOrphan)
-                {
+                    List<string> toOrphan = new List<string>();
                     using (var cmd = m_db.CreateCommand())
                     {
                         cmd.CommandText = @"
-UPDATE persistent_bots SET active = 0, deactivation_reason = 'orphaned'
-WHERE bot_id = @id AND active = 1";
-                        cmd.Parameters.AddWithValue("@id", orphanID);
-                        orphanedCount += cmd.ExecuteNonQuery();
+SELECT bot_id, creator_object FROM persistent_bots
+WHERE region_id = @rid AND active = 1";
+                        cmd.Parameters.AddWithValue("@rid", regionID);
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                string creatorObjStr = reader.GetString(1);
+                                if (UUID.TryParse(creatorObjStr, out UUID creatorObj))
+                                {
+                                    // Check if the object still exists in the scene
+                                    SceneObjectPart part = m_scene.GetSceneObjectPart(creatorObj);
+                                    if (part == null)
+                                        toOrphan.Add(reader.GetString(0));
+                                }
+                            }
+                        }
                     }
 
-                    if (UUID.TryParse(orphanID, out UUID oid))
+                    foreach (string orphanID in toOrphan)
                     {
-                        lock (m_lock)
-                            m_persistentBotIDs.Remove(oid);
+                        using (var cmd = m_db.CreateCommand())
+                        {
+                            cmd.CommandText = @"
+UPDATE persistent_bots SET active = 0, deactivation_reason = 'orphaned'
+WHERE bot_id = @id AND active = 1";
+                            cmd.Parameters.AddWithValue("@id", orphanID);
+                            orphanedCount += cmd.ExecuteNonQuery();
+                        }
+
+                        if (UUID.TryParse(orphanID, out UUID oid))
+                        {
+                            lock (m_lock)
+                                m_persistentBotIDs.Remove(oid);
+                        }
                     }
                 }
 
