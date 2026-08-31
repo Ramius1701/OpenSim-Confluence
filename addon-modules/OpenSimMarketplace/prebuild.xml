@@ -31,9 +31,9 @@
   <Reference name="OpenSim.Framework"/>
   <Reference name="OpenSim.Framework.Servers"/>
   <Reference name="OpenSim.Framework.Servers.HttpServer"/>
-  <Reference name="OpenSim.Region.CoreModules"/>
   <Reference name="OpenSim.Region.Framework"/>
   <Reference name="OpenSim.Services.Interfaces"/>
+  <Reference name="OpenSim.Services.MarketplaceService"/>
 
   <Files>
     <Match pattern="*.cs" recurse="true">

@@ -11,10 +11,10 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Framework.Servers;
 using OpenSim.Framework.Servers.HttpServer;
-using OpenSim.Region.CoreModules.Framework.Marketplace;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
+using OpenSim.Services.MarketplaceService;
 using Caps = OpenSim.Framework.Capabilities.Caps;
 
 namespace OpenSim.Region.ClientStack.LindenCaps
@@ -281,7 +281,9 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
             string versionKey = id + "|" + DateTime.UtcNow.Ticks;
             SnapshotResponse snapshot = MarketplaceInventoryOperations.Snapshot(
-                m_scene,
+                m_scene.InventoryService,
+                m_scene.UserAccountService,
+                m_scene.RegionInfo.ScopeID,
                 m_serviceAccountId,
                 agentId,
                 sourceFolderId,

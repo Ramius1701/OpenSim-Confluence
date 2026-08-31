@@ -4,9 +4,12 @@
  * OpenSim Marketplace - Direct Delivery inventory operations.
  *
  * Shared by both addon-modules/OpenSimMarketplace's legacy v2 HTTP API and the
- * native DirectDelivery cap module / WebUI marketplace. Moved here from
- * addon-modules so it can be referenced from core (LindenCaps, the WebUI
- * connector) without a dependency on the addon assembly.
+ * native DirectDelivery cap module (region-side) / WebUI marketplace checkout
+ * (Robust-side). Lives here, in OpenSim.Services.MarketplaceService rather than
+ * CoreModules, specifically because it has NO Scene dependency (see Deliver's
+ * own comment) - that's what makes it callable directly from
+ * OpenSim.Server.Handlers (WebInterfaceServiceConnector), which does not
+ * reference OpenSim.Region.Framework/CoreModules at all.
  *
  * The next-owner permission transformation is intentionally modelled on the
  * current OpenSimulator Scene.GiveInventoryItem implementation. Marketplace
@@ -22,11 +25,10 @@ using System.Text;
 using log4net;
 using OpenMetaverse;
 using OpenSim.Framework;
-using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
 using PermissionMask = OpenSim.Framework.PermissionMask;
 
-namespace OpenSim.Region.CoreModules.Framework.Marketplace;
+namespace OpenSim.Services.MarketplaceService;
 
 public static class MarketplaceInventoryOperations
 {
@@ -37,14 +39,13 @@ public static class MarketplaceInventoryOperations
     private const uint RequiredSourcePermissions =
         (uint)(PermissionMask.Copy | PermissionMask.Transfer);
 
-    public static InventoryResponse Inventory(Scene scene, UUID sellerId, int maxNodes)
+    public static InventoryResponse Inventory(IInventoryService inventory, IUserAccountService userAccounts, UUID scopeId, UUID sellerId, int maxNodes)
     {
-        if (!UserExists(scene, sellerId))
+        if (!UserExists(userAccounts, scopeId, sellerId))
             return new InventoryResponse { Ok = false, SellerId = sellerId.ToString(), Message = "Seller account was not found." };
 
         try
         {
-            IInventoryService inventory = scene.InventoryService;
             InventoryFolderBase marketplace = EnsureMarketplaceFolder(inventory, sellerId);
             InventoryFolderBase outbox = EnsureChildFolder(
                 inventory,
@@ -103,9 +104,8 @@ public static class MarketplaceInventoryOperations
         }
     }
 
-    public static ProductFolderInfo Inspect(Scene scene, UUID sellerId, UUID sourceFolderId, int maxNodes)
+    public static ProductFolderInfo Inspect(IInventoryService inventory, UUID sellerId, UUID sourceFolderId, int maxNodes)
     {
-        IInventoryService inventory = scene.InventoryService;
         InventoryFolderBase marketplace = EnsureMarketplaceFolder(inventory, sellerId);
         InventoryFolderBase outbox = EnsureChildFolder(
             inventory,
@@ -122,20 +122,21 @@ public static class MarketplaceInventoryOperations
     }
 
     public static SnapshotResponse Snapshot(
-        Scene scene,
+        IInventoryService inventory,
+        IUserAccountService userAccounts,
+        UUID scopeId,
         UUID serviceAccountId,
         UUID sellerId,
         UUID sourceFolderId,
         string versionKey,
         int maxNodes)
     {
-        if (!UserExists(scene, sellerId))
+        if (!UserExists(userAccounts, scopeId, sellerId))
             throw new MarketplaceInventoryException(HttpStatusCode.NotFound, "Seller account was not found.");
-        if (!UserExists(scene, serviceAccountId))
+        if (!UserExists(userAccounts, scopeId, serviceAccountId))
             throw new MarketplaceInventoryException(HttpStatusCode.ServiceUnavailable, "Marketplace service account was not found.");
 
-        IInventoryService inventory = scene.InventoryService;
-        ProductFolderInfo inspected = Inspect(scene, sellerId, sourceFolderId, maxNodes);
+        ProductFolderInfo inspected = Inspect(inventory, sellerId, sourceFolderId, maxNodes);
         FolderSnapshot source = CaptureFolder(inventory, sellerId, sourceFolderId, maxNodes);
 
         InventoryFolderBase serviceRoot = EnsureRootChildFolder(
@@ -198,12 +199,17 @@ public static class MarketplaceInventoryOperations
     // trigger directly, for a buyer who may not be logged into any region
     // at all - IInventoryService/IUserAccountService are grid-shared
     // connectors either way, so no live Scene is actually required to reach
-    // them. Region callers (the old v2 addon, and DirectDeliveryModule's own
-    // internal delivery-trigger route) pass their own scene.InventoryService/
-    // UserAccountService/RegionInfo.ScopeID/Permissions.PropagatePermissions();
-    // pass notifyScene only when a live Scene is available and local
-    // in-viewer notification is wanted - null skips it silently (matching
-    // how an offline recipient was already handled either way).
+    // them. Region callers (the old v2 addon, and DirectDeliveryModule) pass
+    // their own scene.InventoryService/UserAccountService/RegionInfo.ScopeID/
+    // Permissions.PropagatePermissions(); this whole class has no Scene
+    // dependency anywhere, which is what makes it callable from Robust
+    // (OpenSim.Server.Handlers, which doesn't reference OpenSim.Region.Framework
+    // at all) in the first place. Pass notifyRecipient only when a live Scene
+    // is available and local in-viewer notification is wanted - the callback
+    // receives (recipientId, destination folder, item count) and is expected
+    // to do its own scene.GetScenePresence/SendBulkUpdateInventory, using
+    // CollectDeliveryTree above to walk the folder; null skips it silently
+    // (matching how an offline recipient was already handled either way).
     public static DeliveryResponse Deliver(
         IInventoryService inventory,
         IUserAccountService userAccounts,
@@ -218,7 +224,7 @@ public static class MarketplaceInventoryOperations
         int maxNodes,
         IDeliveryLedger ledger,
         ILog log,
-        Scene notifyScene)
+        Action<UUID, InventoryFolderBase, int> notifyRecipient)
     {
         if (ledger.TryGet(deliveryId, out DeliveryReceipt recorded))
         {
@@ -303,8 +309,7 @@ public static class MarketplaceInventoryOperations
             if (!ledger.TryRecord(receipt, out string ledgerError))
                 return DeliveryResponse.Error(deliveryId, "Delivery completed but receipt ledger failed: " + ledgerError, true);
 
-            if (notifyScene != null)
-                NotifyRecipient(notifyScene, inventory, recipientId, destination, snapshot.Items.Count);
+            notifyRecipient?.Invoke(recipientId, destination, snapshot.Items.Count);
 
             log.InfoFormat(
                 "[OPENSIM MARKETPLACE]: Delivered snapshot {0} to {1}; delivery={2}, destination={3}",
@@ -585,13 +590,6 @@ public static class MarketplaceInventoryOperations
         Message = message
     };
 
-    private static bool UserExists(Scene scene, UUID userId)
-    {
-        if (scene.UserAccountService == null || scene.InventoryService == null)
-            throw new MarketplaceInventoryException(HttpStatusCode.ServiceUnavailable, "User account or inventory service is unavailable.", true);
-        return UserExists(scene.UserAccountService, scene.RegionInfo.ScopeID, userId);
-    }
-
     private static bool UserExists(IUserAccountService userAccounts, UUID scopeId, UUID userId)
     {
         if (userAccounts == null)
@@ -599,23 +597,23 @@ public static class MarketplaceInventoryOperations
         return userAccounts.GetUserAccount(scopeId, userId) != null;
     }
 
-    private static void NotifyRecipient(
-        Scene scene,
+    // Walks a delivered folder's full tree for a caller's own in-viewer
+    // "you got mail" push - kept here as a public helper (rather than private
+    // NotifyRecipient logic, as this class had before) specifically so it has
+    // no Scene/ScenePresence dependency of its own: the region-side callers
+    // that actually HAVE a Scene (DirectDeliveryModule, the old v2 addon) can
+    // call this then do their own scene.GetScenePresence/SendBulkUpdateInventory,
+    // while Deliver's own notifyRecipient callback param stays a plain
+    // delegate - this keeps the whole class callable from Robust (the WebUI
+    // checkout), which has no Scene at all.
+    public static void CollectDeliveryTree(
         IInventoryService inventory,
-        UUID recipientId,
-        InventoryFolderBase destination,
-        int itemCount)
+        UUID ownerId,
+        InventoryFolderBase folder,
+        List<InventoryFolderBase> folders,
+        List<InventoryItemBase> items)
     {
-        ScenePresence? presence = scene.GetScenePresence(recipientId);
-        if (presence == null || presence.IsChildAgent || presence.ControllingClient == null || !presence.ControllingClient.IsActive)
-            return;
-
-        List<InventoryFolderBase> folders = new();
-        List<InventoryItemBase> items = new();
-        CollectTree(inventory, recipientId, destination, folders, items);
-        presence.ControllingClient.SendBulkUpdateInventory(folders.ToArray(), items.ToArray());
-        presence.ControllingClient.SendAlertMessage(
-            $"Marketplace delivery received: {destination.Name} ({itemCount} inventory item{(itemCount == 1 ? string.Empty : "s")}).");
+        CollectTree(inventory, ownerId, folder, folders, items);
     }
 
     private static void CollectTree(

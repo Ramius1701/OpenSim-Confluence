@@ -137,6 +137,16 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IOfflineIMService m_OfflineIMService;
         private IMessagingService m_MessagingService;
         private IStoreService m_StoreService;
+        private IMarketplaceListingsService m_MarketplaceListingsService;
+        private IDeliveryLedger m_MarketplaceLedger;
+        private UUID m_marketplaceServiceAccountId = UUID.Zero;
+        // Separate from m_purchasesInProgress (Store) - an in-progress Store
+        // purchase and an in-progress Marketplace purchase by the same
+        // avatar are unrelated events and shouldn't block each other.
+        private readonly Dictionary<UUID, bool> m_marketplacePurchasesInProgress = new Dictionary<UUID, bool>();
+        // See STORE_PURCHASE_TRANSACTION_TYPE - picked clear of it and of
+        // the real OpenMetaverse.MoneyTransactionType values.
+        private const int MARKETPLACE_PURCHASE_TRANSACTION_TYPE = 5002;
         private OpenSim.Services.StoreService.Gloebit.GloebitClient m_GloebitClient;
         private bool m_gloebitEnabled = false;
         private int m_regionOrderPortStart, m_regionOrderPortEnd;
@@ -324,6 +334,23 @@ namespace OpenSim.Server.Handlers.WebInterface
                 m_regionOrderGridRoot = storeConfig.GetString("RegionOrderGridRoot", string.Empty);
                 m_regionOrderExternalHostName = storeConfig.GetString("RegionOrderExternalHostName", string.Empty);
             }
+
+            // Native DirectDelivery marketplace - listing metadata/stock
+            // (MarketplaceListingsService) and delivery idempotency
+            // (IDeliveryLedger) both come from the same [MarketplaceService]
+            // LocalServiceModule; the concrete class implements both, and
+            // LoadReusedPlugin creates a fresh instance per call (confirmed
+            // via ServerUtils.LoadPlugin - no cross-call instance caching),
+            // so this is two lightweight instances, not a double-connect -
+            // every data-layer call opens/closes its own MySqlConnection
+            // regardless. m_InventoryService/m_UserAccountService (loaded
+            // above) are reused directly for delivery - no Scene needed, see
+            // MarketplaceInventoryOperations.Deliver's own comment for why.
+            m_MarketplaceListingsService = LoadReusedPlugin<IMarketplaceListingsService>(config, "MarketplaceService", args);
+            m_MarketplaceLedger = LoadReusedPlugin<IDeliveryLedger>(config, "MarketplaceService", args);
+            IConfig marketplaceConfig = config.Configs["MarketplaceService"];
+            if (marketplaceConfig != null)
+                UUID.TryParse(marketplaceConfig.GetString("ServiceAccountUUID", string.Empty).Trim(), out m_marketplaceServiceAccountId);
 
             // Store's own Gloebit integration - Robust-native, independent of
             // addon-modules/Gloebit/GloebitMoneyModule (region-Scene-bound,

@@ -8,6 +8,7 @@
  */
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -22,9 +23,9 @@ using OpenSim.Framework;
 using OpenSim.Framework.ServiceAuth;
 using OpenSim.Framework.Servers;
 using OpenSim.Framework.Servers.HttpServer;
-using OpenSim.Region.CoreModules.Framework.Marketplace;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Services.MarketplaceService;
 
 [assembly: Addin("OpenSimMarketplace", "2.1.0")]
 [assembly: AddinDescription("OpenSim Direct Delivery marketplace inventory and fulfilment")]
@@ -186,7 +187,7 @@ public sealed class MarketplaceModule : ISharedRegionModule
             if (scene == null)
                 return;
 
-            InventoryResponse result = MarketplaceInventoryOperations.Inventory(scene, sellerId, m_maxInventoryNodes);
+            InventoryResponse result = MarketplaceInventoryOperations.Inventory(scene.InventoryService, scene.UserAccountService, scene.RegionInfo.ScopeID, sellerId, m_maxInventoryNodes);
             Write(response, result.Ok ? 200 : 422, result);
         }
         catch (RequestBodyTooLargeException)
@@ -225,7 +226,7 @@ public sealed class MarketplaceModule : ISharedRegionModule
 
             try
             {
-                ProductFolderInfo result = MarketplaceInventoryOperations.Inspect(scene, sellerId, sourceFolderId, m_maxInventoryNodes);
+                ProductFolderInfo result = MarketplaceInventoryOperations.Inspect(scene.InventoryService, sellerId, sourceFolderId, m_maxInventoryNodes);
                 Write(response, 200, new { ok = true, product = result });
             }
             catch (MarketplaceInventoryException ex)
@@ -283,7 +284,9 @@ public sealed class MarketplaceModule : ISharedRegionModule
             try
             {
                 SnapshotResponse result = MarketplaceInventoryOperations.Snapshot(
-                    scene,
+                    scene.InventoryService,
+                    scene.UserAccountService,
+                    scene.RegionInfo.ScopeID,
                     m_serviceAccountId,
                     sellerId,
                     sourceFolderId,
@@ -384,7 +387,8 @@ public sealed class MarketplaceModule : ISharedRegionModule
                     m_maxInventoryNodes,
                     m_ledger,
                     Log,
-                    m_notifyLocalUser ? scene : null);
+                    m_notifyLocalUser ? (Action<UUID, InventoryFolderBase, int>)((notifyRecipientId, destination, itemCount) =>
+                        NotifyRecipientInScene(scene, notifyRecipientId, destination, itemCount)) : null);
                 Write(response, result.Ok ? 200 : (result.Retryable ? 503 : 422), result);
             }
             finally
@@ -405,6 +409,24 @@ public sealed class MarketplaceModule : ISharedRegionModule
             Log.ErrorFormat("[OPENSIM MARKETPLACE]: Delivery request failed for {0}: {1}", deliveryId, ex);
             Write(response, 500, DeliveryResponse.Error(deliveryId, "Delivery request failed.", true));
         }
+    }
+
+    // MarketplaceInventoryOperations itself has no Scene dependency (so it's
+    // callable from Robust too - see its own Deliver comment); this is the
+    // region-side half of what used to be its private NotifyRecipient,
+    // supplied as Deliver's notifyRecipient callback below.
+    private static void NotifyRecipientInScene(Scene scene, UUID recipientId, InventoryFolderBase destination, int itemCount)
+    {
+        ScenePresence? presence = scene.GetScenePresence(recipientId);
+        if (presence == null || presence.IsChildAgent || presence.ControllingClient == null || !presence.ControllingClient.IsActive)
+            return;
+
+        List<InventoryFolderBase> folders = new();
+        List<InventoryItemBase> items = new();
+        MarketplaceInventoryOperations.CollectDeliveryTree(scene.InventoryService, recipientId, destination, folders, items);
+        presence.ControllingClient.SendBulkUpdateInventory(folders.ToArray(), items.ToArray());
+        presence.ControllingClient.SendAlertMessage(
+            $"Marketplace delivery received: {destination.Name} ({itemCount} inventory item{(itemCount == 1 ? string.Empty : "s")}).");
     }
 
     private Scene? SceneOrUnavailable(IOSHttpResponse response)

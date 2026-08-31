@@ -1517,6 +1517,10 @@
       <Reference name="OpenSim.Services.InventoryService"/>
       <Reference name="OpenSim.Services.CurrencyService"/>
       <Reference name="OpenSim.Services.AuthenticationService"/>
+      <!-- Native DirectDelivery marketplace checkout - MarketplaceInventoryOperations.
+           Deliver has no Scene dependency (see its own comment), which is what makes
+           it safe to call directly from here. -->
+      <Reference name="OpenSim.Services.MarketplaceService"/>
       <Reference name="XMLRPC"/>
       <Reference name="Nini"/>
       <Reference name="log4net"/>
@@ -1709,6 +1713,7 @@
       <Reference name="OpenSim.Framework.Console"/>
       <Reference name="OpenSim.Region.PhysicsModules.SharedBase"/>
       <Reference name="OpenSim.Services.Interfaces"/>
+      <Reference name="OpenSim.Services.MarketplaceService"/>
       <Reference name="OpenSim.Region.ScriptEngine.Shared.Api"/>
       <Reference name="Mono.Addins" path="../../../../../bin/"/>
       <Reference name="Nini" path="../../../../../bin/"/>
