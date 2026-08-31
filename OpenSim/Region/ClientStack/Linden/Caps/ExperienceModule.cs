@@ -151,7 +151,11 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             caps.RegisterHandler("GetExperienceInfo", new GetExperienceInfoGetHandler(agent, this));
             caps.RegisterHandler("IsExperienceAdmin", new IsExperienceAdminGetHandler(agent, this));
             caps.RegisterHandler("IsExperienceContributor", new IsExperienceContributorGetHandler(agent, this));
-            caps.RegisterHandler("RegionExperiences", new RegionExperiencesGetHandler(agent, this));
+            caps.RegisterSimpleHandler("RegionExperiences",
+                new SimpleStreamHandler(string.Format("/caps/{0}", UUID.Random()), delegate (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
+                {
+                    HandleRegionExperiences(httpRequest, httpResponse, agent);
+                }));
             caps.RegisterHandler("ExperienceQuery", new ExperienceQueryGetHandler(agent, this));
             caps.RegisterHandler("UpdateExperience", new UpdateExperiencePostHandler(agent, this));
             caps.RegisterHandler("GetMetadata", new GetMetadataPostHandler(agent, this, m_scene));
@@ -298,6 +302,126 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             }
 
             response.RawBuffer = response_bytes;
+            response.StatusCode = (int)HttpStatusCode.OK;
+        }
+
+        // GET returns the current allowed/blocked/trusted estate lists; POST is the
+        // Region/Estate > Experiences panel's Apply button, which sends the full
+        // desired lists (llfloaterregioninfo.cpp's LLPanelRegionExperiences::sendUpdate).
+        // That's separate from the per-item "estateexperiencedelta" UDP messages
+        // EstateManagementModule already handles for individual add/remove clicks -
+        // this cap was GET-only, so the POST had nowhere to go and Apply silently
+        // failed to round-trip (per-item UDP deltas still persisted correctly, but
+        // a full-list POST here always no-opped).
+        private void HandleRegionExperiences(IOSHttpRequest request, IOSHttpResponse response, UUID agentID)
+        {
+            switch (request.HttpMethod)
+            {
+                case "GET":
+                    response.RawBuffer = Encoding.UTF8.GetBytes(BuildRegionExperiencesResponse());
+                    response.StatusCode = (int)HttpStatusCode.OK;
+                    return;
+                case "POST":
+                    HandleSetRegionExperiences(request, response, agentID);
+                    return;
+                default:
+                    response.StatusCode = (int)HttpStatusCode.MethodNotAllowed;
+                    return;
+            }
+        }
+
+        private string BuildRegionExperiencesResponse()
+        {
+            UUID[] allowed = GetEstateAllowedExperiences();
+            UUID[] key = GetEstateKeyExperiences();
+            UUID[] blocked = GetEstateBlockedExperiences();
+
+            string response_str = "<llsd><map><key>allowed</key>";
+            if (allowed.Length > 0)
+            {
+                response_str += "<array>";
+                foreach (UUID id in allowed)
+                {
+                    response_str += string.Format("<uuid>{0}</uuid>", id);
+                }
+                response_str += "</array>";
+            }
+            else response_str += "<undef />";
+
+            // `default`/`disabled` stay omitted-shaped (neither is modeled; the panel
+            // reads them conditionally, so undef/empty is the correct "not set" wire value).
+            response_str += "<key>blocked</key>";
+            if (blocked.Length > 0)
+            {
+                response_str += "<array>";
+                foreach (UUID id in blocked)
+                {
+                    response_str += string.Format("<uuid>{0}</uuid>", id);
+                }
+                response_str += "</array>";
+            }
+            else response_str += "<undef />";
+
+            response_str += "<key>default</key><uuid /><key>disabled</key><undef /><key>trusted</key>";
+
+            if (key.Length > 0)
+            {
+                response_str += "<array>";
+                foreach (UUID id in key)
+                {
+                    response_str += string.Format("<uuid>{0}</uuid>", id);
+                }
+                response_str += "</array>";
+            }
+            else response_str += "<undef />";
+
+            response_str += "</map></llsd>";
+
+            return response_str;
+        }
+
+        private void HandleSetRegionExperiences(IOSHttpRequest request, IOSHttpResponse response, UUID agentID)
+        {
+            if (!m_scene.Permissions.CanIssueEstateCommand(agentID, false))
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            OSDMap map = (OSDMap)OSDParser.DeserializeLLSDXml(request.InputStream);
+
+            UUID[] ParseIds(string key)
+            {
+                if (!(map[key] is OSDArray arr))
+                    return new UUID[0];
+                return arr.Select(x => x.AsUUID()).ToArray();
+            }
+
+            UUID[] allowed = ParseIds("allowed");
+            UUID[] blocked = ParseIds("blocked");
+            UUID[] trusted = ParseIds("trusted");
+
+            // Same per-list caps EstateManagementModule's estateexperiencedelta enforces
+            // (blocked reuses the AllowedExperiences limit there too) - this writes the
+            // same EstateSettings-backed storage, so the ceilings must match.
+            if (allowed.Length > (int)Constants.EstateAccessLimits.AllowedExperiences)
+                allowed = allowed.Take((int)Constants.EstateAccessLimits.AllowedExperiences).ToArray();
+            if (trusted.Length > (int)Constants.EstateAccessLimits.KeyExperiences)
+                trusted = trusted.Take((int)Constants.EstateAccessLimits.KeyExperiences).ToArray();
+            if (blocked.Length > (int)Constants.EstateAccessLimits.AllowedExperiences)
+                blocked = blocked.Take((int)Constants.EstateAccessLimits.AllowedExperiences).ToArray();
+
+            EstateSettings es = m_scene.RegionInfo.EstateSettings;
+            es.AllowedExperiences = allowed;
+            es.KeyExperiences = trusted;
+            es.BlockedExperiences = blocked;
+
+            m_scene.EstateDataService.StoreEstateSettings(es);
+
+            IEstateModule estateModule = m_scene.RequestModuleInterface<IEstateModule>();
+            estateModule?.TriggerEstateInfoChange();
+
+            response.RawBuffer = Encoding.UTF8.GetBytes(BuildRegionExperiencesResponse());
             response.StatusCode = (int)HttpStatusCode.OK;
         }
 
@@ -1211,81 +1335,6 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             }
 
             string response_str = "<?xml version=\"1.0\" ?><llsd><map><key>status</key><boolean>" + (is_admin ? "true" : "false") + "</boolean></map></llsd>";
-
-            return Encoding.UTF8.GetBytes(response_str);
-        }
-    }
-
-    public class RegionExperiencesGetHandler : BaseStreamHandler
-    {
-        //private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
-
-        private UUID m_AgentID = UUID.Zero;
-        private IExperienceModule m_ExperienceModule = null;
-
-        public RegionExperiencesGetHandler(UUID agent_id, IExperienceModule experienceModule)
-            : this(string.Format("/caps/{0}", UUID.Random()), agent_id, experienceModule)
-        {
-        }
-
-        public RegionExperiencesGetHandler(string path, UUID agent_id, IExperienceModule experienceModule)
-            : base("GET", path, null, null)
-        {
-            m_AgentID = agent_id;
-            m_ExperienceModule = experienceModule;
-        }
-
-        protected override byte[] ProcessRequest(string path, Stream request, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
-        {
-            //m_log.InfoFormat("[EXPERIENCE] RegionExperiences request on {0}", path);
-
-            UUID[] allowed = m_ExperienceModule.GetEstateAllowedExperiences();
-            UUID[] key = m_ExperienceModule.GetEstateKeyExperiences();
-            UUID[] blocked = m_ExperienceModule.GetEstateBlockedExperiences();
-
-            string response_str = "<llsd><map><key>allowed</key>";
-            if (allowed.Length > 0)
-            {
-                response_str += "<array>";
-                foreach (UUID id in allowed)
-                {
-                    response_str += string.Format("<uuid>{0}</uuid>", id);
-                }
-                response_str += "</array>";
-            }
-            else response_str += "<undef />";
-
-            // The `blocked` list now surfaces the real estate BlockedExperiences tier. It was
-            // hardcoded <undef/>, so the Region/Estate > Experiences Blocked editor always
-            // rendered empty even when experiences were region-blocked. `default`/`disabled`
-            // stay omitted-shaped (neither is modeled; the panel reads them conditionally, so
-            // undef/empty is the correct "not set" wire value).
-            response_str += "<key>blocked</key>";
-            if (blocked.Length > 0)
-            {
-                response_str += "<array>";
-                foreach (UUID id in blocked)
-                {
-                    response_str += string.Format("<uuid>{0}</uuid>", id);
-                }
-                response_str += "</array>";
-            }
-            else response_str += "<undef />";
-
-            response_str += "<key>default</key><uuid /><key>disabled</key><undef /><key>trusted</key>";
-
-            if (key.Length > 0)
-            {
-                response_str += "<array>";
-                foreach (UUID id in key)
-                {
-                    response_str += string.Format("<uuid>{0}</uuid>", id);
-                }
-                response_str += "</array>";
-            }
-            else response_str += "<undef />";
-
-            response_str += "</map></llsd>";
 
             return Encoding.UTF8.GetBytes(response_str);
         }

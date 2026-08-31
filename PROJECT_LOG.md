@@ -16473,3 +16473,88 @@ checked so far. Still not done: `AgentExperiences`'s create path,
 `GroupExperiences`, `GetAdminExperiences`/`GetCreatorExperiences`,
 and `ExperiencePreferences` haven't had their field-level content
 verified yet (only cap names/response-key conventions spot-checked).
+
+### Experience Tools — remaining handlers field-verified; 4th real gap found and fixed (2026-08-31)
+
+Closed out the "not yet field-verified" list from the previous entry.
+
+**Verified correct, no changes needed:**
+- `ExperiencePreferences` GET/PUT/DELETE - traced the real protocol
+  through `llexperiencecache.cpp`'s `getExperiencePermission`/
+  `setExperiencePermission`/`forgetExperiencePermission` and
+  `llfloaterexperienceprofile.cpp`'s `experiencePermissionResults`
+  (the single callback consuming all three verbs' responses via
+  `hasPermission(result, "experiences"/"blocked", id)`). Confluence's
+  `blocked`/`experiences` array-shaped response, with the single
+  queried/changed experience UUID placed in whichever array matches
+  its current permission (both `<undef/>` if neither set, i.e.
+  "Forget"), is exactly what the real viewer expects on all three
+  verbs. `m_ExperiencePermissions` in-memory cache is correctly
+  hydrated from `IExperienceService.FetchExperiencePermissions` on
+  `OnNewClient`, so preferences do survive relog (not a cache-miss bug
+  as briefly suspected).
+- `GetExperiencesGetHandler`/`GetAdminExperiencesGetHandler`/
+  `GetCreatorExperiencesGetHandler`/`GroupExperiencesGetHandler`/
+  `AgentExperiences` (list+create path) - all cross-checked field-by-
+  field against `llfloaterexperiences.cpp`'s `refreshContents`/
+  `updateInfo`/`checkAndOpen`/`retrieveExperienceListCoro`. Confirmed
+  `GroupExperiences`'s raw-UUID-after-`?` query format (no `key=`)
+  matches `getGroupExperiencesCoro`'s URL construction exactly, and
+  the create-path's `PaymentRequired` failure response correctly
+  triggers the viewer's `ExperienceAcquireFailed` notification.
+- `UpdateExperiencePostHandler`'s remaining fields (name, description,
+  slurl, maturity, marketplace/logo metadata, group_id) - cross-checked
+  against `llfloaterexperienceprofile.cpp`'s `updatePackage()`/`doSave()`
+  and confirmed `EXPERIENCE_ID == "public_id"` (so `onSaveComplete`'s
+  id-match check against the response is satisfied). The viewer's own
+  `updateExperienceCoro` already strips `quota`/`expires`/`agent_id`
+  from the outgoing body before sending, matching that Confluence never
+  trusts client-supplied values for those fields anyway.
+- `IsExperienceAdminGetHandler`/`IsExperienceContributorGetHandler` -
+  `?experience_id=<uuid>` query key confirmed against
+  `getExperienceAdminCoro`'s URL construction.
+
+**`RegionExperiencesGetHandler` - missing POST (update) path, fixed.**
+The Region/Estate Info floater's Experiences tab has two independent
+write paths in the real viewer: per-item add/remove clicks fire an
+immediate `estateexperiencedelta` UDP message (already fully and
+correctly handled by `EstateManagementModule.cs`, vanilla-lineage
+code, not in scope for this audit), but clicking the tab's own
+Apply/OK button additionally does a full-list HTTP POST to the SAME
+`RegionExperiences` capability URL used for the initial GET
+(`llfloaterregioninfo.cpp`'s `LLPanelRegionExperiences::sendUpdate`
+-> `LLExperienceCache::setRegionExperiences` -> POST). Confluence's
+`RegionExperiencesGetHandler` was registered as a GET-only
+`BaseStreamHandler`, so that POST had no matching handler - real-world
+impact was muted (the per-item deltas still persisted correctly), but
+the full-list resync on Apply always silently no-opped, and the
+gap was protocol-incomplete regardless. Fixed by switching
+`RegionExperiences` from `RegisterHandler`+`RegionExperiencesGetHandler`
+to `RegisterSimpleHandler`+a `HandleRegionExperiences` dispatcher
+(the same GET/POST-per-method-switch pattern already used for
+`AgentExperiences`/`ExperiencePreferences`), with the new POST path
+parsing the `allowed`/`blocked`/`trusted` UUID arrays, gating on
+`Scene.Permissions.CanIssueEstateCommand` (matching every other
+estate-write path in this codebase), clamping to the same
+`Constants.EstateAccessLimits` ceilings `EstateManagementModule`'s
+UDP delta path already enforces (since both write the same
+`EstateSettings` storage), persisting via
+`EstateDataService.StoreEstateSettings` +
+`IEstateModule.TriggerEstateInfoChange`, then echoing the same
+response shape the GET path already used (refactored into a shared
+`BuildRegionExperiencesResponse` so GET and POST-then-echo can't drift).
+The now-dead standalone `RegionExperiencesGetHandler` class was
+removed. Build verified clean (0 errors/warnings). Not yet
+live-tested in-world (no estate manager currently available to click
+Apply on the Experiences tab and confirm the round-trip) - flagged
+per the project's "no verified claim without concrete proof" rule.
+
+**Experience Tools running total this session: 4 real fixes**
+(`ExperienceQuery` cap, quota field, Private flag, `RegionExperiences`
+POST gap). Experience Tools is now considered thoroughly audited -
+every capability's field-level content has been traced against real
+viewer source at least once. Next candidate areas for this initiative,
+still entirely unchecked: Combat2 scripting, EEP environment scripting
+(beyond the environment-push angle already covered via
+`ExperienceQuery`), Pathfinding, PBR materials/GLTF overrides, Display
+Names, Abuse Reports, Bot/NPC framework.
