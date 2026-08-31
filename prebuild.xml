@@ -1716,6 +1716,7 @@
       <Reference name="OpenSim.Framework.Console"/>
       <Reference name="OpenSim.Region.PhysicsModules.SharedBase"/>
       <Reference name="OpenSim.Services.Interfaces"/>
+      <Reference name="OpenSim.Region.ScriptEngine.Shared.Api"/>
       <Reference name="Mono.Addins" path="../../../../../bin/"/>
       <Reference name="Nini" path="../../../../../bin/"/>
       <Reference name="log4net" path="../../../../../bin/"/>
@@ -1729,7 +1730,7 @@
       </Files>
     </Project>
 
-	
+
     <!-- Data Base Modules -->
     <Project name="OpenSim.Data.MySQL" path="OpenSim/Data/MySQL" type="Library">
       <Configuration name="Debug">
