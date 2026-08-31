@@ -421,6 +421,32 @@ namespace OpenSim.Framework
             return ok;
         }
 
+        // Same asset-type dispatch as FromAssetOSD, but targets one specific track
+        // instead of replacing the whole day cycle (llReplaceEnvironment's track_no
+        // 0-4, not just -1). trackIndex: 0 = water, 1 = ground-level sky, 2-4 = the
+        // three altitude-banded sky tracks (matching Altitudes[0..2]).
+        public bool ReplaceTrackFromAsset(int trackIndex, string name, OSD osd)
+        {
+            if (osd is not OSDMap map)
+                return false;
+            if (!map.TryGetValue("type", out OSD tmp))
+                return false;
+            string type = tmp.AsString();
+
+            Cycle ??= new DayCycle();
+
+            bool ok;
+            if (trackIndex == 0)
+                ok = type == "water" && Cycle.replaceWaterFromOSD(name, map);
+            else
+                ok = type == "sky" && Cycle.replaceSkyTrackFromOSD(trackIndex, name, map);
+
+            if (ok)
+                InvalidateCaches();
+
+            return ok;
+        }
+
         public OSD ToOSD()
         {
             return new OSDMap

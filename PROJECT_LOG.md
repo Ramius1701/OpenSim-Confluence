@@ -17056,3 +17056,83 @@ clean. Not yet live-tested in-world (would need `[Search] Module =
 "ConfluenceSearchModule"` configured with a real `GroupsSearchService`
 and a resident using the classic Directory floater's Groups tab to
 confirm the round-trip).
+
+### EEP environment scripting — 3 real bugs fixed, 1 real feature gap closed (2026-08-31)
+
+Scope: `llGetEnvironment`/`llSetEnvironment`/`llReplaceEnvironment`
+(region/parcel-level) and region/parcel sky-water access - the
+per-agent angle (`llSetAgentEnvironment`/`llReplaceAgentEnvironment`)
+was already covered via the `ExperienceQuery` work earlier in this
+initiative. These are real, documented SL LSL functions (unlike
+Combat2/Bot-NPC), so the SL wiki + real field-level tracing applied
+directly, same as Experience Tools/PBR materials.
+
+**`llGetEnvironment` - 3 confirmed bugs, all the same pattern.** The
+`SKY_CLOUDS`, `SKY_MOON`, and `SKY_SUN` rules each return an
+`is_default_texture` integer field (confirmed against the SL wiki
+field-by-field: SKY_CLOUDS position 8, SKY_MOON position 4, SKY_SUN
+position 4) - all three were hardcoded to `0` regardless of the real
+texture state, even though the exact values needed
+(`sky.IsDefaultCloudTexture()`/`IsDefaultMoonTexture()`/
+`IsDefaultSunTexture()`) were already implemented and correctly used
+two rule-cases earlier in the very same function
+(`SKY_TEXTURE_DEFAULTS`). A script would never see `is_default=1` for
+any of these three fields even on an untouched, fully-default sky.
+Fixed by wiring in the already-existing accessor calls.
+
+**`llReplaceEnvironment` - real feature gap closed: individual
+altitude-track replacement (track_no 0-4) was entirely unimplemented,
+rejecting anything but track_no==-1 with ENV_INVALID_RULE.** The real
+SL wiki documents track_no 0 (water)/1 (ground-level sky)/2-4
+(altitude-banded sky tracks, matching `env.Altitudes`)/-1 (all
+tracks) as all valid. Confirmed this was a real regression relative to
+this codebase's own sibling function - `llSetEnvironment` already does
+genuine per-track field editing via `position.z` and
+`ViewerEnvironment.EnsureSkyTargets(altitude, allTracks)` - so the
+underlying track model was already proven, `llReplaceEnvironment` just
+never got the same treatment for whole-asset replacement.
+
+Traced the actual data model (`DayCycle`'s `waterTrack`/`skyTrack0`/
+`skyTracks[0..2]` fields, `skyframes`/`waterframes` shared-namespace
+dictionaries) via the existing `FromAssetOSD`/`replaceSkyFromOSD`/
+`replaceWaterFromOSD` methods already used by the ExtEnvironment cap
+(`EnvironmentModule.cs`) - `replaceWaterFromOSD` is already a complete,
+correct track-0 operation as-is (water has no altitude banding), but
+`replaceSkyFromOSD` flattens the ENTIRE sky cycle to one static frame
+across all tracks, which is not what per-track replacement needs (it
+would silently blow away every other altitude band).
+
+**New methods added, not just wiring:**
+- `DayCycle.replaceSkyTrackFromOSD(int trackIndex, string name, OSDMap map)`
+  (`ViewerDaycycle.cs`) - replaces exactly ONE sky track's content
+  (`skyTrack0` for track 1, `skyTracks[trackIndex-2]` for 2-4) without
+  touching the others. Keys the new frame with a track-specific name
+  (`"track{N}_{name}"`) rather than reusing `replaceSkyFromOSD`'s bare
+  name, since `skyframes` is a single dictionary shared by every
+  track - reusing a name another track's own frame still references
+  would have silently corrupted that track's content too.
+- `ViewerEnvironment.ReplaceTrackFromAsset(int trackIndex, string name, OSD osd)`
+  (`ViewerEnvironment.cs`) - the per-track counterpart to the existing
+  `FromAssetOSD`, dispatching to `replaceWaterFromOSD` (track 0,
+  requires a "water"-type asset) or the new `replaceSkyTrackFromOSD`
+  (tracks 1-4, requires a "sky"-type asset) - mismatched asset/track
+  types fail cleanly rather than corrupting state.
+- `llReplaceEnvironment` itself: accepts track_no 0-4 (not just -1),
+  routing through a new `ApplyReplaceEnvironmentAsset` helper shared
+  between the whole-region and per-parcel branches. Also matches the
+  wiki's documented `ENV_NO_PERMISSIONS` for attempting to remove
+  tracks 0/1 via an empty environment string, and returns
+  `ENV_INVALID_RULE` (not a silent no-op success) for the
+  not-yet-implemented "remove one specific sky track" case (2-4) -
+  day_length/day_offset-only updates (empty environment, track_no=-1)
+  keep working exactly as before.
+
+Build verified clean. Not yet live-tested in-world - would need a
+script actually calling `llReplaceEnvironment` with a specific
+track_no against a real sky/water settings asset to confirm the
+round-trip renders correctly for other viewers in the parcel/region.
+
+**This closes out every area on the original scope list** (Experience
+Tools, Combat2, Display Names, Abuse Reports, Pathfinding, PBR
+materials, Bot/NPC framework, Currency, Search, EEP scripting) - see
+the audit-status memory for the full running tally.

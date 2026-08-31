@@ -20964,7 +20964,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                             result.Add(ToLSLVector(sky.cloud_scroll_rate));
                             result.Add(ToLSLVector(sky.cloud_pos_density1));
                             result.Add(ToLSLVector(sky.cloud_pos_density2));
-                            result.Add(new LSL_Integer(0));
+                            result.Add(new LSL_Integer(sky.IsDefaultCloudTexture() ? 1 : 0));
                         }
                         break;
 
@@ -20996,7 +20996,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                             result.Add(ToLSLRotation(sky.moon_rotation));
                             result.Add(new LSL_Float(sky.moon_scale));
                             result.Add(new LSL_Float(sky.moon_brightness));
-                            result.Add(new LSL_Integer(0));
+                            result.Add(new LSL_Integer(sky.IsDefaultMoonTexture() ? 1 : 0));
                             result.Add(ToLSLVector(ViewerEnvironment.Xrot(sky.moon_rotation)));
                             result.Add(ToLSLVector(sky.ambient));
                             result.Add(ToLSLVector(sky.sunlight_color));
@@ -21029,7 +21029,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                             result.Add(ToLSLRotation(sky.sun_rotation));
                             result.Add(new LSL_Float(sky.sun_scale));
                             result.Add(ToLSLVector(sky.sunlight_color));
-                            result.Add(new LSL_Integer(0));
+                            result.Add(new LSL_Integer(sky.IsDefaultSunTexture() ? 1 : 0));
                             result.Add(ToLSLVector(ViewerEnvironment.Xrot(sky.sun_rotation)));
                             result.Add(ToLSLVector(sky.ambient));
                             result.Add(ToLSLVector(sky.sunlight_color));
@@ -21196,17 +21196,43 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             return changed;
         }
 
+        // track_no: -1 = whole environment (ViewerEnvironment.CycleFromOSD, unchanged),
+        // 0 = water, 1 = ground-level sky, 2-4 = the three altitude-banded sky tracks
+        // (matching env.Altitudes). Individual-track replacement was previously
+        // rejected outright (ENV_INVALID_RULE for anything but -1) despite the real SL
+        // wiki documenting 0-4 as valid, and llSetEnvironment's sibling per-track
+        // machinery (EnsureSkyTargets) already proving the underlying track model
+        // works - see PROJECT_LOG.md.
+        private int ApplyReplaceEnvironmentAsset(ViewerEnvironment env, int trackNo, LSL_String environment)
+        {
+            if (!TryLoadEnvironmentAsset(environment, out OSD envOSD))
+                return ScriptBaseClass.ENV_NO_ENVIRONMENT;
+
+            bool ok = trackNo == -1 ? env.CycleFromOSD(envOSD) : env.ReplaceTrackFromAsset(trackNo, null, envOSD);
+            return ok ? 1 : ScriptBaseClass.ENV_NO_ENVIRONMENT;
+        }
+
         public LSL_Integer llReplaceEnvironment(LSL_Vector position, LSL_String environment, LSL_Integer track_no,
                 LSL_Integer day_length, LSL_Integer day_offset)
         {
             if (m_envModule is null)
                 return ScriptBaseClass.ENV_NO_ENVIRONMENT;
 
-            if (track_no.value != -1)
+            if (track_no.value < -1 || track_no.value > 4)
                 return ScriptBaseClass.ENV_INVALID_RULE;
 
             if (!ValidateEnvironmentTime(day_length.value, day_offset.value))
                 return ScriptBaseClass.ENV_VALIDATION_FAIL;
+
+            bool isEmpty = string.IsNullOrEmpty(environment) || environment == ScriptBaseClass.NULL_KEY;
+
+            // Tracks 0/1 can't be removed (matches real SL's documented ENV_NO_PERMISSIONS
+            // for this case). Removing one specific sky track (2-4) isn't implemented -
+            // returning ENV_INVALID_RULE rather than silently no-op-succeeding, since
+            // falling through would otherwise just re-save the untouched environment
+            // and report success without actually removing anything.
+            if (isEmpty && track_no.value != -1)
+                return track_no.value <= 1 ? ScriptBaseClass.ENV_NO_PERMISSIONS : ScriptBaseClass.ENV_INVALID_RULE;
 
             bool wholeRegion = position.x < 0 || position.y < 0;
             if (wholeRegion)
@@ -21214,23 +21240,19 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 if (!World.Permissions.CanIssueEstateCommand(m_host.OwnerID, true))
                     return ScriptBaseClass.ENV_NO_PERMISSIONS;
 
-                if (string.IsNullOrEmpty(environment) || environment == ScriptBaseClass.NULL_KEY)
+                if (isEmpty && track_no.value == -1 && day_length.value < 0 && day_offset.value < 0)
                 {
-                    if (day_length.value < 0 && day_offset.value < 0)
-                    {
-                        m_envModule.StoreOnRegion(null);
-                        m_envModule.WindlightRefresh(0);
-                        return 1;
-                    }
+                    m_envModule.StoreOnRegion(null);
+                    m_envModule.WindlightRefresh(0);
+                    return 1;
                 }
 
                 ViewerEnvironment env = m_envModule.GetRegionEnvironment().Clone();
-                if (!string.IsNullOrEmpty(environment) && environment != ScriptBaseClass.NULL_KEY)
+                if (!isEmpty)
                 {
-                    if (!TryLoadEnvironmentAsset(environment, out OSD envOSD))
-                        return ScriptBaseClass.ENV_NO_ENVIRONMENT;
-                    if (!env.CycleFromOSD(envOSD))
-                        return ScriptBaseClass.ENV_NO_ENVIRONMENT;
+                    int loadResult = ApplyReplaceEnvironmentAsset(env, track_no.value, environment);
+                    if (loadResult != 1)
+                        return loadResult;
                 }
 
                 ApplyEnvironmentTime(env, day_length.value, day_offset.value);
@@ -21249,23 +21271,19 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             if (!World.Permissions.CanEditParcelProperties(m_host.OwnerID, parcel, GroupPowers.AllowEnvironment, true))
                 return ScriptBaseClass.ENV_NO_PERMISSIONS;
 
-            if (string.IsNullOrEmpty(environment) || environment == ScriptBaseClass.NULL_KEY)
+            if (isEmpty && track_no.value == -1 && day_length.value < 0 && day_offset.value < 0)
             {
-                if (day_length.value < 0 && day_offset.value < 0)
-                {
-                    parcel.StoreEnvironment(null);
-                    m_envModule.WindlightRefresh(0, false);
-                    return 1;
-                }
+                parcel.StoreEnvironment(null);
+                m_envModule.WindlightRefresh(0, false);
+                return 1;
             }
 
             ViewerEnvironment parcelEnv = (parcel.LandData.Environment ?? m_envModule.GetRegionEnvironment()).Clone();
-            if (!string.IsNullOrEmpty(environment) && environment != ScriptBaseClass.NULL_KEY)
+            if (!isEmpty)
             {
-                if (!TryLoadEnvironmentAsset(environment, out OSD envOSD))
-                    return ScriptBaseClass.ENV_NO_ENVIRONMENT;
-                if (!parcelEnv.CycleFromOSD(envOSD))
-                    return ScriptBaseClass.ENV_NO_ENVIRONMENT;
+                int loadResult = ApplyReplaceEnvironmentAsset(parcelEnv, track_no.value, environment);
+                if (loadResult != 1)
+                    return loadResult;
             }
 
             ApplyEnvironmentTime(parcelEnv, day_length.value, day_offset.value);

@@ -190,6 +190,53 @@ namespace OpenSim.Framework
             return true;
         }
 
+        // Same idea as replaceSkyFromOSD, but replaces only ONE track's content
+        // instead of flattening the whole sky cycle to a single static frame -
+        // llReplaceEnvironment's track_no 1-4 (skyTrack0 = ground-level, skyTracks[0..2]
+        // = the three altitude-banded tracks). skyframes is a single namespace shared
+        // by every track, so this keys the new frame uniquely to the track being
+        // replaced - reusing a name another track's own frame still references would
+        // silently corrupt that track's content too.
+        public bool replaceSkyTrackFromOSD(int trackIndex, string name, OSDMap map)
+        {
+            if (trackIndex < 1 || trackIndex > 4)
+                return false;
+
+            SkyData sky = new SkyData();
+            string frameName = "track" + trackIndex + "_" + (string.IsNullOrWhiteSpace(name) ? "Sky" : name);
+            try
+            {
+                sky.FromOSD(frameName, map);
+            }
+            catch
+            {
+                return false;
+            }
+
+            skyframes[frameName] = sky;
+
+            TrackEntry t = new TrackEntry()
+            {
+                time = -1,
+                frameName = frameName
+            };
+
+            if (trackIndex == 1)
+            {
+                skyTrack0.Clear();
+                skyTrack0.Add(t);
+            }
+            else
+            {
+                int idx = trackIndex - 2;
+                skyTracks[idx] ??= new List<TrackEntry>();
+                skyTracks[idx].Clear();
+                skyTracks[idx].Add(t);
+            }
+
+            return true;
+        }
+
         public void FromOSD(OSDMap map)
         {
             CompareTrackEntries cte = new CompareTrackEntries();
