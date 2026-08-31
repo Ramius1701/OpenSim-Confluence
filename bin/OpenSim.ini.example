@@ -1175,6 +1175,10 @@
     ;; Robust-side: the WebUI checkout's Deliver call).
     ServiceAccountUUID = "00000000-0000-0000-0000-000000000000"
 
+    ;; Upper bound on items+folders DirectDeliveryModule's PUT
+    ;; /associate_inventory will snapshot from a single product folder.
+    MaxInventoryNodes = 5000
+
 [AuctionService]
     ;; Backs land-parcel web-bidding auctions.
     ;; Only needed if [Modules] AuctionService is LocalAuctionServiceConnector.
