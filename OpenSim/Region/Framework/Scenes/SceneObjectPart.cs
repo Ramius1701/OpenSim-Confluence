@@ -335,6 +335,115 @@ namespace OpenSim.Region.Framework.Scenes
                 ParentGroup.HasGroupChanged = true;
         }
 
+        // Pathfinding linkset properties (ObjectNavMeshProperties/RegionObjects/
+        // TerrainNavMeshProperties caps). Only meaningful on a linkset's root part -
+        // matches the real viewer's llpathfindinglinkset.cpp, which treats these as
+        // whole-linkset properties, not per-part. category: 0=Include(walkable),
+        // 1=Exclude, 2=Ignore, matching LINKSET_CATEGORY_VALUE_* in
+        // llpathfindinglinkset.cpp exactly. A/B/C/D: walkability coefficients, 0-100.
+        private const string PathfindingDynAttrsNamespace = "OpenSim";
+        private const string PathfindingDynAttrsStore = "Pathfinding";
+        private const string PathfindingCategoryKey = "category";
+        private const string PathfindingWalkabilityAKey = "A";
+        private const string PathfindingWalkabilityBKey = "B";
+        private const string PathfindingWalkabilityCKey = "C";
+        private const string PathfindingWalkabilityDKey = "D";
+
+        public const int PathfindingCategoryInclude = 0;
+        public const int PathfindingCategoryExclude = 1;
+        public const int PathfindingCategoryIgnore = 2;
+        public const int PathfindingWalkabilityDefault = 100;
+
+        public int GetPathfindingCategory()
+        {
+            if (DynAttrs == null)
+                return PathfindingCategoryInclude;
+
+            lock (DynAttrs)
+            {
+                if (DynAttrs.TryGetStore(PathfindingDynAttrsNamespace, PathfindingDynAttrsStore, out OSDMap store)
+                    && store != null
+                    && store.TryGetValue(PathfindingCategoryKey, out OSD categoryOSD))
+                {
+                    return categoryOSD.AsInteger();
+                }
+            }
+
+            return PathfindingCategoryInclude;
+        }
+
+        public void SetPathfindingCategory(int category)
+        {
+            DynAttrs ??= new DAMap();
+
+            lock (DynAttrs)
+            {
+                if (!DynAttrs.TryGetStore(PathfindingDynAttrsNamespace, PathfindingDynAttrsStore, out OSDMap store)
+                    || store == null)
+                {
+                    store = new OSDMap();
+                }
+
+                store[PathfindingCategoryKey] = OSD.FromInteger(category);
+                DynAttrs.SetStore(PathfindingDynAttrsNamespace, PathfindingDynAttrsStore, store);
+            }
+
+            if (ParentGroup != null)
+                ParentGroup.HasGroupChanged = true;
+        }
+
+        public void GetPathfindingWalkability(out int a, out int b, out int c, out int d)
+        {
+            a = b = c = d = PathfindingWalkabilityDefault;
+
+            if (DynAttrs == null)
+                return;
+
+            lock (DynAttrs)
+            {
+                if (!DynAttrs.TryGetStore(PathfindingDynAttrsNamespace, PathfindingDynAttrsStore, out OSDMap store)
+                    || store == null)
+                    return;
+
+                if (store.TryGetValue(PathfindingWalkabilityAKey, out OSD aOSD))
+                    a = aOSD.AsInteger();
+                if (store.TryGetValue(PathfindingWalkabilityBKey, out OSD bOSD))
+                    b = bOSD.AsInteger();
+                if (store.TryGetValue(PathfindingWalkabilityCKey, out OSD cOSD))
+                    c = cOSD.AsInteger();
+                if (store.TryGetValue(PathfindingWalkabilityDKey, out OSD dOSD))
+                    d = dOSD.AsInteger();
+            }
+        }
+
+        public void SetPathfindingWalkability(int? a, int? b, int? c, int? d)
+        {
+            DynAttrs ??= new DAMap();
+
+            lock (DynAttrs)
+            {
+                if (!DynAttrs.TryGetStore(PathfindingDynAttrsNamespace, PathfindingDynAttrsStore, out OSDMap store)
+                    || store == null)
+                {
+                    store = new OSDMap();
+                }
+
+                if (a.HasValue)
+                    store[PathfindingWalkabilityAKey] = OSD.FromInteger(Math.Clamp(a.Value, 0, 100));
+                if (b.HasValue)
+                    store[PathfindingWalkabilityBKey] = OSD.FromInteger(Math.Clamp(b.Value, 0, 100));
+                if (c.HasValue)
+                    store[PathfindingWalkabilityCKey] = OSD.FromInteger(Math.Clamp(c.Value, 0, 100));
+                if (d.HasValue)
+                    store[PathfindingWalkabilityDKey] = OSD.FromInteger(Math.Clamp(d.Value, 0, 100));
+
+                DynAttrs.SetStore(PathfindingDynAttrsNamespace, PathfindingDynAttrsStore, store);
+            }
+
+            if (ParentGroup != null)
+                ParentGroup.HasGroupChanged = true;
+        }
+
         #region Fields
 
         public bool AllowedDrop;

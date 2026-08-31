@@ -16706,3 +16706,91 @@ Real-world impact depends on whether a given deployment runs SSL caps
 - not yet confirmed either way for Casperia Prime specifically, and
 not live-tested in-world (would need a real screenshot-included abuse
 report on an SSL-caps region to prove the round-trip).
+
+### Pathfinding — items 1-4 built: AgentState, CharacterProperties, TerrainNavMeshProperties, RegionObjects/ObjectNavMeshProperties (2026-08-31)
+
+Confirmed real viewer footprint first (huge one: llpathfindingmanager/
+navmesh/navmeshstatus/linkset/linksetlist/character/characterlist/
+pathtool.cpp, llfloaterpathfindingconsole/linksets/characters.cpp).
+Confirmed the LSL scripting side (`llCreateCharacter`/`llNavigateTo`/
+`llPatrolPoints`/etc in LSL_Api.cs) already existed, but grepped for
+all 5 real caps (`CharacterProperties`, `NavMeshGenerationStatus`,
+`ObjectNavMeshProperties`, `RetrieveNavMeshSrc`,
+`TerrainNavMeshProperties`) plus the `DynamicPathfindingEnabled`
+simulator-feature flag and `AgentState`/`RegionObjects` (found via
+`llpathfindingmanager.cpp`'s own cap-name constants) - all zero
+matches. This is a real feature-gap (the whole viewer-facing half of
+Pathfinding), not a wiring bug, so it was scoped as a project with the
+user rather than silently built: items 1-4 below are tractable
+data-storage/retrieval caps; item 5 (real navmesh generation/baking)
+is a much larger, separate undertaking - user's direction: "start on
+1-4, then do 5, this is a requested item and code."
+
+**Protocol traced precisely before writing any code** (this matters -
+several details would have been easy to get wrong by guessing):
+- `ObjectNavMeshProperties` uses **PUT**, not POST
+  (`linksetObjectsCoro`'s `putAndSuspend`) - same for
+  `TerrainNavMeshProperties`'s update path.
+- `RegionObjects` (GET, full linkset dump) and `ObjectNavMeshProperties`
+  (PUT, apply changes) are two SEPARATE cap names, not one GET/PUT
+  pair on the same cap - confirmed via
+  `getRetrieveObjectLinksetsURLForCurrentRegion()` vs
+  `getChangeObjectLinksetsURLForCurrentRegion()` returning different
+  cap-name constants. `TerrainNavMeshProperties`, by contrast, DOES
+  share one cap URL for both GET and PUT.
+- Response/request shape is a FLAT map keyed by UUID string at the top
+  level (`parseLinksetListData` iterates `pLinksetListData.beginMap()`
+  directly) - no wrapper key. Terrain's shape is a single flat object
+  (no UUID key at all - `LLPathfindingLinkset`'s terrain constructor
+  skips `parseObjectData`, so no name/description/owner/position
+  fields either, just the pathfinding-specific ones).
+- `navmesh_category` wire values: 0=Include, 1=Exclude, 2=Ignore
+  (`LINKSET_CATEGORY_VALUE_*` in llpathfindinglinkset.cpp) - NOT the
+  7-value `ELinksetUse` enum the UI displays (Walkable/StaticObstacle/
+  etc - that's derived client-side from `category` + `phantom`).
+  Walkability coefficients A/B/C/D are ints, 0-100
+  (`MIN`/`MAX_WALKABILITY_VALUE`).
+- PUT bodies are a **partial patch** - `encodeAlteredFields` only
+  includes fields that actually changed, so the server must treat a
+  missing field as "leave unchanged," not "reset to default."
+- `AgentState` GET returns `{can_modify_navmesh: bool}`; the same cap
+  URL also handles a `{command: "rebuild"}` POST-equivalent for the
+  rebake button (that piece is `NavMeshGenerationStatus`, deferred to
+  item 5).
+
+**Storage decisions:**
+- Per-linkset `navmesh_category`/A/B/C/D: added to
+  `SceneObjectPart.cs` via `DynAttrs` (namespace "OpenSim", store
+  "Pathfinding"), following the EXACT precedent already established
+  by Combat2's `GetLslHealth`/`SetLslHealth` (`LslCombatDynAttrsNamespace`)
+  in the same file - already-persisted, already-proven pattern, no
+  new DB migration needed.
+- Character list: `LSL_Api.m_characterNavStates` (the existing
+  Combat2-adjacent registry `llCreateCharacter` already populates) is
+  `private static` and process-wide - added a public static
+  `LSL_Api.GetActivePathfindingCharacters(Scene)` that filters to
+  `Created == true` entries whose root part actually exists in the
+  given scene, without exposing the private `CharacterNavState` type
+  itself.
+- Terrain-wide walkability: kept in-memory only on the module instance
+  for this first pass (same not-persisted-across-restart tradeoff
+  already accepted for Combat2's character state) rather than adding a
+  new `RegionSettings` DB column/migration - a real, deliberate scope
+  cut, noted here rather than silently taken.
+
+**New file:** `OpenSim/Region/ClientStack/Linden/Caps/PathfindingModule.cs`
+registers all 5 caps, gated behind a new `[Pathfinding] Enabled = true`
+config section (`bin/OpenSim.ini.example`), off by default - matching
+`AbuseReportsModule`'s exact enable-gate convention. `modifiable` in
+linkset responses is computed per-request via the real requesting
+agent's `CanEditObject` permission (not hardcoded), matching the real
+viewer's use of that field to gray out uneditable objects in the UI.
+`AgentState`/terrain-PUT are gated on `CanIssueEstateCommand`, matching
+every other estate-write path in this codebase.
+
+Build verified clean (0 errors/warnings). **Not yet live-tested** - and
+per the dependency noted above, these caps won't actually be called by
+a real viewer until `RetrieveNavMeshSrc` exists too (item 5), since
+`isPathfindingEnabledForRegion()` gates the whole floater on that cap's
+mere presence. Next: item 5 (navmesh generation/retrieval) - a real
+R&D undertaking, scoped separately.

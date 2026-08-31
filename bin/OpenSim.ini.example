@@ -1130,6 +1130,18 @@
     ;Enabled = true
 
 
+[Pathfinding]
+    ;; Enables the in-viewer Pathfinding floaters' CAPS endpoints
+    ;; (AgentState, CharacterProperties, TerrainNavMeshProperties,
+    ;; RegionObjects, ObjectNavMeshProperties). Note: real navmesh
+    ;; generation/retrieval (NavMeshGenerationStatus, RetrieveNavMeshSrc)
+    ;; is not yet implemented, so the viewer's own isPathfindingEnabled
+    ;; check (gated on RetrieveNavMeshSrc's presence) will keep the
+    ;; Pathfinding floater from calling any of these caps until that
+    ;; lands too.
+    ;Enabled = true
+
+
 [CurrencyService]
     ;; Backs ConfluenceCurrencyModule (see [Economy]/[Modules] above).
     ;; Only needed if [Modules] CurrencyService is LocalCurrencyServiceConnector.

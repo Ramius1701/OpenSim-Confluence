@@ -9996,6 +9996,45 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 m_characterNavStates.Remove(root.UUID);
         }
 
+        public readonly struct PathfindingCharacterInfo
+        {
+            public readonly UUID RootID;
+            public readonly float Radius;
+            public readonly float Length;
+
+            public PathfindingCharacterInfo(UUID rootID, float radius, float length)
+            {
+                RootID = rootID;
+                Radius = radius;
+                Length = length;
+            }
+        }
+
+        // Backs the CharacterProperties cap - m_characterNavStates is process-wide (keyed
+        // by linkset root UUID, not scoped to a region), so callers must filter to the
+        // scene they actually want.
+        public static List<PathfindingCharacterInfo> GetActivePathfindingCharacters(Scene scene)
+        {
+            List<PathfindingCharacterInfo> result = new();
+
+            lock (m_characterNavLock)
+            {
+                foreach (KeyValuePair<UUID, CharacterNavState> kvp in m_characterNavStates)
+                {
+                    if (!kvp.Value.Created)
+                        continue;
+
+                    if (scene.GetSceneObjectPart(kvp.Key) == null)
+                        continue;
+
+                    lock (kvp.Value.Sync)
+                        result.Add(new PathfindingCharacterInfo(kvp.Key, kvp.Value.Radius, kvp.Value.Length));
+                }
+            }
+
+            return result;
+        }
+
         private static void ApplyCharacterOptions(CharacterNavState state, LSL_List options)
         {
             if (state == null || options == null)
