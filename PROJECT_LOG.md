@@ -16617,3 +16617,53 @@ findings in this area would be lower-confidence than everything found
 in Experience Tools. **User's call: treat Combat2 as done with this
 one fix**, and move to a ported area that has real viewer-facing
 protocol to verify against.
+
+### Display Names — one real fix, protocol otherwise verified clean (2026-08-31)
+
+Confirmed real viewer footprint first (`llviewerdisplayname.cpp`,
+`llfloaterdisplayname.cpp`, `llavatarnamecache.cpp`) before starting -
+unlike Combat2, Display Names has a substantial protocol surface to
+verify against.
+
+**`DisplayNameModule.SetDisplayName`'s 7-day-cooldown branch - fixed.**
+When a resident hits the once-a-week rename limit, the handler sent
+the in-world chat alert but then `return`ed without setting
+`httpResponse.StatusCode` or `RawBuffer` - leaving the response at its
+framework default of 200 OK with an empty body (confirmed via
+`OSHttpServer/HttpResponse.cs`'s constructor: `Status =
+HttpStatusCode.OK`). Traced what this does client-side:
+`LLViewerDisplayName::set()` connects a callback slot then POSTs; on a
+non-OK HTTP status it fires that slot with `(false, "", LLSD())` and
+disconnects it, but on `200 OK` it just waits for an async
+`SetDisplayNameReply` EventQueue message that only
+`SendSetDisplayNameReply` sends - and that method was never reached
+because of the early return. Net effect: the resident got the chat
+alert, but the floater's own success/failure notification never fired
+(no toast either way), and the connected `sSetDisplayNameSignal` slot
+was never disconnected - a real accumulating leak, since the next
+*successful* rename attempt would fire that stale slot alongside the
+new one. Fixed by setting `httpResponse.StatusCode = 403 Forbidden` on
+this branch, which routes through the viewer's already-correct
+generic-failure path (`onCacheSetName(false, "", LLSD())` ->
+"SetDisplayNameFailedGeneric" notification) instead of stalling
+silently.
+
+**Also traced and confirmed correct, not a bug:** initially suspected
+`FormatDisplayNameUpdate`'s missing `display_name_expires` key (present
+in `GetDisplayNames`'s response, absent here) was a bug, since
+`LLAvatarName::fromLLSD` reads that key - but the real
+`LLDisplayNameUpdate::post` handler immediately overwrites
+`av_name.mExpires` right after calling `fromLLSD()` regardless of what
+was parsed, so the omission is harmless for this specific message.
+`GetDisplayNames` (`BunchOfCaps.cs`) already includes all 7 fields
+`LLAvatarName::fromLLSD`/`asLLSD` round-trip on, correctly. The
+`SetDisplayName` POST body's `[old, new]` array-index convention, the
+`SetDisplayNameReply`/`DisplayNameUpdate` EventQueue message short-name
+convention (bare name, not the `/message/...` HTTP node path),
+`IsNameDefault`/`ViewerDisplayName`/`Username`/`LegacyName`'s fallback
+logic - all verified against the real viewer/protocol and correct.
+
+Build verified clean. Not yet live-tested in-world (need to trigger
+the actual 7-day cooldown against a real account to watch the fixed
+notification fire) - flagged per the project's "no verified claim
+without concrete proof" rule.

@@ -141,6 +141,16 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             if (userData.NameChanged.AddDays(7) > DateTime.UtcNow)
             {
                 m_Scene.GetScenePresence(agent_id).ControllingClient.SendAlertMessage("You can only change your display name once a week!");
+
+                // Was falling through with the default 200 OK / empty body. The viewer's
+                // LLViewerDisplayName::set() only resolves its callback (and disconnects its
+                // signal slot) either from a non-OK HTTP status here, or from an async
+                // SetDisplayNameReply event queue message - neither of which happened, so the
+                // resident got the in-world alert but the floater's own success/failure
+                // notification never fired, and the connected callback slot leaked (the next
+                // successful rename would fire this stale slot too). A non-OK status here
+                // routes through the viewer's existing generic-failure path instead.
+                httpResponse.StatusCode = (int)HttpStatusCode.Forbidden;
                 return;
             }
 
