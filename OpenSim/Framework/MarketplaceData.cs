@@ -6,11 +6,43 @@
  * region layers can share one set of types, matching where CurrencyTransfer/
  * StoreCatalogItem already live for the same reason.
  */
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using OpenMetaverse;
 
 namespace OpenSim.Framework
 {
+    // One row per marketplace listing (native DirectDelivery marketplace,
+    // MarketplaceListingsService/IMarketplaceListingsData) - not the old v2
+    // addon's protocol, which never persisted listings of its own at all
+    // (every "product" was just discovered live from Merchant Outbox folder
+    // contents on each request). CountOnHand null means unlimited stock;
+    // a non-null value is real, atomically-decremented finite stock (see
+    // IMarketplaceListingsData.TryReserveStock).
+    public class MarketplaceListing
+    {
+        public int ID = 0;
+        public UUID SellerID = UUID.Zero;
+        public string Title = string.Empty;
+        public string Description = string.Empty;
+
+        // ConfluenceCurrency units - see ICurrencyService.
+        public int Price = 0;
+
+        public int? CountOnHand = null;
+        public bool IsListed = false;
+
+        // Populated by PUT /associate_inventory/<id> (DirectDeliveryModule)
+        // via MarketplaceInventoryOperations.Snapshot - UUID.Zero until then.
+        public UUID SnapshotFolderID = UUID.Zero;
+        public UUID ListingFolderID = UUID.Zero;
+        public UUID VersionFolderID = UUID.Zero;
+
+        public DateTime Created = DateTime.UtcNow;
+        public DateTime Updated = DateTime.UtcNow;
+    }
+
     public sealed class ProductFolderInfo
     {
         [JsonPropertyName("folder_id")]

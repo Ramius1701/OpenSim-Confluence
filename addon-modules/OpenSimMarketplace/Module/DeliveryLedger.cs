@@ -12,7 +12,7 @@ using System.IO;
 using System.Text.Json;
 using log4net;
 using OpenSim.Framework;
-using OpenSim.Region.CoreModules.Framework.Marketplace;
+using OpenSim.Services.Interfaces;
 
 namespace OpenSim.Addons.Marketplace;
 

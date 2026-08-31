@@ -1107,11 +1107,13 @@
     ; AbuseReportsService = "LocalAbuseReportsServicesConnector"
     ; AbuseReportsService = "RemoteAbuseReportsServicesConnector"
 
-    ;; Confluence's native currency/auction connectors - each region talks
-    ;; to the [CurrencyService]/[AuctionService] database directly. This is
-    ;; how Confluence is set up out of the box.
+    ;; Confluence's native currency/auction/marketplace connectors - each
+    ;; region talks to the [CurrencyService]/[AuctionService]/
+    ;; [MarketplaceService] database directly. This is how Confluence is
+    ;; set up out of the box.
     CurrencyService = "LocalCurrencyServiceConnector"
     AuctionService = "LocalAuctionServiceConnector"
+    MarketplaceService = "LocalMarketplaceListingsServiceConnector"
 
 [AbuseReportsService]
     ;; Only needed if [Modules] AbuseReportsService above is set to
@@ -1156,6 +1158,22 @@
     DailyPurchaseCapUSD = 500
     WeeklyPurchaseCapUSD = 2000
     MonthlyPurchaseCapUSD = 5000
+
+[MarketplaceService]
+    ;; Backs the native, viewer-integrated DirectDelivery marketplace
+    ;; (DirectDeliveryModule's caps - see FEATURES.md). Only needed if
+    ;; [Modules] MarketplaceService is LocalMarketplaceListingsServiceConnector.
+    LocalServiceModule = "OpenSim.Services.MarketplaceService.dll:MarketplaceListingsService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlMarketplaceListingsData"
+    ;; Edit this for your own database - this module talks directly to
+    ;; MySQL rather than through ROBUST, same as [CurrencyService] above.
+    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+    ;; Must match Robust.HG.ini's own [MarketplaceService] ServiceAccountUUID
+    ;; exactly - both sides manipulate the same custodian account's
+    ;; inventory (region-side: PUT /associate_inventory's Snapshot call;
+    ;; Robust-side: the WebUI checkout's Deliver call).
+    ServiceAccountUUID = "00000000-0000-0000-0000-000000000000"
 
 [AuctionService]
     ;; Backs land-parcel web-bidding auctions.

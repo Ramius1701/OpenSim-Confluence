@@ -986,6 +986,38 @@
     RegionOrderGridRoot = "C:\opensim"
     RegionOrderExternalHostName = "${Const|BaseHostname}"
 
+;; Needed for the WebUI's own ConfluenceCurrency checkout (Store's "Buy
+;; with Confluence Currency" path, and the native Marketplace's checkout -
+;; see [MarketplaceService] below) to actually charge anyone -
+;; WebInterfaceServiceConnector loads ICurrencyService straight from this
+;; section (LoadReusedPlugin<ICurrencyService>(config, "CurrencyService", ...)),
+;; same as the region-side [CurrencyService] block in OpenSim.ini.example,
+;; just read Robust-side instead of through a region's own Scene. Without
+;; this section the checkout silently no-ops (every m_CurrencyService ==
+;; null guard in WebInterfaceServiceConnector just skips the charge) rather
+;; than failing loudly - found missing from this template while building
+;; the native Marketplace's own checkout, which hits the exact same gap.
+[CurrencyService]
+    LocalServiceModule = "OpenSim.Services.CurrencyService.dll:CurrencyService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlCurrencyData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+;; Native DirectDelivery marketplace (viewer-integrated - see FEATURES.md).
+;; Listing metadata/stock only; actual inventory snapshot/delivery is
+;; DirectDeliveryModule's job region-side (OpenSim.ini's own
+;; [MarketplaceService] block), reusing MarketplaceInventoryOperations.
+;; Auto-merchant for everyone - no separate merchant-status table/flag.
+[MarketplaceService]
+    LocalServiceModule = "OpenSim.Services.MarketplaceService.dll:MarketplaceListingsService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlMarketplaceListingsData"
+    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+    ;; Non-zero local account UUID - the neutral custodian for in-transit
+    ;; snapshot/delivery folders, same role as the old v2 addon's own
+    ;; ServiceAccountUUID (OpenSimMarketplace.ini) - can be the same account
+    ;; if that addon is also installed, or a fresh one if not.
+    ServiceAccountUUID = "00000000-0000-0000-0000-000000000000"
+
 ;; Store's OWN Gloebit integration - Robust-side, independent of
 ;; addon-modules/Gloebit/GloebitMoneyModule (that module is entirely
 ;; region-Scene-bound; nothing Robust-side can charge Gloebits without

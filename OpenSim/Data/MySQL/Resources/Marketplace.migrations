@@ -1,0 +1,37 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `marketplace_listings` (
+	`ID` INT NOT NULL AUTO_INCREMENT,
+	`SellerID` VARCHAR(36) NOT NULL,
+	`Title` VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+	`Description` TEXT CHARACTER SET utf8mb4 NOT NULL,
+	`Price` INT NOT NULL DEFAULT 0,
+	`CountOnHand` INT NULL,
+	`IsListed` TINYINT(1) NOT NULL DEFAULT 0,
+	`SnapshotFolderID` VARCHAR(36) NOT NULL,
+	`ListingFolderID` VARCHAR(36) NOT NULL,
+	`VersionFolderID` VARCHAR(36) NOT NULL,
+	`Created` INT NOT NULL,
+	`Updated` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `SellerID` (`SellerID`) USING BTREE,
+	INDEX `IsListed_Created` (`IsListed`, `Created`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `marketplace_deliveries` (
+	`DeliveryID` VARCHAR(128) NOT NULL,
+	`SellerID` VARCHAR(36) NOT NULL,
+	`SnapshotFolderID` VARCHAR(36) NOT NULL,
+	`RecipientID` VARCHAR(36) NOT NULL,
+	`SnapshotFingerprint` VARCHAR(64) NOT NULL,
+	`DestinationFolderID` VARCHAR(36) NOT NULL,
+	`ItemCount` INT NOT NULL DEFAULT 0,
+	`FolderCount` INT NOT NULL DEFAULT 0,
+	`Created` INT NOT NULL,
+	PRIMARY KEY (`DeliveryID`) USING BTREE,
+	INDEX `RecipientID` (`RecipientID`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+COMMIT;
