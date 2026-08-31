@@ -326,9 +326,16 @@ namespace OpenSim.Region.ClientStack.Linden
                     }, "", null);
             caps.HttpListener.AddStreamHandler(uploader);
 
+            // Sibling upload caps (UploadBakedTexture/UserProfile/InventoryThumbnail) all
+            // pick http/https based on caps.SSLCaps - this one hardcoded http://, so the
+            // screenshot's second-step POST would 404/fail on an SSL-caps grid, and since
+            // ReportAbuse() only fires from that second step's callback, the whole report
+            // (not just the screenshot) would be silently lost.
+            string protocol = caps.SSLCaps ? "https://" : "http://";
+
             OSDMap response = new OSDMap();
             response.Add("state", "upload");
-            response.Add("uploader", "http://" + caps.HostName + ":" + caps.Port + uploader.Path);
+            response.Add("uploader", protocol + caps.HostName + ":" + caps.Port + uploader.Path);
 
             return OSDParser.SerializeLLSDXmlString(response); ;
         }

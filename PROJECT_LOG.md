@@ -16667,3 +16667,42 @@ Build verified clean. Not yet live-tested in-world (need to trigger
 the actual 7-day cooldown against a real account to watch the fixed
 notification fire) - flagged per the project's "no verified claim
 without concrete proof" rule.
+
+### Abuse Reports — SSL scheme mismatch could silently drop screenshot reports (2026-08-31)
+
+Confirmed real viewer footprint first (`llfloaterreporter.cpp`) before
+starting. Traced the full protocol: `gatherReport()`'s LLSD field
+names (`report-type`, `category`, `position`, `check-flags`,
+`screenshot-id`, `object-id`, `abuser-id`, `abuse-region-name`,
+`abuse-region-id`, `summary`, `version-string`, `details`) against
+`AbuseReportDataFromOSD` - all match exactly, including the deliberate
+choice to ignore the client's `abuse-region-name`/`abuse-region-id`
+(the real viewer always sends these blank/null and expects the server
+to fill in the true region attribution itself, which Confluence
+already does).
+
+**`SendUserReportWithScreenshot` - SSL scheme mismatch, fixed.** The
+screenshot-included path uses the standard two-step asset-upload
+protocol (`state: upload` + `uploader: <url>`, then the viewer POSTs
+the raw JPEG to that URL, matching `LLViewerAssetUpload::
+EnqueueInventoryUpload`'s generic coroutine field expectations
+exactly - verified `"uploader"`/`"state"`/`"complete"` are the right
+keys/values). But the `uploader` URL was hardcoded to `"http://" +
+caps.HostName + ...`, while every sibling upload cap in this codebase
+(`UploadBakedTextureModule`, `UserProfileModule`,
+`InventoryThumbnailUploadModule`) picks the scheme via `caps.SSLCaps ?
+"https://" : "http://"`. On any grid running SSL-enabled capabilities,
+the second-step upload would be pointed at the wrong scheme and fail -
+and since `ReportAbuse()` only fires from inside that second step's
+success callback, the *entire* report (not just the screenshot) would
+be silently lost, with the resident's floater still showing
+"HelpReportAbuseConfirm" (the confirmation notification fires
+immediately client-side after the first POST, regardless of whether
+the second step ever succeeds - so residents would believe their
+report went through when it didn't). Fixed by matching the sibling
+modules' `caps.SSLCaps` pattern exactly. Build verified clean.
+
+Real-world impact depends on whether a given deployment runs SSL caps
+- not yet confirmed either way for Casperia Prime specifically, and
+not live-tested in-world (would need a real screenshot-included abuse
+report on an SSL-caps region to prove the round-trip).
