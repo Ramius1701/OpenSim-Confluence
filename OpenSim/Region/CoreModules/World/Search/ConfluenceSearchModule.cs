@@ -314,8 +314,17 @@ namespace OpenSim.Region.CoreModules.World.Search
         }
 
         // Same protocol overload OpenSimSearch/WhiteCore-Dev both use: one
-        // viewer packet (OnDirFindQuery) carries either a People search or
-        // an Events (DateEvents) search, distinguished only by a flag bit.
+        // viewer packet (OnDirFindQuery) carries a People, Groups, or Events
+        // (DateEvents) search, distinguished only by a flag bit. Groups was
+        // missing here (m_groupsService was loaded in Initialise() but never
+        // actually queried) - confirmed against the real viewer source
+        // (llpaneldirgroups.cpp, still present and reachable in both the
+        // official client and Firestorm) that the classic Directory
+        // floater's Groups tab really does send DirFindQuery with
+        // DFQ_GROUPS/DirFindFlags.Groups, not a separate message - and
+        // BasicSearchModule.cs (vanilla OpenSim's own basic search) already
+        // handles this same flag, so this was a real regression relative to
+        // what stock OpenSim already did, not unsupported-by-design.
         private void DirFindQuery(IClientAPI remoteClient, UUID queryID,
                 string queryText, uint queryFlags, int queryStart)
         {
@@ -325,8 +334,52 @@ namespace OpenSim.Region.CoreModules.World.Search
                 return;
             }
 
+            if (((DirFindFlags)queryFlags & DirFindFlags.Groups) == DirFindFlags.Groups)
+            {
+                DirGroupsQuery(remoteClient, queryID, queryText, queryStart);
+                return;
+            }
+
             if (((DirFindFlags)queryFlags & DirFindFlags.People) == DirFindFlags.People)
                 DirPeopleQuery(remoteClient, queryID, queryText, queryStart);
+        }
+
+        private void DirGroupsQuery(IClientAPI remoteClient, UUID queryID, string queryText, int queryStart)
+        {
+            if (m_groupsService == null)
+            {
+                remoteClient.SendAlertMessage("Groups search is not enabled");
+                remoteClient.SendDirGroupsReply(queryID, new DirGroupsReplyData[0]);
+                return;
+            }
+
+            List<DirGroupsReplyData> results = m_groupsService.FindGroups(remoteClient.AgentId.ToString(), queryText);
+
+            if (results.Count == 0)
+            {
+                remoteClient.SendDirGroupsReply(queryID, new DirGroupsReplyData[0]);
+                return;
+            }
+
+            DirGroupsReplyData[] data = results.ToArray();
+
+            // Same paging as BasicSearchModule's own Groups handling - a viewer page is
+            // 100 results, and queryStart is the resident paging to the next page.
+            if (queryStart > 0 && queryStart < data.Length)
+            {
+                int len = Math.Min(data.Length - queryStart, 101);
+                DirGroupsReplyData[] page = new DirGroupsReplyData[len];
+                Array.Copy(data, queryStart, page, 0, len);
+                data = page;
+            }
+            else if (data.Length > 101)
+            {
+                DirGroupsReplyData[] page = new DirGroupsReplyData[101];
+                Array.Copy(data, 0, page, 0, 101);
+                data = page;
+            }
+
+            remoteClient.SendDirGroupsReply(queryID, data);
         }
 
         private void DirPeopleQuery(IClientAPI remoteClient, UUID queryID, string queryText, int queryStart)

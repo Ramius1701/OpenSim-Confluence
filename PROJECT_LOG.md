@@ -16995,3 +16995,64 @@ Build verified clean. Not yet live-tested in-world - would need a
 region with `[NPC] Enabled = true` and bot persistence configured,
 restarted with an actual persisted bot on it, to watch it correctly
 survive this time.
+
+### Currency — clean bill of health; Search — 1 real gap found and fixed (2026-08-31)
+
+**Currency (`ConfluenceCurrencyModule.cs`) - no bugs found.** This
+file turned out to already carry extensive self-documented prior
+audit work (explicit comments citing `LLCurrencyUIManager::Impl::
+finishCurrencyBuy`/`LLFloaterBuyLandUI::finishWebSiteInfo` by name,
+recording earlier fixes: the `landtool.php` routing gap, the
+`errorMessage`/`errorURI` failure-shape gap, a missing `OnObjectBuy`
+subscription that made object purchases silently free, a missing
+`OnRequestPayPrice` subscription, a `transactionID` reuse bug that
+broke repeat purchases of the same object, and a missing balance-push
+on region crossing between mixed economy modules). Re-verified three
+of these specific claims independently against the actual
+`secondlife/viewer` GitHub source this pass (not just trusting the
+comments) - `errorMessage`/`errorURI` handling, `landUse`/`membership`
+response shape, and `getCurrencyQuote`'s exact required response
+fields - all confirmed byte-for-byte correct. Also independently
+verified `SendEconomyData`'s 17-argument positional call maps
+`PriceGroupCreate` (arg 5) and `PriceUpload` (arg 15) to the correct
+slots against `IClientAPI`'s real parameter order. No new findings -
+this file was already thoroughly done.
+
+**Search - found a third, entirely separate search module
+(`ConfluenceSearchModule.cs`) beyond the two known ones
+(`addon-modules/OpenSimSearch` and `BasicSearchModule.cs`), confirmed
+it's the actual native/active one** (same `[Search] Module = "Name"`
+self-disabling-others gate `ConfluenceCurrencyModule` uses for
+`[Economy] economymodule`), and audited that one specifically -
+per [[casperia-audit-native-module-first]], checking for a native
+replacement before trusting whichever file grep finds first paid off
+again here.
+
+This file also already carried its own extensive audit history
+(explicit task #53 comment: extended to cover People/Events/
+Classifieds/Groups after comparing directly against OpenSimSearch's
+source, citing WhiteCore-Dev's own category split as corroboration).
+**But the comment's own claim - "one viewer packet carries either a
+People search or an Events search" - was incomplete: `DirFindQuery`
+never actually checked for the `Groups` flag**, despite
+`m_groupsService` (`IGroupsSearchProvider`, fully wired and loaded in
+`Initialise()`) sitting right there unused. Confirmed this is a real,
+reachable gap by fetching `llpaneldirgroups.cpp` directly from
+`secondlife/viewer` (both the official repo and this session's own
+Firestorm checkout have identical code): `U32 scope = DFQ_GROUPS;`
+before calling `sendDirFindQuery` - the classic Directory floater's
+Groups tab genuinely still sends this. Vanilla OpenSim's own
+`BasicSearchModule.cs` already handles this exact flag correctly (with
+real `queryStart` pagination), confirming this was a real regression
+in the native replacement, not an unsupported-by-design gap.
+
+**Fixed:** added a `Groups` flag branch to `DirFindQuery` and a new
+`DirGroupsQuery` handler calling `m_groupsService.FindGroups()` (whose
+return shape already matches `DirGroupsReplyData` exactly, requiring
+no translation), with the same page-of-101/`queryStart` offset
+handling `BasicSearchModule.cs`'s own Groups branch already
+established as the right pattern for this protocol. Build verified
+clean. Not yet live-tested in-world (would need `[Search] Module =
+"ConfluenceSearchModule"` configured with a real `GroupsSearchService`
+and a resident using the classic Directory floater's Groups tab to
+confirm the round-trip).
