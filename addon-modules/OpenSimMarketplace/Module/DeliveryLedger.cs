@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using log4net;
+using OpenSim.Framework;
 using OpenSim.Region.CoreModules.Framework.Marketplace;
 
 namespace OpenSim.Addons.Marketplace;

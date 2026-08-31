@@ -1,13 +1,15 @@
 /*
- * Result types returned by MarketplaceInventoryOperations. Moved out of
- * addon-modules/OpenSimMarketplace (where they originated as the old v2 HTTP API's
- * JSON response bodies) so both that legacy addon and the native DirectDelivery cap
- * module / WebUI marketplace can share one inventory-operations implementation.
+ * Result types returned by MarketplaceInventoryOperations. Live in
+ * OpenSim.Framework (not CoreModules) so both the data layer
+ * (OpenSim.Data/OpenSim.Data.MySQL, which cannot reference CoreModules -
+ * CoreModules references Data, not the other way around) and the service/
+ * region layers can share one set of types, matching where CurrencyTransfer/
+ * StoreCatalogItem already live for the same reason.
  */
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
-namespace OpenSim.Region.CoreModules.Framework.Marketplace
+namespace OpenSim.Framework
 {
     public sealed class ProductFolderInfo
     {

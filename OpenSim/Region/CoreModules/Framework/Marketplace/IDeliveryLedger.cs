@@ -4,6 +4,7 @@
  * same delivery_id and matching parameters returns the original receipt instead of
  * delivering a second copy.
  */
+using OpenSim.Framework;
 
 namespace OpenSim.Region.CoreModules.Framework.Marketplace
 {
