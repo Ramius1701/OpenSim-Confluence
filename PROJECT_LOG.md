@@ -16859,3 +16859,67 @@ environment.** All 6 real caps
 `RetrieveNavMeshSrc` - 7 counting both linkset caps) are registered
 and protocol-correct; the one gap (real navmesh mesh data) is a
 documented, external blocker, not an oversight.
+
+### PBR materials — clean bill of health, one FYI (2026-08-31)
+
+Confirmed real viewer footprint first (large: llmaterialeditor.cpp,
+llgltfmateriallist.cpp, llpbrterrainfeatures.cpp, llmaterialmgr.cpp,
+llvlcomposition.cpp, llface.cpp, llpanelface.cpp/fspanelface.cpp).
+
+**Verification method this pass: fetched the actual, authoritative
+`secondlife/viewer` GitHub source directly via `gh api`** (not just
+Firestorm's fork) for the two files that matter most -
+`llgltfmaterial.cpp`/`.h` (the override LLSD encode/decode) and
+`llpbrterrainfeatures.cpp` (the `ModifyRegion` cap's real request/
+response shape) - since Firestorm's local checkout doesn't include
+`indra/llprimitive` (unlike `LLPathingLib`, this one's a genuine
+open-source omission in the local checkout, not a closed-source
+blocker - confirmed via `add_subdirectory(${LIBS_OPEN_PREFIX}llprimitive)`
+in `indra/CMakeLists.txt`).
+
+**`MaterialsModule.ModifyMaterialParams` (per-face glTF override cap)
+- verified correct, byte-for-byte.** Cross-checked
+`AddMaterialOverride`'s compact-key encoding (`bc`/`ec`/`mf`/`rf`/
+`am`/`ac`/`ds`/`tex`/`ti` with `ti[i]["o"/"s"/"r"]` sub-keys, alpha
+mode integer mapping 0=OPAQUE/1=BLEND/2=MASK) against the real
+`LLGLTFMaterial::getOverrideLLSD`/`applyOverrideLLSD` in the fetched
+source - every key, every texture-slot index order
+(BASE_COLOR=0/NORMAL=1/METALLIC_ROUGHNESS=2/EMISSIVE=3, with
+occlusion aliased onto the metallic-roughness slot exactly as the
+real `GLTF_TEXTURE_INFO_OCCLUSION = GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS`
+enum does), matches exactly. The top-level cap envelope (`object_id`/
+`side`/`gltf_json`/`asset_id`) also matches `llgltfmateriallist.cpp`'s
+`is_valid_update`/queueApply construction exactly.
+
+**`ModifyRegionModule` (PBR terrain overrides cap) - verified correct.**
+This file already carried its own header comment citing the exact
+Firestorm files it was checked against; re-verified independently
+against the real secondlife/viewer source fetched this pass and found
+the same: `{success, overrides}` GET / `{overrides}` POST / `{success,
+message?}` response, 4-slot `overrides` array using the identical
+compact override encoding, matches `LLPBRTerrainFeatures::
+queryRegionCoro`/`modifyRegionCoro` exactly. Correctly scoped to the
+override layer only (which glTF asset occupies each of the 4 slots is
+the separate, pre-existing `RegionSettings.TerrainPBR1-4` mechanism,
+out of scope for this cap by design, not an oversight).
+
+`llGetPrimitiveParams`/`llGetLinkPrimitiveParams`'s `PRIM_GLTF_*`
+readback already carries its own honest inline comment documenting a
+real, smaller-than-full-SL-parity scope (reads back the override JSON
+that was set, not the merged base-material-plus-override view) - a
+deliberate, already-documented tradeoff, not a bug.
+
+**One FYI, not a bug:** `llSetLinkGLTFOverrides` supports an extra
+op-code, `OVERRIDE_GLTF_EXTENSION_JSON` (stored under compact key
+`"xj"`), that does not exist in real SL's LSL API - confirmed via the
+Second Life wiki's `llSetLinkGLTFOverrides` page, which documents only
+8 `OVERRIDE_GLTF_*` constants (no extension-JSON one). This is a
+Confluence-added capability beyond the real spec, not an attempt at
+parity that got it wrong - harmless (real viewers just ignore the
+unrecognized `"xj"` key when parsing LLSD), but worth flagging clearly
+since scripts using it will never see any visible effect in Firestorm,
+the official SL viewer, or any other real client, regardless of how
+correctly the server stores it.
+
+**No bugs found in this pass** - this is the first area in this
+initiative with a clean bill of health across everything checked.
