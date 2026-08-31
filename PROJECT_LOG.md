@@ -16794,3 +16794,68 @@ a real viewer until `RetrieveNavMeshSrc` exists too (item 5), since
 `isPathfindingEnabledForRegion()` gates the whole floater on that cap's
 mere presence. Next: item 5 (navmesh generation/retrieval) - a real
 R&D undertaking, scoped separately.
+
+### Pathfinding — item 5 investigated: real navmesh baking is blocked on closed-source LLPathingLib, not just effort (2026-08-31)
+
+Before writing any navmesh-generation code, traced exactly what
+`RetrieveNavMeshSrc`'s response needs to contain. `unzip_llsdNavMesh`
+(`llsdserialize.cpp`) is confirmed to be nothing more than generic
+zlib/gzip inflate - no SL-specific structure at all. But the
+*decompressed* bytes it hands back are then parsed by
+`LLPathingLib::PathingPacket` (referenced in
+`llpathfindingpathtool.h`), and **`LLPathingLib`'s source is not
+present anywhere in the local Firestorm checkout** - it's a prebuilt,
+closed-source Linden Lab library the viewer links against. A web
+search turned up no public specification for its internal
+polygon-mesh format either.
+
+Checked whether any other OpenSim fork had already solved this, since
+porting a working implementation would have been dramatically cheaper
+than reimplementing Recast-style navmesh baking from scratch and
+guessing the wire format. **WhiteCore-Dev does register
+`RetrieveNavMeshSrc`**
+(`WhiteCore/Services/GenericServices/CapsService/CAPModules/Region/RetrieveNavMeshSrc.cs`)
+- but its handler just returns an empty `OSDArray` with no
+`navmesh_data`/`navmesh_version` fields at all, which (traced through
+`LLPathfindingNavMesh::handleNavMeshResult`) actually puts the real
+viewer into `kNavMeshRequestError`, not a working state. It's also
+registered for `GET`, while the real protocol's retrieval step is a
+**POST** (confirmed via `navMeshStatusRequestCoro`'s
+`httpAdapter->postAndSuspend(httpRequest, navMeshURL, postData)`) - so
+even reaching WhiteCore's stub would fail. No fork available in this
+session's toolkit (WhiteCore-Dev, Halcyon, opensim-master) has ever
+shipped a real, working implementation.
+
+**Conclusion, presented to and confirmed by the user:** fabricating a
+guessed binary navmesh format would be unverifiable and against this
+project's standing "no unverified claims" rule - there is no way to
+check a guessed format against `LLPathingLib` without its source.
+Real navmesh generation is out of reach in this environment, full
+stop, not merely expensive.
+
+**What WAS still worth doing, and got built:** both caps are plain
+LLSD outside the mesh-data payload itself, so implemented them
+correctly:
+- `NavMeshGenerationStatus` (GET returns `{version, status:
+  "complete"}`; POST handles the rebake button's `{command:
+  "rebuild"}` by bumping the version - the viewer only checks the
+  transport-level HTTP status on that call, never the body).
+- `RetrieveNavMeshSrc` (POST, matching the real verb WhiteCore got
+  wrong) honestly omits `navmesh_data`, which the real viewer already
+  treats as a clean, non-crashing error state rather than a malformed
+  response.
+
+Net effect: `isPathfindingEnabledForRegion()`'s presence-gate now
+opens, so the Pathfinding floater opens and every cap built in the
+previous entry (linksets, characters, terrain, agent state) becomes
+genuinely reachable and functional - only the navmesh *visualization*
+tab itself stays in the same unsolved state every other available
+OpenSim fork ships today. Build verified clean. Not yet live-tested.
+
+**Pathfinding is now considered complete for what's achievable in this
+environment.** All 6 real caps
+(`AgentState`/`CharacterProperties`/`TerrainNavMeshProperties`/
+`RegionObjects`/`ObjectNavMeshProperties`/`NavMeshGenerationStatus`/
+`RetrieveNavMeshSrc` - 7 counting both linkset caps) are registered
+and protocol-correct; the one gap (real navmesh mesh data) is a
+documented, external blocker, not an oversight.

@@ -22,14 +22,18 @@ namespace OpenSim.Region.ClientStack.LindenCaps
     // (llCreateCharacter/llNavigateTo/etc in LSL_Api.cs) already existed, but none of
     // the caps backing the floater UI did.
     //
-    // Real navmesh generation/baking (NavMeshGenerationStatus + RetrieveNavMeshSrc) is
-    // NOT part of this module - that is a much larger, separate undertaking (a real
-    // Recast-style walkable-surface mesh baked from region geometry, serialized
-    // byte-compatible with the viewer's own decompressor). Until that exists,
-    // isPathfindingEnabledForRegion() in the real viewer (gated on RetrieveNavMeshSrc's
-    // mere presence) will keep the whole Pathfinding floater from ever calling any of
-    // the caps this module DOES implement. They are still implemented correctly and
-    // completely here so they are ready the moment that gate opens.
+    // Real navmesh generation/baking is NOT implemented - the actual binary format the
+    // viewer's LLPathingLib parses out of RetrieveNavMeshSrc's response is defined by
+    // that closed-source Linden Lab library, which isn't present in any locally
+    // available viewer checkout and has no public specification (confirmed via
+    // web search; even WhiteCore-Dev's own RetrieveNavMeshSrc is an empty stub that
+    // leaves the client in an error state - see PROJECT_LOG for the full trace).
+    // NavMeshGenerationStatus and RetrieveNavMeshSrc ARE both registered here, correctly
+    // implementing everything that IS plain LLSD (status/version reporting, the rebake
+    // trigger), so isPathfindingEnabledForRegion()'s presence-gate opens and every other
+    // cap in this module actually gets exercised by the viewer - RetrieveNavMeshSrc
+    // itself just honestly reports "no mesh data" rather than fabricating bytes with no
+    // way to verify they mean anything to LLPathingLib.
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "PathfindingModule")]
     public class PathfindingModule : ISharedRegionModule
     {
@@ -47,6 +51,16 @@ namespace OpenSim.Region.ClientStack.LindenCaps
         private int m_terrainB = SceneObjectPart.PathfindingWalkabilityDefault;
         private int m_terrainC = SceneObjectPart.PathfindingWalkabilityDefault;
         private int m_terrainD = SceneObjectPart.PathfindingWalkabilityDefault;
+
+        // NavMeshGenerationStatus/RetrieveNavMeshSrc: real navmesh baking + the exact
+        // binary format the viewer's LLPathingLib (closed-source, not present in any
+        // locally-available viewer checkout, no public spec) expects is not implemented -
+        // see PROJECT_LOG. This still reports a valid, well-formed "complete, nothing to
+        // show" status so isPathfindingEnabledForRegion()'s presence-gate opens (which is
+        // what unblocks every OTHER cap in this module), and the navmesh-retrieval POST
+        // correctly reports "no data" rather than a malformed response - the viewer
+        // handles that as a clean error state (kNavMeshRequestError), not a crash.
+        private int m_navMeshVersion = 1;
 
         #region ISharedRegionModule
 
@@ -103,7 +117,65 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
             caps.RegisterSimpleHandler("ObjectNavMeshProperties",
                 new SimpleStreamHandler($"/{UUID.Random()}", (req, resp) => HandleObjectNavMeshProperties(agent, req, resp)));
+
+            caps.RegisterSimpleHandler("NavMeshGenerationStatus",
+                new SimpleStreamHandler($"/{UUID.Random()}", (req, resp) => HandleNavMeshGenerationStatus(agent, req, resp)));
+
+            caps.RegisterSimpleHandler("RetrieveNavMeshSrc",
+                new SimpleStreamHandler($"/{UUID.Random()}", (req, resp) => HandleRetrieveNavMeshSrc(req, resp)));
         }
+
+        #region NavMeshGenerationStatus / RetrieveNavMeshSrc
+
+        private void HandleNavMeshGenerationStatus(UUID agentID, IOSHttpRequest request, IOSHttpResponse response)
+        {
+            switch (request.HttpMethod)
+            {
+                case "GET":
+                    WriteResponse(response, BuildNavMeshStatusResponse());
+                    return;
+                case "POST":
+                    // The rebake button's {"command":"rebuild"} - the viewer only checks
+                    // the transport-level HTTP status on this call, not the body, so a
+                    // bumped version (making the next GET/status-check look "changed") is
+                    // all that is needed here.
+                    if (m_scene.Permissions.CanIssueEstateCommand(agentID, false))
+                        m_navMeshVersion++;
+                    else
+                        response.StatusCode = (int)HttpStatusCode.Forbidden;
+                    return;
+                default:
+                    response.StatusCode = (int)HttpStatusCode.NotFound;
+                    return;
+            }
+        }
+
+        private OSDMap BuildNavMeshStatusResponse()
+        {
+            return new OSDMap
+            {
+                ["version"] = OSD.FromInteger(m_navMeshVersion),
+                ["status"] = OSD.FromString("complete")
+            };
+        }
+
+        private void HandleRetrieveNavMeshSrc(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (request.HttpMethod != "POST")
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            // No navmesh_data key: real baking + LLPathingLib-compatible serialization
+            // isn't implemented (see PROJECT_LOG). The viewer treats a missing
+            // navmesh_data field as a clean error state, not a crash.
+            OSDMap map = new OSDMap { ["navmesh_version"] = OSD.FromInteger(m_navMeshVersion) };
+
+            WriteResponse(response, map);
+        }
+
+        #endregion
 
         #region AgentState
 
