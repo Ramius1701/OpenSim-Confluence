@@ -17136,3 +17136,159 @@ round-trip renders correctly for other viewers in the parcel/region.
 Tools, Combat2, Display Names, Abuse Reports, Pathfinding, PBR
 materials, Bot/NPC framework, Currency, Search, EEP scripting) - see
 the audit-status memory for the full running tally.
+
+### Pathfinding — the whole feature was never actually compiled into any build (2026-09-01)
+
+While scoping unrelated marketplace work, found that `PathfindingModule.cs`
+(all 7 caps from the item 1-4 entry above) was never actually part of any
+built DLL, despite every `dotnet build` that session reporting "0 Errors."
+
+Root cause, in two layers: (1) `OpenSim.Region.ClientStack.LindenCaps.csproj`
+has `EnableDefaultItems=false`, so a `.cs` file not explicitly listed in a
+`<Compile Include>` is silently never compiled — no error, just absence —
+and `PathfindingModule.cs` was missing from that list. (2) Every `.csproj`/
+`.sln` in this repo is gitignored and *generated* from the versioned
+`prebuild.xml` via `runprebuild.bat`/`.sh` — so the real, durable fix has
+to live in `prebuild.xml`, not just the local generated `.csproj`.
+`PathfindingModule.cs` needed `OpenSim.Region.ScriptEngine.Shared.Api`
+(for `LSL_Api.GetActivePathfindingCharacters`), and `prebuild.xml`'s
+LindenCaps project block never had that reference.
+
+Regenerating to fix it hit a second, older, unrelated bug: `prebuild.xml`'s
+own top-of-file warning comment about the `GenerateGitVersionInfo` MSBuild
+Target embedded a literal `--` (from `git rev-list --count`), which is
+illegal inside an XML comment body and had been silently breaking
+`runprebuild.bat`/`.sh` for *everyone* on this codebase since 2026-08-18
+(see the Test-project note in that same comment) — nobody had actually run
+it successfully since then to notice. Fixed by splitting the paste-back
+Target block out into `Tools/GenerateGitVersionInfo-msbuild-target.xml`
+(a real file, not XML-comment-escaped text).
+
+Verified via `grep -a -c "PathfindingModule" bin/OpenSim.Region.ClientStack.LindenCaps.dll`
+that the class now actually appears in the built DLL (0 hits before the
+fix, 2 after) — the same binary-grep verification method already proven
+necessary in this session, not just trusting a clean build. Redeployed to
+live Casperia Prime (all 15 regions, staggered restart, confirmed
+`RegionReady` + no addin/type-load errors — the exact signature of the
+original bug).
+
+## Marketplace rebuild: a real, viewer-integrated DirectDelivery marketplace (2026-09-01)
+
+The existing `addon-modules/OpenSimMarketplace` is a service-to-service v2
+HTTP API for an *external* website — unrelated to the real SL viewer's own
+Marketplace floater. Traced the real `DirectDelivery` capability straight
+from Firestorm/secondlife-viewer source (`llmarketplacefunctions.cpp`) —
+7 routes (`GET /merchant`, `GET /listings`, `GET /listing/<id>`,
+`POST /listings`, `PUT /listing/<id>`, `PUT /associate_inventory/<id>`,
+`DELETE /listing/<id>`), one consistent response envelope
+(`{"listings": [{"id", "is_listed", "edit_url", "inventory_info": {...}}]}`),
+merchant-listing-management only — real SL's viewer floater never handles
+browsing/checkout/payment, those live entirely on marketplace.secondlife.com.
+Evaluated the one known public attempt at this
+(github.com/TheAfroOfDoom/opensim-marketplace) — doesn't reach the actual
+protocol. User decisions locked in before building: auto-merchant for
+everyone (no admin gate), stock is per-listing (unlimited *or* real finite
+stock, both supported), ConfluenceCurrency only (Gloebit explicitly ruled
+out — its async/OAuth flow doesn't fit), `edit_url` points at a new
+`/marketplace/manage` page.
+
+Six phases, each built, `runprebuild.bat`-regenerated, `dotnet build`-verified,
+and binary-grepped before moving to the next:
+
+- **Phase 0** — moved `MarketplaceInventoryOperations.cs` (807 lines:
+  `Inventory`/`Inspect`/`Snapshot`/`Deliver`, deterministic SHA256 UUIDs,
+  folder-tree fingerprinting, next-owner permission-folding) out of the old
+  addon and made it `public`, so both the old v2 API and the new native
+  path share one implementation instead of duplicating it.
+- **Phase 1** — `MarketplaceListingsService` (Robust-hosted, following
+  `CurrencyService`/`StoreService`'s exact established pattern: interface +
+  raw-ADO.NET MySQL data class + `.migrations` file + config), plus a
+  related pre-existing gap fixed in the same pass: `Robust.HG.ini.example`
+  had no `[CurrencyService]` section at all, so the WebUI's ConfluenceCurrency
+  checkout (Store's, and now Marketplace's) was silently dead on any grid
+  installed from just the example ini.
+- **Phase 2** — `LocalMarketplaceListingsServiceConnector`, mirroring
+  `LocalCurrencyServiceConnector` exactly (direct-to-DB region connector,
+  no Robust round-trip per call).
+- **Phase 3** — `DirectDeliveryModule.cs`, the real viewer-facing cap.
+  Registers one `"DirectDelivery"` cap and dispatches its 7 sub-routes from
+  one handler via `RegisterSimpleHandler(..., addToListener: false)` +
+  `MainServer.Instance.AddSimpleStreamHandler(handler, varPath: true)` — no
+  other module in this codebase had exercised that combination before.
+  Confirmed by reading `BaseHttpServer.TryGetSimpleStreamHandler` directly
+  that the handler's own `Path` must be *just* the per-agent random UUID
+  segment (no `"/caps/"` wrapper) for the varPath prefix match to key on
+  it correctly — every other cap here uses the two-segment `/caps/{uuid}`
+  shape, which would collide every agent's DirectDelivery cap onto the
+  same key.
+- **Phase 4** — `/marketplace` WebUI storefront (browse, listing detail,
+  buy, manage). The buy flow reuses `ChargeConfluenceCurrency`'s exact
+  idempotent pattern (a fresh UUID doubling as both the currency
+  transaction ID and the delivery ledger's idempotency key) but, unlike
+  Store (which sells grid-provided items), pays the *seller* directly, not
+  the house, and actually has to call `Deliver`.
+
+**Two real architectural corrections made mid-build, before the wrong
+foundation calcified:**
+
+1. The response DTOs (`ProductFolderInfo`/`InventoryResponse`/
+   `SnapshotResponse`/`DeliveryReceipt`/`DeliveryResponse`) were first
+   placed alongside `MarketplaceInventoryOperations` in CoreModules, but
+   the new `IMarketplaceListingsData` (in `OpenSim.Data`) needs to store/
+   retrieve `DeliveryReceipt` rows too, and `OpenSim.Data` cannot
+   reference `OpenSim.Region.CoreModules` — CoreModules references Data,
+   not the other way. Moved into `OpenSim.Framework` instead, matching
+   exactly where `CurrencyTransfer`/`StoreCatalogItem` already live for
+   the identical reason.
+2. Bigger one, found starting Phase 4: calling `MarketplaceInventoryOperations.
+   Deliver` directly from `WebInterfaceServiceConnector.cs`
+   (`OpenSim.Server.Handlers`, i.e. Robust) would have required adding a
+   `OpenSim.Region.CoreModules` reference to Server.Handlers — real
+   Scene/LindenUDP/PhysicsModules bloat with no business in Robust.exe,
+   for a WebUI checkout page. Root cause: `Inventory`/`Inspect`/`Snapshot`
+   still took `Scene` (only `Deliver` had been decoupled earlier), and
+   `NotifyRecipient`'s `Scene`/`ScenePresence` dependency was still baked
+   into the class. Finished decoupling all four methods from `Scene`
+   entirely — they now take `IInventoryService`/`IUserAccountService`/
+   `scopeId` directly, and `Deliver`'s notify step is a plain
+   `Action<UUID, InventoryFolderBase, int>` delegate instead of a `Scene`
+   parameter, with a new public `CollectDeliveryTree` helper for
+   region-side callers that still have a real Scene to build their own
+   notification from. With zero Scene dependency left, the whole class
+   moved from CoreModules into `OpenSim.Services.MarketplaceService`
+   (alongside `MarketplaceListingsService`) — referenced by LindenCaps,
+   the old addon, and Server.Handlers alike, none of which need CoreModules
+   for it. This is *why* `WebInterfaceServiceConnector.HandleMarketplaceBuy`
+   can call `Deliver` in-process using Robust's own already-loaded
+   `m_InventoryService`/`m_UserAccountService` — no region round-trip, no
+   single-service-region SPOF, works for a buyer who's never logged into
+   any region at all (the whole point of a browser-reachable marketplace).
+
+**One real bug caught before commit** (Phase 3): the first draft of
+`PUT /associate_inventory/<id>` stored the merchant's own *mutable* outbox
+folder id as `listing_folder_id` instead of the *immutable*, custodian-owned
+snapshot folder `Snapshot()` actually returned.
+
+**One real gap caught while writing the buy flow** (Phase 4): `Deliver`'s
+content-integrity check requires the exact snapshot fingerprint recorded
+at snapshot time, but `MarketplaceListing` never persisted it anywhere —
+added `SnapshotFingerprint` as a new `:VERSION 2` migration column
+(keeping `:VERSION 1` as originally shipped) and threaded it through every
+layer.
+
+**One real gap caught while designing the buy flow** (before Phase 4's
+code was written): the plan's own "reject before any currency moves"
+stock-check-before-charge ordering has a hole if you follow it through — a
+reservation that succeeds but is followed by a failed currency charge
+permanently burns a unit of finite stock for nothing. Added `ReleaseStock`
+(a plain compensating increment) across all four layers before writing the
+buy flow that needs it.
+
+Not yet done: live deployment/testing (this was all built and verified via
+build + binary grep on the dev machine, not yet pushed to Casperia Prime or
+exercised against a real viewer's Marketplace Listings floater — the exact
+request-body field names for `POST`/`PUT /listing` were designed
+consistently with the traced response envelope's naming convention but not
+independently re-verified against a live viewer capture). `addon-modules/
+OpenSimMarketplace`'s v2 HTTP API keeps working unchanged for now — legacy/
+external-integration path, not the primary marketplace going forward.

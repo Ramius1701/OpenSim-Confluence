@@ -5,6 +5,18 @@ gap today. For what already exists, see `FEATURES.md`.
 
 ## In progress / being investigated
 
+- **Native, viewer-integrated Marketplace** (`DirectDeliveryModule` +
+  `/marketplace` WebUI) — a real implementation of SL's actual
+  `DirectDelivery` viewer capability, traced from Firestorm source: browse
+  and buy from a browser, list and manage inventory from the viewer's own
+  Marketplace Listings floater, auto-merchant for everyone, unlimited or
+  real finite stock per listing, ConfluenceCurrency checkout. Built,
+  `dotnet build`- and binary-grep-verified, not yet deployed to Casperia
+  Prime or exercised against a real viewer's Marketplace floater — same
+  present-but-unverified caveat as WebRTC voice/Aurora below. Supersedes
+  `addon-modules/OpenSimMarketplace`'s old v2 HTTP API (a service-to-service
+  protocol for an external website, unrelated to the real viewer floater),
+  which keeps working unchanged as a legacy/external-integration path.
 - **Vehicle and prim region crossings.** Avatar crossings are already
   smooth (see `FEATURES.md`). Vehicles and other physical objects still
   freeze in place for the duration of a crossing — a deliberate
