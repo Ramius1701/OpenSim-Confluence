@@ -83,6 +83,11 @@ scripting, and a range of physics/environment/reliability improvements
 over stock OpenSimulator. See [`FEATURES.md`](FEATURES.md) for the full,
 categorized list.
 
+A native, viewer-integrated DirectDelivery Marketplace is also built (see
+[`MARKETPLACE.md`](MARKETPLACE.md) for setup and usage) — not yet listed
+in `FEATURES.md` since it's still working through live verification; see
+`ROADMAP.md`.
+
 ## Roadmap
 
 For what's planned, what's deliberately out of scope, and current known

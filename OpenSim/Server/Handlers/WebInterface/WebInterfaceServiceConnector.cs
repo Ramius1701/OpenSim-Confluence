@@ -605,6 +605,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/marketplace/manage/save":
                         HandleMarketplaceManageSave(request, response);
                         break;
+                    case BasePath + "/marketplace/manage/associate":
+                        HandleMarketplaceManageAssociate(request, response);
+                        break;
                     case BasePath + "/admin/store":
                         HandleAdminStore(request, response);
                         break;
@@ -11108,12 +11111,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
 
             // Create/edit form - a listing is created with just a title/
-            // description/price/stock; inventory association (which folder
-            // it delivers) happens separately, from the viewer's
-            // DirectDelivery Marketplace Listings floater (PUT
-            // /associate_inventory/<id>), matching real SL - there is no
-            // web-based inventory picker here, since inventory only really
-            // makes sense to browse from inside the viewer.
+            // description/price/stock; inventory association is a separate
+            // step below, done from the web (not the viewer's DirectDelivery
+            // Marketplace Listings floater - Firestorm/AyaneStorm both hard-
+            // block that UI outside real Second Life, confirmed against
+            // source: LLSLMMenuUpdater::checkMerchantStatus returns before
+            // ever asking the region, regardless of caps. DirectDeliveryModule
+            // itself is untouched and will work immediately if a viewer
+            // without that block is ever used - this is purely a web-side
+            // path to the same MarketplaceInventoryOperations.Snapshot call
+            // that cap would have triggered).
             sb.Append("<div class=\"content-card\">");
             sb.Append("<h2>").Append(editing != null ? "Edit Listing" : "New Listing").Append("</h2>");
             sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/marketplace/manage/save\">");
@@ -11135,11 +11142,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<p><label><input type=\"checkbox\" name=\"is_listed\" value=\"1\"")
                   .Append(editing.IsListed ? " checked" : string.Empty).Append("> Listed (visible in the Marketplace)</label>");
                 if (editing.ListingFolderID == UUID.Zero)
-                    sb.Append(" <em>- not yet associated with inventory; use the viewer's Marketplace Listings floater first.</em>");
+                    sb.Append(" <em>- not yet associated with inventory; see below.</em>");
                 sb.Append("</p>");
             }
             sb.Append("<button type=\"submit\">Save</button>");
             sb.Append("</form></div>");
+
+            if (editing != null)
+                sb.Append(BuildInventoryAssociationSection(session, editing));
 
             List<MarketplaceListing> mine = m_MarketplaceListingsService.GetListingsBySeller(session.PrincipalID);
             if (mine.Count > 0)
@@ -11211,7 +11221,150 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 MarketplaceListing created = m_MarketplaceListingsService.CreateListing(session.PrincipalID, title, description, price, countOnHand);
                 redirectUrl = BasePath + "/marketplace/manage?listing=" + created.ID + "&message="
-                        + Uri.EscapeDataString("Listing created - use the viewer's Marketplace Listings floater to associate inventory with it.");
+                        + Uri.EscapeDataString("Listing created - associate an inventory folder with it below.");
+            }
+
+            response.Redirect(redirectUrl, HttpStatusCode.Redirect);
+        }
+
+        // Lists the merchant's own top-level Merchant Outbox product folders
+        // (auto-created on first call if they don't exist yet, same as the
+        // old v2 addon) via MarketplaceInventoryOperations.Inventory - the
+        // exact same Scene-free call DirectDeliveryModule's GET /listings
+        // path would make region-side, just made from here instead. Ordinary
+        // inventory folder organizing (Inventory > OpenSim Marketplace >
+        // Merchant Outbox > <product>) is completely ungated on every
+        // viewer - only the SLM floater itself is blocked, not the folders
+        // it would have read.
+        private string BuildInventoryAssociationSection(WebSession session, MarketplaceListing editing)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<div class=\"content-card\">");
+            sb.Append("<h2>Associate Inventory</h2>");
+
+            if (m_InventoryService == null || m_UserAccountService == null)
+            {
+                sb.Append("<p><em>Inventory service is not available on this grid.</em></p></div>");
+                return sb.ToString();
+            }
+
+            InventoryResponse products = MarketplaceInventoryOperations.Inventory(
+                    m_InventoryService, m_UserAccountService, UUID.Zero, session.PrincipalID, 5000);
+
+            if (!products.Ok)
+            {
+                sb.Append("<p><em>").Append(Html(products.Message)).Append("</em></p></div>");
+                return sb.ToString();
+            }
+
+            if (editing.ListingFolderID != UUID.Zero)
+            {
+                sb.Append("<p>Currently delivers the folder associated on ").Append(editing.Updated.ToString("u"))
+                  .Append(". Associating a different folder below replaces it for future deliveries - already-delivered copies are unaffected.</p>");
+            }
+
+            sb.Append("<p>Put what this listing should deliver into a folder under "
+                    + "<strong>Inventory &gt; OpenSim Marketplace &gt; Merchant Outbox</strong> "
+                    + "(create it there if you haven't already - drag the item(s) in, Copy and Transfer permissions required), then pick it below.</p>");
+
+            if (products.Products.Count == 0)
+            {
+                sb.Append("<p><em>No product folders found yet - add one to Merchant Outbox first.</em></p></div>");
+                return sb.ToString();
+            }
+
+            sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/marketplace/manage/associate\">");
+            sb.Append("<input type=\"hidden\" name=\"listing_id\" value=\"").Append(editing.ID).Append("\">");
+            sb.Append("<select name=\"source_folder_id\">");
+            foreach (ProductFolderInfo product in products.Products)
+            {
+                bool sellable = product.Copy && product.Transfer;
+                sb.Append("<option value=\"").Append(product.FolderId).Append("\"")
+                  .Append(sellable ? string.Empty : " disabled").Append(">")
+                  .Append(Html(product.Name)).Append(" (").Append(product.ItemCount).Append(" item")
+                  .Append(product.ItemCount == 1 ? string.Empty : "s");
+                if (!sellable)
+                    sb.Append(" - not sellable: ").Append(Html(product.Message));
+                sb.Append(")</option>");
+            }
+            sb.Append("</select> ");
+            sb.Append("<button type=\"submit\">Associate</button>");
+            sb.Append("</form></div>");
+
+            return sb.ToString();
+        }
+
+        private void HandleMarketplaceManageAssociate(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+            if (m_MarketplaceListingsService == null || request.HttpMethod != "POST")
+            {
+                response.Redirect(BasePath + "/marketplace/manage", HttpStatusCode.Redirect);
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string redirectUrl;
+
+            if (!int.TryParse(FormValue(form, "listing_id"), out int listingId) || listingId <= 0
+                    || !UUID.TryParse(FormValue(form, "source_folder_id"), out UUID sourceFolderId) || sourceFolderId == UUID.Zero)
+            {
+                redirectUrl = BasePath + "/marketplace/manage?message=" + Uri.EscapeDataString("Invalid request.");
+            }
+            else
+            {
+                MarketplaceListing listing = m_MarketplaceListingsService.GetListing(listingId);
+                if (listing == null || listing.SellerID != session.PrincipalID)
+                {
+                    redirectUrl = BasePath + "/marketplace/manage?message=" + Uri.EscapeDataString("Listing not found.");
+                }
+                else if (m_InventoryService == null || m_UserAccountService == null)
+                {
+                    redirectUrl = BasePath + "/marketplace/manage?listing=" + listingId + "&message="
+                            + Uri.EscapeDataString("Inventory service is not available on this grid.");
+                }
+                else
+                {
+                    try
+                    {
+                        string versionKey = listingId + "|" + DateTime.UtcNow.Ticks;
+                        SnapshotResponse snapshot = MarketplaceInventoryOperations.Snapshot(
+                                m_InventoryService,
+                                m_UserAccountService,
+                                UUID.Zero,
+                                m_marketplaceServiceAccountId,
+                                session.PrincipalID,
+                                sourceFolderId,
+                                versionKey,
+                                5000);
+
+                        if (!UUID.TryParse(snapshot.SnapshotFolderId, out UUID snapshotFolderId))
+                        {
+                            redirectUrl = BasePath + "/marketplace/manage?listing=" + listingId + "&message="
+                                    + Uri.EscapeDataString("Snapshot did not return a valid folder id.");
+                        }
+                        else
+                        {
+                            // Same simplification DirectDeliveryModule uses -
+                            // no separate version-history concept yet, both
+                            // listing_folder_id and version_folder_id point
+                            // at this snapshot.
+                            m_MarketplaceListingsService.SetInventoryAssociation(
+                                    listingId, snapshotFolderId, snapshotFolderId, snapshotFolderId, snapshot.SnapshotFingerprint);
+                            redirectUrl = BasePath + "/marketplace/manage?listing=" + listingId + "&message="
+                                    + Uri.EscapeDataString("Inventory associated - " + snapshot.ItemCount + " item(s). You can now list it.");
+                        }
+                    }
+                    catch (MarketplaceInventoryException ex)
+                    {
+                        redirectUrl = BasePath + "/marketplace/manage?listing=" + listingId + "&message=" + Uri.EscapeDataString(ex.Message);
+                    }
+                }
             }
 
             response.Redirect(redirectUrl, HttpStatusCode.Redirect);

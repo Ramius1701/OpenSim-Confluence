@@ -7,16 +7,32 @@ gap today. For what already exists, see `FEATURES.md`.
 
 - **Native, viewer-integrated Marketplace** (`DirectDeliveryModule` +
   `/marketplace` WebUI) — a real implementation of SL's actual
-  `DirectDelivery` viewer capability, traced from Firestorm source: browse
-  and buy from a browser, list and manage inventory from the viewer's own
-  Marketplace Listings floater, auto-merchant for everyone, unlimited or
-  real finite stock per listing, ConfluenceCurrency checkout. Built,
-  `dotnet build`- and binary-grep-verified, not yet deployed to Casperia
-  Prime or exercised against a real viewer's Marketplace floater — same
-  present-but-unverified caveat as WebRTC voice/Aurora below. Supersedes
-  `addon-modules/OpenSimMarketplace`'s old v2 HTTP API (a service-to-service
-  protocol for an external website, unrelated to the real viewer floater),
-  which keeps working unchanged as a legacy/external-integration path.
+  `DirectDelivery` capability, traced from Firestorm source: browse and buy
+  from a browser, auto-merchant for everyone, unlimited or real finite
+  stock per listing, ConfluenceCurrency checkout. See `MARKETPLACE.md` for
+  setup/usage. Deployed to Casperia Prime; migration and clean boot
+  verified live, browse page confirmed rendering correctly. A real
+  end-to-end purchase (buy → charge → deliver) is not yet independently
+  verified against live data - present-but-unverified caveat, same as
+  WebRTC voice/Aurora below.
+
+  **Real, load-bearing finding, not just a caveat:** Firestorm/AyaneStorm
+  hard-block the viewer's own "Marketplace Listings" floater outside real
+  Second Life (`LLSLMMenuUpdater::checkMerchantStatus` returns before ever
+  asking the region, regardless of caps - confirmed against source, no
+  known bypass). `DirectDeliveryModule` is protocol-correct and left in
+  place, dormant, for if a non-blocking viewer is ever used - but for now,
+  merchants associate inventory through `/marketplace/manage` on the web
+  instead (the exact same `Snapshot` call the floater would have
+  triggered, just invoked from Robust). No in-world UI was added to
+  replace it; the folder-organizing step it depends on (`Inventory >
+  OpenSim Marketplace > Merchant Outbox > <product>`) is itself completely
+  ordinary, ungated inventory management on every viewer.
+
+  Supersedes `addon-modules/OpenSimMarketplace`'s old v2 HTTP API (a
+  service-to-service protocol for an external website, unrelated to the
+  real viewer floater), which keeps working unchanged as a legacy/
+  external-integration path.
 - **Vehicle and prim region crossings.** Avatar crossings are already
   smooth (see `FEATURES.md`). Vehicles and other physical objects still
   freeze in place for the duration of a crossing — a deliberate

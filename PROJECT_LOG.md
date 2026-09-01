@@ -17292,3 +17292,94 @@ consistently with the traced response envelope's naming convention but not
 independently re-verified against a live viewer capture). `addon-modules/
 OpenSimMarketplace`'s v2 HTTP API keeps working unchanged for now — legacy/
 external-integration path, not the primary marketplace going forward.
+
+### Marketplace rebuild — deployed live, then a real blocker found: no mainstream viewer will show the floater (2026-09-01)
+
+Deployed to Casperia Prime for real: migration ran cleanly (`marketplace_listings`/
+`marketplace_deliveries` created, both `:VERSION` steps applied), all 15
+regions booted with no new errors, `/marketplace` rendered correctly. User
+then tried to open the viewer's Marketplace Listings floater to do the
+first real end-to-end test and couldn't find it anywhere — no floater, no
+"Merchant Outbox" folder either.
+
+Traced this directly against real Firestorm source
+(`indra/newview/llviewermenu.cpp`,
+`LLSLMMenuUpdater::checkMerchantStatus`):
+
+```cpp
+// <FS:Ansariel> Don't show merchant outbox or SL Marketplace stuff outside SL
+if (!LLGridManager::getInstance()->isInSecondLife())
+{
+    gMenuHolder->getChild<LLView>("MarketplaceListings")->setVisible(false);
+    return;
+}
+```
+
+This is a hard, deliberate block, not a caps/registration bug — it returns
+*before* the viewer ever calls `getMerchantStatusCoro()` (the function that
+would hit `regionp->getCapability("DirectDelivery")`, confirmed via
+`getSLMConnectURL` - the cap wiring itself is correct). Since the
+"Merchant Outbox" folder is only auto-created downstream of a *successful*
+merchant-status check (`LLSLMMenuUpdater::setMerchantMenu`'s
+`gInventory.ensureCategoryForTypeExists(FT_MARKETPLACE_LISTINGS)`), that
+never firing explains both missing pieces at once.
+
+Checked every other viewer source available locally: AyaneStorm has the
+identical block (same Firestorm lineage, same `<FS:Ansariel>` tag, same
+`isInSecondLife()` check verbatim). CoolVL Viewer never implemented the
+Marketplace Listings feature at all (zero references in source). No debug
+setting exposes a bypass for the `isInSecondLife()` check in any of them -
+it's a hard-coded runtime gate with no exposed toggle.
+
+This retroactively confirms Fly-Man's Discord claim from early in this
+initiative ("some caps need waking up, then the window will work") was
+incomplete - waking the region-side caps was necessary but not sufficient.
+No mainstream viewer build available to this project shows this UI on an
+OpenSim grid, full stop, regardless of what the region does.
+
+**Decision (user, presented with patch-a-viewer vs. build-a-viewer vs.
+find-a-different-way): find a different way, no viewer patch/build for
+now** - revisit a custom viewer later if warranted, at which point
+`DirectDeliveryModule` needs zero changes to start working, since the
+region side was never the problem.
+
+**What "a different way" turned out to be, cheaply**: `MarketplaceInventoryOperations.
+Inventory`/`Inspect`/`Snapshot` were already made Scene-free during the
+earlier `Deliver`-decoupling work (see the "relocate MarketplaceInventoryOperations
+out of CoreModules" entry above) - specifically so the Robust-hosted WebUI
+could call them directly. That same property means the WebUI can drive the
+*entire* merchant-listing-management flow that the blocked floater would
+have driven, not just delivery. Extended `/marketplace/manage`:
+`HandleMarketplaceManage` now calls `MarketplaceInventoryOperations.Inventory`
+(using Robust's own already-loaded `m_InventoryService`/`m_UserAccountService`)
+to list the merchant's own Merchant Outbox product folders as a plain
+`<select>` dropdown, and a new `HandleMarketplaceManageAssociate` POST
+handler calls `Snapshot` - the exact same operation `PUT /associate_inventory`
+would have triggered region-side, just invoked from Robust instead. No
+in-world "listing station" prim or HUD was needed or added - the only
+in-world step left is organizing product into a Merchant Outbox subfolder,
+which is completely ordinary, ungated inventory folder management on every
+viewer (dragging items into a folder was never part of what got blocked).
+`DirectDeliveryModule.cs` itself is untouched, still fully built, sitting
+dormant.
+
+**Deploy-verification gap found and fixed while shipping this**: the first
+deploy of the new `OpenSim.Server.Handlers.dll` (the only file touched by
+this change) hit a persistent file lock, resolved after killing stale
+MSBuild node-reuse processes. That single-file deploy succeeded and was
+binary-grep-verified, but a full hash comparison of every `.dll`/`.exe`/
+`.pdb` between the local build and live afterward - prompted by "we
+already missed one file today," referring to the earlier
+`OpenSim.Server.Handlers.dll` lock fight - turned up 46 files (92 counting
+`.pdb`s) that were stale on live: every one of them had been rebuilt with
+different output bytes by the whole-solution `dotnet build` for this
+change (their *source* never changed, but MSBuild's own output isn't
+byte-stable across separate invocations of this solution), while only the
+one file known to differ had actually been re-synced. Live was running a
+patchwork of two different build invocations. Fixed with a full stop-all/
+resync/restart cycle; a follow-up hash comparison confirmed 0 mismatches,
+0 missing, before restarting. Worth remembering: after any partial,
+single-file deploy following a whole-solution rebuild, do a full hash
+comparison before calling it done, not just a targeted binary-grep check
+that only proves the one file you were tracking - the DLLs you didn't
+touch can still have moved.
