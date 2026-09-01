@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using log4net;
@@ -74,6 +75,7 @@ namespace OpenSim.Services.MarketplaceService
             listing.ListingFolderID = listingFolderId;
             listing.VersionFolderID = versionFolderId;
             listing.SnapshotFingerprint = snapshotFingerprint ?? string.Empty;
+            listing.Updated = DateTime.UtcNow;
             return m_Database.UpdateListing(listing);
         }
 

@@ -812,7 +812,17 @@ public static class MarketplaceInventoryOperations
     {
         InventoryFolderBase? root = inventory.GetRootFolder(ownerId);
         if (root == null)
-            throw new MarketplaceInventoryException(HttpStatusCode.ServiceUnavailable, "Inventory root folder was not found.", true);
+        {
+            // A real resident's root folder always exists by the time they
+            // can reach this code (created at first login). The Marketplace
+            // service account never logs in through a viewer, so nothing
+            // ever provisions its inventory unless something does it here -
+            // CreateUserInventory is the same call LLLoginService makes.
+            inventory.CreateUserInventory(ownerId);
+            root = inventory.GetRootFolder(ownerId);
+            if (root == null)
+                throw new MarketplaceInventoryException(HttpStatusCode.ServiceUnavailable, "Inventory root folder was not found.", true);
+        }
         return EnsureChildFolder(inventory, ownerId, root, name, purpose);
     }
 

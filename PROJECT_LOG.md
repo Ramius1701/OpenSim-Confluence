@@ -17425,3 +17425,109 @@ folder names throughout. Build verified via binary grep for the three new
 method names in `OpenSim.Services.MarketplaceService.dll`. Not yet
 deployed to live as of this entry - live is still running the previous,
 folder-based-association build.
+
+### Marketplace: Associate silently failing - service account had no inventory (2026-09-01/02)
+
+Deployed the flat-listing build above, then live-tested: the item showed
+up correctly in the Associate dropdown (confirming the flat-folder fix
+worked), but clicking Associate produced no visible change - the listing
+kept showing "not yet associated" with no obvious error. Root cause,
+found by querying the live DB directly rather than guessing from logs:
+`SnapshotListingItem` parks a custodial copy of the item under the
+configured `ServiceAccountUUID` ("GRID SERVICES") before it can associate
+anything, via `EnsureRootChildFolder` -> `IInventoryService.GetRootFolder`.
+That account had zero rows in `inventoryfolders` - not even a root
+folder - so every attempt threw `MarketplaceInventoryException`
+("Inventory root folder was not found.") and redirected back with a
+message the user didn't notice, making it look like nothing happened.
+
+Investigated whether "GRID SERVICES" was a safe account to keep using
+before fixing anything - a repo-wide grep for its literal name initially
+found nothing (missed it because the name is split across two separate
+string-literal lines in code), leading to an incorrect first read that
+it was some unexplained pre-existing account. Corrected on a second,
+targeted look at `UserAccountService.cs`: it's genuinely stock behavior
+- every Robust instance auto-creates this "system grid god account" at
+startup (`Constants.servicesGodAgentID`, a fixed well-known UUID) if one
+doesn't exist, and it's referenced specially in `LLLoginService`,
+`GatekeeperService`, `Scene.cs`, and `GodsModule.cs` for privileged
+grid-level messaging/login-rejection - never meant to hold arbitrary
+inventory content. User's call: don't create a separate dedicated
+account either (ruled out after briefly drafting one, "Marketplace"
+"Service", via a direct DB insert matching `UserAccountService`'s own
+schema/MD5 hash scheme - blocked by the auto-mode classifier for writing
+directly to the live `UserAccounts`/`auth` tables, correctly, and dropped
+per explicit user instruction: "We dont need to create any accounts").
+
+Fix: `EnsureRootChildFolder` now self-provisions by calling
+`IInventoryService.CreateUserInventory` (the same call a real login
+triggers) when `GetRootFolder` returns null, then retries once before
+throwing. Works for whichever account ends up configured as
+`ServiceAccountUUID` - GRID SERVICES stays configured, unchanged, no
+account created or migrated. Also fixed a smaller gap found in the same
+pass: `MarketplaceListingsService.SetInventoryAssociation` never touched
+`listing.Updated`, so the "currently delivers the item associated on
+{date}" text would have shown a stale timestamp forever.
+
+This fix lives in `OpenSim.Services.MarketplaceService.dll`, which -
+despite being conceptually Robust-side logic - turned out to be loaded
+by every region process too (OpenSim's addon loader scans every DLL in
+the shared bin directory at startup regardless of whether a region's ini
+names it), so a Robust-only restart wasn't enough to release the file
+lock for redeploy; needed the full stop/resync/restart cycle. User logged
+off first so this could be deployed without disconnecting an active
+session. Verified live: all 15 regions + Robust back up clean, 0
+missing/0 mismatched on the post-sync hash comparison, no new errors
+beyond the same pre-existing Tangle YEngine asset issue.
+
+### WebUI: three concrete defects found and fixed from live screenshots (2026-09-02)
+
+User feedback on the WebUI (a recurring theme - see the content-parity
+and visual-polish entries elsewhere in this log) with three specific,
+screenshotted issues this pass, in `WebInterfaceServiceConnector.cs`:
+
+1. **Double-escaped `&amp;` rendering as literal text** - the admin
+   dashboard's "Purchases &amp; Transactions" tile (and, found by
+   grepping every other `&amp;` literal in the file for the same
+   pattern, a "Password &amp; email" label on the Help page) had
+   `&amp;` hardcoded directly into a plain string that then gets passed
+   through the page's own `Html()` escaping helper, which escapes `&` to
+   `&amp;` unconditionally - so the already-encoded `&amp;` became
+   `&amp;amp;`, rendering as the literal text "&amp;" in the browser.
+   Fixed by using a plain `&` at both call sites (`Html()` escapes it
+   correctly at render time). Confirmed the rest of the file's `&amp;`
+   literals are all raw `sb.Append()` HTML markup, not run through
+   `Html()`, so not affected by the same bug.
+2. **Homepage not eye-catching / header size inconsistent with the rest
+   of the site** - the shared `.hero h1` (homepage, search, Help &
+   Support, etc.) was 30px while a plain content page's `h1` (Admin
+   dashboard's "Grid Administration", etc.) was 21px, a two-tier
+   hierarchy that read as inconsistent rather than intentional. User's
+   call: unify to one size rather than shrink the hero - raised the
+   plain-page default to 30px to match, instead of shrinking the
+   homepage's headline (which would have worked against the "not
+   enticing" complaint that started this).
+3. **Welcome screen's (`/welcome.php`, the in-viewer login splash) empty
+   middle gap** - the two-column layout (Regions+News+Events on the
+   left, GridStatus+Welcome on the right, `justify-content:space-between`
+   pinning both to the container's edges) was originally built to
+   deliberately match WhiteCore-Dev's actual reference template (see the
+   2026-08-19 redesign entry), but read as a broken/incomplete layout on
+   a wide viewport regardless of matching the source. User's call:
+   restructure to a horizontal row of individually-wrapping tiles
+   instead - removed the two wrapping `<div>`s so all four
+   `.welcome-box` elements (Regions, Upcoming Events, Grid Status,
+   Welcome) become direct flex children with their own `flex:1 1 280px;
+   max-width:340px`, `justify-content` changed from `space-between` to
+   `center`. Verified live at both narrow and wide viewports - fills the
+   row instead of leaving a gap, wraps cleanly at mobile widths.
+
+All three verified live via browser (homepage, `/help`, `/welcome.php`)
+after a Robust-only restart attempt failed the same way the marketplace
+fix did - `OpenSim.Server.Handlers.dll` also turned out to be
+directory-scanned and locked by every running region, confirming this
+isn't specific to one DLL; any changed file in the shared bin directory
+needs the full stop/resync/restart cycle regardless of which service
+"conceptually" owns it. Full hash comparison clean (0 missing/0
+mismatched), all 15 regions + Robust back to `RegionReady` with no new
+errors beyond the usual pre-existing ones.

@@ -1199,7 +1199,6 @@ namespace OpenSim.Server.Handlers.WebInterface
             // it stays on the full /economy page.
             sb.Append("<div class=\"welcome-columns\">");
 
-            sb.Append("<div>");
             sb.Append("<div class=\"welcome-box\">");
             sb.Append(RenderRegionListCompact(regions.Take(8).ToList()));
             if (regions.Count > 8)
@@ -1212,16 +1211,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             string events = RenderUpcomingEvents(3);
             if (!string.IsNullOrEmpty(events))
                 sb.Append("<div class=\"welcome-box\">").Append(events).Append("</div>");
-            sb.Append("</div>");
 
-            sb.Append("<div>");
             sb.Append("<div class=\"welcome-box\">");
             sb.Append(RenderGridStatusWidget(regions));
             sb.Append("</div>");
             sb.Append("<div class=\"welcome-box\">");
             sb.Append("<h2>Welcome</h2><p>").Append(welcome).Append("</p>");
             sb.Append("<a class=\"welcome-register-cta\" href=\"").Append(BasePath).Append("/register\">Register - it's free &rarr;</a>");
-            sb.Append("</div>");
             sb.Append("</div>");
 
             sb.Append("</div>");
@@ -1340,18 +1336,21 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // the reference screenshot exactly rather than a guess at
                 // it. Confluence's own extra sections (Economy, Events)
                 // stack into the right column alongside Grid Status.
-                ".welcome-columns{display:flex;justify-content:space-between;gap:28px;" +
+                // Horizontal row of tiles rather than two edge-pinned vertical
+                // stacks (the earlier layout, verified against WhiteCore-Dev's
+                // reference, left a wide empty gap between the two columns at
+                // desktop widths - changed on explicit feedback to instead
+                // fill the row with individually-wrapping boxes).
+                ".welcome-columns{display:flex;justify-content:center;gap:20px;" +
                 "flex-wrap:wrap;max-width:1300px;margin:0 auto;padding:20px 24px 60px;}" +
-                ".welcome-columns>div{flex:1 1 320px;max-width:380px;}" +
                 // The floating translucent box itself - WhiteCore's
                 // #regionbox/#infobox/#news/#gridstatus (semi-transparent,
                 // rounded, shadowed) and osloginscreen's .boxtext, adapted to
                 // this site's own dark palette instead of copying their
                 // literal colors.
                 ".welcome-box{background:rgba(21,24,29,.86);border:1px solid rgba(255,255,255,.08);" +
-                "border-radius:8px;padding:18px 20px;margin-bottom:20px;backdrop-filter:blur(3px);" +
-                "box-shadow:0 8px 24px rgba(0,0,0,.45);}" +
-                ".welcome-box:last-child{margin-bottom:0;}" +
+                "border-radius:8px;padding:18px 20px;backdrop-filter:blur(3px);" +
+                "box-shadow:0 8px 24px rgba(0,0,0,.45);flex:1 1 280px;max-width:340px;}" +
                 ".welcome-box h2:first-child{margin-top:0;}" +
                 ".welcome-register-cta{display:block;text-align:center;background:var(--accent);color:#fff;" +
                 "text-decoration:none;font-weight:700;padding:11px;border-radius:40px;margin:6px 0 14px;" +
@@ -1562,7 +1561,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<h2><i class=\"bi bi-list-task\"></i> Common Tasks</h2><div class=\"feature-grid-3\">");
             AppendIconFeatureCard(sb, "person-gear", "Manage Your Account", new[]
             {
-                ("Password &amp; email", true, "Change both from My Account."),
+                ("Password & email", true, "Change both from My Account."),
                 ("Profile", true, "Update your About text, picks and classifieds from your Profile page."),
                 ("Regions", true, "See regions you own or manage from My Account.")
             });
@@ -6046,7 +6045,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(adminNav, BasePath + "/admin/regions", "bi-map", "Region Management", "Search regions, Hypergrid, maptiles, backups, restart, create");
             AppendDashboardLink(adminNav, BasePath + "/admin/estates", "bi-building", "Estate Management", "Edit estate settings and access lists");
             AppendDashboardLink(adminNav, BasePath + "/admin/groups", "bi-people-fill", "Groups Management", "Grid-wide group administration");
-            AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "Purchases &amp; Transactions", "Financial reporting across the grid");
+            AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "Purchases & Transactions", "Financial reporting across the grid");
             AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions and online totals");
             AppendDashboardLink(adminNav, BasePath + "/admin/news", "bi-newspaper", "News Feed", "Post announcements to the splash page");
             AppendDashboardLink(adminNav, BasePath + "/admin/events", "bi-calendar-event", "Events", "Manage the grid-wide events calendar");
@@ -14293,7 +14292,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".site-footer{background:var(--dark);border-top:1px solid var(--border);padding:20px 24px;" +
                 "margin-top:40px;}" +
                 ".site-footer-inner{color:var(--muted);font-size:13.5px;}" +
-                "h1{font-size:21px;margin:0 0 14px;color:var(--text);}" +
+                // Matches .hero h1 below - one h1 size site-wide instead of a
+                // smaller default that made plain pages feel inconsistent
+                // with hero-banner pages (explicit feedback).
+                "h1{font-size:30px;margin:0 0 14px;color:var(--text);}" +
                 "h2{font-size:16px;margin:26px 0 12px;color:var(--text);border-top:1px solid var(--border);" +
                 "padding-top:20px;}" +
                 "h2:first-child{border-top:none;padding-top:0;margin-top:0;}" +
