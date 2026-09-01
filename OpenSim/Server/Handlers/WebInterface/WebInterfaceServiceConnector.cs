@@ -18,6 +18,7 @@ using OpenSim.Framework;
 using OpenSim.Server.Base;
 using OpenSim.Server.Handlers.Base;
 using OpenSim.Services.Interfaces;
+using OpenSim.Services.MarketplaceService;
 using GridRegion = OpenSim.Services.Interfaces.GridRegion;
 using OpenSim.Framework.Servers.HttpServer;
 
@@ -407,7 +408,11 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "/create-avatar", "/verify-avatar", "/import-avatar", "/my-avatars", "/switch-avatar",
                 "/suggestion-box", "/recovery-codes", "/recover-account",
                 // Store: prim-capacity packs + self-service region ordering.
-                "/store"
+                "/store",
+                // Native DirectDelivery marketplace - browse/buy (public) and
+                // a merchant's own listing management (the edit_url
+                // destination DirectDeliveryModule's viewer cap points at).
+                "/marketplace"
             };
             foreach (string route in topLevelRoutes)
             {
@@ -584,6 +589,21 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/store/gloebit/transaction":
                         HandleStoreGloebitTransaction(request, response);
+                        break;
+                    case BasePath + "/marketplace":
+                        HandleMarketplace(request, response);
+                        break;
+                    case BasePath + "/marketplace/listing":
+                        HandleMarketplaceListing(request, response);
+                        break;
+                    case BasePath + "/marketplace/buy":
+                        HandleMarketplaceBuy(request, response);
+                        break;
+                    case BasePath + "/marketplace/manage":
+                        HandleMarketplaceManage(request, response);
+                        break;
+                    case BasePath + "/marketplace/manage/save":
+                        HandleMarketplaceManageSave(request, response);
                         break;
                     case BasePath + "/admin/store":
                         HandleAdminStore(request, response);
@@ -10813,6 +10833,397 @@ namespace OpenSim.Server.Handlers.WebInterface
             return "Payment submitted to Gloebit - awaiting confirmation. Check My Purchases shortly.";
         }
 
+        // Public browse - only ever shows IsListed listings, matching
+        // real SL: browsing/checkout live entirely on the marketplace
+        // website (this page), never through the viewer's DirectDelivery
+        // cap (DirectDeliveryModule), which is merchant-management only.
+        private void HandleMarketplace(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+
+            if (m_MarketplaceListingsService == null)
+            {
+                WritePage(request, response, PageTitle("Marketplace"),
+                        "<h1><i class=\"bi bi-bag\"></i> Marketplace</h1><p>The marketplace is not available on this grid.</p>");
+                return;
+            }
+
+            int.TryParse(request.QueryString.Get("start"), out int start);
+            if (start < 0)
+                start = 0;
+            const int pageSize = 24;
+
+            List<MarketplaceListing> listings = m_MarketplaceListingsService.GetListedListings(start, pageSize);
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-bag\"></i> Marketplace</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a>");
+            if (session != null)
+                sb.Append(" | <a href=\"").Append(BasePath).Append("/marketplace/manage\">My Listings</a>");
+            sb.Append("</p>");
+
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            if (listings.Count == 0)
+            {
+                sb.Append("<p>Nothing is for sale right now.</p>");
+            }
+            else
+            {
+                foreach (MarketplaceListing listing in listings)
+                {
+                    sb.Append("<div class=\"content-card\">");
+                    sb.Append("<h2><a href=\"").Append(BasePath).Append("/marketplace/listing?id=").Append(listing.ID).Append("\">")
+                      .Append(Html(listing.Title)).Append("</a></h2>");
+                    if (!string.IsNullOrEmpty(listing.Description))
+                        sb.Append("<p>").Append(Html(TruncateText(listing.Description, 160))).Append("</p>");
+                    sb.Append("<p><strong>").Append(m_currencySymbol).Append(" ").Append(listing.Price.ToString("N0")).Append("</strong>");
+                    if (listing.CountOnHand.HasValue)
+                        sb.Append(listing.CountOnHand.Value > 0 ? " - " + listing.CountOnHand.Value.ToString("N0") + " in stock" : " - Out of stock");
+                    sb.Append("</p>");
+                    sb.Append("</div>");
+                }
+
+                sb.Append("<p>");
+                if (start > 0)
+                    sb.Append("<a href=\"").Append(BasePath).Append("/marketplace?start=").Append(Math.Max(0, start - pageSize)).Append("\">Previous</a> ");
+                if (listings.Count == pageSize)
+                    sb.Append("<a href=\"").Append(BasePath).Append("/marketplace?start=").Append(start + pageSize).Append("\">Next</a>");
+                sb.Append("</p>");
+            }
+
+            WritePage(request, response, PageTitle("Marketplace"), sb.ToString());
+        }
+
+        private void HandleMarketplaceListing(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+
+            if (m_MarketplaceListingsService == null || !int.TryParse(request.QueryString.Get("id"), out int id))
+            {
+                response.Redirect(BasePath + "/marketplace", HttpStatusCode.Redirect);
+                return;
+            }
+
+            MarketplaceListing listing = m_MarketplaceListingsService.GetListing(id);
+            if (listing == null || !listing.IsListed)
+            {
+                WritePage(request, response, PageTitle("Marketplace"),
+                        "<h1><i class=\"bi bi-bag\"></i> Marketplace</h1><p>Listing not found.</p>");
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-bag\"></i> ").Append(Html(listing.Title)).Append("</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/marketplace\">Back to Marketplace</a></p>");
+
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            sb.Append("<div class=\"content-card\">");
+            if (!string.IsNullOrEmpty(listing.Description))
+                sb.Append("<p>").Append(Html(listing.Description)).Append("</p>");
+            sb.Append("<p><strong>").Append(m_currencySymbol).Append(" ").Append(listing.Price.ToString("N0")).Append("</strong></p>");
+
+            bool inStock = !listing.CountOnHand.HasValue || listing.CountOnHand.Value > 0;
+            if (listing.CountOnHand.HasValue)
+                sb.Append("<p>").Append(inStock ? listing.CountOnHand.Value.ToString("N0") + " in stock" : "Out of stock").Append("</p>");
+
+            if (session == null)
+            {
+                sb.Append("<p><a href=\"").Append(BasePath).Append("/login\">Log in</a> to buy.</p>");
+            }
+            else if (session.PrincipalID == listing.SellerID)
+            {
+                sb.Append("<p><em>This is your own listing.</em> <a href=\"").Append(BasePath)
+                  .Append("/marketplace/manage?listing=").Append(listing.ID).Append("\">Manage it</a></p>");
+            }
+            else if (listing.ListingFolderID == UUID.Zero)
+            {
+                sb.Append("<p><em>Not available yet - the seller hasn't finished setting this listing up.</em></p>");
+            }
+            else if (!inStock)
+            {
+                sb.Append("<p><em>Out of stock.</em></p>");
+            }
+            else
+            {
+                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/marketplace/buy\">");
+                sb.Append("<input type=\"hidden\" name=\"listing_id\" value=\"").Append(listing.ID).Append("\">");
+                sb.Append("<button type=\"submit\">Buy for ").Append(m_currencySymbol).Append(" ").Append(listing.Price.ToString("N0")).Append("</button>");
+                sb.Append("</form>");
+            }
+            sb.Append("</div>");
+
+            WritePage(request, response, PageTitle(listing.Title), sb.ToString());
+        }
+
+        private void HandleMarketplaceBuy(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+            if (m_MarketplaceListingsService == null || request.HttpMethod != "POST")
+            {
+                response.Redirect(BasePath + "/marketplace", HttpStatusCode.Redirect);
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string redirectUrl = ProcessMarketplaceBuy(session, form);
+            response.Redirect(redirectUrl, HttpStatusCode.Redirect);
+        }
+
+        // Same double-submit-lock/idempotent-transactionID discipline as
+        // ProcessStoreBuy/ChargeConfluenceCurrency, plus the extra stock
+        // check (before any currency moves, per the plan) and delivery step
+        // Store doesn't need - Store sells grid-provided items (prim packs,
+        // region orders), Marketplace listings are peer-to-peer, so payment
+        // goes to the seller, not the house, and MarketplaceInventoryOperations.
+        // Deliver actually has to run to hand the item over.
+        private string ProcessMarketplaceBuy(WebSession session, Dictionary<string, string> form)
+        {
+            if (!int.TryParse(FormValue(form, "listing_id"), out int listingId))
+                return BasePath + "/marketplace?message=" + Uri.EscapeDataString("Invalid listing.");
+
+            MarketplaceListing listing = m_MarketplaceListingsService.GetListing(listingId);
+            if (listing == null || !listing.IsListed)
+                return BasePath + "/marketplace?message=" + Uri.EscapeDataString("This listing is no longer available.");
+
+            if (listing.SellerID == session.PrincipalID)
+                return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("You cannot buy your own listing.");
+
+            if (listing.ListingFolderID == UUID.Zero)
+                return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("This listing has no inventory associated with it yet.");
+
+            if (m_CurrencyService == null || m_MarketplaceLedger == null || m_InventoryService == null || m_UserAccountService == null)
+                return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("The marketplace is not fully configured on this grid.");
+
+            bool alreadyInProgress;
+            lock (m_marketplacePurchasesInProgress)
+            {
+                alreadyInProgress = m_marketplacePurchasesInProgress.ContainsKey(session.PrincipalID);
+                if (!alreadyInProgress)
+                    m_marketplacePurchasesInProgress[session.PrincipalID] = true;
+            }
+
+            if (alreadyInProgress)
+                return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("A purchase is already in progress for your account - please wait.");
+
+            try
+            {
+                if (!m_MarketplaceListingsService.TryReserveStock(listingId))
+                    return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("This item just sold out.");
+
+                // Doubles as both the currency transaction ID (so a
+                // retried/duplicated POST can't double-charge - same
+                // rationale as Store's order.ID) and Deliver's own delivery
+                // ledger idempotency key, in one fresh UUID.
+                UUID deliveryId = UUID.Random();
+
+                bool charged = m_CurrencyService.Transfer(listing.SellerID, session.PrincipalID, listing.Price,
+                        "Marketplace purchase: " + listing.Title, MARKETPLACE_PURCHASE_TRANSACTION_TYPE, deliveryId);
+
+                if (!charged)
+                {
+                    m_MarketplaceListingsService.ReleaseStock(listingId);
+                    return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("Payment failed - insufficient balance?");
+                }
+
+                DeliveryResponse delivery = MarketplaceInventoryOperations.Deliver(
+                        m_InventoryService,
+                        m_UserAccountService,
+                        UUID.Zero,
+                        true,
+                        m_marketplaceServiceAccountId,
+                        listing.SellerID,
+                        listing.ListingFolderID,
+                        session.PrincipalID,
+                        listing.SnapshotFingerprint,
+                        deliveryId.ToString(),
+                        5000,
+                        m_MarketplaceLedger,
+                        m_log,
+                        null);
+
+                if (!delivery.Ok)
+                {
+                    // Currency already moved - refund via a second, distinct
+                    // Transfer rather than trying to reverse the first one
+                    // (matches the ledger's own append-only posture).
+                    m_CurrencyService.Transfer(session.PrincipalID, listing.SellerID, listing.Price,
+                            "Marketplace purchase refund (delivery failed): " + listing.Title,
+                            MARKETPLACE_PURCHASE_TRANSACTION_TYPE, UUID.Random());
+                    m_MarketplaceListingsService.ReleaseStock(listingId);
+                    return BasePath + "/marketplace/listing?id=" + listingId + "&message="
+                            + Uri.EscapeDataString("Delivery failed and your payment was refunded: " + delivery.Message);
+                }
+
+                return BasePath + "/marketplace/listing?id=" + listingId + "&message="
+                        + Uri.EscapeDataString("Purchase complete - check your Received Items folder.");
+            }
+            finally
+            {
+                lock (m_marketplacePurchasesInProgress)
+                    m_marketplacePurchasesInProgress.Remove(session.PrincipalID);
+            }
+        }
+
+        // The edit_url destination DirectDeliveryModule's viewer cap points
+        // at (?listing=<id>), and the merchant's own listing dashboard with
+        // no id given.
+        private void HandleMarketplaceManage(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (m_MarketplaceListingsService == null)
+            {
+                WritePage(request, response, PageTitle("My Listings"),
+                        "<h1><i class=\"bi bi-bag\"></i> My Listings</h1><p>The marketplace is not available on this grid.</p>");
+                return;
+            }
+
+            string queryMessage = request.QueryString.Get("message");
+            int.TryParse(request.QueryString.Get("listing"), out int editId);
+
+            MarketplaceListing editing = editId > 0 ? m_MarketplaceListingsService.GetListing(editId) : null;
+            if (editing != null && editing.SellerID != session.PrincipalID)
+                editing = null;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-bag\"></i> My Listings</h1>");
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/marketplace\">Back to Marketplace</a></p>");
+
+            if (!string.IsNullOrEmpty(queryMessage))
+                sb.Append("<p>").Append(Html(queryMessage)).Append("</p>");
+
+            // Create/edit form - a listing is created with just a title/
+            // description/price/stock; inventory association (which folder
+            // it delivers) happens separately, from the viewer's
+            // DirectDelivery Marketplace Listings floater (PUT
+            // /associate_inventory/<id>), matching real SL - there is no
+            // web-based inventory picker here, since inventory only really
+            // makes sense to browse from inside the viewer.
+            sb.Append("<div class=\"content-card\">");
+            sb.Append("<h2>").Append(editing != null ? "Edit Listing" : "New Listing").Append("</h2>");
+            sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/marketplace/manage/save\">");
+            if (editing != null)
+                sb.Append("<input type=\"hidden\" name=\"listing_id\" value=\"").Append(editing.ID).Append("\">");
+            sb.Append("<p><input type=\"text\" name=\"title\" placeholder=\"Title\" maxlength=\"255\" required value=\"")
+              .Append(editing != null ? Html(editing.Title) : string.Empty).Append("\"></p>");
+            sb.Append("<p><textarea name=\"description\" placeholder=\"Description\">")
+              .Append(editing != null ? Html(editing.Description) : string.Empty).Append("</textarea></p>");
+            sb.Append("<p>Price: ").Append(m_currencySymbol)
+              .Append(" <input type=\"number\" name=\"price\" min=\"0\" required value=\"")
+              .Append(editing != null ? editing.Price.ToString() : "0").Append("\"></p>");
+            sb.Append("<p><label><input type=\"checkbox\" name=\"unlimited\" value=\"1\"")
+              .Append(editing == null || !editing.CountOnHand.HasValue ? " checked" : string.Empty)
+              .Append("> Unlimited stock</label> or stock on hand: <input type=\"number\" name=\"count_on_hand\" min=\"0\" value=\"")
+              .Append(editing != null && editing.CountOnHand.HasValue ? editing.CountOnHand.Value.ToString() : string.Empty).Append("\"></p>");
+            if (editing != null)
+            {
+                sb.Append("<p><label><input type=\"checkbox\" name=\"is_listed\" value=\"1\"")
+                  .Append(editing.IsListed ? " checked" : string.Empty).Append("> Listed (visible in the Marketplace)</label>");
+                if (editing.ListingFolderID == UUID.Zero)
+                    sb.Append(" <em>- not yet associated with inventory; use the viewer's Marketplace Listings floater first.</em>");
+                sb.Append("</p>");
+            }
+            sb.Append("<button type=\"submit\">Save</button>");
+            sb.Append("</form></div>");
+
+            List<MarketplaceListing> mine = m_MarketplaceListingsService.GetListingsBySeller(session.PrincipalID);
+            if (mine.Count > 0)
+            {
+                sb.Append("<h2>Your Listings</h2>");
+                foreach (MarketplaceListing listing in mine)
+                {
+                    sb.Append("<div class=\"content-card\">");
+                    sb.Append("<h3>").Append(Html(listing.Title)).Append(listing.IsListed ? " <small>(Listed)</small>" : " <small>(Unlisted)</small>").Append("</h3>");
+                    sb.Append("<p>").Append(m_currencySymbol).Append(" ").Append(listing.Price.ToString("N0"));
+                    if (listing.CountOnHand.HasValue)
+                        sb.Append(" - ").Append(listing.CountOnHand.Value.ToString("N0")).Append(" in stock");
+                    sb.Append("</p>");
+                    sb.Append("<p><a href=\"").Append(BasePath).Append("/marketplace/manage?listing=").Append(listing.ID).Append("\">Edit</a></p>");
+                    sb.Append("</div>");
+                }
+            }
+
+            WritePage(request, response, PageTitle("My Listings"), sb.ToString());
+        }
+
+        private void HandleMarketplaceManageSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+            if (m_MarketplaceListingsService == null || request.HttpMethod != "POST")
+            {
+                response.Redirect(BasePath + "/marketplace/manage", HttpStatusCode.Redirect);
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string title = (FormValue(form, "title") ?? string.Empty).Trim();
+            string description = FormValue(form, "description") ?? string.Empty;
+            int.TryParse(FormValue(form, "price"), out int price);
+            bool unlimited = FormValue(form, "unlimited") == "1";
+            int? countOnHand = null;
+            if (!unlimited && int.TryParse(FormValue(form, "count_on_hand"), out int parsedCount))
+                countOnHand = Math.Max(0, parsedCount);
+
+            string redirectUrl;
+            if (string.IsNullOrEmpty(title) || price < 0)
+            {
+                redirectUrl = BasePath + "/marketplace/manage?message=" + Uri.EscapeDataString("Title is required and price must be non-negative.");
+            }
+            else if (int.TryParse(FormValue(form, "listing_id"), out int listingId) && listingId > 0)
+            {
+                MarketplaceListing listing = m_MarketplaceListingsService.GetListing(listingId);
+                if (listing == null || listing.SellerID != session.PrincipalID)
+                {
+                    redirectUrl = BasePath + "/marketplace/manage?message=" + Uri.EscapeDataString("Listing not found.");
+                }
+                else
+                {
+                    listing.Title = title;
+                    listing.Description = description;
+                    listing.Price = price;
+                    listing.CountOnHand = countOnHand;
+                    listing.IsListed = FormValue(form, "is_listed") == "1" && listing.ListingFolderID != UUID.Zero;
+                    m_MarketplaceListingsService.UpdateListing(listing);
+                    redirectUrl = BasePath + "/marketplace/manage?listing=" + listingId + "&message=" + Uri.EscapeDataString("Listing saved.");
+                }
+            }
+            else
+            {
+                MarketplaceListing created = m_MarketplaceListingsService.CreateListing(session.PrincipalID, title, description, price, countOnHand);
+                redirectUrl = BasePath + "/marketplace/manage?listing=" + created.ID + "&message="
+                        + Uri.EscapeDataString("Listing created - use the viewer's Marketplace Listings floater to associate inventory with it.");
+            }
+
+            response.Redirect(redirectUrl, HttpStatusCode.Redirect);
+        }
+
+        private static string TruncateText(string value, int maxLength)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+                return value;
+            return value.Substring(0, maxLength).TrimEnd() + "...";
+        }
+
         // Redirect target for BuildAuthorizeUri when a resident hasn't
         // authorized Gloebit for the portal yet, and for a proactive
         // "link my Gloebit account" click with no purchase pending.
@@ -13202,6 +13613,8 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             ("/store", "bi-shop", "Store"),
             ("/store/my-purchases", "bi-receipt", "My Purchases"),
+            ("/marketplace", "bi-bag", "Marketplace"),
+            ("/marketplace/manage", "bi-tag", "My Listings"),
         };
 
         private static readonly (string Path, string Icon, string Label)[] SidebarAccountLinks =

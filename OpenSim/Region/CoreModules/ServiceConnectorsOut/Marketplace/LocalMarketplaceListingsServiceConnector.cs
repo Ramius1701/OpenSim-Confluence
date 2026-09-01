@@ -175,9 +175,9 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Marketplace
             return m_service.SetListed(id, isListed);
         }
 
-        public bool SetInventoryAssociation(int id, UUID snapshotFolderId, UUID listingFolderId, UUID versionFolderId)
+        public bool SetInventoryAssociation(int id, UUID snapshotFolderId, UUID listingFolderId, UUID versionFolderId, string snapshotFingerprint)
         {
-            return m_service.SetInventoryAssociation(id, snapshotFolderId, listingFolderId, versionFolderId);
+            return m_service.SetInventoryAssociation(id, snapshotFolderId, listingFolderId, versionFolderId, snapshotFingerprint);
         }
 
         public bool TryReserveStock(int id)

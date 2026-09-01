@@ -35,3 +35,11 @@ CREATE TABLE IF NOT EXISTS `marketplace_deliveries` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 COMMIT;
+
+:VERSION 2 # ----- SnapshotFingerprint, required by Deliver's own content-integrity check
+
+BEGIN;
+
+ALTER TABLE `marketplace_listings` ADD COLUMN `SnapshotFingerprint` VARCHAR(64) NOT NULL DEFAULT '' AFTER `VersionFolderID`;
+
+COMMIT;

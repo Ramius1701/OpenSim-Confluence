@@ -64,7 +64,7 @@ namespace OpenSim.Services.MarketplaceService
             return m_Database.SetListedState(id, isListed);
         }
 
-        public bool SetInventoryAssociation(int id, UUID snapshotFolderId, UUID listingFolderId, UUID versionFolderId)
+        public bool SetInventoryAssociation(int id, UUID snapshotFolderId, UUID listingFolderId, UUID versionFolderId, string snapshotFingerprint)
         {
             MarketplaceListing listing = m_Database.GetListing(id);
             if (listing == null)
@@ -73,6 +73,7 @@ namespace OpenSim.Services.MarketplaceService
             listing.SnapshotFolderID = snapshotFolderId;
             listing.ListingFolderID = listingFolderId;
             listing.VersionFolderID = versionFolderId;
+            listing.SnapshotFingerprint = snapshotFingerprint ?? string.Empty;
             return m_Database.UpdateListing(listing);
         }
 

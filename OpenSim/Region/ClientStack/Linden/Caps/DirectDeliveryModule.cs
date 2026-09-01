@@ -303,7 +303,7 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             // both with the new snapshot's folder id. Never store the
             // merchant's own mutable outbox folder (sourceFolderId) here -
             // only the immutable, custodian-owned snapshot.
-            m_listings.SetInventoryAssociation(id, snapshotFolderId, snapshotFolderId, snapshotFolderId);
+            m_listings.SetInventoryAssociation(id, snapshotFolderId, snapshotFolderId, snapshotFolderId, snapshot.SnapshotFingerprint);
 
             listing = m_listings.GetListing(id);
             WriteListingsResponse(response, new System.Collections.Generic.List<MarketplaceListing> { listing });

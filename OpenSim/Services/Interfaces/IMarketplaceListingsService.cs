@@ -30,7 +30,7 @@ namespace OpenSim.Services.Interfaces
 
         bool SetListed(int id, bool isListed);
 
-        bool SetInventoryAssociation(int id, UUID snapshotFolderId, UUID listingFolderId, UUID versionFolderId);
+        bool SetInventoryAssociation(int id, UUID snapshotFolderId, UUID listingFolderId, UUID versionFolderId, string snapshotFingerprint);
 
         // See IMarketplaceListingsData.TryReserveStock - call this before
         // charging currency for a purchase, not after.

@@ -34,10 +34,15 @@ namespace OpenSim.Framework
         public bool IsListed = false;
 
         // Populated by PUT /associate_inventory/<id> (DirectDeliveryModule)
-        // via MarketplaceInventoryOperations.Snapshot - UUID.Zero until then.
+        // via MarketplaceInventoryOperations.Snapshot - UUID.Zero/empty until
+        // then. SnapshotFingerprint is required by Deliver's own content-
+        // integrity check (it must match the stored snapshot tree exactly),
+        // so it has to be persisted here alongside the folder ids - there is
+        // nowhere else the WebUI buy flow could get it from at purchase time.
         public UUID SnapshotFolderID = UUID.Zero;
         public UUID ListingFolderID = UUID.Zero;
         public UUID VersionFolderID = UUID.Zero;
+        public string SnapshotFingerprint = string.Empty;
 
         public DateTime Created = DateTime.UtcNow;
         public DateTime Updated = DateTime.UtcNow;

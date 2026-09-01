@@ -31,7 +31,7 @@ namespace OpenSim.Data.MySQL
 
         private const string ListingColumns =
             "`ID`, `SellerID`, `Title`, `Description`, `Price`, `CountOnHand`, `IsListed`, "
-            + "`SnapshotFolderID`, `ListingFolderID`, `VersionFolderID`, `Created`, `Updated`";
+            + "`SnapshotFolderID`, `ListingFolderID`, `VersionFolderID`, `SnapshotFingerprint`, `Created`, `Updated`";
 
         public MarketplaceListing GetListing(int id)
         {
@@ -114,9 +114,9 @@ namespace OpenSim.Data.MySQL
                 using (MySqlCommand cmd = new MySqlCommand(
                     "insert into `marketplace_listings` "
                     + "(`SellerID`, `Title`, `Description`, `Price`, `CountOnHand`, `IsListed`, "
-                    + "`SnapshotFolderID`, `ListingFolderID`, `VersionFolderID`, `Created`, `Updated`) values "
+                    + "`SnapshotFolderID`, `ListingFolderID`, `VersionFolderID`, `SnapshotFingerprint`, `Created`, `Updated`) values "
                     + "(?SellerID, ?Title, ?Description, ?Price, ?CountOnHand, ?IsListed, "
-                    + "?SnapshotFolderID, ?ListingFolderID, ?VersionFolderID, ?Created, ?Updated)", dbcon))
+                    + "?SnapshotFolderID, ?ListingFolderID, ?VersionFolderID, ?SnapshotFingerprint, ?Created, ?Updated)", dbcon))
                 {
                     AddListingParameters(cmd, listing);
                     cmd.ExecuteNonQuery();
@@ -140,6 +140,7 @@ namespace OpenSim.Data.MySQL
                     + "`Description` = ?Description, `Price` = ?Price, `CountOnHand` = ?CountOnHand, "
                     + "`IsListed` = ?IsListed, `SnapshotFolderID` = ?SnapshotFolderID, "
                     + "`ListingFolderID` = ?ListingFolderID, `VersionFolderID` = ?VersionFolderID, "
+                    + "`SnapshotFingerprint` = ?SnapshotFingerprint, "
                     + "`Updated` = ?Updated where `ID` = ?ID", dbcon))
                 {
                     AddListingParameters(cmd, listing);
@@ -308,6 +309,7 @@ namespace OpenSim.Data.MySQL
             cmd.Parameters.AddWithValue("?SnapshotFolderID", listing.SnapshotFolderID.ToString());
             cmd.Parameters.AddWithValue("?ListingFolderID", listing.ListingFolderID.ToString());
             cmd.Parameters.AddWithValue("?VersionFolderID", listing.VersionFolderID.ToString());
+            cmd.Parameters.AddWithValue("?SnapshotFingerprint", listing.SnapshotFingerprint ?? string.Empty);
             cmd.Parameters.AddWithValue("?Created", Utils.DateTimeToUnixTime(listing.Created));
             cmd.Parameters.AddWithValue("?Updated", Utils.DateTimeToUnixTime(listing.Updated));
         }
@@ -322,6 +324,7 @@ namespace OpenSim.Data.MySQL
                 Price = Convert.ToInt32(result["Price"]),
                 CountOnHand = result["CountOnHand"] is DBNull ? (int?)null : Convert.ToInt32(result["CountOnHand"]),
                 IsListed = Convert.ToBoolean(result["IsListed"]),
+                SnapshotFingerprint = result["SnapshotFingerprint"].ToString(),
                 Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(result["Created"])),
                 Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(result["Updated"]))
             };
