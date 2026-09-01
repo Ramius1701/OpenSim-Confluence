@@ -32,12 +32,26 @@ namespace OpenSim.Services.MarketplaceService;
 
 public static class MarketplaceInventoryOperations
 {
+    // Folder-tree-based - used by the old v2 addon's own Inventory/Inspect/
+    // Snapshot/Deliver below, unchanged, so that already-live addon keeps
+    // working exactly as before.
     private const string MarketplaceFolderName = "OpenSim Marketplace";
     private const string MerchantOutboxFolderName = "Merchant Outbox";
     private const string ServiceInventoryFolderName = "Marketplace Inventory";
     private const string ReceivedItemsFolderName = "Received Items";
     private const uint RequiredSourcePermissions =
         (uint)(PermissionMask.Copy | PermissionMask.Transfer);
+
+    // Item-based - used by the native marketplace path (DirectDeliveryModule /
+    // the WebUI) below: ListListingItems/SnapshotListingItem/DeliverListingItem.
+    // A listing is exactly one item sitting directly inside "Marketplace
+    // Listings" - no per-listing subfolder, no multi-item bundling. This is a
+    // deliberate simplification chosen over real SL's actual structure
+    // (Marketplace Listings > <one folder per listing> > items, which can
+    // bundle several items into one listing) - explicit user direction:
+    // simplicity over bundle support, which nothing here currently needs.
+    private const string MarketplaceListingsFolderName = "Marketplace Listings";
+    private const string MarketplacePurchasesFolderName = "Marketplace Purchases";
 
     public static InventoryResponse Inventory(IInventoryService inventory, IUserAccountService userAccounts, UUID scopeId, UUID sellerId, int maxNodes)
     {
@@ -330,6 +344,252 @@ public static class MarketplaceInventoryOperations
             return DeliveryResponse.Error(deliveryId, "Direct Delivery failed.", true);
         }
     }
+
+    // --- Item-based native marketplace path (see the constants' own comment) ---
+
+    public static InventoryResponse ListListingItems(IInventoryService inventory, IUserAccountService userAccounts, UUID scopeId, UUID sellerId, int maxItems)
+    {
+        if (!UserExists(userAccounts, scopeId, sellerId))
+            return new InventoryResponse { Ok = false, SellerId = sellerId.ToString(), Message = "Seller account was not found." };
+
+        try
+        {
+            InventoryFolderBase listings = EnsureRootChildFolder(inventory, sellerId, MarketplaceListingsFolderName, "marketplace-listings-root");
+            InventoryCollection? content = inventory.GetFolderContent(sellerId, listings.ID);
+            List<ProductFolderInfo> products = new();
+
+            if (content != null)
+            {
+                int count = 0;
+                foreach (InventoryItemBase item in content.Items.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (++count > maxItems)
+                        break;
+                    if (item.Owner != sellerId || item.AssetType == (int)AssetType.Link || item.AssetType == (int)AssetType.LinkFolder)
+                        continue;
+
+                    bool copy = (item.CurrentPermissions & (uint)PermissionMask.Copy) != 0;
+                    bool transfer = (item.CurrentPermissions & (uint)PermissionMask.Transfer) != 0;
+                    bool modify = (item.CurrentPermissions & (uint)PermissionMask.Modify) != 0;
+
+                    products.Add(new ProductFolderInfo
+                    {
+                        FolderId = item.ID.ToString(),
+                        Name = item.Name,
+                        Description = item.Description,
+                        Copy = copy,
+                        Transfer = transfer,
+                        Modify = modify,
+                        Message = copy && transfer
+                            ? "Ready for listing association."
+                            : "Not sellable - needs Copy and Transfer permissions."
+                    });
+                }
+            }
+
+            return new InventoryResponse
+            {
+                Ok = true,
+                SellerId = sellerId.ToString(),
+                MarketplaceFolderId = listings.ID.ToString(),
+                Products = products,
+                Message = products.Count == 0
+                    ? "Marketplace Listings is ready. Drag an item into it to list it."
+                    : "Marketplace Listings synchronized."
+            };
+        }
+        catch (Exception ex)
+        {
+            return new InventoryResponse
+            {
+                Ok = false,
+                SellerId = sellerId.ToString(),
+                Message = "Marketplace inventory could not be prepared: " + ex.Message
+            };
+        }
+    }
+
+    public static SnapshotResponse SnapshotListingItem(
+        IInventoryService inventory,
+        IUserAccountService userAccounts,
+        UUID scopeId,
+        UUID serviceAccountId,
+        UUID sellerId,
+        UUID sourceItemId,
+        string versionKey)
+    {
+        if (!UserExists(userAccounts, scopeId, sellerId))
+            throw new MarketplaceInventoryException(HttpStatusCode.NotFound, "Seller account was not found.");
+        if (!UserExists(userAccounts, scopeId, serviceAccountId))
+            throw new MarketplaceInventoryException(HttpStatusCode.ServiceUnavailable, "Marketplace service account was not found.");
+        if (sellerId == serviceAccountId)
+            throw new MarketplaceInventoryException(HttpStatusCode.Forbidden, "Marketplace service account cannot be used as a seller.");
+
+        InventoryFolderBase listings = EnsureRootChildFolder(inventory, sellerId, MarketplaceListingsFolderName, "marketplace-listings-root");
+        InventoryItemBase? sourceItem = inventory.GetItem(sellerId, sourceItemId);
+        if (sourceItem == null || sourceItem.Owner != sellerId || sourceItem.Folder != listings.ID)
+            throw new MarketplaceInventoryException(HttpStatusCode.NotFound, "Item is not directly inside the seller's Marketplace Listings folder.");
+        if (sourceItem.AssetType == (int)AssetType.Link || sourceItem.AssetType == (int)AssetType.LinkFolder)
+            throw new MarketplaceInventoryException(HttpStatusCode.UnprocessableEntity, "Inventory links are not supported as Marketplace listings.");
+
+        bool copy = (sourceItem.CurrentPermissions & (uint)PermissionMask.Copy) != 0;
+        bool transfer = (sourceItem.CurrentPermissions & (uint)PermissionMask.Transfer) != 0;
+        bool modify = (sourceItem.CurrentPermissions & (uint)PermissionMask.Modify) != 0;
+        if (!copy || !transfer)
+            throw new MarketplaceInventoryException(
+                HttpStatusCode.UnprocessableEntity,
+                $"Marketplace source item '{sourceItem.Name}' must be Copy and Transfer for reliable Direct Delivery. Next-owner permissions may still remove Copy or Transfer for the buyer.");
+
+        ItemNode sourceNode = new(sourceItem);
+        string sourceFingerprint = ComputeItemFingerprint(sourceNode);
+
+        InventoryFolderBase serviceRoot = EnsureRootChildFolder(inventory, serviceAccountId, ServiceInventoryFolderName, "service-inventory");
+        InventoryFolderBase sellerRoot = EnsureChildFolder(inventory, serviceAccountId, serviceRoot, sellerId.ToString(), "service-seller|" + sellerId);
+
+        UUID snapshotItemId = CreateDeterministicUuid("listing-snapshot-item", versionKey + "|" + sourceItem.ID);
+        InventoryItemBase snapshotItem = sourceNode.CreateSnapshotItem(snapshotItemId, serviceAccountId, sellerRoot.ID);
+        AddOrVerifyItem(inventory, snapshotItem);
+
+        ItemNode storedNode = new(snapshotItem);
+        string storedFingerprint = ComputeItemFingerprint(storedNode);
+
+        return new SnapshotResponse
+        {
+            Ok = true,
+            VersionKey = versionKey,
+            SellerId = sellerId.ToString(),
+            SourceFolderId = sourceItemId.ToString(),
+            SnapshotFolderId = snapshotItemId.ToString(),
+            SourceFingerprint = sourceFingerprint,
+            SnapshotFingerprint = storedFingerprint,
+            Name = sourceNode.Name,
+            Description = sourceNode.Description,
+            ItemCount = 1,
+            FolderCount = 0,
+            Copy = copy,
+            Transfer = transfer,
+            Modify = modify,
+            Message = "Marketplace listing snapshot completed."
+        };
+    }
+
+    // Item-based counterpart to Deliver above - same Scene-free posture (see
+    // Deliver's own comment) and the same idempotency-ledger contract, just
+    // delivering a single item straight into the recipient's "Marketplace
+    // Purchases" folder instead of copying a folder tree. notifyRecipient
+    // receives the delivered item directly - no CollectDeliveryTree walk
+    // needed for a single item.
+    public static DeliveryResponse DeliverListingItem(
+        IInventoryService inventory,
+        IUserAccountService userAccounts,
+        UUID scopeId,
+        bool propagatePermissions,
+        UUID serviceAccountId,
+        UUID sellerId,
+        UUID snapshotItemId,
+        UUID recipientId,
+        string snapshotFingerprint,
+        string deliveryId,
+        IDeliveryLedger ledger,
+        ILog log,
+        Action<UUID, InventoryItemBase> notifyRecipient)
+    {
+        if (ledger.TryGet(deliveryId, out DeliveryReceipt recorded))
+        {
+            if (!recorded.Matches(
+                    sellerId.ToString(),
+                    snapshotItemId.ToString(),
+                    recipientId.ToString(),
+                    snapshotFingerprint))
+            {
+                return DeliveryResponse.Error(
+                    deliveryId,
+                    "Delivery ID is already bound to different delivery data.");
+            }
+            return DeliveryResponse.FromReceipt(recorded, true, "Delivery already completed.");
+        }
+
+        if (!UserExists(userAccounts, scopeId, recipientId))
+            return DeliveryResponse.Error(
+                deliveryId,
+                "Recipient must be a local grid account.");
+
+        if (recipientId == serviceAccountId)
+            return DeliveryResponse.Error(
+                deliveryId,
+                "Marketplace service account cannot receive customer deliveries.");
+
+        try
+        {
+            InventoryItemBase? snapshotItem = inventory.GetItem(serviceAccountId, snapshotItemId);
+            if (snapshotItem == null || snapshotItem.Owner != serviceAccountId)
+                throw new MarketplaceInventoryException(HttpStatusCode.NotFound, "Snapshot item was not found.");
+
+            InventoryFolderBase serviceRoot = EnsureRootChildFolder(inventory, serviceAccountId, ServiceInventoryFolderName, "service-inventory");
+            InventoryFolderBase sellerRoot = EnsureChildFolder(inventory, serviceAccountId, serviceRoot, sellerId.ToString(), "service-seller|" + sellerId);
+            if (snapshotItem.Folder != sellerRoot.ID)
+                throw new MarketplaceInventoryException(HttpStatusCode.Forbidden, "Snapshot item is not owned by the Marketplace service account for this seller.");
+
+            ItemNode snapshotNode = new(snapshotItem);
+            string actualFingerprint = ComputeItemFingerprint(snapshotNode);
+            if (!actualFingerprint.Equals(snapshotFingerprint, StringComparison.OrdinalIgnoreCase))
+            {
+                return DeliveryResponse.Error(
+                    deliveryId,
+                    "Published Marketplace snapshot fingerprint does not match the stored item.");
+            }
+
+            InventoryFolderBase purchases = EnsureRootChildFolder(inventory, recipientId, MarketplacePurchasesFolderName, "marketplace-purchases-root");
+
+            UUID deliveredItemId = CreateDeterministicUuid("listing-delivery-item", deliveryId + "|" + snapshotItem.ID);
+            InventoryItemBase deliveredItem = snapshotNode.CreateDeliveryItem(deliveredItemId, recipientId, purchases.ID, propagatePermissions);
+            AddOrVerifyItem(inventory, deliveredItem);
+
+            DeliveryReceipt receipt = new()
+            {
+                TimestampUtc = DateTime.UtcNow.ToString("O"),
+                DeliveryId = deliveryId,
+                SellerId = sellerId.ToString(),
+                SnapshotFolderId = snapshotItemId.ToString(),
+                RecipientId = recipientId.ToString(),
+                SnapshotFingerprint = actualFingerprint,
+                DestinationFolderId = deliveredItem.ID.ToString(),
+                ItemCount = 1,
+                FolderCount = 0
+            };
+
+            if (!ledger.TryRecord(receipt, out string ledgerError))
+                return DeliveryResponse.Error(deliveryId, "Delivery completed but receipt ledger failed: " + ledgerError, true);
+
+            notifyRecipient?.Invoke(recipientId, deliveredItem);
+
+            log.InfoFormat(
+                "[MARKETPLACE]: Delivered item {0} to {1}; delivery={2}, destination item={3}",
+                snapshotItemId,
+                recipientId,
+                deliveryId,
+                deliveredItem.ID);
+
+            return DeliveryResponse.FromReceipt(receipt, false, "Direct Delivery completed.");
+        }
+        catch (MarketplaceInventoryException ex)
+        {
+            return DeliveryResponse.Error(deliveryId, ex.Message, ex.Retryable);
+        }
+        catch (Exception ex)
+        {
+            log.ErrorFormat("[MARKETPLACE]: Delivery {0} failed: {1}", deliveryId, ex);
+            return DeliveryResponse.Error(deliveryId, "Direct Delivery failed.", true);
+        }
+    }
+
+    private static string ComputeItemFingerprint(ItemNode item)
+    {
+        string data = $"I|{item.Id}|{item.FolderId}|{item.AssetId}|{item.Name}|{item.Description}|{item.AssetType}|{item.InvType}|{item.BasePermissions}|{item.CurrentPermissions}|{item.NextPermissions}|{item.EveryOnePermissions}|{item.GroupPermissions}|{item.Flags}\n";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(data))).ToLowerInvariant();
+    }
+
+    // --- Shared helpers (used by both the folder-tree and item-based paths above) ---
 
     private static void ValidateSnapshotLocation(
         IInventoryService inventory,

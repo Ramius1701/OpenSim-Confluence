@@ -273,35 +273,34 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             }
 
             AssociateInventoryRequest payload = JsonSerializer.Deserialize<AssociateInventoryRequest>(request.InputStream, JsonOptions);
-            if (payload == null || !UUID.TryParse(payload.SourceFolderId, out UUID sourceFolderId) || sourceFolderId == UUID.Zero)
+            if (payload == null || !UUID.TryParse(payload.SourceFolderId, out UUID sourceItemId) || sourceItemId == UUID.Zero)
             {
-                WriteError(response, 400, "source_folder_id must be a non-zero UUID identifying a top-level folder in the seller's Merchant Outbox.");
+                WriteError(response, 400, "source_folder_id must be a non-zero UUID identifying an item directly inside the seller's Marketplace Listings folder.");
                 return;
             }
 
             string versionKey = id + "|" + DateTime.UtcNow.Ticks;
-            SnapshotResponse snapshot = MarketplaceInventoryOperations.Snapshot(
+            SnapshotResponse snapshot = MarketplaceInventoryOperations.SnapshotListingItem(
                 m_scene.InventoryService,
                 m_scene.UserAccountService,
                 m_scene.RegionInfo.ScopeID,
                 m_serviceAccountId,
                 agentId,
-                sourceFolderId,
-                versionKey,
-                m_maxInventoryNodes);
+                sourceItemId,
+                versionKey);
 
             if (!UUID.TryParse(snapshot.SnapshotFolderId, out UUID snapshotFolderId))
             {
-                WriteError(response, 500, "Snapshot did not return a valid folder id.");
+                WriteError(response, 500, "Snapshot did not return a valid item id.");
                 return;
             }
 
             // No separate version-history concept (yet) - listing_folder_id and
             // version_folder_id both point at the same deterministic,
-            // content-addressed snapshot folder MarketplaceInventoryOperations.
-            // Snapshot just produced. A later re-association simply replaces
-            // both with the new snapshot's folder id. Never store the
-            // merchant's own mutable outbox folder (sourceFolderId) here -
+            // content-addressed snapshot item MarketplaceInventoryOperations.
+            // SnapshotListingItem just produced. A later re-association simply
+            // replaces both with the new snapshot's item id. Never store the
+            // merchant's own mutable source item id (sourceItemId) here -
             // only the immutable, custodian-owned snapshot.
             m_listings.SetInventoryAssociation(id, snapshotFolderId, snapshotFolderId, snapshotFolderId, snapshot.SnapshotFingerprint);
 

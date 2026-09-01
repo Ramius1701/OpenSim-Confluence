@@ -17383,3 +17383,45 @@ single-file deploy following a whole-solution rebuild, do a full hash
 comparison before calling it done, not just a targeted binary-grep check
 that only proves the one file you were tracking - the DLLs you didn't
 touch can still have moved.
+
+### Marketplace: web association flow corrected to flat, single-item listings (2026-09-01)
+
+First real usability pass on live turned up two problems with the
+"Merchant Outbox" web-association flow above, both from the user's own
+screenshots: (1) the naming was wrong - `FT_OUTBOX` / "Merchant Outbox" is
+real SL's *old*, pre-DirectDelivery folder type; the current DirectDelivery
+era uses `FT_MARKETPLACE_LISTINGS` / "Marketplace Listings" (confirmed in
+`indra/newview/llviewerfoldertype.cpp`), and (2) `Inventory()` only listed
+*subfolders* of that root, but the user had dropped their test item
+directly inside it, so the dropdown showed "No product folders found yet"
+even though the item existed.
+
+The obvious fix was to match real SL exactly: one subfolder per listing
+under `Marketplace Listings`, items inside that. User's reaction, twice:
+"Not sure we need Merchant Outbox with the top folder will do" and then,
+after a corrected-but-still-nested proposal, "So we are going three
+folder deep to make this work?" - followed by the explicit final call:
+**"Just the top folder should be fine. with the item."** Flattened further
+than real SL, on purpose: one item placed directly in `Marketplace
+Listings` *is* the listing - no per-listing subfolder, no bundling
+multiple items into one listing.
+
+Implementation: added item-based methods alongside the original
+folder-based ones in `MarketplaceInventoryOperations.cs` rather than
+replacing them, because the old v2 addon (`addon-modules/OpenSimMarketplace`,
+still actively configured on live) depends on the folder-based
+`Inventory`/`Inspect`/`Snapshot`/`Deliver` methods and was left untouched.
+New: `ListListingItems` (lists items directly inside "Marketplace
+Listings", auto-creating it), `SnapshotListingItem` (validates the item's
+parent folder before snapshotting - Copy+Transfer still required),
+`DeliverListingItem` (delivers into the buyer's "Marketplace Purchases"
+folder instead of the old "Received Items" name). `WebInterfaceServiceConnector.cs`'s
+three marketplace call sites (`BuildInventoryAssociationSection`,
+`HandleMarketplaceManageAssociate`, `ProcessMarketplaceBuy`) switched to
+the new methods; `DirectDeliveryModule.cs` (still dormant, see above)
+updated the same way for when a non-blocking viewer eventually exists.
+`MARKETPLACE.md` updated to describe the flat structure and correct
+folder names throughout. Build verified via binary grep for the three new
+method names in `OpenSim.Services.MarketplaceService.dll`. Not yet
+deployed to live as of this entry - live is still running the previous,
+folder-based-association build.

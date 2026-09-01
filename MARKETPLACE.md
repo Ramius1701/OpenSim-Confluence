@@ -35,11 +35,12 @@ dormant, so it works immediately if a non-blocking viewer is ever used —
 no code changes needed on that side, only a viewer patch.
 
 Because of this, **inventory association is done entirely through the
-web** (`/marketplace/manage`) instead, calling the exact same
-`MarketplaceInventoryOperations.Snapshot` logic the floater would have
-triggered — just invoked from Robust instead of from the region cap. Everything
-else (organizing product folders, browsing, buying, delivery) is
-unaffected by this limitation.
+web** (`/marketplace/manage`) instead, calling the same
+`MarketplaceInventoryOperations.SnapshotListingItem` logic the floater's
+own associate-inventory action would have triggered — just invoked from
+Robust instead of from the region cap, and operating on a single item
+rather than a folder. Everything else (organizing listings, browsing,
+buying, delivery) is unaffected by this limitation.
 
 ## Server setup
 
@@ -87,22 +88,26 @@ boots against the configured database.
 ## Merchant workflow (listing something for sale)
 
 1. **Organize inventory** — completely ordinary folder management, works
-   on any viewer, not gated at all: create a folder under
-   `Inventory > OpenSim Marketplace > Merchant Outbox > <product name>`
-   (auto-created on first visit if it doesn't exist) and put what you want
-   to sell in it. Every item needs Copy and Transfer permissions.
+   on any viewer, not gated at all. `Inventory > Marketplace Listings` is
+   auto-created the first time you visit `/marketplace/manage`. Drag the
+   item you want to sell directly into it (no per-listing subfolder - one
+   item there is one sellable thing). This is a deliberate simplification
+   from real SL, which nests one folder per listing under `Marketplace
+   Listings` so a listing can bundle several items together - not
+   supported here; each listing is exactly one item. Copy and Transfer
+   permissions required.
 2. Log into the web portal, go to **My Listings** (`/marketplace/manage`),
    create a listing: title, description, price, and stock (unlimited, or
    a specific count-on-hand).
 3. Open that listing's edit page and use the **Associate Inventory**
-   section: pick the product folder from the dropdown, click Associate.
-   This snapshots the folder's current contents (content-addressed,
-   fingerprinted) as what the listing will actually deliver — editing the
-   folder afterward doesn't change already-associated listings; re-associate
-   to update what's delivered.
+   section: pick the item from the dropdown, click Associate. This
+   snapshots the item (content-addressed, fingerprinted) as what the
+   listing will actually deliver — editing/removing the original item
+   afterward doesn't change already-associated listings; re-associate to
+   update what's delivered.
 4. Check the "Listed" box and save. It's now visible on `/marketplace`.
 
-Re-associating (picking a folder again, same or different) at any time
+Re-associating (picking an item again, same or different) at any time
 replaces what the listing delivers going forward; anything already
 delivered to a buyer is unaffected.
 
@@ -110,8 +115,9 @@ delivered to a buyer is unaffected.
 
 Browse `/marketplace`, open a listing, click Buy. Payment (ConfluenceCurrency
 only — no Gloebit) goes directly to the seller, not the grid. Delivery
-lands in the buyer's own `Received Items` folder (under the same
-`OpenSim Marketplace` root), whether or not they're logged in at the time.
+lands in the buyer's own `Marketplace Purchases` folder (top-level,
+auto-created on first delivery), whether or not they're logged in at the
+time.
 
 A finite-stock listing that sells out is rejected cleanly before any
 currency moves; a payment that fails after stock was provisionally

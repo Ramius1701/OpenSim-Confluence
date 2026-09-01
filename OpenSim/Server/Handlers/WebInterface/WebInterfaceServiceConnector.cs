@@ -11039,7 +11039,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("Payment failed - insufficient balance?");
                 }
 
-                DeliveryResponse delivery = MarketplaceInventoryOperations.Deliver(
+                DeliveryResponse delivery = MarketplaceInventoryOperations.DeliverListingItem(
                         m_InventoryService,
                         m_UserAccountService,
                         UUID.Zero,
@@ -11050,7 +11050,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                         session.PrincipalID,
                         listing.SnapshotFingerprint,
                         deliveryId.ToString(),
-                        5000,
                         m_MarketplaceLedger,
                         m_log,
                         null);
@@ -11069,7 +11068,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
 
                 return BasePath + "/marketplace/listing?id=" + listingId + "&message="
-                        + Uri.EscapeDataString("Purchase complete - check your Received Items folder.");
+                        + Uri.EscapeDataString("Purchase complete - check your Marketplace Purchases folder.");
             }
             finally
             {
@@ -11248,8 +11247,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return sb.ToString();
             }
 
-            InventoryResponse products = MarketplaceInventoryOperations.Inventory(
-                    m_InventoryService, m_UserAccountService, UUID.Zero, session.PrincipalID, 5000);
+            InventoryResponse products = MarketplaceInventoryOperations.ListListingItems(
+                    m_InventoryService, m_UserAccountService, UUID.Zero, session.PrincipalID, 500);
 
             if (!products.Ok)
             {
@@ -11259,17 +11258,19 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (editing.ListingFolderID != UUID.Zero)
             {
-                sb.Append("<p>Currently delivers the folder associated on ").Append(editing.Updated.ToString("u"))
-                  .Append(". Associating a different folder below replaces it for future deliveries - already-delivered copies are unaffected.</p>");
+                sb.Append("<p>Currently delivers the item associated on ").Append(editing.Updated.ToString("u"))
+                  .Append(". Associating a different item below replaces it for future deliveries - already-delivered copies are unaffected.</p>");
             }
 
-            sb.Append("<p>Put what this listing should deliver into a folder under "
-                    + "<strong>Inventory &gt; OpenSim Marketplace &gt; Merchant Outbox</strong> "
-                    + "(create it there if you haven't already - drag the item(s) in, Copy and Transfer permissions required), then pick it below.</p>");
+            sb.Append("<p>In your viewer, drag the item for this listing directly into "
+                    + "<strong>Inventory &gt; Marketplace Listings</strong> "
+                    + "(auto-created the first time you visit this page). Copy and Transfer "
+                    + "permissions required. Then pick it below.</p>");
 
             if (products.Products.Count == 0)
             {
-                sb.Append("<p><em>No product folders found yet - add one to Merchant Outbox first.</em></p></div>");
+                sb.Append("<p><em>No items found yet in Marketplace Listings. "
+                        + "If you just added one, refresh this page.</em></p></div>");
                 return sb.ToString();
             }
 
@@ -11281,11 +11282,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                 bool sellable = product.Copy && product.Transfer;
                 sb.Append("<option value=\"").Append(product.FolderId).Append("\"")
                   .Append(sellable ? string.Empty : " disabled").Append(">")
-                  .Append(Html(product.Name)).Append(" (").Append(product.ItemCount).Append(" item")
-                  .Append(product.ItemCount == 1 ? string.Empty : "s");
+                  .Append(Html(product.Name));
                 if (!sellable)
                     sb.Append(" - not sellable: ").Append(Html(product.Message));
-                sb.Append(")</option>");
+                sb.Append("</option>");
             }
             sb.Append("</select> ");
             sb.Append("<button type=\"submit\">Associate</button>");
@@ -11333,31 +11333,30 @@ namespace OpenSim.Server.Handlers.WebInterface
                     try
                     {
                         string versionKey = listingId + "|" + DateTime.UtcNow.Ticks;
-                        SnapshotResponse snapshot = MarketplaceInventoryOperations.Snapshot(
+                        SnapshotResponse snapshot = MarketplaceInventoryOperations.SnapshotListingItem(
                                 m_InventoryService,
                                 m_UserAccountService,
                                 UUID.Zero,
                                 m_marketplaceServiceAccountId,
                                 session.PrincipalID,
                                 sourceFolderId,
-                                versionKey,
-                                5000);
+                                versionKey);
 
                         if (!UUID.TryParse(snapshot.SnapshotFolderId, out UUID snapshotFolderId))
                         {
                             redirectUrl = BasePath + "/marketplace/manage?listing=" + listingId + "&message="
-                                    + Uri.EscapeDataString("Snapshot did not return a valid folder id.");
+                                    + Uri.EscapeDataString("Snapshot did not return a valid item id.");
                         }
                         else
                         {
                             // Same simplification DirectDeliveryModule uses -
                             // no separate version-history concept yet, both
                             // listing_folder_id and version_folder_id point
-                            // at this snapshot.
+                            // at this snapshot item.
                             m_MarketplaceListingsService.SetInventoryAssociation(
                                     listingId, snapshotFolderId, snapshotFolderId, snapshotFolderId, snapshot.SnapshotFingerprint);
                             redirectUrl = BasePath + "/marketplace/manage?listing=" + listingId + "&message="
-                                    + Uri.EscapeDataString("Inventory associated - " + snapshot.ItemCount + " item(s). You can now list it.");
+                                    + Uri.EscapeDataString("Inventory associated: " + snapshot.Name + ". You can now list it.");
                         }
                     }
                     catch (MarketplaceInventoryException ex)

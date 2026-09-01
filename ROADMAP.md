@@ -23,11 +23,13 @@ gap today. For what already exists, see `FEATURES.md`.
   known bypass). `DirectDeliveryModule` is protocol-correct and left in
   place, dormant, for if a non-blocking viewer is ever used - but for now,
   merchants associate inventory through `/marketplace/manage` on the web
-  instead (the exact same `Snapshot` call the floater would have
+  instead (the same `SnapshotListingItem` call the floater would have
   triggered, just invoked from Robust). No in-world UI was added to
   replace it; the folder-organizing step it depends on (`Inventory >
-  OpenSim Marketplace > Merchant Outbox > <product>`) is itself completely
-  ordinary, ungated inventory management on every viewer.
+  Marketplace Listings`, item dropped directly inside — a deliberate
+  flattening from real SL's per-listing subfolders, so one item is one
+  listing) is itself completely ordinary, ungated inventory management on
+  every viewer.
 
   Supersedes `addon-modules/OpenSimMarketplace`'s old v2 HTTP API (a
   service-to-service protocol for an external website, unrelated to the
