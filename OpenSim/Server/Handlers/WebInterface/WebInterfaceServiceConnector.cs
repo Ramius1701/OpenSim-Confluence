@@ -1154,6 +1154,21 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<a href=\"").Append(BasePath).Append("/login\" class=\"cta-secondary\">Log In</a>");
             sb.Append("</div>");
 
+            // Hypergrid address up front, not buried on /viewers - the
+            // homepage's other real audience besides a brand-new signup is
+            // a Hypergrid traveler from another grid who just wants the
+            // address to paste into their own viewer's map bar, no account
+            // needed. Same loginUri HandleViewers already computes, not a
+            // second value that could drift.
+            string loginUri = string.IsNullOrEmpty(m_publicBaseUrl) ? string.Empty : m_publicBaseUrl + "/";
+            if (!string.IsNullOrEmpty(loginUri))
+            {
+                sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-signpost-2\"></i> Hypergrid Address</h2>")
+                  .Append("<p>Already have a viewer or an account on another OpenSim grid? Paste this into your map/search bar to teleport straight in.</p>")
+                  .Append("<form onsubmit=\"return false;\"><input type=\"text\" value=\"").Append(Html(loginUri))
+                  .Append("\" readonly onclick=\"this.select()\"></form></div>");
+            }
+
             sb.Append("<h2>Why ").Append(Html(gridName)).Append("?</h2><div class=\"widget-grid\">");
             AppendFeatureCard(sb, "Built-In Economy", "No setup required",
                     "A real currency ledger with buy/sell and group treasuries, ready out of the box.");
@@ -1161,6 +1176,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     "Open, standards-based teleporting to other OpenSimulator grids.");
             AppendFeatureCard(sb, "Active Community", "See what's happening",
                     "Live events, classifieds, and grid-wide search across every region.");
+            AppendFeatureCard(sb, "Safe & Moderated", "Built in, not bolted on",
+                    "Native mute list, grid-wide viewer bans, and in-viewer abuse reporting with a web admin queue.");
+            AppendFeatureCard(sb, "Room to Build", "For creators, not just visitors",
+                    "Larger-than-standard VarRegions with no sim-crossing stutter, mesh uploads, full LSL/OSSL scripting.");
+            AppendFeatureCard(sb, "Runs From a Browser", "No viewer required for the basics",
+                    "Search, events, classifieds, your store listings, account and land - all reachable without logging in-world.");
             sb.Append("</div>");
 
             string classifieds = RenderFeaturedClassifieds(6);
@@ -4420,10 +4441,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                         m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000));
                 long totalAreaSqm = 0;
                 int hgOpenCount = 0;
-                int largestRegionSqm = 0;
+                long largestRegionSqm = 0;
                 foreach (GridRegion region in regions)
                 {
-                    int areaSqm = region.RegionSizeX * region.RegionSizeY;
+                    long areaSqm = (long)region.RegionSizeX * region.RegionSizeY;
                     totalAreaSqm += areaSqm;
                     if (areaSqm > largestRegionSqm)
                         largestRegionSqm = areaSqm;
@@ -5347,40 +5368,69 @@ namespace OpenSim.Server.Handlers.WebInterface
         // succeeds or it doesn't) - "N/A" or omitted rather than a fake
         // zero when a service isn't wired up, matching this page's own
         // established honesty standard elsewhere (see Features page).
+        // Each row below used to just check "is this service's reference
+        // non-null" - true the moment Robust loads the plugin at startup,
+        // regardless of whether it can actually still reach its database
+        // right now. A service that's configured but degraded (DB
+        // connection lost, table missing) would have kept reporting
+        // "Online" forever. Rewritten so every row is its own real, cheap
+        // live call in its own try/catch - "Online" now means "answered
+        // just now", "Error" (new) means "configured but the live call
+        // just failed", "Not configured" still means the reference itself
+        // is null. Overall Status is derived from these per-row results,
+        // not a single catch-all around the whole block that could mask
+        // which specific service actually failed.
         private void HandleGridStatus(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
-            bool servicesOk = true;
             int totalRegions = 0, varRegions = 0, singleRegions = 0;
             int totalAccounts = 0, newAccounts7d = 0, onlineNow = 0, uniqueVisitors30d = 0;
             long totalAreaSqm = 0;
 
             HashSet<string> aliveRegionIDs = new HashSet<string>();
 
-            try
+            bool gridServiceOk = false, userAccountsOk = false, currencyOk = false, searchOk = false, inventoryOk = false;
+
+            if (m_GridService != null)
             {
-                if (m_GridService != null)
+                try
                 {
                     List<GridRegion> regions = FilterOnlineRegions(
                             m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000));
                     totalRegions = regions.Count;
                     foreach (GridRegion region in regions)
                     {
-                        totalAreaSqm += region.RegionSizeX * region.RegionSizeY;
+                        totalAreaSqm += (long)region.RegionSizeX * region.RegionSizeY;
                         if (region.RegionSizeX == 256 && region.RegionSizeY == 256)
                             singleRegions++;
                         else
                             varRegions++;
                         aliveRegionIDs.Add(region.RegionID.ToString());
                     }
+                    gridServiceOk = true;
                 }
-                if (m_UserAccountService != null)
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Grid Service check failed: {0}", e);
+                }
+            }
+            if (m_UserAccountService != null)
+            {
+                try
                 {
                     totalAccounts = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count;
                     long cutoff = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
                     newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
+                    userAccountsOk = true;
                 }
-                if (m_GridUserService != null)
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus User Accounts check failed: {0}", e);
+                }
+            }
+            if (m_GridUserService != null)
+            {
+                try
                 {
                     // A crashed/killed region never clears the "Online"
                     // flag for whoever was on it - see FilterOnlineRegions'
@@ -5390,16 +5440,66 @@ namespace OpenSim.Server.Handlers.WebInterface
                     onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
                     uniqueVisitors30d = m_GridUserService.GetUniqueVisitorCount(30);
                 }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Grid User check failed: {0}", e);
+                }
             }
-            catch (Exception e)
+            if (m_CurrencyService != null)
             {
-                servicesOk = false;
-                m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus caught an exception mid-query: {0}", e);
+                try
+                {
+                    // Cheapest real call available - a zero-width
+                    // transaction-history window still round-trips to the
+                    // currency DB and back, proving it's actually
+                    // reachable rather than just instantiated.
+                    m_CurrencyService.GetTransactionHistory(UUID.Zero, UUID.Zero, DateTime.UtcNow, DateTime.UtcNow, null, null);
+                    currencyOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Currency check failed: {0}", e);
+                }
             }
+            if (m_SearchService != null)
+            {
+                try
+                {
+                    m_SearchService.GetTrendingQueries(1);
+                    searchOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Search check failed: {0}", e);
+                }
+            }
+            if (m_InventoryService != null)
+            {
+                try
+                {
+                    // UUID.Zero has no root folder - a clean null return is
+                    // just as valid a "the service answered" signal as a
+                    // real result, only an exception means it's actually
+                    // unreachable.
+                    m_InventoryService.GetRootFolder(UUID.Zero);
+                    inventoryOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Inventory check failed: {0}", e);
+                }
+            }
+
+            bool servicesOk = (m_GridService == null || gridServiceOk)
+                    && (m_UserAccountService == null || userAccountsOk)
+                    && (m_CurrencyService == null || currencyOk)
+                    && (m_SearchService == null || searchOk)
+                    && (m_InventoryService == null || inventoryOk);
 
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1><i class=\"bi bi-activity\"></i> Grid Status</h1>")
-              .Append("<p>Live snapshot of ").Append(Html(gridName)).Append("'s statistics and service health. ")
+              .Append("<p>Live snapshot of ").Append(Html(gridName)).Append("'s statistics and service health - ")
+              .Append("every row below is its own real call made just now, not a cached or assumed value. ")
               .Append("Last updated ").Append(Html(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC.</p>");
 
             sb.Append("<div class=\"stats-grid\">");
@@ -5416,11 +5516,12 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<tr><th>Grid</th><td>").Append(Html(gridName)).Append("</td></tr>")
               .Append("<tr><th>Status</th><td>").Append(servicesOk
                     ? "<span class=\"pill pill-yes\">Operational</span>"
-                    : "<span class=\"pill pill-no\">Degraded</span>").Append("</td></tr>")
-              .Append("<tr><th>Grid Service</th><td>").Append(m_GridService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
-              .Append("<tr><th>User Accounts</th><td>").Append(m_UserAccountService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
-              .Append("<tr><th>Currency</th><td>").Append(m_CurrencyService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
-              .Append("<tr><th>Search</th><td>").Append(m_SearchService != null ? "<span class=\"pill pill-yes\">Online</span>" : "<span class=\"pill pill-no\">Not configured</span>").Append("</td></tr>")
+                    : "<span class=\"pill pill-warn\">Degraded</span>").Append("</td></tr>")
+              .Append("<tr><th>Grid Service</th><td>").Append(AppendServicePill(m_GridService != null, gridServiceOk)).Append("</td></tr>")
+              .Append("<tr><th>User Accounts</th><td>").Append(AppendServicePill(m_UserAccountService != null, userAccountsOk)).Append("</td></tr>")
+              .Append("<tr><th>Currency</th><td>").Append(AppendServicePill(m_CurrencyService != null, currencyOk)).Append("</td></tr>")
+              .Append("<tr><th>Search</th><td>").Append(AppendServicePill(m_SearchService != null, searchOk)).Append("</td></tr>")
+              .Append("<tr><th>Inventory</th><td>").Append(AppendServicePill(m_InventoryService != null, inventoryOk)).Append("</td></tr>")
               .Append("</tbody></table></div>");
 
             sb.Append("<div class=\"content-card text-center\" style=\"text-align:center;padding-top:20px;\">")
@@ -5804,6 +5905,20 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<div class=\"stat-card\"><div class=\"stat-label\">").Append(Html(label)).Append("</div>")
               .Append("<div class=\"stat-value\">").Append(Html(value)).Append("</div>")
               .Append("<div class=\"stat-sub\">").Append(Html(sub)).Append("</div></div>");
+        }
+
+        // Three real states, not two - a service whose reference is null
+        // was never configured; one that's configured but whose live probe
+        // just threw is genuinely broken right now (distinct from either
+        // "fine" or "not applicable to this grid"), so it gets its own
+        // pill color rather than being lumped in with "Not configured".
+        private static string AppendServicePill(bool configured, bool healthy)
+        {
+            if (!configured)
+                return "<span class=\"pill pill-no\">Not configured</span>";
+            return healthy
+                    ? "<span class=\"pill pill-yes\">Online</span>"
+                    : "<span class=\"pill pill-warn\">Error</span>";
         }
 
         private string RenderNewsFeed(int count)
@@ -14565,6 +14680,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;}" +
                 ".pill-yes{background:rgba(74,222,128,.15);color:var(--success);}" +
                 ".pill-no{background:rgba(153,158,166,.15);color:var(--muted);}" +
+                ".pill-warn{background:var(--danger-bg);color:var(--danger);}" +
                 ".feature-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:20px;margin:0 0 8px;}" +
                 ".powered-group-label{flex:0 0 100%;text-align:center;font-size:11px;letter-spacing:.12em;" +
                 "text-transform:uppercase;color:var(--muted);margin:14px 0 2px;}" +

@@ -17751,3 +17751,58 @@ was ready to deploy - waited for them to log off rather than disconnect
 them, same as the marketplace service-account fix earlier tonight. Same
 full stop/resync/restart cycle (0 missing/0 mismatched, all 15 regions
 + Robust clean, only the pre-existing Tangle YEngine error).
+
+### Land-area type normalization; Grid Status's Service Status was checking "loaded" not "working" (2026-09-02/03)
+
+Two follow-ups from the home-page work above, both from direct user
+questions rather than something I noticed myself.
+
+**Land area accuracy** - asked directly whether `/gridstatus`'s land-
+area figure was trustworthy. Verified independently rather than just
+re-reading the code: summed `sizeX * sizeY` for all 15 regions straight
+from the `regions` table by hand (589,824 m² across nine 256x256
+regions + 786,432 m² across three 512x512 + 3,145,728 m² across three
+1024x1024 = 4,521,984 m², i.e. 4.52 km²) and it matched the live page's
+own number exactly, along with the "6 VarRegion, 9 standard" split.
+Methodology's sound too - `FilterOnlineRegions`' real per-region TCP
+probe, not the DB's possibly-stale online flag. Found one real
+inconsistency while checking, not a live bug: the area-summing
+arithmetic (`RegionSizeX * RegionSizeY`) is duplicated at three call
+sites (`HandleFeatures`, `HandleGridStatus`, and a third admin page),
+and two of the three multiplied in 32-bit `int`
+before widening to the `long` accumulator while the third already cast
+to `long` first - no realistic region size overflows a 32-bit product,
+but normalized all three to the same `(long)x * y` pattern per explicit
+ask.
+
+**Service Status was answering the wrong question** - "Grid Service"/
+"User Accounts"/"Currency"/"Search" each only ever checked "is this
+service's C# reference non-null", true from the moment Robust loads the
+plugin at startup and never re-checked again - a service that's
+configured but has since lost its DB connection would have kept
+reporting "Online" forever, and the overall "Operational/Degraded"
+Status pill was driven by a single try/catch around the *whole* query
+block, so one early exception could mask which specific service
+actually failed (or never get thrown at all if the failing service
+happened to be queried after a `null` short-circuit skipped past it).
+
+Rewritten so each row is its own independent, cheap, real live call in
+its own try/catch: Grid Service reuses the already-necessary region
+query, User Accounts its account count, Currency a zero-width
+`GetTransactionHistory` window (round-trips to the DB, no real data
+needed), Search `GetTrendingQueries(1)`, and a new Inventory row via
+`GetRootFolder(UUID.Zero)` (a clean `null` back is still proof the
+service answered - only a thrown exception means "broken"). Added a
+genuine third pill state - `.pill-warn` (reuses the `--danger` color
+already defined in `:root`) for "configured but the live call just
+failed" - distinct from `.pill-no`'s "never configured at all", via a
+new `AppendServicePill(configured, healthy)` helper so the three-state
+logic exists in exactly one place. Overall Status is now the AND of all
+per-row results instead of one shared catch-all.
+
+Verified live at both an empty-regions state (Robust alone, before any
+region started - all 5 rows still correctly reported Online since
+Robust itself can reach every backing service regardless of region
+count, "Regions: 0" was the only zeroed stat) and after full restart
+(15 regions, 4.52 km², all 5 rows Online). Same deploy discipline as
+every entry above.
