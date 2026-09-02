@@ -1346,6 +1346,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".widget-card{padding:12px 14px;}" +
                 ".widget-card h3{font-size:15px;margin:0 0 5px;}" +
                 ".widget-meta{font-size:13px;}" +
+                ".widget-card-thumb{height:110px;margin:-12px -14px 8px;width:calc(100% + 28px);}" +
                 // True full-viewport background, not a small strip - matches
                 // both references directly (WhiteCore-Dev's welcomescreen
                 // screenshot: full-page photo with translucent boxes
@@ -5628,7 +5629,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 string category = ad.Category >= 0 && ad.Category < ClassifiedCategories.Length
                         ? ClassifiedCategories[ad.Category]
                         : "Misc";
-                sb.Append("<div class=\"widget-card\"><h3>").Append(Html(ad.Name)).Append("</h3>");
+                sb.Append("<div class=\"widget-card\">");
+                if (ad.SnapshotId != UUID.Zero)
+                    // /CAPS/GetTexture is registered directly by
+                    // GetTextureServerConnector at the server root - a
+                    // different connector from this one, not under
+                    // BasePath (WebInterfaceServiceConnector's own route
+                    // prefix, currently "" but not the same concept).
+                    sb.Append("<img class=\"widget-card-thumb\" loading=\"lazy\" alt=\"\" src=\"/CAPS/GetTexture?texture_id=")
+                      .Append(ad.SnapshotId).Append("&amp;format=jpeg\">");
+                sb.Append("<h3>").Append(Html(ad.Name)).Append("</h3>");
                 sb.Append("<div class=\"widget-meta\">").Append(Html(category));
                 if (!string.IsNullOrEmpty(ad.SimName))
                     sb.Append(" &middot; ").Append(Html(ad.SimName));
@@ -14443,6 +14453,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".widget-card{background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;}" +
                 ".widget-card h3{margin:0 0 4px;}" +
                 ".widget-meta{color:var(--muted);font-size:13px;margin:0 0 6px;}" +
+                ".widget-card-thumb{width:100%;height:140px;object-fit:cover;border-radius:6px;" +
+                "margin:-14px -16px 10px;display:block;width:calc(100% + 32px);}" +
                 // Clickable variant of .widget-card (Dashboard's Quick Links) -
                 // same hover-lift/no-underline treatment as .bucket, since an
                 // entire card acting as one <a> looks broken if hover

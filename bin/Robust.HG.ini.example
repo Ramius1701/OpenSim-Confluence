@@ -130,6 +130,23 @@
     MapGetServiceConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:MapGetServiceConnector"
     ;; Uncomment this if you want experience tools to work
     ; ExperienceServiceConnector = "${Const|PrivatePort}/OpenSim.Server.Handlers.dll:ExperienceServiceConnector"
+    ;; WebInterfaceServiceConnector, CurrencyServiceConnector and
+    ;; UserAliasServiceConnector are NOT optional the way most of this
+    ;; section is - without them the built-in WebUI (Store, Marketplace,
+    ;; welcome/home pages, everything this connector serves) simply never
+    ;; loads at all (404 on every route), and neither does ConfluenceCurrency's
+    ;; web checkout. Confirmed live: this exact gap existed on Casperia's
+    ;; own grid, inherited from stock opensim-master, until found and fixed
+    ;; (see PROJECT_LOG.md's "Confluence config cutover" entry) - active by
+    ;; default here so a fresh setup doesn't hit the same thing blind.
+    WebInterfaceServiceConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:WebInterfaceServiceConnector"
+    CurrencyServiceConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:CurrencyServiceConnector"
+    UserAliasServiceConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:UserAliasServiceConnector"
+    ;; Public texture->JPEG endpoint (/CAPS/GetTexture) - backs the WebUI's
+    ;; classified photo thumbnails on the welcome/home pages. No auth of
+    ;; its own (mirrors the real SL/OpenSim viewer-facing GetTexture cap).
+    ;; See [GetTexture] below.
+    GetTextureServiceConnector = "GetTexture@${Const|PublicPort}/OpenSim.Capabilities.Handlers.dll:GetTextureServerConnector"
     ;; Uncomment this if you want offline IM to work
     ; OfflineIMServiceConnector = "${Const|PrivatePort}/OpenSim.Addons.OfflineIM.dll:OfflineIMServiceRobustConnector"
     ;; Uncomment this if you want Groups V2 to work
@@ -331,6 +348,15 @@
     ; If set to true, AllowRemoteDelete = true is required as well.
     ; Default is false.
     AllowRemoteDeleteAllTypes = false
+
+;; Backs the GetTextureServiceConnector registered above - a public
+;; texture->JPEG endpoint for the WebUI's classified photo thumbnails
+;; (welcome/home pages). The asset service class's own constructor
+;; always reads the fixed [AssetService] section above regardless of
+;; what section loaded it, so this key is the only thing this section
+;; needs; match it to whichever LocalServiceModule is active above.
+[GetTexture]
+    AssetService = "OpenSim.Services.AssetService.dll:AssetService"
 
 ; * This configuration loads the inventory server modules. It duplicates
 ; * the function of the legacy inventory server

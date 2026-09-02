@@ -17652,3 +17652,60 @@ appears once `regions.Count > 0`, footer's "Total Online Now"/"Visit
 Our Main Site" both present. Same full stop/resync/restart cycle as
 every entry above (0 missing/0 mismatched, all 15 regions + Robust
 clean, only the pre-existing Tangle YEngine error).
+
+### Classified photo thumbnails: the deferred texture endpoint, wired up (2026-09-02)
+
+Direct follow-up to the welcome.php rebuild above - user asked to wire
+up the texture endpoint that entry flagged as a real, deliberately-
+deferred gap. `GetTextureServerConnector`/`GetTextureRobustHandler`
+(`OpenSim.Capabilities.Handlers`) were already real, working code -
+JP2 asset decode via `OpenJPEG.DecodeToImage` then `System.Drawing`
+re-encode to JPEG/PNG, `Range` request support - just never registered
+as a running Robust connector on this grid. Registered it: `Robust.HG.ini`
+gained a `GetTextureServiceConnector` entry in `[ServiceList]`
+(`GetTexture@${Const|PublicPort}/OpenSim.Capabilities.Handlers.dll:
+GetTextureServerConnector`, same public port as the WebUI) and a new
+`[GetTexture]` section with just `AssetService = "OpenSim.Services.
+FSAssetService.dll:FSAssetConnector"` - confirmed by reading
+`FSAssetConnector`'s own constructor that it always reads the fixed
+`[AssetService]` section above regardless of what section loaded it,
+so no BaseDirectory/SpoolDirectory/connection-string duplication was
+needed. Registers at `/CAPS/GetTexture?texture_id=<id>&format=jpeg`,
+no auth of its own - mirrors the real SL/OpenSim viewer-facing GetTexture
+cap's own security model, a deliberate choice not an oversight.
+
+`RenderFeaturedClassifieds` now emits `<img class="widget-card-thumb">`
+when `ad.SnapshotId != UUID.Zero`, pointing at that endpoint - new
+`.widget-card-thumb` CSS (full-bleed to the card's edges via negative
+margin, `object-fit:cover`) added to both `PageCss` and
+`WelcomeCompactCss`'s own smaller-padding override. One real
+correctness catch during review: the img src was first written with a
+`BasePath` prefix, which is wrong - `BasePath` is
+`WebInterfaceServiceConnector`'s own internal route prefix (currently
+`""`, so it happened to work by accident), not the actual server root
+`/CAPS/GetTexture` is registered under by a completely different
+connector. Fixed to a plain absolute path before it shipped.
+
+Verified: `GetTextureServerConnector loaded successfully` in Robust.log
+at boot, and a direct `curl` against the endpoint with a real texture
+asset id returned a genuine 512x512 JPEG (`file` confirmed real JFIF
+data, not an error page) - the conversion pipeline itself works.
+Neither of the grid's two current classifieds (`Starbase Andromeda`,
+`Grid Sandbox`) actually has a snapshot set (`SnapshotId` is
+`00000000-...` for both, checked directly against the `classifieds`
+table), so there's nothing to show a thumbnail for yet with today's
+data - a resident needs to set a snapshot on their classified ad before
+this becomes visible, not a bug in this change. Same full stop/resync/
+restart cycle as every entry above (0 missing/0 mismatched, all 15
+regions + Robust clean, connector loaded with no errors).
+
+Also fixed the same underlying setup gap in `bin/Robust.HG.ini.example`
+while touching this section: the example template was missing
+`WebInterfaceServiceConnector`/`CurrencyServiceConnector`/
+`UserAliasServiceConnector` from `[ServiceList]` entirely - the exact
+gap live's own "Confluence config cutover (2026-08-29)" comment already
+documented finding and fixing on live, never backported to the example.
+A fresh setup from this template would have had a WebUI that 404s on
+every route. Added all three (active by default, not commented-optional
+like most of this section) alongside the new GetTexture entry, so a
+future setup doesn't hit the same thing blind.
