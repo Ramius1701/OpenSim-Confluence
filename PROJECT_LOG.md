@@ -17531,3 +17531,38 @@ needs the full stop/resync/restart cycle regardless of which service
 "conceptually" owns it. Full hash comparison clean (0 missing/0
 mismatched), all 15 regions + Robust back to `RegionReady` with no new
 errors beyond the usual pre-existing ones.
+
+### WebUI: top nav - Home/Explore/Grid Info alignment and dropdown over-consolidation (2026-09-02)
+
+Two more issues from the same live-screenshot pass, both in the shared
+`.site-nav` top bar rendered for every page:
+
+1. **Home's icon sat at a different vertical position than Explore/Grid
+   Info's icons.** Root cause: Home is a bare `<a>`, a direct child of
+   `.site-nav`, styled only by the generic `.site-nav a .bi{margin-right:
+   4px}` rule. Explore/Grid Info are each wrapped in a `.nav-dropdown`
+   div whose `<a class="dropdown-toggle">` gets `display:inline-flex;
+   align-items:center;gap:4px` - genuine flexbox centering Home never
+   had. Added `.site-nav>a{display:inline-flex;align-items:center;
+   gap:4px}`, a child-combinator selector that only matches Home (the
+   other two `<a>`s are nested a level deeper inside `.nav-dropdown`),
+   without touching the dropdown-specific rules at all.
+2. **Everything except Home buried in two dropdowns** - asked directly
+   "put yourself in looking at that index page": `Features` and `Get a
+   Viewer`, arguably the two highest-intent links for a visitor deciding
+   whether to join, were both three levels deep inside "Grid Info ▾"
+   while the nav bar sat mostly empty. Restructured on explicit
+   confirmation: `Features`/`Get a Viewer` promoted to flat top-level
+   links (both `HandleHome`/render call sites - logged-in app-shell and
+   logged-out site-header share identical Home markup, updated together
+   via one `replace_all`), removed from `RenderTopNavGroups`'s Grid Info
+   dropdown, which now holds only Status/Help(+About/Support when
+   logged-out). Explore (Search/Destinations/World Map/Economy) left
+   untouched - browsing actions for someone already exploring the grid,
+   less relevant to a first-time visitor's join decision than Features/
+   Get a Viewer were.
+
+Verified live: nav now reads "Home · Features · Get a Viewer ·
+Explore ▾ · Grid Info ▾", Home's icon visibly aligned with the
+other two. Same full stop/resync/restart cycle as the entries above (0
+missing/0 mismatched, all 15 regions + Robust clean).

@@ -13676,6 +13676,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                         + "<header class=\"app-topbar\">"
                         + "<button class=\"sidebar-toggle\" aria-label=\"Menu\"><i class=\"bi bi-list\"></i></button>"
                         + "<nav class=\"site-nav\"><a href=\"/\"><i class=\"bi bi-house-door ic-blue\"></i> Home</a>" +
+                        "<a href=\"" + BasePath + "/features\"><i class=\"bi bi-stars ic-amber\"></i> Features</a>" +
+                        "<a href=\"" + BasePath + "/viewers\"><i class=\"bi bi-display ic-blue\"></i> Get a Viewer</a>" +
                         RenderTopNavGroups(false) +
                         RenderNavPages(session) + "</nav>"
                         + "</header>"
@@ -13694,6 +13696,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                         + "<header class=\"site-header\"><div class=\"site-header-inner\">"
                         + "<a class=\"brand\" href=\"/\"><span class=\"brand-mark\">C</span>" + Html(gridName) + "</a>"
                         + "<nav class=\"site-nav\"><a href=\"/\"><i class=\"bi bi-house-door ic-blue\"></i> Home</a>" +
+                        "<a href=\"" + BasePath + "/features\"><i class=\"bi bi-stars ic-amber\"></i> Features</a>" +
+                        "<a href=\"" + BasePath + "/viewers\"><i class=\"bi bi-display ic-blue\"></i> Get a Viewer</a>" +
                         RenderTopNavGroups(true) +
                         RenderNavPages(session) + "</nav>"
                         + "<div class=\"site-actions\">" + navActions + "</div>"
@@ -14237,6 +14241,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".site-nav{display:flex;gap:20px;flex:1;}" +
                 ".site-nav a{color:var(--muted);font-size:14px;font-weight:600;}" +
                 ".site-nav a .bi{margin-right:4px;}" +
+                // Home is a bare <a>, a direct child of .site-nav - unlike
+                // Explore/Grid Info, whose <a> is nested in .nav-dropdown and
+                // gets display:inline-flex;align-items:center from
+                // .dropdown-toggle below. Matches that centering so Home's
+                // icon doesn't sit at a different vertical position than the
+                // other two (found live: "Home is not the same as Explore
+                // and Grid Info").
+                ".site-nav>a{display:inline-flex;align-items:center;gap:4px;}" +
                 ".site-nav a:hover{color:#fff;text-decoration:none;}" +
                 ".site-actions{display:flex;align-items:center;gap:18px;}" +
                 ".site-actions a{color:var(--muted);font-size:14px;font-weight:600;}" +
@@ -14548,9 +14560,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<div class=\"nav-dropdown\"><a href=\"#\" class=\"dropdown-toggle\">")
               .Append("<i class=\"bi bi-info-circle ic-purple\"></i> Grid Info <i class=\"bi bi-caret-down-fill\"></i></a>")
               .Append("<div class=\"dropdown-menu\">")
-              .Append("<a href=\"").Append(BasePath).Append("/features\"><i class=\"bi bi-stars ic-amber\"></i> Features</a>")
               .Append("<a href=\"").Append(BasePath).Append("/gridstatus\"><i class=\"bi bi-activity ic-green\"></i> Status</a>")
-              .Append("<a href=\"").Append(BasePath).Append("/viewers\"><i class=\"bi bi-display ic-blue\"></i> Get a Viewer</a>")
               .Append("<a href=\"").Append(BasePath).Append("/help\"><i class=\"bi bi-question-circle ic-cyan\"></i> Help</a>");
             if (includeAboutSupport)
             {
