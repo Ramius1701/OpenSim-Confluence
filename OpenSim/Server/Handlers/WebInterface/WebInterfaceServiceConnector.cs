@@ -1106,6 +1106,17 @@ namespace OpenSim.Server.Handlers.WebInterface
         // site chrome via WritePage, a real pitch for why to join, and
         // Featured Classifieds (browsing what's for sale is a "look what
         // you could have" hook here, not just status information).
+        // Rebuilt (2026-09-02) after stepping back and looking at this page
+        // "as a whole" next to welcome.php's own rebuild earlier the same
+        // day - everything here sat in one flat, undifferentiated .card
+        // (found live: .content-card, used by ~15 other pages too, had no
+        // CSS rule anywhere in this file, so it never actually looked like
+        // a distinct section), there was no live online-now/region-count
+        // proof point until a visitor scrolled past the pitch cards down to
+        // Economy, Economy and Classifieds shared the same two data sources
+        // welcome.php pairs side by side but stacked here in a different
+        // order, and the only CTA sat once above the fold with nothing to
+        // act on after being convinced by the content below it.
         private void HandleHome(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
@@ -1116,10 +1127,26 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
 
+            List<GridRegion> regions = FilterOnlineRegions(
+                    m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>());
+            int onlineNow = 0;
+            if (m_GridUserService != null)
+            {
+                HashSet<string> aliveRegionIDs = new HashSet<string>(regions.Select(r => r.RegionID.ToString()));
+                onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1>").Append(Html(gridName)).Append("</h1>");
             sb.Append(RenderAnnouncement());
             sb.Append("<p class=\"tagline-lead\">").Append(tagline).Append("</p>");
+
+            sb.Append("<div class=\"home-live-strip\">");
+            sb.Append("<span class=\"home-online-badge\">&#9679; Online</span>");
+            if (m_GridUserService != null)
+                sb.Append("<span>").Append(onlineNow.ToString("N0")).Append(" online now</span>");
+            sb.Append("<span>").Append(regions.Count.ToString("N0")).Append(" regions to explore</span>");
+            sb.Append("</div>");
 
             sb.Append("<div class=\"cta-row\">");
             if (allowRegistration)
@@ -1136,10 +1163,34 @@ namespace OpenSim.Server.Handlers.WebInterface
                     "Live events, classifieds, and grid-wide search across every region.");
             sb.Append("</div>");
 
-            sb.Append(RenderEconomyStats());
-            sb.Append(RenderFeaturedClassifieds(6));
-            sb.Append(RenderUpcomingEvents(5));
-            sb.Append(RenderNewsFeed(5));
+            string classifieds = RenderFeaturedClassifieds(6);
+            string economy = RenderEconomyStats();
+            if (!string.IsNullOrEmpty(classifieds) || !string.IsNullOrEmpty(economy))
+            {
+                sb.Append("<div class=\"home-2col\">");
+                if (!string.IsNullOrEmpty(classifieds))
+                    sb.Append("<div class=\"content-card home-2col-wide\">").Append(classifieds).Append("</div>");
+                if (!string.IsNullOrEmpty(economy))
+                    sb.Append("<div class=\"content-card\">").Append(economy).Append("</div>");
+                sb.Append("</div>");
+            }
+
+            string events = RenderUpcomingEvents(5);
+            if (!string.IsNullOrEmpty(events))
+                sb.Append("<div class=\"content-card\">").Append(events).Append("</div>");
+
+            string news = RenderNewsFeed(5);
+            if (!string.IsNullOrEmpty(news))
+                sb.Append("<div class=\"content-card\">").Append(news).Append("</div>");
+
+            // Repeated CTA - a visitor who scrolls through Economy/
+            // Classifieds/Events and gets convinced shouldn't have to
+            // scroll back to the top to act on it.
+            if (allowRegistration)
+                sb.Append("<div class=\"content-card\" style=\"text-align:center;\"><h2>Ready to join ")
+                  .Append(Html(gridName)).Append("?</h2><div class=\"cta-row\" style=\"justify-content:center;\">")
+                  .Append("<a href=\"").Append(BasePath).Append("/register\" class=\"cta-primary\">Create a Free Account</a>")
+                  .Append("</div></div>");
 
             sb.Append("<p><a href=\"").Append(BasePath).Append("/viewers\">Get a viewer &rarr;</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/features\">See all features &rarr;</a></p>");
@@ -14392,6 +14443,36 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".page{max-width:1600px;margin:0 auto;padding:32px 24px 60px;}" +
                 ".card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);" +
                 "box-shadow:0 8px 24px rgba(0,0,0,.35);padding:32px 36px;}" +
+                // Genuinely missing until now - .content-card is used as a
+                // distinct raised section (Features' Platform Overview, My
+                // Balance, Admin's Powered By/Membership Perks/Service
+                // Status, every marketplace management page, ~15 call sites
+                // total) but had no CSS rule anywhere in this file, so every
+                // one of those pages has been rendering it as a bare,
+                // unstyled div this whole time - found while looking at the
+                // home page "as a whole" and noticing content read as flat/
+                // undifferentiated compared to welcome.php's floating boxes.
+                // h2:first-child below already strips the border-top/margin
+                // for a heading that opens one of these, so no extra rule
+                // needed for that.
+                ".content-card{background:var(--input-bg);border:1px solid var(--border);" +
+                "border-radius:var(--radius);padding:20px 24px;margin:0 0 20px;}" +
+                ".content-card:last-child{margin-bottom:0;}" +
+                // Live "this grid is real right now" strip for the home
+                // page - same proof point welcome.php's own top bar leads
+                // with (online-now/region-count), missing here entirely
+                // until a visitor scrolled past the pitch cards down to
+                // Economy.
+                ".home-live-strip{display:flex;align-items:center;flex-wrap:wrap;gap:16px;" +
+                "margin:0 0 18px;font-size:13.5px;color:var(--muted);}" +
+                ".home-online-badge{display:inline-flex;align-items:center;gap:6px;color:var(--success);" +
+                "font-weight:700;}" +
+                // Classifieds beside Economy, same pairing/visual weight as
+                // welcome.php - replaces stacking the same two data sources
+                // in a different, inconsistent order.
+                ".home-2col{display:flex;gap:20px;flex-wrap:wrap;margin:0 0 20px;}" +
+                ".home-2col>.content-card{flex:1 1 320px;margin-bottom:0;}" +
+                ".home-2col>.home-2col-wide{flex:2 1 420px;}" +
                 ".site-footer{background:var(--dark);border-top:1px solid var(--border);padding:20px 24px;" +
                 "margin-top:40px;}" +
                 ".site-footer-inner{color:var(--muted);font-size:13.5px;}" +

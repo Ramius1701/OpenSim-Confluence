@@ -17709,3 +17709,45 @@ A fresh setup from this template would have had a WebUI that 404s on
 every route. Added all three (active by default, not commented-optional
 like most of this section) alongside the new GetTexture entry, so a
 future setup doesn't hit the same thing blind.
+
+### Home page rebuilt to match welcome.php's visual language; .content-card had no CSS anywhere (2026-09-02)
+
+User asked to step back and look at the home page "as a whole" now that
+the navbar was fixed. Real gaps found, all concrete rather than taste:
+no live online-now/region-count proof point until a visitor scrolled
+past the pitch cards down to Economy (welcome.php's own top bar leads
+with exactly this); Economy and Featured Classifieds - the same two
+data sources welcome.php now pairs side by side - stacked here in a
+different order with no visual pairing; a single CTA above the fold
+with nothing to act on after being convinced by the content below it;
+and everything sitting in one flat, undifferentiated `.card`.
+
+That last one turned out to be a real, much bigger bug than page-layout
+taste: `.content-card` - used at ~15 call sites across this file
+(Features' Platform Overview, My Balance, Admin's Powered By/
+Membership Perks/Service Status, every marketplace management page,
+now the home page too) - had **no CSS rule defined anywhere** in this
+file. Every single page using it has been rendering it as a bare,
+unstyled div this whole time; nothing about it was home-page-specific.
+Added the missing rule to the shared `PageCss` (background/border/
+radius/padding, matching `.widget-card`'s treatment one level up in
+visual weight) - `h2:first-child` already strips the stray top-border/
+margin for a heading that opens one, so no extra rule was needed there.
+Verified live on `/features` too, not just the home page - Platform
+Overview and Open Source/Powered By now render as real distinct boxes
+instead of flat text.
+
+Rebuilt `HandleHome`: added a `.home-live-strip` (online-now/region-
+count, same proof point as welcome.php, new classes since
+`.welcome-online-badge` etc. are scoped to `WelcomeCompactCss` and this
+page only loads the shared `PageCss`), moved Classifieds/Economy into a
+`.home-2col` pairing (classifieds wider, same visual weight welcome.php
+gives them), wrapped Events/News each in their own now-actually-styled
+`.content-card`, and added a repeated "Ready to join?" CTA card after
+the content. Verified live: stats strip shows real counts (0/15 before
+regions were up, 15 once they were), Classifieds/Economy render side by
+side in distinct boxes, repeated CTA present. User was online when this
+was ready to deploy - waited for them to log off rather than disconnect
+them, same as the marketplace service-account fix earlier tonight. Same
+full stop/resync/restart cycle (0 missing/0 mismatched, all 15 regions
++ Robust clean, only the pre-existing Tangle YEngine error).
