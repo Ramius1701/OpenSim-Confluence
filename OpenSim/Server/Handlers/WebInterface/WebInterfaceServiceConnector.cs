@@ -1158,68 +1158,129 @@ namespace OpenSim.Server.Handlers.WebInterface
         // "all of it" list, a grid-operator announcements feed originally
         // shared with the home page, now specific to this one.
         //
-        // Redesigned (2026-08-19) to match the real layout shape of
-        // djphil's osloginscreen (background photo slideshow + a 3-column
-        // logo/regions | announcements/register | grid-status split) rather
-        // than the earlier single-column stat-card stack, per explicit
-        // direction - in this site's own theme, not osloginscreen's
-        // Bootstrap-slate one. Kept this connector's own real DB-driven
-        // news/events/stats rather than downgrading to osloginscreen's
-        // hardcoded static news-ticker list - those are genuinely better
-        // (admin-managed, not baked into a template) and not something to
-        // regress just to match the reference more closely.
+        // Rebuilt (2026-09-02) after the user pointed at two real competing
+        // grids' own splash screens (3RD Rock Grid, DigiWorldz) with the
+        // explicit framing "why can't our welcome/splash look like these,"
+        // then "remember we are going with a 1st impression" - i.e. this
+        // page specifically, not the browser home page. Both references
+        // share the same real shape, confirmed side by side rather than
+        // assumed from one: a branded top bar (logo/tagline left, live
+        // online-now/region-count/join-CTA stats right), a multi-item news
+        // ticker, Featured Classifieds beside a live Economy dashboard,
+        // a full-width Upcoming Events row, and a closing stat/link footer.
+        // Everything below reuses this connector's own existing, real
+        // DB-driven render methods (RenderFeaturedClassifieds/
+        // RenderEconomyStats/RenderUpcomingEvents - the home page's own
+        // data sources, not a second divergent copy) rather than inventing
+        // new ones - the gap from the reference was page layout/content
+        // selection, not missing data sources.
+        //
+        // One real gap knowingly deferred rather than rushed: the
+        // reference's classifieds show actual photo thumbnails
+        // (UserClassifiedAdd.SnapshotId is a real texture asset id this
+        // grid already has), but rendering it needs a public texture-to-
+        // image HTTP endpoint this Robust instance doesn't currently run -
+        // GetTextureRobustHandler (OpenSim.Capabilities.Handlers) already
+        // does exactly the JP2->JPEG/PNG conversion needed and is proven,
+        // real code, just not wired into this grid's ServiceConnectors.
+        // Wiring up a new always-on public asset-serving endpoint is an
+        // infrastructure decision worth making deliberately, not smuggled
+        // into a page-layout pass - text-only classified cards (name/
+        // category/location/price/description, same as the home page
+        // already shows) ship tonight instead.
         private void HandleWelcome(IOSHttpRequest request, IOSHttpResponse response)
         {
             string gridName = GetSetting("GridName", m_gridName);
             string welcomeMessage = GetWebSafeWelcomeMessage();
-            string welcome = string.IsNullOrEmpty(welcomeMessage)
-                    ? "Welcome to " + Html(gridName) + "."
-                    : Html(welcomeMessage);
+            string tagline = string.IsNullOrEmpty(welcomeMessage)
+                    ? "Explore. Build. Connect."
+                    : TruncateText(welcomeMessage, 90);
+            bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
 
             List<GridRegion> regions = FilterOnlineRegions(
                     m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>());
 
+            int onlineNow = 0;
+            if (m_GridUserService != null)
+            {
+                HashSet<string> aliveRegionIDs = new HashSet<string>(regions.Select(r => r.RegionID.ToString()));
+                onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
+            }
+
             StringBuilder sb = new StringBuilder(WelcomeCompactCss);
             sb.Append(RenderWelcomeSlideshow());
 
-            sb.Append("<div class=\"welcome-title\"><h1>").Append(Html(gridName)).Append("</h1><p>")
-              .Append(welcome).Append("</p></div>");
+            sb.Append("<div class=\"welcome-topbar\">");
+            sb.Append("<div class=\"welcome-brand\"><span class=\"welcome-brand-mark\">")
+              .Append(Html(gridName.Length > 0 ? gridName.Substring(0, 1) : "?")).Append("</span><div>")
+              .Append("<div class=\"welcome-brand-name\">").Append(Html(gridName)).Append("</div>")
+              .Append("<div class=\"welcome-tagline\">").Append(Html(tagline)).Append("</div></div></div>");
+            sb.Append("<div class=\"welcome-topstats\">");
+            sb.Append("<span class=\"welcome-online-badge\">&#9679; Online</span>");
+            if (m_GridUserService != null)
+                sb.Append("<span>").Append(onlineNow.ToString("N0")).Append(" online now</span>");
+            sb.Append("<span>").Append(regions.Count.ToString("N0")).Append(" regions to explore</span>");
+            if (allowRegistration)
+                sb.Append("<a class=\"welcome-join-cta\" href=\"").Append(BasePath).Append("/register\">Free to Join</a>");
+            sb.Append("</div></div>");
+
+            // Multi-item ticker, not a single boxed announcement -
+            // RenderAnnouncement (a distinct admin-set notice with its own
+            // color/title) still renders separately right below, since
+            // squeezing it into ticker rows would lose that.
+            if (m_NewsService != null)
+            {
+                List<NewsItem> newsItems = m_NewsService.GetNews(0, 5);
+                if (newsItems.Count > 0)
+                {
+                    sb.Append("<div class=\"welcome-ticker\"><span class=\"welcome-ticker-label\">News</span>")
+                      .Append("<div class=\"welcome-ticker-track\">");
+                    for (int i = 0; i < newsItems.Count; i++)
+                    {
+                        if (i > 0)
+                            sb.Append("<span class=\"welcome-ticker-sep\">&middot;</span>");
+                        sb.Append("<span>").Append(Html(newsItems[i].Title)).Append("</span>");
+                    }
+                    sb.Append("</div></div>");
+                }
+            }
 
             sb.Append(RenderAnnouncement());
 
-            // Left/right split verified against WhiteCore-Dev's actual
-            // welcomescreen/index.html (#topleft: Region+News, #topright:
-            // GridStatus+InfoBox either side of open space) - Confluence's
-            // own "Welcome" text plays InfoBox's role on the right,
-            // Upcoming Events joins Regions/News on the left ("things
-            // happening on the grid"), matching the reference's real 2-item
-            // right column rather than stacking everything there. Economy
-            // dropped from this page entirely per explicit feedback -
-            // currency figures aren't useful on a first-impression splash;
-            // it stays on the full /economy page.
-            sb.Append("<div class=\"welcome-columns\">");
+            sb.Append("<div class=\"welcome-stack\">");
 
-            sb.Append("<div class=\"welcome-box\">");
-            sb.Append(RenderRegionListCompact(regions.Take(8).ToList()));
-            if (regions.Count > 8)
-                sb.Append("<p class=\"welcome-more-link\"><a href=\"").Append(BasePath).Append("/worldmap\">View all ")
-                  .Append(regions.Count).Append(" regions &rarr;</a></p>");
-            sb.Append("</div>");
-            string newsFeed = RenderNewsFeed(3);
-            if (!string.IsNullOrEmpty(newsFeed))
-                sb.Append("<div class=\"welcome-box\">").Append(newsFeed).Append("</div>");
-            string events = RenderUpcomingEvents(3);
+            string classifieds = RenderFeaturedClassifieds(6);
+            string economy = RenderEconomyStats();
+            if (!string.IsNullOrEmpty(classifieds) || !string.IsNullOrEmpty(economy))
+            {
+                sb.Append("<div class=\"welcome-2col\">");
+                if (!string.IsNullOrEmpty(classifieds))
+                    sb.Append("<div class=\"welcome-box welcome-box-wide\">").Append(classifieds).Append("</div>");
+                if (!string.IsNullOrEmpty(economy))
+                    sb.Append("<div class=\"welcome-box\">").Append(economy).Append("</div>");
+                sb.Append("</div>");
+            }
+
+            string events = RenderUpcomingEvents(6);
             if (!string.IsNullOrEmpty(events))
                 sb.Append("<div class=\"welcome-box\">").Append(events).Append("</div>");
 
-            sb.Append("<div class=\"welcome-box\">");
-            sb.Append(RenderGridStatusWidget(regions));
-            sb.Append("</div>");
-            sb.Append("<div class=\"welcome-box\">");
-            sb.Append("<h2>Welcome</h2><p>").Append(welcome).Append("</p>");
-            sb.Append("<a class=\"welcome-register-cta\" href=\"").Append(BasePath).Append("/register\">Register - it's free &rarr;</a>");
+            string regionList = RenderRegionListCompact(regions.Take(8).ToList());
+            if (!string.IsNullOrEmpty(regionList))
+            {
+                sb.Append("<div class=\"welcome-box\">").Append(regionList);
+                if (regions.Count > 8)
+                    sb.Append("<p class=\"welcome-more-link\"><a href=\"").Append(BasePath).Append("/worldmap\">View all ")
+                      .Append(regions.Count).Append(" regions &rarr;</a></p>");
+                sb.Append("</div>");
+            }
+
             sb.Append("</div>");
 
+            sb.Append("<div class=\"welcome-footer\">");
+            sb.Append("<span>&#9679; Total Online Now: ").Append(onlineNow.ToString("N0")).Append("</span>");
+            sb.Append("<a href=\"").Append(BasePath).Append("/\">Visit Our Main Site</a>");
+            sb.Append("<span>&copy; ").Append(DateTime.UtcNow.Year).Append(" ").Append(Html(gridName)).Append("</span>");
             sb.Append("</div>");
 
             WriteAdaptivePage(request, response, gridName, sb.ToString());
@@ -1320,29 +1381,42 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".welcome-bg{position:fixed;inset:0;z-index:-2;background-size:cover;" +
                 "background-position:center;transition:background-image 1s linear;}" +
                 ".welcome-bg::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.28);}" +
-                // Centered title/tagline over the photo - the .title/.subtitle
-                // treatment both references use, not tucked into a column.
-                ".welcome-title{text-align:center;padding:36px 20px 10px;}" +
-                ".welcome-title h1{font-size:34px;font-weight:800;color:#fff;margin:0 0 8px;" +
-                "text-shadow:0 1px 6px rgba(0,0,0,.7);}" +
-                ".welcome-title p{font-size:16px;color:#f0f2f5;margin:0 auto;max-width:560px;" +
-                "text-shadow:0 1px 4px rgba(0,0,0,.7);}" +
-                // Verified against WhiteCore-Dev's actual current template
-                // (welcomescreen/index.html: #topleft{Region+News} and
-                // #topright{GridStatus+InfoBox} either side of an empty
-                // spacer column, not a full 3-column split) - left/right
-                // content pinned to the edges with the photo showing
-                // through the open space between and below them, matching
-                // the reference screenshot exactly rather than a guess at
-                // it. Confluence's own extra sections (Economy, Events)
-                // stack into the right column alongside Grid Status.
-                // Horizontal row of tiles rather than two edge-pinned vertical
-                // stacks (the earlier layout, verified against WhiteCore-Dev's
-                // reference, left a wide empty gap between the two columns at
-                // desktop widths - changed on explicit feedback to instead
-                // fill the row with individually-wrapping boxes).
-                ".welcome-columns{display:flex;justify-content:center;gap:20px;" +
-                "flex-wrap:wrap;max-width:1300px;margin:0 auto;padding:20px 24px 60px;}" +
+                // Branded top bar - grid identity/tagline left, live "this
+                // grid is alive" stats and the join CTA right, replacing the
+                // earlier centered title-over-photo treatment (redundant
+                // once the grid name lives here instead).
+                ".welcome-topbar{display:flex;justify-content:space-between;align-items:center;" +
+                "flex-wrap:wrap;gap:16px;max-width:1300px;margin:0 auto;padding:20px 24px;}" +
+                ".welcome-brand{display:flex;align-items:center;gap:12px;}" +
+                ".welcome-brand-mark{display:flex;align-items:center;justify-content:center;width:40px;" +
+                "height:40px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;" +
+                "font-size:18px;flex-shrink:0;}" +
+                ".welcome-brand-name{font-size:19px;font-weight:800;color:#fff;" +
+                "text-shadow:0 1px 4px rgba(0,0,0,.6);}" +
+                ".welcome-tagline{font-size:12.5px;color:#d8dce3;text-shadow:0 1px 3px rgba(0,0,0,.6);}" +
+                ".welcome-topstats{display:flex;align-items:center;flex-wrap:wrap;gap:18px;font-size:13px;" +
+                "color:#e8eaed;text-shadow:0 1px 3px rgba(0,0,0,.6);}" +
+                ".welcome-online-badge{display:inline-flex;align-items:center;gap:6px;color:var(--success);" +
+                "font-weight:700;}" +
+                ".welcome-join-cta{display:inline-block;background:var(--accent);color:#fff;" +
+                "text-decoration:none;font-weight:700;padding:8px 18px;border-radius:40px;" +
+                "text-transform:uppercase;font-size:12px;letter-spacing:.3px;}" +
+                ".welcome-join-cta:hover{background:var(--accent-dark);color:#fff;text-decoration:none;}" +
+                // News ticker - several headlines in one compact bar rather
+                // than a single boxed announcement.
+                ".welcome-ticker{display:flex;align-items:center;gap:14px;max-width:1300px;margin:0 auto;" +
+                "padding:8px 24px;background:rgba(21,24,29,.7);border-top:1px solid rgba(255,255,255,.08);" +
+                "border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;}" +
+                ".welcome-ticker-label{color:var(--accent-bright);font-weight:800;font-size:11.5px;" +
+                "letter-spacing:.5px;flex-shrink:0;}" +
+                ".welcome-ticker-track{display:flex;flex-wrap:wrap;gap:10px;font-size:13px;color:#e8eaed;}" +
+                ".welcome-ticker-sep{color:var(--muted);}" +
+                // Main content stack - full-width boxes (Classifieds+Economy
+                // side by side, then Events, then Regions), replacing the
+                // earlier edge-pinned/wrapping-tile column layouts.
+                ".welcome-stack{max-width:1300px;margin:0 auto;padding:20px 24px 50px;display:flex;" +
+                "flex-direction:column;gap:20px;}" +
+                ".welcome-2col{display:flex;gap:20px;flex-wrap:wrap;}" +
                 // The floating translucent box itself - WhiteCore's
                 // #regionbox/#infobox/#news/#gridstatus (semi-transparent,
                 // rounded, shadowed) and osloginscreen's .boxtext, adapted to
@@ -1350,18 +1424,24 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // literal colors.
                 ".welcome-box{background:rgba(21,24,29,.86);border:1px solid rgba(255,255,255,.08);" +
                 "border-radius:8px;padding:18px 20px;backdrop-filter:blur(3px);" +
-                "box-shadow:0 8px 24px rgba(0,0,0,.45);flex:1 1 280px;max-width:340px;}" +
+                "box-shadow:0 8px 24px rgba(0,0,0,.45);}" +
+                ".welcome-2col>.welcome-box{flex:1 1 320px;}" +
+                ".welcome-2col>.welcome-box-wide{flex:2 1 420px;}" +
                 ".welcome-box h2:first-child{margin-top:0;}" +
-                ".welcome-register-cta{display:block;text-align:center;background:var(--accent);color:#fff;" +
-                "text-decoration:none;font-weight:700;padding:11px;border-radius:40px;margin:6px 0 14px;" +
-                "text-transform:uppercase;font-size:13px;letter-spacing:.3px;}" +
-                ".welcome-register-cta:hover{background:var(--accent-dark);color:#fff;text-decoration:none;}" +
                 ".welcome-region-list{list-style:none;margin:0;padding:0;}" +
                 ".welcome-region-list li{display:flex;justify-content:space-between;align-items:center;" +
                 "padding:8px 0;border-bottom:1px solid var(--border);font-size:14px;}" +
                 ".welcome-region-list li:last-child{border-bottom:none;}" +
                 ".welcome-region-coords{color:var(--muted);font-size:12.5px;}" +
-                "@media (max-width:600px){.welcome-title h1{font-size:26px;}}" +
+                // Closing stat/link bar - matches the reference's own
+                // "Total Online Now" footer rather than the page just
+                // stopping after the last content block.
+                ".welcome-footer{display:flex;justify-content:space-between;align-items:center;" +
+                "flex-wrap:wrap;gap:10px;max-width:1300px;margin:0 auto;padding:16px 24px 30px;" +
+                "border-top:1px solid rgba(255,255,255,.08);font-size:12.5px;color:#c3c8d1;}" +
+                ".welcome-footer a{color:var(--accent-bright);}" +
+                "@media (max-width:600px){.welcome-brand-name{font-size:16px;}" +
+                ".welcome-topstats{gap:10px;font-size:12px;}}" +
                 "</style>";
 
         // Real counterpart to WhiteCore-Dev's welcomescreen/gridstatus.html

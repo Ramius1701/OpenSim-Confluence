@@ -17590,3 +17590,65 @@ never actually matched that comment. Fixed by deriving the cell from
 v.Name))`), so it can't drift again regardless of what gets added to
 the viewer list in the future. Verified live: "Firestorm (Windows),
 Firestorm (macOS), Firestorm (Linux), AyaneStorm, Cool VL Viewer".
+
+### welcome.php rebuilt to match real competing grids' splash screens (2026-09-02)
+
+User pulled up two real competing grids' actual login splash screens
+(3RD Rock Grid, DigiWorldz) and asked directly why ours doesn't look
+like theirs, then "remember we are going with a 1st impression" -
+scoping this to `/welcome.php` specifically, not the browser home page.
+Both references turned out to share one real shape (confirmed side by
+side, not assumed from one): a branded top bar (logo/tagline left,
+live online-now/region-count/join-CTA stats right), a multi-item news
+ticker, Featured Classifieds beside a live Economy dashboard, a
+full-width Upcoming Events row, and a closing stat/link footer. What
+this page had instead: a centered title over a photo, then a single
+row of edge-pinned/wrapping boxes (Regions, News, Events, Grid Status,
+a static Welcome+register box) - no brand bar, no ticker, no
+classifieds, Economy explicitly dropped from this page on 2026-08-19's
+own "not useful on a first-impression splash" reasoning, only a single
+event visible (real data, not a limit - `RenderUpcomingEvents(3)` was
+already capable of more, just nothing else was upcoming), no footer.
+
+Notable mid-investigation find: `RenderEconomyStats()` already exists,
+already wired into the home page (`HandleHome`), with its own comment
+citing this *exact* prior conversation ("added after the user pointed
+at competing grids' own splash screens (3rd Rock Grid, DigiWorldz)...
+'I'm competing with these grids for users'") - this has come up before,
+got fixed for the home page, but never made it back into `/welcome.php`
+after that page's own later "Economy dropped from this page" pass. Two
+unreconciled decisions sitting in the same file. `PageCss`'s own
+color-scheme history comment tells the same story one layer up - dark/
+blue theme already adopted from 3RG (with DigiWorldz/Wolf Territories
+confirming it's a common "grid status splash" pattern, not one grid's
+idiosyncrasy) before tonight.
+
+Rebuilt `HandleWelcome` to reuse the connector's own real render
+methods end to end - `RenderFeaturedClassifieds`, `RenderEconomyStats`,
+`RenderUpcomingEvents` (bumped 3->6), `RenderRegionListCompact` - not a
+second divergent data path, just a different arrangement
+(`.welcome-topbar`/`.welcome-ticker`/`.welcome-stack`/`.welcome-2col`/
+`.welcome-footer` replace `.welcome-title`/`.welcome-columns`). Real
+gap knowingly deferred rather than rushed: the reference's classifieds
+show actual photo thumbnails (`UserClassifiedAdd.SnapshotId` is a real
+texture asset id this grid already has), but rendering one needs a
+public texture->JPEG/PNG HTTP endpoint this Robust instance doesn't
+run yet. Found real, working code for exactly this -
+`GetTextureRobustHandler` (`OpenSim.Capabilities.Handlers`, JP2 decode
+via `OpenJPEG.DecodeToImage` + `System.Drawing` re-encode, `Range`
+support and all) plus its `GetTextureServerConnector` registration -
+just never wired into this grid's `Robust.HG.ini` ServiceConnectors.
+Standing up a new always-on public asset-serving endpoint (no auth
+check in the handler itself, by design - mirrors the real SL/OpenSim
+viewer-facing cap) is an infrastructure decision worth making
+deliberately on its own, not smuggled into a page-layout pass -
+text-only classified cards ship tonight, image thumbnails noted as a
+real, buildable follow-up.
+
+Verified live at 1400px: brand bar shows real `online now`/region
+counts (0/15 before regions were up, 15 once they were), Featured
+Classifieds/Economy/Events render with real DB data, Regions box
+appears once `regions.Count > 0`, footer's "Total Online Now"/"Visit
+Our Main Site" both present. Same full stop/resync/restart cycle as
+every entry above (0 missing/0 mismatched, all 15 regions + Robust
+clean, only the pre-existing Tangle YEngine error).
