@@ -17566,3 +17566,27 @@ Verified live: nav now reads "Home · Features · Get a Viewer ·
 Explore ▾ · Grid Info ▾", Home's icon visibly aligned with the
 other two. Same full stop/resync/restart cycle as the entries above (0
 missing/0 mismatched, all 15 regions + Robust clean).
+
+### AyaneStorm added to the viewer list; Features page's "Supported Viewers" was silently stale (2026-09-02)
+
+User asked whether the Features page was up to date and pointed out
+AyaneStorm was missing from `/viewers`. Verified AyaneStorm's real
+distribution point before linking it - its own README's "Download"
+section is leftover Firestorm boilerplate pointing at
+firestormviewer.org (Firestorm doesn't distribute AyaneStorm builds);
+the real releases live at `github.com/AyaneStorm/ayanestorm/releases`
+(confirmed via `gh release list` - v1.0.80, 2026-08-31, real Windows/
+macOS/Linux binaries as release assets, not source-only). Added to
+`DesktopViewers`.
+
+Checking `/features` while at it turned up a real bug, not just a
+missing entry: its "Platform Overview" table's "Supported Viewers" row
+was a hardcoded string (`"Firestorm, Cool VL Viewer"`) - despite the
+comment directly above it explicitly stating the intent was to avoid
+exactly this ("the same viewer list HandleViewers already publishes,
+not a second hand-typed copy that could drift out of sync"). The code
+never actually matched that comment. Fixed by deriving the cell from
+`DesktopViewers` itself (`string.Join(", ", DesktopViewers.Select(v =>
+v.Name))`), so it can't drift again regardless of what gets added to
+the viewer list in the future. Verified live: "Firestorm (Windows),
+Firestorm (macOS), Firestorm (Linux), AyaneStorm, Cool VL Viewer".

@@ -1485,6 +1485,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             ("Firestorm (Windows)", "https://www.firestormviewer.org/windows-for-open-simulator/", "OpenSim-specific build"),
             ("Firestorm (macOS)", "https://www.firestormviewer.org/mac-for-open-simulator/", "OpenSim-specific build"),
             ("Firestorm (Linux)", "https://www.firestormviewer.org/linux-for-open-simulator/", "OpenSim-specific build"),
+            ("AyaneStorm", "https://github.com/AyaneStorm/ayanestorm/releases", "Firestorm fork for photographers - Windows/macOS/Linux"),
             ("Cool VL Viewer", "https://sldev.free.fr/", "Long-running, OpenSim-compatible"),
         };
 
@@ -4274,7 +4275,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // second hand-typed copy that could drift out of sync.
             sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-activity\"></i> Platform Overview</h2>")
               .Append("<table><tbody>")
-              .Append("<tr><th>Supported Viewers</th><td>Firestorm, Cool VL Viewer</td></tr>")
+              .Append("<tr><th>Supported Viewers</th><td>").Append(Html(string.Join(", ", DesktopViewers.Select(v => v.Name)))).Append("</td></tr>")
               .Append("<tr><th>Core Platform</th><td>OpenSimulator (Confluence build)</td></tr>")
               .Append("<tr><th>Core Version</th><td><span title=\"commit ").Append(global::OpenSim.VersionInfo.BuildCommitHash).Append("\">")
               .Append(global::OpenSim.VersionInfo.DisplayVersionNumber).Append("</span></td></tr>")
