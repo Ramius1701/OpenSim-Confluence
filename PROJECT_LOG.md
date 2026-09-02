@@ -17806,3 +17806,38 @@ Robust itself can reach every backing service regardless of region
 count, "Regions: 0" was the only zeroed stat) and after full restart
 (15 regions, 4.52 km², all 5 rows Online). Same deploy discipline as
 every entry above.
+
+### Grid Status expanded - 5 more real service rows, 4 more real stat tiles (2026-09-03)
+
+Direct follow-up: asked whether other services and live tiles belonged
+on this page, framed as "the page that gives all the information about
+the grid itself." Inventoried every `m_XxxService` field this connector
+actually holds (~25 total) rather than guessing, then picked the ones
+that are both genuinely resident-facing and have a cheap, safe, real
+call available to probe them - not padding the page with obscure
+internal plumbing (StaticPage/Suggestion/RecoveryCode/GridSettings/
+WebAccount services stayed out; EstateData and AbuseReports too, more
+admin-facing than "is the grid healthy" signals for a visitor).
+
+Added, same per-service try/catch + `AppendServicePill` pattern as the
+5 rows from the entry above: **Events** (`GetUpcoming(0,1000)`),
+**Marketplace** (`GetListedListings(0,1000)`), **Store**
+(`GetActiveCatalogItems()`), **Friends** (`GetFriends(UUID.Zero)` - an
+empty result is still proof it answered, same reasoning as Inventory's
+`GetRootFolder`), **Profiles & Classifieds**
+(`GetRecentClassifieds(1000)`). Four of these five calls are the exact
+same ones `RenderUpcomingEvents`/`RenderFeaturedClassifieds` and the
+marketplace/store pages already make - reused their `.Count` for real
+new stat tiles (Upcoming Events, Marketplace Listings, Store Items,
+Active Classifieds) instead of querying twice for the same data.
+Deliberately left Gloebit off this pass - it's a real-money payment
+gateway and no cheap side-effect-free "ping" call was obviously safe to
+guess at; worth a dedicated look later rather than risking a wrong
+probe against it.
+
+Verified live: all 9 service rows Online, all 4 new stat tiles showing
+real counts (1 upcoming event, 1 marketplace listing, 1 store item, 1
+active classified - matches what's actually in the DB right now, not
+placeholder zeros). Same deploy discipline as every entry above (0
+missing/0 mismatched, all 15 regions + Robust clean, only the
+pre-existing Tangle YEngine error).

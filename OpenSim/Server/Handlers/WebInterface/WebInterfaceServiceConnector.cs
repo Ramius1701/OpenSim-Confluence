@@ -5389,7 +5389,9 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             HashSet<string> aliveRegionIDs = new HashSet<string>();
 
-            bool gridServiceOk = false, userAccountsOk = false, currencyOk = false, searchOk = false, inventoryOk = false;
+            bool gridServiceOk = false, userAccountsOk = false, currencyOk = false, searchOk = false, inventoryOk = false,
+                    eventsOk = false, marketplaceOk = false, storeOk = false, friendsOk = false, profilesOk = false;
+            int upcomingEventCount = 0, marketplaceListingCount = 0, storeItemCount = 0, activeClassifiedCount = 0;
 
             if (m_GridService != null)
             {
@@ -5489,12 +5491,83 @@ namespace OpenSim.Server.Handlers.WebInterface
                     m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Inventory check failed: {0}", e);
                 }
             }
+            if (m_EventsService != null)
+            {
+                try
+                {
+                    // Same call RenderUpcomingEvents already makes, reused
+                    // here for both the health probe and a real stat tile
+                    // instead of querying twice.
+                    upcomingEventCount = m_EventsService.GetUpcoming(0, 1000).Count;
+                    eventsOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Events check failed: {0}", e);
+                }
+            }
+            if (m_MarketplaceListingsService != null)
+            {
+                try
+                {
+                    marketplaceListingCount = m_MarketplaceListingsService.GetListedListings(0, 1000).Count;
+                    marketplaceOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Marketplace check failed: {0}", e);
+                }
+            }
+            if (m_StoreService != null)
+            {
+                try
+                {
+                    storeItemCount = m_StoreService.GetActiveCatalogItems().Count;
+                    storeOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Store check failed: {0}", e);
+                }
+            }
+            if (m_FriendsService != null)
+            {
+                try
+                {
+                    // UUID.Zero has no friends list - same "empty result is
+                    // still proof it answered" reasoning as Inventory above.
+                    m_FriendsService.GetFriends(UUID.Zero);
+                    friendsOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Friends check failed: {0}", e);
+                }
+            }
+            if (m_UserProfilesService != null)
+            {
+                try
+                {
+                    // Same call RenderFeaturedClassifieds already makes.
+                    activeClassifiedCount = m_UserProfilesService.GetRecentClassifieds(1000).Count;
+                    profilesOk = true;
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Profiles check failed: {0}", e);
+                }
+            }
 
             bool servicesOk = (m_GridService == null || gridServiceOk)
                     && (m_UserAccountService == null || userAccountsOk)
                     && (m_CurrencyService == null || currencyOk)
                     && (m_SearchService == null || searchOk)
-                    && (m_InventoryService == null || inventoryOk);
+                    && (m_InventoryService == null || inventoryOk)
+                    && (m_EventsService == null || eventsOk)
+                    && (m_MarketplaceListingsService == null || marketplaceOk)
+                    && (m_StoreService == null || storeOk)
+                    && (m_FriendsService == null || friendsOk)
+                    && (m_UserProfilesService == null || profilesOk);
 
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1><i class=\"bi bi-activity\"></i> Grid Status</h1>")
@@ -5509,6 +5582,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendStat(sb, "Unique Visitors", uniqueVisitors30d.ToString("N0"), "last 30 days, including hypergrid");
             AppendStat(sb, "New Accounts", newAccounts7d.ToString("N0"), "last 7 days");
             AppendStat(sb, "Land Area", (totalAreaSqm / 1000000.0).ToString("N2") + " km" + (char)0xB2, "total across all regions");
+            if (m_EventsService != null)
+                AppendStat(sb, "Upcoming Events", upcomingEventCount.ToString("N0"), "scheduled");
+            if (m_MarketplaceListingsService != null)
+                AppendStat(sb, "Marketplace Listings", marketplaceListingCount.ToString("N0"), "listed for sale");
+            if (m_StoreService != null)
+                AppendStat(sb, "Store Items", storeItemCount.ToString("N0"), "active catalog items");
+            if (m_UserProfilesService != null)
+                AppendStat(sb, "Active Classifieds", activeClassifiedCount.ToString("N0"), "posted by residents");
             AppendStat(sb, "OpenSimulator", global::OpenSim.VersionInfo.DisplayVersionNumber, "core version");
             sb.Append("</div>");
 
@@ -5522,6 +5603,11 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<tr><th>Currency</th><td>").Append(AppendServicePill(m_CurrencyService != null, currencyOk)).Append("</td></tr>")
               .Append("<tr><th>Search</th><td>").Append(AppendServicePill(m_SearchService != null, searchOk)).Append("</td></tr>")
               .Append("<tr><th>Inventory</th><td>").Append(AppendServicePill(m_InventoryService != null, inventoryOk)).Append("</td></tr>")
+              .Append("<tr><th>Events</th><td>").Append(AppendServicePill(m_EventsService != null, eventsOk)).Append("</td></tr>")
+              .Append("<tr><th>Marketplace</th><td>").Append(AppendServicePill(m_MarketplaceListingsService != null, marketplaceOk)).Append("</td></tr>")
+              .Append("<tr><th>Store</th><td>").Append(AppendServicePill(m_StoreService != null, storeOk)).Append("</td></tr>")
+              .Append("<tr><th>Friends</th><td>").Append(AppendServicePill(m_FriendsService != null, friendsOk)).Append("</td></tr>")
+              .Append("<tr><th>Profiles &amp; Classifieds</th><td>").Append(AppendServicePill(m_UserProfilesService != null, profilesOk)).Append("</td></tr>")
               .Append("</tbody></table></div>");
 
             sb.Append("<div class=\"content-card text-center\" style=\"text-align:center;padding-top:20px;\">")
