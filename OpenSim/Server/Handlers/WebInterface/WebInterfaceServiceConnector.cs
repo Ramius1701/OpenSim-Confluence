@@ -4418,7 +4418,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1><i class=\"bi bi-stars\"></i> Grid Features</h1>");
             sb.Append("<p>Confluence runs on OpenSimulator, extended with a set of natively-built systems ")
-              .Append("(not addon modules) covering currency, search, moderation, and grid administration.</p>");
+              .Append("(not addon modules) covering currency, marketplace, search, moderation, and grid administration.</p>");
 
             // Platform Overview table - same shape as OpenSim-Grid-Interface's
             // features.php ("Supported Viewers"/"Main Simulator"/"Main
@@ -4513,7 +4513,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendIconFeatureCard(sb, "gear-wide-connected", "Platform Services", new[]
             {
                 ("Native Search", true, "Grid-wide place search, integrated with the viewer's own Search window"),
-                ("SimProtection", true, "Automatic script/physics throttling on FPS drops, with auto-recovery"),
+                // Corrected wording (2026-09-03) after verifying the real
+                // implementation (SimProtectionModule): it's a hard on/off
+                // disable of scripts/physics on sustained low FPS, not
+                // graduated throttling, and sustained near-zero FPS
+                // triggers a full region restart - a bigger deal than the
+                // old wording implied, stated honestly rather than left out.
+                ("SimProtection", true, "Auto-disables scripts/physics on sustained low FPS and re-enables once it recovers; restarts the region if FPS stays near zero"),
                 ("Scripted NPCs", true, "osNpc bots with avatar-follow and tag-group management")
             });
 
@@ -4563,6 +4569,25 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 ("What it is", false, "A real-money payment gateway, for grids that want a paid economy instead of (or alongside) the native ledger"),
                 ("How it's added", false, "Swappable via the addon-modules Gloebit integration - not required, not enabled by default")
+            });
+            // Added 2026-09-03 - real, live-tested this session, but was
+            // missing from this page entirely (the page's own intro
+            // sentence didn't even list "marketplace" among what it
+            // covers). See MARKETPLACE.md for the full setup/limitation
+            // writeup this card summarizes.
+            AppendIconFeatureCard(sb, "bag", "Marketplace" + (m_MarketplaceListingsService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
+            {
+                ("Browse & Buy", false, "Grid-wide storefront at /marketplace, ConfluenceCurrency checkout, unlimited or real finite stock per listing"),
+                ("Listing Management", false, "Create and manage listings entirely from the web at /marketplace/manage - drag an item into a folder, no in-world listing station needed"),
+                // Honest gap, same standard as Voice above - Firestorm/
+                // AyaneStorm hard-block their own in-viewer Marketplace
+                // Listings floater outside real Second Life, confirmed
+                // against source, no known workaround - so web management
+                // is the primary path here, not a missing capability of
+                // this grid's own DirectDelivery implementation (which is
+                // built and dormant, ready if a non-blocking viewer is
+                // ever used).
+                ("Viewer Floater", false, "Blocked by Firestorm/AyaneStorm outside real Second Life - use the web pages above instead, same login")
             });
             sb.Append("</div>");
 

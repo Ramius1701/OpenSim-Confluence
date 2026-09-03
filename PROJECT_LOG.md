@@ -17841,3 +17841,59 @@ active classified - matches what's actually in the DB right now, not
 placeholder zeros). Same deploy discipline as every entry above (0
 missing/0 mismatched, all 15 regions + Robust clean, only the
 pre-existing Tangle YEngine error).
+
+### Features page audit: Marketplace was missing entirely; SimProtection's own wording overstated (2026-09-03)
+
+Asked directly to review `/features` for accuracy. Mid-review, a real-
+looking discrepancy turned up first (`/features` and `/gridstatus` both
+suddenly showing 5 regions instead of the 15 from the last deploy) -
+investigated properly rather than assuming a bug: checked the actual
+running process list, confirmed only 5 `OpenSim.exe` processes were
+alive, all started hours after the last restart. User confirmed this
+was deliberate (scaled down independently, outside this session) - not
+a page bug, both pages were correctly and consistently reporting real
+state the whole time. Worth remembering: a "these two live tiles
+disagree" alarm needs the actual process/DB state checked before
+concluding the code is wrong.
+
+Back to the real ask - had a general-purpose agent independently verify
+the three technical claims this reviewer was least certain about,
+against actual implementing code rather than trusting the page's own
+wording:
+- **On-Demand Regions** - accurate. `OnDemandRegionModule` (`OpenSim/
+  Region/CoreModules/World/OnDemand/`) really does set `Scene.Active =
+  false` when a region empties and wake it on the next arrival - a
+  WhiteCore-Dev-derived port, genuinely not a vanilla OpenSim feature.
+- **Scripted NPCs** - accurate, avatar-follow and tag-group management
+  both real (`NPCModule.cs`'s `FollowTick()`, `osNpcAddTag`/
+  `GetNPCsWithTag`/`DeleteNPCsWithTag` in `OSSL_Api.cs`) - not
+  embellished stock `osNpcCreate`/`osNpcMoveTo`.
+- **SimProtection** - real but the page's own wording overstated it.
+  `SimProtectionModule.cs` doesn't "throttle" - it's a hard on/off
+  disable of scripts/physics on sustained low FPS via
+  `RegionSettings.DisableScripts`/`DisablePhysics`, with real auto-
+  re-enable once FPS recovers. Bigger gap: sustained near-zero FPS
+  triggers a full region **restart**, which the old wording never
+  mentioned at all - a materially bigger deal than "throttling"
+  implied. Reworded to state both accurately, matching this page's own
+  established honesty standard (the same one that already flags Voice
+  as not bundled rather than staying silent).
+
+Bigger finding: **Marketplace wasn't mentioned anywhere on this page**,
+despite being real, live-tested, and one of the largest features built
+this session - the page's own intro sentence didn't even list
+"marketplace" among what it covers. Added a full card (Browse & Buy,
+Listing Management, and the same honest "Viewer Floater blocked
+outside real Second Life" caveat MARKETPLACE.md already documents) to
+the Economy & Currency section, alongside Native Currency and Gloebit -
+thematically the right neighbors, all three are "how money moves on
+this grid." Updated the intro sentence too.
+
+Verified live: SimProtection's corrected wording renders, Marketplace
+card renders with all three rows including the pill (`Active`, driven
+by the same `m_MarketplaceListingsService != null` check every other
+card on this page already uses). Deployed to just Robust + the 5
+regions actually running (not a blind restart back to 15) - 0 missing/
+0 mismatched, all 5 `RegionReady`, zero errors of any kind (Tangle's
+own pre-existing error didn't appear since Tangle isn't among the 5
+running right now).
