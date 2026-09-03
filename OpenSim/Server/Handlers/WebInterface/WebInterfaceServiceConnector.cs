@@ -14674,7 +14674,18 @@ namespace OpenSim.Server.Handlers.WebInterface
         // folder" route.
         private void HandleWelcomePhoto(IOSHttpRequest request, IOSHttpResponse response, string unsafeName)
         {
-            string fileName = Path.GetFileName(unsafeName);
+            // HandleRequest's dispatcher routes on request.RawUrl - still
+            // percent-encoded, unlike RegionWebModule's own reference
+            // handlers this was modeled on, which route on the already-
+            // decoded UriPath instead. Never mattered for plain ASCII
+            // filenames (nothing to decode), but any non-ASCII name (an
+            // umlaut, say) arrived here still escaped and never matched
+            // the real file on disk - found live: a properly re-escaped
+            // request for a real, existing file 404ing. Decode first,
+            // then GetFileName - so a traversal payload that only
+            // becomes "../x" after decoding still gets stripped, not
+            // one that only looks safe pre-decode.
+            string fileName = Path.GetFileName(Uri.UnescapeDataString(unsafeName));
             if (string.IsNullOrEmpty(fileName) ||
                     Array.IndexOf(WelcomePhotoExtensions, Path.GetExtension(fileName).ToLowerInvariant()) < 0)
             {

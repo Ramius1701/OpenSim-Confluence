@@ -18194,3 +18194,49 @@ Deploy: only `OpenSim.Server.Handlers.dll`/`.pdb` changed (this
 connector is Robust-hosted, not per-region), so no region restart was
 needed - copied both files to live, SHA256-verified, restarted Robust
 alone, confirmed clean startup log with no errors.
+
+### Follow-up, same session: real 404 found on the umlaut-named photos while re-verifying welcome.php
+
+User asked to check welcome.php again after the crossfade fix and the
+duplicate-photo cleanup above. Re-verified live rather than assuming
+still-good: watched network requests during a page load and found
+`GebäudePastellfarben1-4.jpg` (the correctly-named copies that were
+deliberately kept over the mangled duplicates) 404ing anyway, alongside
+the mangled ones that were expected to 404 now that they're deleted.
+Confirmed with a direct `curl` against the live server (not a browser
+cache artifact) that even the properly re-escaped URL for a real,
+existing file came back 404.
+
+Root cause: `HandleRequest`'s router dispatches on `request.RawUrl`,
+which stays percent-encoded, and `HandleWelcomePhoto` passed that
+segment straight into `Path.GetFileName()` with no decode step first.
+Harmless for every plain-ASCII filename in `WebSplash/` (nothing to
+decode), but the one filename with a real Unicode character (the
+umlaut in "Gebäude") arrives here still as literal `%C3%A4`, which
+`Path.GetFileName` treats as literal text - never matching the real
+on-disk file, which has an actual "ä". Checked the reference this
+handler's own comment cites (`RegionWebModule.SendMedia`/
+`SendEstateMedia`) and found why *it* doesn't have the same bug: it
+routes on `request.UriPath` (already decoded), not `RawUrl` - this
+handler copied the traversal-stripping half of that pattern but not
+the decoding half it depends on.
+
+**Fix**: `Uri.UnescapeDataString(unsafeName)` before `Path.GetFileName`
+in `HandleWelcomePhoto` - decode first so `Path.GetFileName` strips
+traversal from the real decoded value (an encoded `..%2f` payload
+that only becomes `../` after decoding still gets caught), not from
+a still-escaped string that looks safe before decoding but wouldn't
+be after. `HandleRequest`'s router itself was deliberately left alone
+- it's shared by every route in this 18,000-line connector, and this
+bug only ever bites a route that treats a path segment as a literal
+filesystem lookup key, which is just this one.
+
+Verified live: `curl` against both the umlaut file and a plain-ASCII
+one both return 200 after redeploy, and a `../../OpenSim.exe`
+traversal attempt still correctly 404s. Browser re-check showed one
+straggler 404 for `GebäudePastellfarben1.jpg` specifically - traced to
+a stale cached 404 response from before the fix (a fresh
+`fetch(..., {cache:'no-store'})` against the same URL returned 200
+immediately), not a real remaining issue. Same deploy as the entry
+above: only `OpenSim.Server.Handlers.dll`/`.pdb`, hash-verified,
+Robust restarted alone, clean startup log.
