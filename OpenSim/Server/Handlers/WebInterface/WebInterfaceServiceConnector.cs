@@ -1373,17 +1373,34 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         // Cycles through whatever's in WebSplash/ (see HandleWelcomePhoto) a
-        // few seconds apart - a plain background-image swap on a timer, not
-        // a cross-fade (CSS can't interpolate between two different
-        // background-image values, and layering two divs just to fade
-        // between them isn't worth it for what's a nice-to-have banner).
-        // Fixed full-viewport background behind everything (WhiteCore-Dev's
-        // own body.welcomescreen{background-image:...} pattern, confirmed
-        // against its real randomimageswitch.js - a plain div here instead
-        // of styling <body> directly, since <body> is shared page chrome
-        // this connector doesn't want to reach into). Renders nothing at
-        // all when the photo folder is empty/missing, so an operator who
+        // few seconds apart. Fixed full-viewport background behind
+        // everything (WhiteCore-Dev's own body.welcomescreen{background-
+        // image:...} pattern, confirmed against its real
+        // randomimageswitch.js - a plain div here instead of styling
+        // <body> directly, since <body> is shared page chrome this
+        // connector doesn't want to reach into). Renders nothing at all
+        // when the photo folder is empty/missing, so an operator who
         // doesn't care about the banner gets the old plain-background page.
+        //
+        // Two stacked layers crossfaded on `opacity`, not a direct
+        // `background-image` swap on one layer. Found live - "blinks
+        // before displaying the next picture... grayish screen every so
+        // often" - tracing it back: a bare
+        // `element.style.backgroundImage = url(...)` has no guaranteed
+        // fetch-before-swap; the browser starts painting the new url()
+        // immediately and renders nothing under it until that request
+        // finishes, so anything short of an already-cached image shows
+        // as a blank flash (the plain page underneath, hence "grayish"),
+        // then pops in with no fade once loaded (the "blink"). The real
+        // osloginscreen.css reference this was modeled on only ever
+        // looked like a fade because the browser already had that image
+        // cached from an earlier cycle - `transition:background 1s` on a
+        // url() swap isn't a spec-guaranteed crossfade either way.
+        // Fixed properly: preload the next image with a plain JS Image()
+        // object first, only write it into the (currently hidden) back
+        // layer's background-image once its own onload has fired, then
+        // crossfade opacity - which, unlike background-image, browsers
+        // reliably animate.
         private string RenderWelcomeSlideshow()
         {
             List<string> photos = GetWelcomePhotoFiles();
@@ -1391,8 +1408,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return string.Empty;
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<div class=\"welcome-bg\" id=\"welcome-slideshow\" style=\"background-image:url('")
+            sb.Append("<div class=\"welcome-bg-layer\" id=\"welcome-bg-a\" style=\"opacity:1;background-image:url('")
               .Append(Html(BasePath)).Append("/welcome-photos/").Append(Html(Uri.EscapeDataString(photos[0]))).Append("')\"></div>");
+            sb.Append("<div class=\"welcome-bg-layer\" id=\"welcome-bg-b\" style=\"opacity:0\"></div>");
+            sb.Append("<div class=\"welcome-bg-overlay\"></div>");
 
             if (photos.Count > 1)
             {
@@ -1406,10 +1425,23 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 urls.Append(']');
 
-                sb.Append("<script>(function(){var photos=").Append(urls)
-                  .Append(";var i=0;setInterval(function(){i=(i+1)%photos.length;")
-                  .Append("document.getElementById('welcome-slideshow').style.backgroundImage=")
-                  .Append("\"url(\"+JSON.stringify(photos[i])+\")\";},6000);})();</script>");
+                sb.Append("<script>(function(){var photos=").Append(urls).Append(";var i=0;")
+                  .Append("var layers=[document.getElementById('welcome-bg-a'),document.getElementById('welcome-bg-b')];")
+                  .Append("var front=0;")
+                  .Append("setInterval(function(){")
+                  .Append("i=(i+1)%photos.length;")
+                  .Append("var url=photos[i];")
+                  .Append("var img=new Image();")
+                  .Append("img.onload=function(){")
+                  .Append("var back=layers[1-front];")
+                  .Append("back.style.backgroundImage=\"url(\"+JSON.stringify(url)+\")\";")
+                  .Append("void back.offsetHeight;") // force layout so the opacity change below actually transitions instead of coalescing
+                  .Append("back.style.opacity=1;")
+                  .Append("layers[front].style.opacity=0;")
+                  .Append("front=1-front;")
+                  .Append("};")
+                  .Append("img.src=url;")
+                  .Append("},6000);})();</script>");
             }
 
             return sb.ToString();
@@ -1465,9 +1497,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // cards") and padding (this page supplies its own via
                 // .welcome-columns instead).
                 ".card{background:transparent;border:none;box-shadow:none;padding:0;}" +
-                ".welcome-bg{position:fixed;inset:0;z-index:-2;background-size:cover;" +
-                "background-position:center;transition:background-image 1s linear;}" +
-                ".welcome-bg::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.28);}" +
+                // Two stacked layers instead of one - see RenderWelcomeSlideshow's
+                // own comment for why (opacity crossfades reliably, a
+                // background-image swap on a single layer doesn't). Same
+                // DOM order both layers, so the browser's default paint
+                // order alone decides which one is "on top" while both
+                // happen to be visible mid-fade - deliberately left
+                // implicit rather than juggling z-index between them.
+                ".welcome-bg-layer{position:fixed;inset:0;z-index:-2;background-size:cover;" +
+                "background-position:center;transition:opacity 1.2s ease;}" +
+                ".welcome-bg-overlay{position:fixed;inset:0;z-index:-2;background:rgba(0,0,0,.28);}" +
                 // Branded top bar - grid identity/tagline left, live "this
                 // grid is alive" stats and the join CTA right, replacing the
                 // earlier centered title-over-photo treatment (redundant

@@ -18129,3 +18129,66 @@ deferral - not a failure, just queued behind someone still standing in
 that region. No engine/LSL code was changed anywhere in this fix; the
 `.example` template edit is the only tracked-repo change, committed
 and pushed on its own.
+
+### welcome.php's photo background: real blank/gray flashes and hard "blinks" instead of a fade (2026-09-04)
+
+User: "welcome.php seems to blnk before displaying the next picture,
+not a transition like it was before. There is also a grayish screen
+every so often" - with a screenshot of the live splash showing a
+plain black background instead of a photo. Traced `RenderWelcomeSlideshow()`
+(`WebInterfaceServiceConnector.cs`) rather than guessing: it did a bare
+`element.style.backgroundImage = url(...)` on a single layer every
+6 seconds, with a `transition:background-image 1s linear` CSS rule
+that's a documented no-op - `background-image` url-to-url changes
+aren't reliably interpolated by any transition, so the swap was always
+either an instant cut, or - since nothing preloaded the next image
+first - a real gap where the browser renders nothing under the new
+url() until it finishes downloading, exposing the plain transparent
+page underneath (the "grayish screen"). Checked the real
+`osloginscreen.css`/`index.php` reference this was modeled on too:
+its own `.fader{transition:background 1s linear}` trick only ever
+looked like a fade in practice because the browser already had that
+random image cached from an earlier cycle - the technique was never a
+guaranteed crossfade either way, on either implementation.
+
+**Fix**: rebuilt as two stacked `.welcome-bg-layer` divs crossfaded on
+`opacity` (reliably animatable, unlike `background-image`) plus a
+separate always-visible `.welcome-bg-overlay` div for the constant
+dark tint (previously a `::after` pseudo-element on the single layer -
+split out so doubling the layers doesn't double the overlay's
+darkness during a fade). The timer now preloads the next photo with a
+plain JS `Image()` object and only writes it into the currently-hidden
+layer's `background-image` inside that image's own `onload` - so the
+visible layer never changes until the replacement is already fully
+downloaded, and a forced reflow (`void back.offsetHeight`) sits
+between writing the new image in and flipping opacity so the browser
+actually commits the "before" frame before animating to "after"
+instead of coalescing both into one paint.
+
+Verified live at `casperia.ddns.net:8002/welcome.php` (Robust restarted
+to pick up the rebuilt `OpenSim.Server.Handlers.dll` - presence was 0,
+so nobody was mid-login): confirmed the rendered `<script>` matches
+source exactly (no HTML-escaping mangling), watched multiple full tick
+cycles, and caught an actual mid-fade screenshot showing two images
+genuinely double-exposed together - real evidence of a working
+crossfade, not an inference from timing logs. `getComputedStyle`
+polling on `opacity` inside this session's own browser-automation tool
+gave misleading flat 0/1 readings throughout testing (never showing
+the transition mid-flight even 1.5s after a manual opacity change) -
+established as a quirk of that specific tool's style-recalc timing,
+not a real page bug, once the actual rendered pixels contradicted it;
+noted here so a future session doesn't waste time chasing the same
+false signal. No console errors either run.
+
+Also found, not fixed: `WebSplash/` has 4 duplicate photos under a
+mangled filename (`Geb#U00e4udePastellfarben1-4.jpg`, sitting alongside
+correctly-named `GebäudePastellfarben1-4.jpg` copies of the same
+images) - both variants genuinely exist on disk so neither 404s, this
+is just leftover clutter from an old rename, not related to this bug.
+Left alone pending the user's call on whether to delete the mangled
+copies.
+
+Deploy: only `OpenSim.Server.Handlers.dll`/`.pdb` changed (this
+connector is Robust-hosted, not per-region), so no region restart was
+needed - copied both files to live, SHA256-verified, restarted Robust
+alone, confirmed clean startup log with no errors.
