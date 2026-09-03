@@ -18180,13 +18180,15 @@ not a real page bug, once the actual rendered pixels contradicted it;
 noted here so a future session doesn't waste time chasing the same
 false signal. No console errors either run.
 
-Also found, not fixed: `WebSplash/` has 4 duplicate photos under a
-mangled filename (`Geb#U00e4udePastellfarben1-4.jpg`, sitting alongside
+Also found: `WebSplash/` had 4 duplicate photos under a mangled
+filename (`Geb#U00e4udePastellfarben1-4.jpg`, sitting alongside
 correctly-named `GebäudePastellfarben1-4.jpg` copies of the same
-images) - both variants genuinely exist on disk so neither 404s, this
-is just leftover clutter from an old rename, not related to this bug.
-Left alone pending the user's call on whether to delete the mangled
-copies.
+images, byte-size-confirmed identical) - both variants genuinely
+existed on disk so neither 404s, this was just leftover clutter from
+an old rename, not related to the fade bug. User asked for the mangled
+copies removed; deleted directly from live `WebSplash/` (asset files,
+not tracked in the repo, no build/restart needed - the photo list is
+re-scanned from disk on every page load).
 
 Deploy: only `OpenSim.Server.Handlers.dll`/`.pdb` changed (this
 connector is Robust-hosted, not per-region), so no region restart was
