@@ -18040,3 +18040,92 @@ above), so the live "mark a region Unlisted, confirm it disappears"
 test is the clear next step, on the user's own login. Same deploy
 discipline as every entry above (0 missing/0 mismatched, all 5 regions
 + Robust clean, zero new errors).
+
+### osGetMapTexture() on a MOAP prim showing a flat map instead of the Warp3D composite - root cause was a config gap, not the LSL script or the engine code (2026-09-03)
+
+User (relaying a fix from another AI) pasted a proposed engine patch
+claiming `osGetMapTexture()` needed code changes to
+`Warp3DMapImageModule.cs` - writing the Warp3D render result into a
+`RegionSettings.TerrainMapImage` property - plus a new
+`osGetWorldMapTexture()` OSSL function, to fix a var-region MOAP prim
+(`llSetTexture(osGetMapTexture(),4)`) showing the flat legacy map
+image instead of a rich 3D composite.
+
+Both premises were wrong. `RegionSettings.TerrainMapImage` doesn't
+exist anywhere in this codebase - the real property is
+`TerrainImageID` (`OSSL_Api.cs` ~line 4619, `osGetMapTexture()`
+already returns exactly this). The real file is
+`OpenSim/Region/CoreModules/World/Warp3DMap/Warp3DImageModule.cs`, not
+`WorldMap/Warp3DMapImageModule.cs`. And `TerrainImageID` was already
+being populated correctly by `WorldMapModule.GenerateMaptile()` from
+whatever `IMapImageGenerator` is active - applying the patch as
+written would have double-written the same asset through a second
+path, creating orphaned duplicates, not fixing anything.
+
+Traced the actual root cause instead of patching on the reporter's
+say-so: `Warp3DImageModule.Initialise()` only enables itself
+(`m_Enabled = true`) when `[Map] MapImageModule` resolves to exactly
+the string `"Warp3DImageModule"` - and the code's own fallback default
+for that config value, when the line is absent or commented out, is
+the literal string `"MapImageModule"` (the legacy flat renderer). All
+15 live region `OpenSim.ini` files had this line commented out
+(`;MapImageModule = "MapImageModule"`), which the example ini's own
+comment misleadingly implies might already default to Warp3D - it
+doesn't. So every region had been silently running the flat renderer
+this whole time, by its own documented fallback behavior, not a bug.
+`osGetMapTexture()` and the reported LSL script needed zero changes.
+
+Also had an Explore agent specifically check the var-region case,
+since the reported prim was on a var region: confirmed
+`Warp3DImageModule`/`WorldMapModule` render the entire region
+footprint in one pass with a uniform non-stretching downscale for
+regions bigger than 256 (not a per-cell crop), so a single
+`TerrainImageID` composite is correct for any size region without
+special-casing.
+
+**Fix**: uncommented and corrected `[Map] MapImageModule` to
+`"Warp3DImageModule"` in all 15 region `OpenSim.ini` files (`sed`
+across `Simulators/*/OpenSim.ini`, verified present via grep in all
+15 afterward). `m_drawPrimVolume` already defaults to `true` in code,
+so prims render with no further config once Warp3D itself is enabled.
+Live-only config change - no code touched, so no build/deploy/hash
+step, just a restart of the affected regions.
+
+Deploy: checked `presence` (0 online) before restarting; stopped and
+staggered-restarted the 5 regions currently up (Welcome_Center 15s,
+then Sandbox/Starbase_Andromeda/SVC/Section_31 5s apart) - Robust was
+left untouched since it never reads region inis. All 5 logged
+`RegionReady` cleanly with zero new errors.
+
+Verified live, not just "it starts cleanly": `Warp3DImageModule.cs`
+logs `"[MAPTILE]: Loaded prim mesher ..."` on init - a line that only
+exists in this module, never the legacy one - and it appeared for all
+5 regions, confirming Warp3D actually activated everywhere. Each
+region's background maptile generation fired ~180s after startup
+(Starbase Andromeda deferred instead - an avatar was present there,
+the documented "wait for avatars to leave" behavior, not a failure).
+Opened Welcome Center's regenerated `map-1-1000-1000-objects.jpg`
+directly: shows real building/prim geometry (a ship structure, two
+mandala-style platforms) rather than a flat green/blue heightmap -
+visual proof, not an inference from log lines alone. SailorV
+Creations (1024x1024 var region) uploaded 16 per-cell tiles (4x4 =
+1024/256) and Section 31 (512x512) uploaded 4 (2x2) - both match the
+expected per-cell tiling math for the grid's separate `/worldmap`
+consumer, independent of the single full-footprint `TerrainImageID`
+composite.
+
+Also updated `bin/OpenSim.ini.example`'s `[Map] MapImageModule` line to
+match the fix - uncommented it to `"Warp3DImageModule"` and added a
+note explaining that leaving it commented does NOT default to Warp3D
+despite the setting's own `{MapImageModule Warp3DImageModule}
+Warp3DImageModule` label implying otherwise, so a fresh install of
+this fork now gets the real 3D renderer out of the box instead of the
+same silent legacy fallback Casperia Prime's own regions had been
+running under. This was the "(and the .example template)" half of the
+original offer the user said "Go ahead" to.
+
+Starbase Andromeda's own maptile is still pending its avatar-present
+deferral - not a failure, just queued behind someone still standing in
+that region. No engine/LSL code was changed anywhere in this fix; the
+`.example` template edit is the only tracked-repo change, committed
+and pushed on its own.

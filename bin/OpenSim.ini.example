@@ -405,7 +405,10 @@
     ;# {MapImageModule} {} {The map image module to use} {MapImageModule Warp3DImageModule} Warp3DImageModule
     ;; The module to use in order to generate map images.
     ;; Warp3DImageModule renders a real top-down 3D aerial view with z-buffered objects.
-    ;MapImageModule = "Warp3DImageModule"
+    ;; NOTE: leaving this commented out does NOT default to Warp3DImageModule despite
+    ;; the label above - Warp3DImageModule.Initialise() falls back to the legacy flat
+    ;; "MapImageModule" renderer unless this line is actually uncommented.
+    MapImageModule = "Warp3DImageModule"
 
     ;# {MaptileRefresh} {GenerateMaptiles} {Maptile refresh period?} {} 0
     ;; If desired, a running region can update the map tiles periodically
