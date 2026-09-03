@@ -127,6 +127,17 @@ namespace OpenSim.Services.Interfaces
         /// <param name='regionID'></param>
         int GetRegionFlags(UUID scopeID, UUID regionID);
 
+        // Confluence addition (2026-09-03) - a Robust-local write path for
+        // the estate-owner "Unlisted" self-service toggle (see
+        // WebInterfaceServiceConnector's HandleAdminEstates). Deliberately
+        // narrow (whole flags int, not a single-bit helper) so it reuses
+        // whatever GetRegionFlags already returned rather than needing its
+        // own bit-level API. Only meaningful against the real local
+        // GridService a Robust instance runs - remote/region-side
+        // implementers of this interface return false since nothing here
+        // needs a region to set its own grid-wide flags remotely.
+        bool SetRegionFlags(UUID scopeID, UUID regionID, int flags);
+
         Dictionary<string,object> GetExtraFeatures();
     }
 

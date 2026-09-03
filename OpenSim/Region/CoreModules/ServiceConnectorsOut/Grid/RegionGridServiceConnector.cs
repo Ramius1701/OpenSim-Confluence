@@ -535,6 +535,18 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Grid
             return flags;
         }
 
+        // Not a real region-side use case (only Robust's own WebUI sets
+        // this - see IGridService.SetRegionFlags), but forwarded the same
+        // local-then-remote way as GetRegionFlags above rather than a hard
+        // stub, so this connector doesn't silently lie about supporting
+        // the interface it implements.
+        public bool SetRegionFlags(UUID scopeID, UUID regionID, int flags)
+        {
+            if (m_LocalGridService.SetRegionFlags(scopeID, regionID, flags))
+                return true;
+            return m_RemoteGridService != null && m_RemoteGridService.SetRegionFlags(scopeID, regionID, flags);
+        }
+
         public Dictionary<string, object> GetExtraFeatures()
         {
             Dictionary<string, object> extraFeatures;

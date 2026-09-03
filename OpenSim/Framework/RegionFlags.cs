@@ -49,6 +49,13 @@ namespace OpenSim.Framework
         Reservation = 128, // This is an inactive reservation
         Authenticate = 256, // Require authentication
         Hyperlink = 512, // Record represents a HG link
-        DefaultHGRegion = 1024 // Record represents a default region for hypergrid teleports only.
+        DefaultHGRegion = 1024, // Record represents a default region for hypergrid teleports only.
+        // Confluence addition (2026-09-03) - owner opted out of public
+        // listing (world map, region tables, public stat counts) via
+        // /admin/estates self-service. Deliberately doesn't affect
+        // NoDirectLogin/LockedOut/etc - an unlisted region is still fully
+        // reachable by anyone who already has its name or a direct link,
+        // it's just not advertised anywhere on the grid's own public pages.
+        Unlisted = 2048
     }
 }

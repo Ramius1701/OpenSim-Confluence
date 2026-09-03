@@ -895,6 +895,19 @@ namespace OpenSim.Services.GridService
                 return -1;
         }
 
+        // Confluence addition (2026-09-03) - real write path for
+        // IGridService.SetRegionFlags, same Get-mutate-Store shape
+        // HandleSetFlags (the console command) already uses just below.
+        public bool SetRegionFlags(UUID scopeID, UUID regionID, int flags)
+        {
+            RegionData region = m_Database.Get(regionID, scopeID);
+            if (region == null)
+                return false;
+
+            region.Data["flags"] = flags.ToString();
+            return m_Database.Store(region);
+        }
+
         private void HandleDeregisterRegion(string module, string[] cmd)
         {
             if (cmd.Length < 4)

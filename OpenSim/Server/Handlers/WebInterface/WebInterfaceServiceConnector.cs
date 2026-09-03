@@ -840,6 +840,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/estates/update":
                         HandleAdminEstatesUpdate(request, response);
                         break;
+                    case BasePath + "/admin/estates/region-visibility":
+                        HandleAdminEstatesRegionVisibility(request, response);
+                        break;
                     case BasePath + "/admin/estates/managers":
                         HandleAdminEstatesListAction(request, response, "managers");
                         break;
@@ -1127,12 +1130,19 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
 
-            List<GridRegion> regions = FilterOnlineRegions(
+            // Online-now counting stays against every alive region,
+            // Unlisted included - a resident standing in an unlisted
+            // region is still really online, that flag only opts a
+            // region out of public listing/map/counts, not out of the
+            // grid's own activity stats. Only the "regions to explore"
+            // display count/list is filtered.
+            List<GridRegion> aliveRegions = FilterOnlineRegions(
                     m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>());
+            List<GridRegion> regions = FilterListedRegions(aliveRegions);
             int onlineNow = 0;
             if (m_GridUserService != null)
             {
-                HashSet<string> aliveRegionIDs = new HashSet<string>(regions.Select(r => r.RegionID.ToString()));
+                HashSet<string> aliveRegionIDs = new HashSet<string>(aliveRegions.Select(r => r.RegionID.ToString()));
                 onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
             }
 
@@ -1269,13 +1279,17 @@ namespace OpenSim.Server.Handlers.WebInterface
                     : TruncateText(welcomeMessage, 90);
             bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
 
-            List<GridRegion> regions = FilterOnlineRegions(
+            // Same split as HandleHome above - online-now counts every
+            // alive region including Unlisted ones, only the displayed
+            // region list/count is filtered.
+            List<GridRegion> aliveRegions = FilterOnlineRegions(
                     m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>());
+            List<GridRegion> regions = FilterListedRegions(aliveRegions);
 
             int onlineNow = 0;
             if (m_GridUserService != null)
             {
-                HashSet<string> aliveRegionIDs = new HashSet<string>(regions.Select(r => r.RegionID.ToString()));
+                HashSet<string> aliveRegionIDs = new HashSet<string>(aliveRegions.Select(r => r.RegionID.ToString()));
                 onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
             }
 
@@ -2228,7 +2242,15 @@ namespace OpenSim.Server.Handlers.WebInterface
             // Online/Offline column, so nothing about the grid's roster is
             // hidden - only the interactive map itself is online-only.
             List<GridRegion> aliveRegions = FilterOnlineRegions(regions);
+            // aliveRegionIDs stays unfiltered by Unlisted - it also drives
+            // the "Show Users" online-avatar overlay below, and a resident
+            // standing in an unlisted region is still really there. Only
+            // the map tiles and the "All Regions" table (built from
+            // listedRegions/listedAliveRegions below) hide Unlisted
+            // regions themselves.
             HashSet<string> aliveRegionIDs = new HashSet<string>(aliveRegions.Select(r => r.RegionID.ToString()));
+            List<GridRegion> listedRegions = FilterListedRegions(regions);
+            List<GridRegion> listedAliveRegions = FilterListedRegions(aliveRegions);
 
             // Resolved once per unique estate owner, not once per region -
             // a grid where one resident owns many regions shouldn't cost
@@ -2260,7 +2282,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             bool isViewerContext = IsViewerRequest(request, response);
 
             OSDArray regionArray = new OSDArray();
-            foreach (GridRegion region in aliveRegions)
+            foreach (GridRegion region in listedAliveRegions)
             {
                 OSDMap r = new OSDMap();
                 r["name"] = region.RegionName;
@@ -2417,11 +2439,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("searchBox.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();doSearch();}});");
             sb.Append("})();</script>");
 
-            sb.Append("<h2>All Regions</h2><p class=\"news-meta\">Every region registered on this grid - the map above only draws the ones actually online right now.</p>");
+            sb.Append("<h2>All Regions</h2><p class=\"news-meta\">Every publicly-listed region on this grid - the map above only draws the ones actually online right now.</p>");
             sb.Append("<table><tr><th>Region</th><th>Status</th><th>Size</th><th>Owner</th><th></th></tr>");
             // Alphabetical, not registration/DB order - found live: the
-            // list had no sort applied at all.
-            foreach (GridRegion region in regions.OrderBy(r => r.RegionName, StringComparer.OrdinalIgnoreCase))
+            // list had no sort applied at all. listedRegions (not regions)
+            // so an owner's Unlisted opt-out is honored here too, not just
+            // on the map.
+            foreach (GridRegion region in listedRegions.OrderBy(r => r.RegionName, StringComparer.OrdinalIgnoreCase))
             {
                 string teleportUrl = isViewerContext
                         ? "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25"
@@ -4463,8 +4487,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<h2><i class=\"bi bi-activity\"></i> Live Grid Snapshot</h2><div class=\"stats-grid\">");
             if (m_GridService != null)
             {
-                List<GridRegion> regions = FilterOnlineRegions(
-                        m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000));
+                // FilterListedRegions on top of the usual alive-probe -
+                // this whole snapshot is public-facing, so an owner's
+                // Unlisted opt-out applies to every figure here (region
+                // count, area, largest-region) same as the map/tables.
+                List<GridRegion> regions = FilterListedRegions(FilterOnlineRegions(
+                        m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000)));
                 long totalAreaSqm = 0;
                 int hgOpenCount = 0;
                 long largestRegionSqm = 0;
@@ -5448,8 +5476,17 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 try
                 {
-                    List<GridRegion> regions = FilterOnlineRegions(
+                    List<GridRegion> aliveRegions = FilterOnlineRegions(
                             m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000));
+                    // aliveRegionIDs feeds GetOnlineUserCount below - stays
+                    // unfiltered by Unlisted, a resident standing in an
+                    // unlisted region still really counts as online. Only
+                    // the displayed region/area stats (totalRegions etc.)
+                    // respect the opt-out.
+                    foreach (GridRegion region in aliveRegions)
+                        aliveRegionIDs.Add(region.RegionID.ToString());
+
+                    List<GridRegion> regions = FilterListedRegions(aliveRegions);
                     totalRegions = regions.Count;
                     foreach (GridRegion region in regions)
                     {
@@ -5458,7 +5495,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                             singleRegions++;
                         else
                             varRegions++;
-                        aliveRegionIDs.Add(region.RegionID.ToString());
                     }
                     gridServiceOk = true;
                 }
@@ -6037,6 +6073,22 @@ namespace OpenSim.Server.Handlers.WebInterface
             return Util.IsHostAlive(region.ServerURI, timeoutMs);
         }
 
+        // Applied on top of FilterOnlineRegions at every PUBLIC-facing call
+        // site (home, welcome.php, world map, features, grid status) - an
+        // owner's RegionFlags.Unlisted opt-out (see HandleAdminEstates'
+        // region checkboxes) means excluded from public listings and stat
+        // counts, not excluded from the grid itself (still fully reachable
+        // by name/direct link). Deliberately NOT folded into
+        // FilterOnlineRegions itself - Region Management (admin) and any
+        // other admin-facing region list needs to keep showing everything,
+        // unlisted included.
+        private List<GridRegion> FilterListedRegions(List<GridRegion> regions)
+        {
+            if (m_GridService == null || regions.Count == 0)
+                return regions;
+            return regions.Where(r => (m_GridService.GetRegionFlags(UUID.Zero, r.RegionID) & (int)OpenSim.Framework.RegionFlags.Unlisted) == 0).ToList();
+        }
+
         private static void AppendStat(StringBuilder sb, string label, string value, string sub)
         {
             sb.Append("<div class=\"stat-card\"><div class=\"stat-label\">").Append(Html(label)).Append("</div>")
@@ -6536,7 +6588,19 @@ namespace OpenSim.Server.Handlers.WebInterface
                         string status = open ? "Open" : "Closed";
                         string actionLabel = open ? "Close to HG" : "Open to HG";
 
-                        rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
+                        // Read-only badge, not a second toggle - the real
+                        // Unlisted control already lives on /admin/estates
+                        // (CanManageEstate lets an admin manage any estate
+                        // there too, not just its owner), this table just
+                        // needs to show it's set so an admin isn't confused
+                        // about why a region is missing from the public
+                        // world map/region tables while still showing up
+                        // here.
+                        bool isUnlisted = (m_GridService.GetRegionFlags(UUID.Zero, region.RegionID) & (int)OpenSim.Framework.RegionFlags.Unlisted) != 0;
+                        rows.Append("<tr><td>").Append(Html(region.RegionName));
+                        if (isUnlisted)
+                            rows.Append(" <span class=\"pill pill-no\" title=\"Hidden from the public world map, region tables and stat counts - set via Estate Management\">Unlisted</span>");
+                        rows.Append("</td>");
                         rows.Append("<td>").Append(region.RegionCoordX).Append(",").Append(region.RegionCoordY).Append("</td>");
                         rows.Append("<td><span class=\"pill ").Append(onlineRegionIDs.Contains(region.RegionID) ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>");
                         rows.Append("<td>").Append(status).Append("</td>");
@@ -8945,18 +9009,37 @@ namespace OpenSim.Server.Handlers.WebInterface
                     UserAccount owner = m_UserAccountService?.GetUserAccount(UUID.Zero, estate.EstateOwner);
                     string ownerName = owner != null ? owner.Name : estate.EstateOwner.ToString();
 
+                    // Unlisted checkbox per region - self-service opt-out
+                    // of public listing (World Map, region tables, grid
+                    // stat counts), same self-service pattern this page
+                    // already extends to estate owners (not just admins)
+                    // for everything else here. GetRegionFlags is a real
+                    // per-region call, not derived from GridRegion itself -
+                    // see IGridService.GetRegionFlags's own doc comment for
+                    // why (flags aren't returned by the region-listing
+                    // calls, only this dedicated one).
                     StringBuilder regionRows = new StringBuilder();
                     foreach (UUID regionID in m_EstateDataService.GetRegions(estateID))
                     {
                         GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, regionID);
-                        regionRows.Append("<li>").Append(Html(region != null ? region.RegionName : regionID.ToString())).Append("</li>");
+                        string regionName = region != null ? region.RegionName : regionID.ToString();
+                        bool isUnlisted = m_GridService != null
+                                && (m_GridService.GetRegionFlags(UUID.Zero, regionID) & (int)OpenSim.Framework.RegionFlags.Unlisted) != 0;
+                        regionRows.Append("<li><label><input type=\"checkbox\" name=\"unlisted_")
+                                .Append(regionID).Append("\"").Append(isUnlisted ? " checked" : "").Append("> ")
+                                .Append(Html(regionName)).Append(" <span class=\"news-meta\">- hide from the public World Map, ")
+                                .Append("region tables and grid stat counts (still reachable by name or direct link)</span></label></li>");
                     }
 
                     body = "<h1>" + Html(estate.EstateName) + "</h1>"
                             + "<p><a href=\"" + BasePath + "/admin/estates\">Back to list</a></p>"
                             + message
                             + "<h2>Regions in this estate</h2>"
+                            + "<form method=\"post\" action=\"" + BasePath + "/admin/estates/region-visibility\">"
+                            + "<input type=\"hidden\" name=\"estate_id\" value=\"" + estate.EstateID + "\">"
                             + "<ul>" + regionRows.ToString() + "</ul>"
+                            + "<button type=\"submit\">Save Visibility</button>"
+                            + "</form>"
                             + "<h2>Settings</h2>"
                             + "<form method=\"post\" action=\"" + BasePath + "/admin/estates/update\">"
                             + "<input type=\"hidden\" name=\"estate_id\" value=\"" + estate.EstateID + "\">"
@@ -9112,6 +9195,71 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                         m_EstateDataService.StoreEstateSettings(estate);
                         message = "Estate settings updated.";
+                    }
+                }
+            }
+
+            response.Redirect(BasePath + "/admin/estates?id=" + Uri.EscapeDataString(estateIdParam) + "&message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Self-service "Unlisted" toggle - see HandleAdminEstates' region
+        // checkbox list and RegionFlags.Unlisted's own comment. One
+        // GetRegionFlags + SetRegionFlags round-trip per region in this
+        // estate (not a bulk call - IGridService has no bulk flags
+        // primitive, and an estate's own region count is small enough
+        // that this isn't worth adding one for).
+        private void HandleAdminEstatesRegionVisibility(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Estate not found.";
+            string estateIdParam = string.Empty;
+
+            if (request.HttpMethod == "POST" && m_EstateDataService != null && m_GridService != null)
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                estateIdParam = FormValue(form, "estate_id");
+
+                if (int.TryParse(estateIdParam, out int estateID))
+                {
+                    EstateSettings estate = m_EstateDataService.LoadEstateSettings(estateID);
+                    if (estate == null || estate.EstateID == 0)
+                    {
+                        message = "Estate not found.";
+                    }
+                    else if (!CanManageEstate(session, estate))
+                    {
+                        response.StatusCode = (int)HttpStatusCode.Forbidden;
+                        return;
+                    }
+                    else
+                    {
+                        int updated = 0;
+                        foreach (UUID regionID in m_EstateDataService.GetRegions(estateID))
+                        {
+                            bool wantUnlisted = !string.IsNullOrEmpty(FormValue(form, "unlisted_" + regionID));
+                            int currentFlags = m_GridService.GetRegionFlags(UUID.Zero, regionID);
+                            if (currentFlags == -1)
+                                continue;
+
+                            bool isUnlisted = (currentFlags & (int)OpenSim.Framework.RegionFlags.Unlisted) != 0;
+                            if (wantUnlisted == isUnlisted)
+                                continue;
+
+                            int newFlags = wantUnlisted
+                                    ? currentFlags | (int)OpenSim.Framework.RegionFlags.Unlisted
+                                    : currentFlags & ~(int)OpenSim.Framework.RegionFlags.Unlisted;
+                            if (m_GridService.SetRegionFlags(UUID.Zero, regionID, newFlags))
+                                updated++;
+                        }
+                        message = updated > 0
+                                ? "Visibility updated for " + updated + " region" + (updated == 1 ? "" : "s") + "."
+                                : "No changes made.";
                     }
                 }
             }

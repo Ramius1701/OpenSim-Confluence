@@ -17966,3 +17966,77 @@ user's own in-viewer test to fully confirm - flagged as the next thing
 to verify once they're back in Firestorm. Same deploy discipline (0
 missing/0 mismatched, all 5 running regions + Robust clean, no new
 errors).
+
+### Region-owner "Unlisted" opt-out built (2026-09-03)
+
+Full build of the privacy gap flagged during the world-map review
+earlier (no such opt-out existed anywhere in this codebase or stock
+OpenSim). Reused existing infrastructure end to end rather than adding
+new plumbing:
+
+- **Storage**: no schema migration. `regions.flags` already exists and
+  backs `OpenSim.Framework.RegionFlags` (bits used up to 1024) - added
+  `Unlisted = 2048`, a new bit on the same column.
+- **Write path**: new `IGridService.SetRegionFlags(scopeID, regionID,
+  flags)`, mirroring `GetRegionFlags`'s own signature. Real
+  Get-mutate-Store implementation in `GridService.cs` (the exact same
+  shape the `set region flags` console command already uses). Confirmed
+  via the live `[GridService]` config that Robust's WebUI loads this
+  concrete class directly (`LocalServiceModule`, not a remote
+  connector), so the two other `IGridService` implementers
+  (`RegionGridServiceConnector` - region-side, forwards local-then-
+  remote same as `GetRegionFlags`; `GridServicesConnector` - the remote
+  HTTP client, returns `false` with a comment explaining why rather than
+  faking a round-trip nothing currently calls) didn't need real logic,
+  just an honest implementation of the interface they're stuck with.
+- **UI - self-service, not admin-only**: `/admin/estates?id=N` already
+  had `CanManageEstate(session, estate)`, letting an estate *owner* (not
+  just an admin) manage their own estate - matches this grid's existing
+  "self-service region restart" precedent (Membership Perks). Added a
+  checkbox per region in that page's existing region list (new
+  `/admin/estates/region-visibility` POST handler, same
+  read-form/redirect-with-message shape as the neighboring
+  `HandleAdminEstatesUpdate`) - check every box for "none of my sims
+  listed" (literally the user's own framing), or toggle individually.
+- **Enforcement**: `FilterListedRegions` (new helper, layered on top of
+  the existing `FilterOnlineRegions`) applied at every public-facing
+  call site - `HandleHome`, `HandleWelcome`, `HandleWorldMap` (both the
+  map tiles and the "All Regions" table - the table previously listed
+  every registered region regardless of status, now only listed ones),
+  `HandleFeatures`' Live Grid Snapshot, `HandleGridStatus`'s region
+  count/area stats. Deliberately NOT folded into `FilterOnlineRegions`
+  itself - Region Management (admin) needs to keep showing everything.
+  Admin's Region Management table gets a read-only "Unlisted" badge
+  instead of a second toggle (the real control already lives on
+  /admin/estates, which `CanManageEstate` already lets an admin reach
+  for any estate too, not just its owner).
+- **Real bug caught mid-build, not shipped**: the first pass filtered
+  Unlisted regions out of the SAME region list used to compute "online
+  now"/"unique visitors" resident counts at four of the five call
+  sites - would have made a resident standing in an unlisted region
+  silently vanish from the grid's own online-count stats, not just from
+  the public region listing. An unlisted region opts *itself* out of
+  public listing, not the *people in it* out of being counted as
+  online - caught before deploy by re-reading each site's full context
+  rather than pattern-matching the same one-line fix everywhere; split
+  into two lists (`aliveRegions`/`aliveRegionIDs` unfiltered for
+  online-counting, a second `FilterListedRegions`-filtered list for
+  whatever's actually displayed) at each of the four affected sites.
+
+Also fixed the same `RegionFlags` vs `OpenMetaverse.RegionFlags`
+ambiguous-reference compile error at all 5 usage sites (this file
+already `using`s both namespaces) by fully qualifying to
+`OpenSim.Framework.RegionFlags.Unlisted`.
+
+Verified live: all 15 registered regions still render correctly
+everywhere (world map, All Regions table, Features snapshot, Grid
+Status counts) with nothing yet marked Unlisted - a clean regression
+check, not a false-positive "it compiles" claim. Could not test the
+actual toggle end-to-end this session - `/admin/estates` requires a
+real login, and entering credentials isn't something this session ever
+does; the user was online in-world at verification time (confirmed via
+`presence`, matching the welcome.php link testing from the entry
+above), so the live "mark a region Unlisted, confirm it disappears"
+test is the clear next step, on the user's own login. Same deploy
+discipline as every entry above (0 missing/0 mismatched, all 5 regions
++ Robust clean, zero new errors).

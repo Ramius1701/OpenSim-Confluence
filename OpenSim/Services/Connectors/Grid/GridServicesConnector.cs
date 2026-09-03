@@ -753,6 +753,20 @@ namespace OpenSim.Services.Connectors
             return -1;
         }
 
+        // Confluence addition (2026-09-03) - not implemented as a real
+        // remote HTTP call. The only real caller (WebInterfaceServiceConnector's
+        // estate-owner "Unlisted" self-service toggle) always runs on
+        // Robust, which loads the concrete local GridService directly
+        // (LocalServiceModule, not this remote connector) - confirmed
+        // against the live [GridService] config. Returning false rather
+        // than silently pretending success is the honest answer for a
+        // remote round-trip nothing in this codebase actually needs yet;
+        // add the matching POST handler case if that changes.
+        public bool SetRegionFlags(UUID scopeID, UUID regionID, int flags)
+        {
+            return false;
+        }
+
         public Dictionary<string, object> GetExtraFeatures()
         {
             Dictionary<string, object> sendData = new()
