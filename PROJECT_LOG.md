@@ -17897,3 +17897,72 @@ regions actually running (not a blind restart back to 15) - 0 missing/
 0 mismatched, all 5 `RegionReady`, zero errors of any kind (Tangle's
 own pre-existing error didn't appear since Tangle isn't among the 5
 running right now).
+
+### welcome.php's region links did nothing at all - real Firestorm source traced to find the actual working scheme (2026-09-03)
+
+Moving on to `/worldmap` next, the user raised three real questions: what
+if a sim owner doesn't want their region listed at all (genuine gap,
+no such opt-out exists anywhere in this codebase or in stock OpenSim's
+`RegionFlags`/`EstateSettings` - flagged for a future pass, needs a
+design decision on where the toggle lives before building it, not
+answered blind), whether the region list should be alphabetical (it
+wasn't - fixed), and a claim that `secondlife://` is for browser links
+and `hop://` is for viewer links.
+
+That last claim sent this deep enough to be worth recording in detail.
+Checked `ayanestorm`'s actual installer/Info.plist source first: both
+schemes are registered as real OS-level protocol handlers on Windows
+and macOS - `hop://` is just as browser-clickable as `secondlife://`,
+contradicting the literal claim. But live testing turned up the REAL
+bug underneath it: welcome.php's region links
+(`secondlife:///app/teleport/RegionName/128/128/25`) did **nothing at
+all**, identically, whether clicked from inside the viewer's own
+pre-login panel or from a plain external browser - the user confirmed
+this directly after being asked exactly what happened and where.
+
+Traced the actual fix in `fspanellogin.cpp` (Firestorm's real source,
+not assumption): `/app/teleport/` is a live-session command - meaningless
+pre-login, which is exactly welcome.php's context (it's the in-viewer
+login splash, rendered before authentication - see this file's own
+`HandleWelcome` comment). The right command is `location_login`
+(`LLLoginLocationAutoHandler`, registered `UNTRUSTED_BLOCK` - the
+constructor's own comment reads "don't allow from external browsers"),
+which calls `FSPanelLogin::autologinToLocation` ->
+`LLStartUp::setStartSLURL` -> the location combo's `setTextEntry` -
+i.e. it fills the Start Location box instead of attempting a command
+that has no session to run against. `UNTRUSTED_BLOCK` also means this
+command is silently ignored from a real external browser, so welcome.php
+needs to pick per-request: `secondlife:///app/location_login/...` when
+`IsViewerRequest()` is true, `hop://host:port/RegionName` (the real
+Hypergrid address, works for a stranger whose viewer isn't already
+configured for this grid) otherwise. Same request-time branch applied
+to `/worldmap`'s map-popup and "All Regions" table, except there
+`/app/teleport/` is the right in-viewer command (worldmap isn't a
+pre-login page - a viewer request there is reasonably assumed to
+already be a live session) paired with `hop://` for the same
+external-browser case. Two new shared helpers
+(`BuildLocationLoginUrl`/`BuildHopUrl`) so this logic exists once, not
+copy-pasted per call site (9 total sites across the file use this
+`/app/teleport/` pattern - only welcome.php and worldmap were in scope
+for this pass; the other 7 - Search, Destinations, etc. - are
+logged-in-viewer-facing pages where `/app/teleport/` was likely already
+correct, not yet audited).
+
+User's own prior attempt at this exact problem (an old PHP welcome.php)
+used a bare `secondlife://RegionName/110/128/22` for the viewer branch
+and `hop://gridHost/RegionName` for the browser branch - close, but the
+bare-SLURL branch hardcoded fixed coordinates for every region (their
+own stated objection to it) and, per this session's source-tracing,
+still wasn't the right command for the pre-login case anyway
+(`location_login`, not a bare unadorned SLURL).
+
+Verified live: from a normal (non-viewer) browser, both welcome.php's
+Regions list and worldmap's map/table now render real
+`hop://casperia.ddns.net:8002/RegionName` links (confirmed via direct
+DOM inspection, not just reading the generated string) instead of the
+dead `/app/teleport/` links. The `location_login` branch is only
+reachable from a real viewer's own User-Agent, so it still needs the
+user's own in-viewer test to fully confirm - flagged as the next thing
+to verify once they're back in Firestorm. Same deploy discipline (0
+missing/0 mismatched, all 5 running regions + Robust clean, no new
+errors).

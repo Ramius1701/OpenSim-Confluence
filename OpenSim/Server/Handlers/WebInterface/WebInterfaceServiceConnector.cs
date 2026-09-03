@@ -1337,7 +1337,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!string.IsNullOrEmpty(events))
                 sb.Append("<div class=\"welcome-box\">").Append(events).Append("</div>");
 
-            string regionList = RenderRegionListCompact(regions.Take(8).ToList());
+            string regionList = RenderRegionListCompact(regions.Take(8).ToList(), IsViewerRequest(request, response));
             if (!string.IsNullOrEmpty(regionList))
             {
                 sb.Append("<div class=\"welcome-box\">").Append(regionList);
@@ -1569,7 +1569,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         // column this narrow (per explicit feedback after seeing it live);
         // a list reads fine at that width and matches osloginscreen's own
         // regionlist.php, which is plain text rows too, not thumbnails.
-        private string RenderRegionListCompact(List<GridRegion> regions)
+        private string RenderRegionListCompact(List<GridRegion> regions, bool isViewerContext)
         {
             if (regions.Count == 0)
                 return string.Empty;
@@ -1578,7 +1578,17 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<h2>Regions</h2><ul class=\"welcome-region-list\">");
             foreach (GridRegion region in regions)
             {
-                string tp = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                // This page is always pre-login when rendered inside the
+                // viewer's own panel - see this class's own HandleWelcome
+                // comment. location_login (not /app/teleport/) is the
+                // command that fills the Start Location box instead of
+                // trying to run a teleport with no session yet - see
+                // BuildLocationLoginUrl's own comment for why. A real
+                // external browser gets hop:// instead, since
+                // location_login is explicitly blocked from that context.
+                string tp = isViewerContext
+                        ? BuildLocationLoginUrl(region.RegionName)
+                        : BuildHopUrl(region.RegionName);
                 sb.Append("<li><a href=\"").Append(Html(tp)).Append("\">").Append(Html(region.RegionName)).Append("</a>")
                   .Append("<span class=\"welcome-region-coords\">").Append(region.RegionCoordX).Append(", ")
                   .Append(region.RegionCoordY).Append("</span></li>");
@@ -2239,6 +2249,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return resolved;
             }
 
+            // Viewer-context here means an already-running viewer's own
+            // embedded browser (worldmap isn't a pre-login page like
+            // welcome.php - a logged-in session is the reasonable
+            // assumption), so /app/teleport/ is the right live-teleport
+            // command. A real external browser gets hop:// - see
+            // BuildHopUrl's own comment for why a bare secondlife:// SLURL
+            // isn't enough for a stranger whose viewer may not default to
+            // this grid.
+            bool isViewerContext = IsViewerRequest(request, response);
+
             OSDArray regionArray = new OSDArray();
             foreach (GridRegion region in aliveRegions)
             {
@@ -2249,7 +2269,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                 r["gridY"] = region.RegionCoordY;
                 r["sizeX"] = region.RegionSizeX;
                 r["sizeY"] = region.RegionSizeY;
-                r["teleportUrl"] = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                r["teleportUrl"] = isViewerContext
+                        ? "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25"
+                        : BuildHopUrl(region.RegionName);
                 r["owner"] = ResolveOwnerName(region.EstateOwner);
 
                 int unitsX = Math.Max(1, region.RegionSizeX / 256);
@@ -2397,9 +2419,13 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             sb.Append("<h2>All Regions</h2><p class=\"news-meta\">Every region registered on this grid - the map above only draws the ones actually online right now.</p>");
             sb.Append("<table><tr><th>Region</th><th>Status</th><th>Size</th><th>Owner</th><th></th></tr>");
-            foreach (GridRegion region in regions)
+            // Alphabetical, not registration/DB order - found live: the
+            // list had no sort applied at all.
+            foreach (GridRegion region in regions.OrderBy(r => r.RegionName, StringComparer.OrdinalIgnoreCase))
             {
-                string teleportUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                string teleportUrl = isViewerContext
+                        ? "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25"
+                        : BuildHopUrl(region.RegionName);
                 bool isOnline = aliveRegionIDs.Contains(region.RegionID.ToString());
                 sb.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>")
                   .Append("<td><span class=\"pill ").Append(isOnline ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>")
@@ -14541,6 +14567,55 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return viewCookie.Equals("viewer", StringComparison.OrdinalIgnoreCase);
 
             return false;
+        }
+
+        // Two teleport-link schemes, not interchangeable - verified against
+        // real Firestorm/AyaneStorm source (fspanellogin.cpp) rather than
+        // assumed, after live testing found the previous single
+        // secondlife:///app/teleport/ link doing nothing at all in every
+        // context tried.
+        //
+        // BuildLocationLoginUrl: secondlife:///app/location_login/... maps
+        // to LLLoginLocationAutoHandler ("location_login" command), which
+        // is explicitly registered UNTRUSTED_BLOCK ("don't allow from
+        // external browsers" - the constructor's own comment) - it only
+        // fires from a trusted in-viewer context, e.g. welcome.php's own
+        // pre-login MOTD panel, and calls FSPanelLogin::autologinToLocation
+        // -> LLStartUp::setStartSLURL -> the location combo's setTextEntry,
+        // i.e. it fills the Start Location box rather than attempting a
+        // teleport - the only sane behavior pre-login, since no session
+        // exists yet to command. /app/teleport/ is the right scheme for an
+        // already-logged-in session (Search/Places results shown inside a
+        // live viewer), just wrong for welcome.php specifically.
+        //
+        // BuildHopUrl: for a real external browser, a bare secondlife://
+        // SLURL doesn't encode which grid it's on - it only resolves
+        // correctly for someone whose viewer already defaults to this
+        // grid. hop://host:port/RegionName is the actual Hypergrid address
+        // (verified: Firestorm's own installer registers "hop" as an OS
+        // protocol handler identically to "secondlife" - both are real
+        // browser-clickable links - but only hop:// carries the grid
+        // identity a stranger's viewer needs to connect to the right
+        // place).
+        private string BuildHopUrl(string regionName)
+        {
+            string hostPort = m_publicBaseUrl ?? string.Empty;
+            foreach (string prefix in new[] { "https://", "http://" })
+            {
+                if (hostPort.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    hostPort = hostPort.Substring(prefix.Length);
+                    break;
+                }
+            }
+            hostPort = hostPort.TrimEnd('/');
+            return "hop://" + hostPort + "/" + Uri.EscapeDataString(regionName);
+        }
+
+        private static string BuildLocationLoginUrl(string regionName, int x = 128, int y = 128, int z = 25)
+        {
+            return "secondlife:///app/location_login/" + Uri.EscapeDataString(regionName)
+                    + "/" + x + "/" + y + "/" + z;
         }
 
         // Picks WriteBarePage for a real viewer request, WritePage for a
