@@ -234,8 +234,6 @@ reimplementation, but well-documented design rationale):
   compatibility.
 - `llOpenFloater` isn't implemented — OpenSimulator has no
   viewer-hosted floater service to back it.
-- `PRIM_GLTF_*` readback returns a face's own override data, not the
-  base material merged underneath it. Full SL parity would need both.
 - Pathfinding is region-local and approximate, not a physics-engine-
   native or Linden-proprietary navmesh service.
 - A handful of bot functions (`botListen` position source,

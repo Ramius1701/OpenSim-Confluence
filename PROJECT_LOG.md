@@ -19547,3 +19547,35 @@ service layers are both entirely its own architecture and consistently
 low-yield to keep re-checking; the LSL/OSSL-API-level category remains
 the one that's found real fixes twice out of two attempts and hasn't
 been re-run with a fresh keyword set since the very first batch.
+
+### PRIM_GLTF_* readback now merges the assigned base material (2026-09-05)
+
+Not from the fork review - a known, self-documented gap from
+`ROADMAP.md`'s "Known limitations" (`GetGltfPrimitiveParams` only ever
+read the per-face override JSON, so a face with an assigned glTF
+material but no override read back as "nothing set" instead of the
+material's real values). User flagged glTF as a priority ("its better
+than dae files") and asked for this specifically.
+
+Fixed by reading a second layer: the assigned base material via the
+already-existing `GetGltfMaterialAssetData`, which
+`TryCompactGltfMaterialJson` already normalizes into the exact same
+compact key scheme (`bc`/`mf`/`rf`/`am`/`ac`/`ec`/`ds`/`tex`/`ti`) the
+override data uses. That meant the merge didn't need any new parsing
+logic - every field is read via the same `ReadCompact*` helpers
+already used for the override, just applied to both strings in turn
+(override first, base as fallback), combined at the call site.
+Override-only behavior for a face with no assigned base material is
+unchanged (base data comes back `"{}"` and every fallback check is a
+no-op). Updated the stale scope-note comments at both the switch-case
+call site and the function itself to describe the merged behavior.
+Removed the now-fixed item from `ROADMAP.md`'s Known Limitations.
+
+Deploy note: held the restart per the user's explicit call ("wait
+entirely") after a resident logged into Starbase Andromeda mid-session
+- polled the `presence` table in the background every 2 minutes until
+it hit 0 rather than disrupt them, then deployed once genuinely empty.
+Build verified via `OpenSim.Region.ScriptEngine.Shared.Api.dll`'s
+timestamp/location (LSL_Api.cs's own project folder, SDK-style
+auto-glob), hash-verified copy, all 5 regions confirmed `RegionReady`
+with no new errors.
