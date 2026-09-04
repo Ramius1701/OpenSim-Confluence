@@ -19049,3 +19049,126 @@ next occurrence, and whether disabling automatic .NET runtime servicing
 restarts (or scheduling updates for a window that includes a
 supervised restart) is worth doing given this is a live production
 service.
+
+### Halcyon review - original 110-hit grep closed out (2026-09-05)
+
+Resumed the Halcyon donor-repo review's original keyword-scan grep
+(`race condition|null.ref|deadlock|overflow|exploit|duplicate|crash
+fix|memory leak|permission bypass|god.*mode|sql injection|buffer|dupe`,
+110 total hits) at ~56 already inspected across prior sessions. Cross-
+referenced every hash in the 110-hit list against every hash previously
+cited in this file's Halcyon sections (146 distinct citations) to build
+an exact remaining list, rather than re-deriving from memory - 54
+genuinely unchecked hits.
+
+**No code changes this round - everything checked was either already
+correctly implemented (in one case via a cleaner mechanism than
+Halcyon's own fix), already-established-dead architecture, or not
+portable (feature work, build tooling, or a custom non-SL LSL API).**
+
+**Real candidates individually verified against Confluence's current
+code, all ruled out with evidence:**
+- `2f948f412c` (NRE uploading an asset with no money module) -
+  `InventoryCapsModule.cs` doesn't exist here; the modern equivalent,
+  `BunchOfCaps.cs:652-661`'s mesh-upload cost check, already has the
+  exact `if (mm != null)` guard this commit was adding.
+- `880c0904e4`/`43fa7906a4` (seated-avatar/passenger region-access
+  bypass during vehicle crossing - "used to be able to gain region
+  access by sitting on someone else's prim") - traced the real current
+  crossing path (`SceneObjectGroup.cs`'s region-crossing method,
+  `~line 807` for the empty-sitters fast path, `~line 818-838` for the
+  occupied case) and confirmed every seated `ScenePresence` is checked
+  individually via `entityTransfer.checkAgentAccessToRegion(av,
+  destination, newpos, ctx, out reason)` before the crossing proceeds -
+  the whole crossing is denied if any one occupant fails. This is the
+  same protection Halcyon's fix added, already present here via a
+  different (and more centralized) mechanism. Confirmed, not assumed -
+  worth the trace given it's a real security property, not just an
+  architecture-mismatch dismissal.
+- `4928d12ec5` (late `CompleteAgent` retry causing duplicate-processing
+  corruption) - Halcyon's fix used an explicit `AgentInRegionFlags`
+  field that doesn't exist in Confluence's `ScenePresence.cs` at all.
+  Confluence's actual `CompleteMovement(IClientAPI, bool)` gets
+  equivalent duplicate-call protection from `MakeRootAgent`'s own
+  internal "already root" check, which returns false and aborts early
+  on a repeat call - different mechanism, same outcome.
+- `859075be37` (MySQL `DateTime`-into-`int(11)` overflow in
+  `LogoutUsers()`) - `OpenSim/Data/MySQL/MySQLUserData.cs` doesn't
+  exist here; this is the same already-established-dead legacy
+  pre-Robust "agents" table layer.
+- `16fda3e783` (NRE cloning a MOAP whitelist array via `CopyTo` into an
+  uninitialized array) - Confluence's MOAP/media-entry code
+  (`PrimitiveBaseShape.cs`) is architecturally different - it wraps the
+  real OpenMetaverse `MediaEntry` type in a `MediaList : List<MediaEntry>`,
+  not Halcyon's hand-rolled per-field duplication code, so the specific
+  vulnerable line doesn't exist. Same underlying risk class as the
+  already-flagged `RenderMaterials`/`ReflectionProbe` shallow-copy
+  finding, though: `PrimitiveBaseShape.Copy()`'s `MemberwiseClone()`
+  would share the same `MediaList` reference (and thus every
+  `MediaEntry`'s `WhiteList` array) between a duplicated prim and its
+  original, the identical aliasing problem in a different field. Not a
+  new finding - additional evidence for the existing one, noted there.
+- `3172bd080a` (duplicate partId/matid cache-cleanup bug) -
+  `RenderMaterialsModule.cs`, already-established-dead architecture
+  family (never checked this specific commit before, but same file
+  already ruled dead multiple times this review).
+- `f9af526b5a` (dropped duplicate tables from Halcyon's own DB schema)
+  - pure `bin/inworldz-core-base.sql` edit, Halcyon's own database
+  schema file, no Confluence equivalent.
+- `7fabf6f40e` (OAR recursive-scan loading + "IW OARs" opt-in) -
+  feature work, not a bug fix, and the "IW OARs" half is an
+  InWorldz-specific archive-format extension.
+- `183c758f0c` ("not using... one was duplicated, one wasn't needed at
+  all") - the actual diff is two unused `using` statements removed from
+  `VersionInfo.cs` - trivial style-only cleanup, no behavior involved.
+- `32944c7293`/`11f3847d8c` (`iwListRemoveDuplicates`/
+  `iwListRemoveElements`) - Halcyon/InWorldz's own custom LSL functions
+  (the `iw` prefix), not part of the real SL scripting API surface
+  Confluence targets - confirmed not present and not applicable.
+- `6843b1a7f1` (VSCode support + simplified CLI build) - pure build/
+  tooling change, not portable.
+- `7bbc5621f4` (removed duplicated legacy inventory code) - Halcyon's
+  Cassandra-backed inventory implementation, entirely different
+  architecture from Confluence's SQL-based inventory.
+- `3e6e2e51b0` (duplicate key check in SceneView culling) - `SceneView`,
+  already-established-dead architecture family.
+- `7e06d1e73b` (NRE during Astoria's appearance updates) -
+  `CachedUserInfo.cs`, already-established-dead legacy
+  user-communications layer.
+
+**Ruled out as architecture clusters, not individually re-verified per
+commit (each already established dead multiple times this review, and
+each commit in these clusters only fixes bugs *within* that dead
+architecture):** the flatbuffers/`ByteBufferPool` cluster (10 commits:
+`7128f7b4f7`, `1c4fc039c4`, `78f421a999`, `09677b16d5`, `41b9b57cae`,
+`76b1e493cf`, `5de55f812c`, `7c2a6b4bd1`, `2be45e0b98`, `3d2b35782a`) -
+feature-development work on infrastructure Confluence never adopted,
+not bug fixes to portable code; the `m_posInfo`/`m_landList` deadlock-
+in-`MakeRootAgent` cluster (4 commits: `ab6c5831eb` revert,
+`7cf0f38de4`, `2931637d5d`, `9b98b2284f`) - `m_posInfo` confirmed gone
+from Confluence's `MakeRootAgent` many times this review already;
+`7897689c8a` (`KeyOrName()` exploit) - the same Phlox-specific helper
+ruled out in the very first batch of this whole review, re-confirmed
+here only by name match. 22 pure merge commits carried no independent
+content of their own (their real content, where any existed, is
+already covered by the individual commits listed above).
+
+**The original 110-hit grep is now fully closed: 110 of 110 inspected.**
+Zero new code changes this round - every candidate either already had
+equivalent (sometimes better) protection in Confluence's current code,
+or belonged to architecture/tooling this fork never carries. This is a
+genuinely different outcome than earlier passes in this same grep,
+which found several real, portable fixes (`OBJECT_OWNER`,
+`AGENT_FLYING`/`AGENT_SITTING`, the `RequestLure` IM gap, the estate-
+manager ban exemptions) - the well is not dry in general, just for this
+specific keyword set's tail end. Three real findings from earlier in
+this review remain deliberately flagged rather than built
+(`LandingType.Blocked`; `ScenePresence.PhysicsActor` TOCTOU at 14 call
+sites; `RenderMaterials`/`ReflectionProbe`/`MediaList` shallow-copy-on-
+Duplicate, now with a second corroborating donor commit). If this
+review resumes, the fresh keyword categories already identified but
+never run (`security|vulnerab|permission|unauthorized|access
+control|economy|currency|inventory` against Halcyon specifically, and
+the `teleport|crossing|physics|collision` set against WhiteCore-Dev,
+which has never been run there) are better ROI than re-scanning this
+exhausted grep further.
