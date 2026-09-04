@@ -491,6 +491,16 @@ namespace OpenSim
                 m_log.InfoFormat("[SCENE]: Secure permissions loading enabled, modules loaded: {0}", String.Join(" ", m_permsModules.ToArray()));
             }
 
+            // Independent of the above (which only validates modules explicitly listed in config,
+            // and only when SecurePermissionsLoading is enabled): abort if no permissions module wired
+            // itself up at all. A misconfigured/failed permissions module here would silently run the
+            // region with no permission checks whatsoever.
+            if (!scene.Permissions.IsAvailable())
+            {
+                m_log.Fatal("[MODULES]: No permissions module is available - refusing to start with unchecked permissions.");
+                Environment.Exit(0);
+            }
+
             scene.SetModuleInterfaces();
 // First Step of bootreport sequence
             if (scene.SnmpService != null)

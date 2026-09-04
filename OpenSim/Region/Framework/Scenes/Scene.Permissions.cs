@@ -231,6 +231,13 @@ namespace OpenSim.Region.Framework.Scenes
             return true;
         }
 
+        // Minimum functionality check: if no handler has hooked OnGenerateClientFlags, no permissions
+        // module actually wired itself up, regardless of what RegionModules or config claims loaded.
+        public bool IsAvailable()
+        {
+            return OnGenerateClientFlags is not null;
+        }
+
         public bool PropagatePermissions()
         {
             PropagatePermissionsHandler handler = OnPropagatePermissions;

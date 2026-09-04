@@ -313,11 +313,17 @@ namespace OpenSim.Framework
         // see IXmlSerializable
         public void WriteXml(XmlWriter writer)
         {
+            // Suppress the redundant xmlns:xsi/xmlns:xsd boilerplate .NET would otherwise
+            // emit on every single serialized item - real bloat multiplied across every
+            // prim's inventory on every OAR save/backup/region-crossing.
+            XmlSerializerNamespaces ns = new XmlSerializerNamespaces();
+            ns.Add("", "");
+
             lock (this)
             {
                 foreach (TaskInventoryItem item in Values)
                 {
-                    tiiSerializer.Serialize(writer, item);
+                    tiiSerializer.Serialize(writer, item, ns);
                 }
             }
 
