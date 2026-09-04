@@ -155,6 +155,13 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
                 case (byte)InstantMessageDialog.StopTyping:
                 case (byte)InstantMessageDialog.BusyAutoResponse:
                 case (byte)InstantMessageDialog.MessageFromObject:
+                // Donor-repo review (Halcyon): RequestLure ("Ask to
+                // Teleport" - the resident requesting a lure FROM
+                // someone, distinct from that person offering one) was
+                // missing from this allowlist, so the IM carrying the
+                // request silently hit the default case and was never
+                // forwarded at all.
+                case (byte)InstantMessageDialog.RequestLure:
                     break;
                 default:
                     return;
