@@ -1436,6 +1436,13 @@
     ;; llSetTimerEvent minimum value. Default 0.5s, 0.05s whould be more resonable
     ; MinTimerInterval = 0.5
 
+    ;; When a saved .state file's snapshot migration version does not match
+    ;; the engine's current version (e.g. after a YEngine rebuild/redeploy),
+    ;; attempt a best-effort restore instead of immediately discarding the
+    ;; script's state and resetting it to default. Set to true to restore
+    ;; the old (destructive) behaviour of always resetting on a mismatch.
+    ; StrictStateMigrationVersion = false
+
     ;# {ScriptDelayFactor} {} {Multiplier for scripting delays} {} 1.0
     ;; Sets the multiplier for the scripting delays
     ; ScriptDelayFactor = 1.0
