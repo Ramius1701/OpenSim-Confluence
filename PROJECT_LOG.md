@@ -18575,3 +18575,110 @@ real, verified, canonical protocol design. No code change from this
 entry; existing implementation already correct, now verified against
 two independent sources (AyaneStorm and the actual LL viewer) instead
 of one.
+
+## Halcyon review resumed - the three flagged items resolved, teleport/crossing category started (2026-09-04)
+
+User: "We should finish halcyon." Picked up exactly where the paused
+audit left off (see [[casperia-fork-review-status]] and the earlier
+"Halcyon systematic commit review"/"batch 2/3/4"/"fresh keyword
+categories" entries) rather than re-deriving anything. Note for next
+time: the actual `git log origin/master..halcyon/master` comparison
+this whole review has used lives against **this repo's own `halcyon`
+remote** (`OpenSim-Confluence`'s `.git/config`, not the standalone
+`S:\Github\halcyon` clone, which has no such comparison basis
+configured) - cost a few minutes re-discovering this, worth
+remembering.
+
+**All three previously-"genuinely open" items now resolved:**
+
+1. **Appearance-serial `-1` vs `0`** - investigated with the newly-
+   cloned real `secondlife-viewer` source instead of trusting
+   Halcyon's 2016 commit message. Halcyon's own commit claimed LL's
+   viewer defines both `VERSION_INITIAL` and `VERSION_UNKNOWN` as
+   `-1`. The actual current viewer source
+   (`llviewerinventory.h:218`) defines `VERSION_UNKNOWN = -1,
+   VERSION_INITIAL = 1` - different values, contradicting the
+   premise the 2016 fix was built on (either always wrong, or the
+   viewer's definitions changed since). Concluded: do NOT port this -
+   blindly setting the default appearance serial to `-1` everywhere
+   would be applying a specifically-verified-incorrect premise, not a
+   fix. Resolved by determining the fix was itself unsound, not by
+   building it.
+
+2. **Estate-Manager ban-target-protection** - real, confirmed, fixed
+   (commit `3785e79c18`). `TestLandRestrictions` only exempted
+   `Permissions.IsGod` (God-tier); `ScenePresence.cs` has three call
+   sites that reach it directly during normal avatar movement,
+   bypassing `CheckLandPositionAccess`'s own `IsEstateManager` guard
+   entirely - a manager banned before being promoted (or banned by a
+   co-manager) would have their own walking movement silently
+   blocked. Added the same exemption directly in
+   `TestLandRestrictions`. Also fixed `EstateManagementModule`'s
+   ban-add path, which only refused to ban `IsAdministrator`
+   (God-tier, per the file's own existing comment) - extended to
+   `IsEstateManager` too. Ban removal was already unconditional,
+   checked directly - no gap there.
+
+3. **`LandManagementModule.cs`'s ~20 `GetLandObject(...)` call
+   sites** - real, confirmed, fixed (commit `70cd2495cf`). Checked
+   all 16 actual call sites individually (not just the one spot-check
+   from the original pass): 13 already correctly guarded, 3 weren't -
+   `EventManagerOnClientMovement`'s `newover` (fires on every
+   significant avatar movement - a frequent, not rare, crash risk),
+   the parcel object-return handler's `flags==4` branch, and
+   `ClientOnParcelFreezeUser`/`ClientOnParcelEjectUser` both passing
+   a possibly-null `land` into `CanEditParcelProperties`, which
+   dereferences it with no guard inside
+   `PermissionsModule.GenericParcelOwnerPermission`. Fixed at the
+   shared method instead of each call site, so any other/future
+   caller is protected too.
+
+**Resumed the keyword scan - teleport/crossing category (52 hits,
+previously entirely unrun):**
+
+- **Real fix candidate, confirmed but NOT built - needs more care,
+  not rushed:** Halcyon's `606b9f9325` ("Fixed teleport routing
+  'Blocked'", Mantis 3201) - `LandingType.Blocked` (the parcel-owner
+  "block all teleport landings here" setting) is never referenced
+  anywhere in Confluence's codebase at all (confirmed via search,
+  zero matches) - only `LandingType.LandingPoint` is ever checked, in
+  `ScenePresence.cs`'s `CheckAndAdjustLandingPoint_OS`/`_SL` (the two
+  landing-point-behavior variants). Traced where a `false` return
+  from either actually goes: `MakeRootAgent` only logs a debug
+  message ("houston we have a problem") on failure - it does not
+  reject the avatar's entry, and the existing ban-check at the same
+  spot (`TestLandRestrictions`) even discards its own reason string
+  via `out string _`. This confirms real ban/access enforcement
+  happens earlier, in `QueryAccess`/`CheckLandPositionAccess` (the
+  same method the Estate-Manager fix above touches) - this
+  landing-point-adjustment code is a secondary, position-clamping-only
+  path, not the real gate. Adding a `LandingType.Blocked` check here
+  the same way Halcyon did would look like a fix without actually
+  blocking anything - flagging as real and confirmed, but needs the
+  actual `QueryAccess` pipeline traced properly before building it,
+  not a rushed port into the wrong layer.
+- **Checked, not applicable:** `8164f4ffd6` (`isRestrictedFromLand`
+  preferring local `ScenePresence` group data over a service lookup)
+  - Confluence's `LandObject.HasGroupAccess` already does exactly
+  this (`sp.ControllingClient.IsGroupMember(...)`) *and* adds a real
+  time-based cache (`m_groupMemberCache`) Halcyon's 2015 version
+  didn't have - already ahead, not behind. `ed9d8b78c9` (seated-avatar
+  crossing position fix) - `ChildAgentUpdate2Response`/`data.SatOnGroup`
+  don't exist anywhere in Confluence (confirmed via search) - Halcyon's
+  own custom cross-region protocol, and the commit's own title says
+  "Started to fix" with the actual correction left commented out even
+  upstream - not portable, not even finished by its own author.
+
+**Status:** ~12 of 52 teleport/crossing hits inspected. Remaining for
+a future resume: `bdefae8a24` (attachment-point/crossing bug),
+`0a1c5ddd3f` (NRE after damage+crossing), `7f9b6b0abe` (flying-avatar
+corner-crossing bounce-back), `59dcee165a` (prim crossing precheck
+timing), `894edb13d2` (redundant parcel-trigger perf fix in
+`SendAvatarLandUpdate` - worth a look given today's
+`EventManagerOnClientMovement` fix touches the same trigger), plus
+roughly 40 more hits from this same category (mostly merge commits
+and InWorldz-architecture-specific diagnostics, lower expected yield
+per the pattern established across this whole review), the ~87
+still-unexamined hits from the original 110-hit grep, and the
+physics/collision category (part of the same 140-hit fresh scan)
+never run at all.
