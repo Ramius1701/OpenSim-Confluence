@@ -237,25 +237,30 @@ namespace OpenSim.Server.Handlers.Hypergrid
                 return FailureResult();
             }
 
+            // Same upstream PR as HGFriendsService.cs's StatusNotification
+            // fix - matching against "friend_" + a counter that only
+            // advances on a hit means any "friend_N" key not encountered
+            // in strict 0,1,2... order (Dictionary enumeration order
+            // isn't a language guarantee) gets silently skipped. Key
+            // order is genuinely irrelevant here, so just match the
+            // prefix instead of reconstructing an expected index.
             List<string> friends = new List<string>();
-            int i = 0;
             foreach (KeyValuePair<string, object> kvp in request)
             {
-                if (kvp.Key.Equals("friend_" + i.ToString()))
-                {
+                if (kvp.Key.StartsWith("friend_"))
                     friends.Add(kvp.Value.ToString());
-                    i++;
-                }
             }
 
-            List<UUID> onlineFriends = m_TheService.StatusNotification(friends, principalID, online);
+            List<UUID> onlineFriends = friends.Count > 0
+                    ? m_TheService.StatusNotification(friends, principalID, online)
+                    : null;
 
             Dictionary<string, object> result = new Dictionary<string, object>();
             if (onlineFriends == null || onlineFriends.Count == 0)
                 result["RESULT"] = "NULL";
             else
             {
-                i = 0;
+                int i = 0;
                 foreach (UUID f in onlineFriends)
                 {
                     result["friend_" + i] = f.ToString();

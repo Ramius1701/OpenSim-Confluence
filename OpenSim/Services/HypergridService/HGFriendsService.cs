@@ -264,25 +264,30 @@ namespace OpenSim.Services.HypergridService
             //m_log.DebugFormat("[HGFRIENDS SERVICE]: Status notification: user has {0} local friends", usersToBeNotified.Count);
 
             // First, let's send notifications to local users who are online in the home grid
+            //
+            // Ported from a real upstream fix (opensim/opensim PR #62,
+            // "the break on line 265 kicks it out of the loops after
+            // first friend, so other friends on same grid do not appear
+            // online") - the old loop below found the first session with
+            // a non-zero RegionID and immediately broke out, so only one
+            // HG friend on the same home grid ever got notified/counted
+            // as online even when several were, silently under-reporting
+            // friends-online status for anyone with more than one friend
+            // logged into the same foreign grid at once. Now every
+            // matching session is processed.
             PresenceInfo[] friendSessions = m_PresenceService.GetAgents(usersToBeNotified.ToArray());
             if (friendSessions != null && friendSessions.Length > 0)
             {
-                PresenceInfo friendSession = null;
-                foreach (PresenceInfo pinfo in friendSessions)
-                    if (!pinfo.RegionID.IsZero()) // let's guard against traveling agents
-                    {
-                        friendSession = pinfo;
-                        break;
-                    }
-
-                if (friendSession != null)
+                foreach (PresenceInfo friendSession in friendSessions)
                 {
+                    if (friendSession.RegionID.IsZero()) // let's guard against traveling agents
+                        continue;
+
                     ForwardStatusNotificationToSim(friendSession.RegionID, foreignUserID, friendSession.UserID, online);
                     usersToBeNotified.Remove(friendSession.UserID.ToString());
                     UUID id;
-                    if (UUID.TryParse(friendSession.UserID, out id))
+                    if (online && UUID.TryParse(friendSession.UserID, out id) && !localFriendsOnline.Contains(id))
                         localFriendsOnline.Add(id);
-
                 }
             }
 
