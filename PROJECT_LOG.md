@@ -18470,3 +18470,55 @@ implemented here - in a few cases, more robustly than the donor repo
 itself. The Tranquillity donor-repo review is now complete against
 today's pull point (`29f312cb79`); [[casperia-fork-review-status]]
 updated accordingly.
+
+### Mantis 9230 revisited - the "needs its own pass" call was wrong, already fully fixed here
+
+User: "Go ahead and tackle mantis 9230." The prior entry flagged this
+as too interdependent to port piecemeal, based on spot-checking two of
+the six relevant commits and finding `SceneXmlLoader.cs` calling
+`obj.SetPartsInventoryChanged(false)` with an argument that the one
+`SceneObjectGroup.cs` diff examined didn't show being added anywhere -
+looked like a real cross-commit dependency gap.
+
+Traced it properly this time instead of building on that assumption:
+`git log -S"SetPartsInventoryChanged"` across Tranquillity's full
+history turned up only those same two commits, which was the tell -
+the real explanation is `Restructure projects...(#143)` (2026-01-17)
+moved every file from `OpenSim/...` to `Source/OpenSim.*/...` between
+them, fragmenting simple path-based diff comparisons across that
+boundary. Pulled the authoritative final state directly from
+Tranquillity's tip (`29f312cb79:Source/OpenSim.Region.Framework/...`)
+for every file involved instead of reconstructing from individual
+commit diffs, then checked each piece against Confluence's actual
+current code one at a time:
+
+- `IEntityInventory.cs`'s `ForceInventoryPersistence(bool force = true)`
+  - already present.
+- `SceneObjectPartInventory.cs`'s `HasInventoryChanged = force ||
+  m_items.Count > 0` - already present.
+- `SceneObjectGroup.cs`'s `SetPartsInventoryChanged(bool force = true)`
+  group-level method - already present.
+- `SceneObjectGroup.DelinkFromGroup`'s two added
+  `ForceInventoryPersistence()` calls in the link-renumbering block
+  (single-prim-remaining and multi-prim-remaining cases) - already
+  present, including the donor's own "TODO remove need for this"
+  comments verbatim.
+- `SceneGraph.cs`'s `g.SetPartsInventoryChanged();` in the
+  `RemoveObject`-then-relink path (the actual mantis 9230 report - DB
+  rows for a group get wiped and rewritten on certain unlinks, and
+  without this, only parts whose inventory flag was already dirty
+  would get their inventory rows rewritten, silently dropping the
+  rest) - already present.
+- `SceneXmlLoader.cs`'s `obj.SetPartsInventoryChanged(false)` for a
+  scene load that preserves existing IDs (a companion performance
+  refinement - only flag parts that actually have inventory items,
+  not every part unconditionally, on every region restart) - already
+  present.
+
+All six pieces matched Tranquillity's tip verbatim. Nothing to build -
+this was a false alarm caused by an incomplete first pass, not a real
+gap. Corrected [[casperia-fork-review-status]] to remove the "needs a
+dedicated pass" flag; the Tranquillity review has no open items left
+beyond the MimeKit note (already resolved separately - see the entry
+above) and the never-re-confirmed Robust self-signed-cert gap from the
+original 482-commit audit.
