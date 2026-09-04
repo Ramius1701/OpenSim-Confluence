@@ -19432,21 +19432,43 @@ currency|inventory`) against WhiteCore-Dev for the first time - 97
 total hits, 91 genuinely new after cross-referencing against every
 hash already cited in this file's WhiteCore-Dev sections.
 
-**One real, confirmed missing-feature gap found, deliberately flagged
-rather than built:** the real SL viewer's "Restore to Last Position"
-inventory context-menu action (`RezRestoreToWorldPacket`) is fully
-wired on the *client-protocol* side of Confluence -
-`LLClientView.cs` declares `OnRezRestoreToWorld`, registers the packet
-handler, and forwards it - but **nothing anywhere in the codebase
-subscribes to that event**. A user right-clicking an item that offers
-this option and choosing it currently does nothing server-side, with
-no visible error. Found via `395c1fac03` (WhiteCore's own fix for this
-same feature, `IInventoryAccessModule.RezRestoreToWorld`). Not built
-this session: implementing it correctly
-means tracing where (if anywhere) Confluence records an object's last
-in-world position/rotation when it's taken into inventory, which
-wasn't done as part of this triage pass - a real feature gap worth a
-dedicated look, not a guess.
+**One real, confirmed missing-feature gap found, then built and
+deployed same day at the user's request:** the real SL viewer's
+"Restore to Last Position" inventory context-menu action
+(`RezRestoreToWorldPacket`) was fully wired on the *client-protocol*
+side of Confluence - `LLClientView.cs` declares `OnRezRestoreToWorld`,
+registers the packet handler, and forwards it - but **nothing anywhere
+in the codebase subscribed to that event**. A user right-clicking an
+item offering this option and choosing it did nothing server-side,
+with no visible error. Found via `395c1fac03` (WhiteCore's own fix for
+this same feature). Initially flagged rather than built, on the
+assumption implementing it correctly would need tracing where
+Confluence stores an object's last in-world position/rotation on take
+- that assumption turned out to be unnecessary: WhiteCore's own
+approach (and the one implemented here) needs no separate tracking at
+all. An object's own serialized transform, already part of its normal
+asset XML from the moment it's taken into inventory, *is* the "last
+position" - the trick is deserializing that asset once to read its
+`AbsolutePosition` before rezzing, then rezzing through the existing
+pipeline with `RayEndIsIntersection=true` so it lands exactly there
+instead of the usual near-avatar placement.
+
+**Built:** `Scene.RezRestoreToWorld(IClientAPI, UUID)` in
+`Scene.Inventory.cs` - fetches the item and asset, deserializes via
+the already-existing `GetSingleObjectToRez` helper (the same one
+`GetSingleObjectToRez`/coalesced-object handling elsewhere in this file
+already uses), refuses attachments and coalesced multi-object items
+with a clear alert message (both graceful "not supported for this
+item" cases, not silent failures), then rezzes via the existing
+item-based `IInventoryAccessModule.RezObject` overload. No-copy item
+cleanup is handled by that overload's own existing logic, same as any
+other inventory rez - no need to duplicate WhiteCore's manual
+no-copy-deletion code. Wired the event subscription into
+`Scene.SubscribeToClientPrimRezEvents`/`UnSubscribeToClientPrimRezEvents`
+alongside the existing `OnRezObject`. Purely additive (51 insertions,
+0 deletions across both files) - doesn't touch any existing rez path.
+Built, deployed, verified live (all 5 regions restarted, `RegionReady`
+confirmed clean, no new errors).
 
 **Confirmed already correctly implemented (no gap):**
 - `d54cc7d1fd` (`llRequestInventoryData`'s landmark-lookup async
