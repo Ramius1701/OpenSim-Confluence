@@ -18682,3 +18682,76 @@ per the pattern established across this whole review), the ~87
 still-unexamined hits from the original 110-hit grep, and the
 physics/collision category (part of the same 140-hit fresh scan)
 never run at all.
+
+### Halcyon review continued - teleport/crossing category, second pass (2026-09-04)
+
+User: "Continue the teleport/crossing category." Checked the 5
+specifically-flagged candidates plus 5 more, bringing this category to
+22 of 52 hits inspected.
+
+**Real fix found, applied and deployed (commit `ce8d1e4270`):**
+`caba0c195f` - `InstantMessageModule.OnInstantMessage`'s dialog-type
+allowlist (a switch statement gating which IM types get forwarded at
+all) was missing `InstantMessageDialog.RequestLure` - the "Ask to
+Teleport" feature (a resident requesting a lure *from* someone, not
+that person offering one). Any such IM hit the `default: return;` case
+and was silently discarded before ever reaching `SendInstantMessage`.
+Confirmed the identical switch/gap in Confluence's own current code
+before fixing, not assumed from the donor diff.
+
+**Checked, not applicable (all confirmed via direct search, not
+assumed) - the pattern holding across this whole category: anything
+from Halcyon's 2015-2017 crossing/transit work touches architecture
+that simply doesn't exist in Confluence:**
+- `bdefae8a24` - `SceneObjectPart.IsValidAttachmentPoint` doesn't
+  exist anywhere in Confluence.
+- `0a1c5ddd3f` - `AvatarTransitController`/`avatar.IsInTransit`
+  (Halcyon's own async teleport-transit state machine); Confluence's
+  teleport path is the standard `EntityTransferModule`, and neither of
+  `Scene.cs`'s two real `SendTeleportFailed` call sites matches this
+  pattern.
+- `7f9b6b0abe`, `59dcee165a` - Halcyon's entire
+  `OpenSim/Region/Framework/AvatarTransit/` state-machine tree
+  (`RemotePresences`, `AvatarConnectionState`,
+  `HasConnectionsEstablishing`) doesn't exist in Confluence at all.
+- `894edb13d2` - the "redundant trigger" it removes doesn't exist to
+  be redundant: Confluence's `LandManagementModule.cs` already has
+  exactly one `TriggerAvatarEnteringNewParcel` call site (the one
+  fixed earlier today), already consolidated.
+- `684aa2ce7f` - touches `BasicPhysicsPlugin`, which no Casperia
+  region actually uses (all run ubODE; `basicphysics` is only a
+  commented-out ini option) - deprioritized, zero live impact either
+  way.
+- `1978a115b2` - the old single-string LightShare `GetEnvironmentSettings`
+  DB-fetch-every-call this optimizes doesn't exist anymore.
+  Confluence's `EnvironmentModule.cs` was rewritten to the modern EEP
+  (`ViewerEnvironment`, per-avatar/per-parcel environment) and its
+  region-level lookup (`GetRegionEnvironment()`) is already a plain
+  in-memory property read (`m_scene.RegionEnvironment`), no DB call at
+  all - already solved more thoroughly than this fix would have.
+- `d2a4f984d9`, `e6278ed768` - both touch the legacy
+  `IUserService`/`UserProfileManager`/`CachedUserInfo` communications
+  layer, already established gone from Confluence earlier in this same
+  review (see the "batch 2" entry).
+- `66033e6c87` (+ its revert/re-revert pair `c7dee978b4`/`0a2d751d57`,
+  "Ghost copies of sim-crossing objects") - touches
+  `Agent/SceneView/SceneView.cs`, Halcyon's own object-culling system,
+  already established not to exist in Confluence (same file family as
+  the `dcbde743e9` null-ref finding from the very first batch of this
+  review). The underlying *concept* (kill-updates when an object exits
+  view distance during a crossing) might still be worth checking
+  against Confluence's own standard culling/update system someday, but
+  that would be an open-ended investigation from scratch, not a
+  direct port - not pursued here.
+
+**Status:** 22 of 52 teleport/crossing hits now inspected. Remaining
+~30: mostly merge commits (~15, noise) and a handful of unchecked
+titles that per this round's pattern are likely to hit the same
+already-established-gone architecture families
+(`4b18b72745`/`3358c8544a`/`1a85f3261f`/`d7513e222e`/`5ac85d82e2`/
+`b164cb9d9d`/`1a5bc3c7b7`/`f3cce86c36`/`016eb8c574`/`f0c06f389a` -
+none individually confirmed yet, listed for whenever this resumes).
+The `LandingType.Blocked` gap flagged in the previous entry is still
+open and still the highest-value remaining item from this category -
+needs the real `QueryAccess` pipeline traced before building, not a
+keyword-scan continuation.
