@@ -18522,3 +18522,56 @@ dedicated pass" flag; the Tranquillity review has no open items left
 beyond the MimeKit note (already resolved separately - see the entry
 above) and the never-re-confirmed Robust self-signed-cert gap from the
 original 482-commit audit.
+
+### secondlife/viewer cloned as a protocol reference; welcome.php's teleport-link fix re-verified against it
+
+User asked whether the real `secondlife/viewer` (the canonical LL
+viewer Firestorm is built from, not always in sync with it) would be
+worth adding as a reference source, separate from the existing
+donor-repo fork-tracking. Recommended yes for protocol-level ground
+truth, but as a selective reference rather than a default first stop,
+given its size and that Firestorm/AyaneStorm still better reflect what
+Casperia's residents actually run. User said go ahead - cloned via
+`git clone --filter=blob:none` (matching the existing convention used
+for `Legion-Grid-Code`/`halcyon`) to `S:\Github\secondlife-viewer`,
+186MB, `develop` branch, HEAD `79363f62` (2026-09-03). Set up
+read-only alongside the other viewer sources, not folded into the
+donor-repo tracking - it's a different category (protocol truth, not
+a fork to cherry-pick server code from).
+
+Used it immediately to re-verify the welcome.php teleport-link fix
+from earlier this session (the one traced through AyaneStorm's
+`fspanellogin.cpp`) against the actual canonical source:
+`llpanellogin.cpp`'s `LLLoginLocationAutoHandler` is byte-for-byte
+identical to Firestorm's copy - same `LLCommandHandler("location_login",
+UNTRUSTED_BLOCK)` registration, same "don't allow from external
+browsers" comment, same `STATE_LOGIN_CLEANUP` pre-login gate. Not a
+Firestorm quirk - the canonical LL mechanism, now confirmed at the
+actual source rather than inferred from a Firestorm-specific file
+name. Cross-checked `/app/teleport/` too (`llurldispatcher.cpp`'s
+`LLTeleportHandler`, `UNTRUSTED_CLICK_ONLY`) - no explicit pre-login
+guard in that handler itself, but it only ever adds a
+`"TeleportViaSLAPP"` notification, which has no live agent/session
+context to act on pre-login either way. Same practical conclusion
+`/app/teleport/` is meaningless on the login splash, reached
+independently via a different code path.
+
+**One real refinement found**: `location_login` doesn't just fill the
+Start Location box - `LLPanelLogin::autologinToLocation()` also calls
+`onClickConnect()`, auto-submitting the login with whatever
+credentials are currently in the form. Checked Firestorm's own
+`FSPanelLogin::autologinToLocation()` too - identical, same
+auto-submit. So a clicked welcome.php region link doesn't just
+pre-fill the field for the resident to review; it actively attempts
+to log in (seamless if "Remember password" is set, a normal
+login-failed prompt otherwise). This is LL's own intended design for
+exactly this "grid website login-and-teleport-here link" use case, not
+a Confluence bug or a misreading of the original ask - flagged it to
+the user as more than literally "fill in the box" since that was the
+original wording, rather than assume. User's call: "We want to do it
+correctly do we not. And support it as it currently works now" - keep
+the current `location_login`/auto-submit behavior as-is, matching the
+real, verified, canonical protocol design. No code change from this
+entry; existing implementation already correct, now verified against
+two independent sources (AyaneStorm and the actual LL viewer) instead
+of one.
