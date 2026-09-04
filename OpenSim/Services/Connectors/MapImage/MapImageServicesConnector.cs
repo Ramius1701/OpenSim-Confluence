@@ -105,12 +105,16 @@ namespace OpenSim.Services.Connectors
             }
             else
             {
+                // Donor-repo sync (Tranquillity #140): don't include SCOPE
+                // when it's zero - AddMapTile already branches this way,
+                // RemoveMapTile didn't, so a tile added with no scope
+                // (AddMapTile's no-SCOPE query) could fail to match a
+                // remove request that always sent SCOPE=<zero guid>.
                 reqString = ServerUtils.BuildQueryString(
                     new Dictionary<string, object>()
                         {
                             {"X" , x.ToString() },
                             {"Y" , y.ToString() },
-                            { "SCOPE" , scopeID.ToString() },
                         }
                     );
             }
@@ -118,7 +122,7 @@ namespace OpenSim.Services.Connectors
             try
             {
                 string reply = SynchronousRestFormsRequester.MakeRequest("POST", m_ServerURI + "/map", reqString, 10, null, false);
-                if (reply.Length > 0)
+                if (!string.IsNullOrEmpty(reply))
                 {
                     Dictionary<string, object> replyData = ServerUtils.ParseXmlResponse(reply);
                     if(replyData.TryGetValue("Result", out object resultobj))
@@ -133,7 +137,7 @@ namespace OpenSim.Services.Connectors
                             return true;
                         else if (res.Equals("failure", StringComparison.InvariantCultureIgnoreCase))
                         {
-                            reason = replyData["Message"].ToString();
+                            reason = replyData.TryGetValue("Message", out object msg) ? msg.ToString() : string.Empty;
                             m_log.DebugFormat("[MAP IMAGE CONNECTOR]: RemoveMapTile failed: {0}", reason);
                             return false;
                         }
@@ -188,7 +192,7 @@ namespace OpenSim.Services.Connectors
             try
             {
                 string reply = SynchronousRestFormsRequester.MakeRequest("POST", m_ServerURI + "/map", reqString, 10, m_Auth, false);
-                if (reply.Length > 0)
+                if (!string.IsNullOrEmpty(reply))
                 {
                     Dictionary<string, object> replyData = ServerUtils.ParseXmlResponse(reply);
                     if (replyData.TryGetValue("Result", out object resultobj))
@@ -203,7 +207,7 @@ namespace OpenSim.Services.Connectors
                             return true;
                         else if (res.Equals("failure", StringComparison.InvariantCultureIgnoreCase))
                         {
-                            reason = replyData["Message"].ToString();
+                            reason = replyData.TryGetValue("Message", out object msg) ? msg.ToString() : string.Empty;
                             m_log.DebugFormat("[MAP IMAGE CONNECTOR]: AddMapTile failed: {0}", reason);
                             return false;
                         }
@@ -232,8 +236,10 @@ namespace OpenSim.Services.Connectors
         public byte[] GetMapTile(string fileName, UUID scopeID, out string format)
         {
             format = string.Empty;
-            new Exception("GetMapTile method not Implemented");
-            return null;
+            // Donor-repo sync (Tranquillity #140): constructed but never
+            // threw, so this silently returned null instead of the
+            // "not implemented" signal the message clearly intends.
+            throw new Exception("GetMapTile method not Implemented");
         }
     }
 }

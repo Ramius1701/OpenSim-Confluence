@@ -31,7 +31,10 @@ namespace OpenSim.Region.ClientStack.Linden
                 return;
             }
 
-            if(map == map.Count < 3)
+            // Donor-repo sync (Tranquillity #140): "map == map.Count < 3"
+            // compiled (OSD's implicit bool conversion) but isn't the
+            // null/size check it looks like - the real intent.
+            if (map == null || map.Count < 3)
             {
                 response.StatusCode = (int)HttpStatusCode.BadRequest;
                 return;

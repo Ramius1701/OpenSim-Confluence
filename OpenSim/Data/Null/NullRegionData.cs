@@ -191,8 +191,12 @@ namespace OpenSim.Data.Null
             {
                 foreach (RegionData r in m_regionData.Values)
                 {
+                    // Donor-repo sync (Tranquillity #140): the Y-axis bound
+                    // used r.sizeX instead of r.sizeY, so a region range
+                    // query returned wrong results for any region whose
+                    // width and height differ (non-square var regions).
                     if (r.posX + r.sizeX > startX && r.posX <= endX
-                         && r.posY + r.sizeX > startY && r.posY <= endY)
+                         && r.posY + r.sizeY > startY && r.posY <= endY)
                          ret.Add(r);
                 }
             }

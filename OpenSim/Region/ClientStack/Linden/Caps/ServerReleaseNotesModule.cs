@@ -66,8 +66,13 @@ namespace OpenSim.Region.ClientStack.LindenCaps
             if (config == null)
                 return;
 
+            // Donor-repo sync (Tranquillity #140): same "only enables
+            // when literally 'localhost'" bug as EstateAccess.cs - any
+            // real configured value left this cap silently disabled.
             string capURL = config.GetString("Cap_ServerReleaseNotes", string.Empty);
-            if (string.IsNullOrEmpty(capURL) || capURL != "localhost")
+            if (string.IsNullOrEmpty(capURL) ||
+                    capURL.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                    capURL == "0")
                 return;
 
             config = source.Configs["ServerReleaseNotes"];

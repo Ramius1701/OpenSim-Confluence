@@ -64,8 +64,15 @@ namespace OpenSim.Region.ClientStack.Linden
             if (config == null)
                 return;
 
+            // Donor-repo sync (Tranquillity #140): this only ever enabled
+            // when Cap_EstateAccess was set to the literal string
+            // "localhost" - any real configured value left the cap
+            // silently disabled. Enable on any configured value that
+            // isn't explicitly turned off.
             m_capUrl = config.GetString("Cap_EstateAccess", string.Empty);
-            if (!String.IsNullOrEmpty(m_capUrl) && m_capUrl.Equals("localhost"))
+            if (!String.IsNullOrEmpty(m_capUrl) &&
+                    !m_capUrl.Equals("false", StringComparison.OrdinalIgnoreCase) &&
+                    m_capUrl != "0")
                 m_Enabled = true;
         }
 
