@@ -18240,3 +18240,102 @@ a stale cached 404 response from before the fix (a fresh
 immediately), not a real remaining issue. Same deploy as the entry
 above: only `OpenSim.Server.Handlers.dll`/`.pdb`, hash-verified,
 Robust restarted alone, clean startup log.
+
+### Donor-repo sync pass (2026-09-04)
+
+User: "We need to make sure our donor repops are updated and those
+latest changes are added to Confluence." Surveyed every local donor
+clone under `S:\Github` (`WhiteCore-Dev`, `OpenSim-Tranquillity`,
+`halcyon`, `opensim-master`, `opensim-vanilla`, `Legion-Grid-Code`,
+`phlox`) via `git fetch` before touching anything. Two had real
+upstream movement: `opensim-master` (3 new commits) and
+`OpenSim-Tranquillity` (109 new commits + a new `v1.0` tag - the last
+recorded Tranquillity audit was against a much older HEAD). The rest
+were already current. `mobius-master` and `opensim-lickx` turned out
+to be plain extracted source snapshots with no `.git`/remote at all -
+"updating" them isn't a git operation, just flagged rather than acted
+on; nobody's asked for a fresh Mobius pull specifically.
+
+Reviewed every new commit that plausibly touched something Confluence
+also has, not just the ones with eye-catching titles - several
+promising-looking finds turned out to already be fixed here:
+
+**Ported (real bugs, confirmed present in Confluence, fixed and
+verified):**
+- `opensim-master` PR #62: `HGFriendsService.StatusNotification` broke
+  out of its session loop after the first friend with a non-zero
+  RegionID, so a resident with multiple HG friends online on the same
+  foreign grid only ever saw one show online. Confluence had the
+  identical bug (same upstream lineage, never modified here). Also
+  ported the companion fix in `HGFriendsServerPostHandler`'s `friend_N`
+  key parsing, which depended on Dictionary enumeration order matching
+  a strictly-increasing counter - order isn't a language guarantee, so
+  out-of-order keys were silently dropped. Deployed: only
+  `OpenSim.Server.Handlers.dll` (Robust-hosted), hash-verified, Robust
+  restarted alone.
+- Tranquillity "Fix Warp3D map tile terrain textures, prim renderer
+  selection, and material dupes": `Warp3DImageModule` picked
+  `renderers[0]`/`[1]` by directory-scan order rather than identity -
+  harmless today only because Meshmerizer happens to load first here,
+  but exactly the kind of incidental-ordering fragility this session's
+  own Warp3D config fix (the entry above, two sections up) just made
+  load-bearing for every region on the grid. Added explicit
+  Meshmerizer-by-name selection. Deployed:
+  `OpenSim.Region.CoreModules.dll`, all 5 running regions restarted
+  staggered, `RegionReady` confirmed clean.
+
+**Investigated and correctly declined (would have made things worse,
+not better):**
+- The same Tranquillity commit's `TerrainPBR1-4` fallback for stale
+  terrain textures. Checked the actual downstream code before porting
+  anything: `TerrainSplat.Splat()` fetches each texture ID's asset and
+  decodes the bytes directly as J2K image data. `TerrainTextureN` is a
+  plain image asset, but `TerrainPBRn` is a *material* asset (GLTF-
+  style JSON referencing separate texture IDs) - swapping one in where
+  Splat expects raw image bytes would throw inside its catch block and
+  silently blank that terrain texture slot for any region actually
+  using PBR terrain, which is worse than today's stale-but-valid
+  legacy texture. Doing this correctly needs the material resolved to
+  its base-color texture ID first; neither this module nor
+  `TerrainSplat.cs` do that today. Left as a real, flagged gap instead
+  of a half-fix.
+
+**Investigated and ruled out as inapplicable (different code path,
+not just "already fine"):**
+- Tranquillity's sculptie-rendering and blank-dynamic-texture/J2K-
+  tile-size fixes are regressions from Tranquillity's *own* migration
+  to SkiaSharp/CoreJ2K. Confluence's `Warp3DImageModule` is still on
+  `System.Drawing.Bitmap` (sculpties already render via
+  `GenerateFacetedSculptMesh` with no gap to close) and
+  `VectorRenderModule` still calls native `OpenJPEG.EncodeFromImage`,
+  not CoreJ2K's encoder - the fixed-256-tile-size bug that caused
+  blank >256px dynamic textures on Tranquillity doesn't exist in this
+  codebase's encoder at all.
+- The same Tranquillity commit's material-dedup fix
+  (`GetOrCreateMaterial` unconditionally calling `addMaterial`, which
+  throws on a duplicate name): Confluence's own `GetOrCreateMaterial`
+  (both overloads) already guards with `TryGetMaterial` before adding.
+  No live evidence of this ever throwing here either (checked
+  `OpenSim.log` around tonight's own maptile regenerations - clean).
+
+**Checked and already fixed in Confluence (no action needed):**
+opensim-master PR #149's experience-permission logic-inversion fix
+(`ExperiencePermission.Allowed` mistakenly checked twice, `.Blocked`
+routed to the wrong event) - Confluence's `LSL_Api.cs` already has the
+correct `.Blocked` check. Two more small `LSL_Api.cs` hardening fixes
+(`llInsertString` out-of-bounds on an index landing past `dest.Length`,
+`ParseString2List` null-guarding `separators`/`spacers`) - both already
+present verbatim in Confluence.
+
+**Not yet reviewed**: roughly 95 more Tranquillity commits, mostly
+their own build/CI/project-layout restructuring and NuGet/SQLite/
+PGSQL driver bumps (not portable - different build system entirely,
+same reasoning as leaving `opensim-enhanced` alone). A handful still
+worth a future pass: YEngine best-effort state restore on migration
+mismatch, a Materials Module Ionic-to-System.IO.Compression
+regression fix, WebRTC/os-webrtc-janus STUN server fixes, and a few
+LSL/OSSL additions (`llSetRenderMaterial`, `CLICK_ACTION_IGNORE`,
+`osNpcPlayAnimation` accepting any asset UUID not just built-in
+animations). Flagging rather than guessing at priority - these weren't
+tied to anything already broken or already touched tonight the way the
+two ported fixes were.
