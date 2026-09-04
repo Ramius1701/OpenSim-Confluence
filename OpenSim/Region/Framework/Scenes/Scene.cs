@@ -4461,6 +4461,23 @@ namespace OpenSim.Region.Framework.Scenes
             if (Permissions.IsGod(agentID))
                 return true;
 
+            // Donor-repo audit (Halcyon, Mantis 3249 - "Do not enforce
+            // parcel bans for Estate Manager"): CheckLandPositionAccess
+            // already exempts estate managers before it ever reaches
+            // this method (see its own IsEstateManager check above), but
+            // ScenePresence.cs has three call sites that reach this
+            // method directly during normal avatar movement/border-
+            // crossing, bypassing that outer guard entirely - the only
+            // exemption left at those call sites was IsGod, a strictly
+            // higher permission level an Estate Manager doesn't
+            // necessarily have. A manager who'd been banned from a
+            // parcel before being promoted (or banned by a co-manager)
+            // would have their own walking movement silently blocked on
+            // land they're supposed to manage. Adding the same
+            // exemption here covers all four call sites uniformly.
+            if (Permissions.IsEstateManager(agentID))
+                return true;
+
             ILandObject land = LandChannel.GetLandObject(posX, posY);
             if (land is null)
                 return false;

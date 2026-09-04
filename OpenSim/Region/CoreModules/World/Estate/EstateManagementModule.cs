@@ -1145,7 +1145,18 @@ namespace OpenSim.Region.CoreModules.World.Estate
 
                 if ((estateAccessType & 64) != 0) // Ban add
                 {
-                    bool userIsAdmin = Scene.Permissions.IsAdministrator(user);
+                    // Donor-repo audit (Halcyon, Mantis 3249's companion
+                    // fix "Prevent Estate Managers from being banned
+                    // from that estate"): IsAdministrator is God-tier
+                    // only (see CheckLandPositionAccess's own comment,
+                    // "IsAdministrator is the same as IsGod for now"),
+                    // so a regular Estate Manager who isn't also a God
+                    // could still be added to the ban list, blocking
+                    // them from land they're supposed to manage. Ban
+                    // removal already has no such restriction (checked
+                    // directly - the block below this one is
+                    // unconditional), so only the add side needed this.
+                    bool userIsAdmin = Scene.Permissions.IsAdministrator(user) || Scene.Permissions.IsEstateManager(user);
                     if(userIsAdmin)
                     {
                         remote_client.SendAlertMessage("Cannot ban a Administrator");
