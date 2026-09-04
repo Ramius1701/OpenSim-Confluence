@@ -303,6 +303,15 @@ also available via `osNpc`.
   transient blip.
 - Avatar baking/"cloud avatar" recovery is active on Hypergrid arrivals
   as well as local logins (previously local-only).
+- A teleport (landmark, map click, or scripted `llTeleportAgent`)
+  targeting a point inside a varregion larger than 256 units — real
+  regions on this grid, not a hypothetical — now correctly resolves to
+  that region regardless of which part of its footprint the target
+  falls in, instead of only its first 256x256 cell.
+- The viewer's inventory "Restore to Last Position" action works: an
+  object taken (or returned to Lost And Found) can be rezzed back at
+  its exact last in-world position and rotation, rather than the usual
+  near-avatar placement a normal rez uses.
 
 ## World and Environment
 

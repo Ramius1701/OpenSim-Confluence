@@ -25,14 +25,25 @@ if (!LLGridManager::getInstance()->isInSecondLife())
 ```
 
 This means the region's own `DirectDelivery` capability
-(`DirectDeliveryModule.cs`) is registered and protocol-correct, but no
-mainstream viewer build will ever call it — the floater (and the
+(`DirectDeliveryModule.cs`) is registered and protocol-correct, but
+Firestorm/AyaneStorm will never call it — the floater (and the
 "Merchant Outbox" inventory folder, which is only auto-created downstream
-of a successful merchant-status check) simply never appear. This is not a
-caps/config problem; there is no known workaround short of a patched
-viewer build. `DirectDeliveryModule.cs` is left in place, untouched and
-dormant, so it works immediately if a non-blocking viewer is ever used —
-no code changes needed on that side, only a viewer patch.
+of a successful merchant-status check) simply never appear on those
+viewers. Confirmed via direct source check (not just the one snippet
+above): the block has no settings-based escape hatch anywhere in
+Firestorm's code, unlike some of its other SL-vs-OpenSim differences.
+
+**CoolVL Viewer already works correctly with no patch needed.** Checked
+its `llmarketplacefunctions.cpp` directly: it gates the floater on the
+actual `DirectDelivery` region capability
+(`gAgent.getRegionCapability("DirectDelivery")`), not a hardcoded
+"is this really Second Life" check — the way a viewer arguably should.
+Since `DirectDeliveryModule.cs` already registers that capability
+correctly, residents using CoolVL Viewer can use the real, native,
+in-world Marketplace Listings floater today, no server-side changes
+needed. `DirectDeliveryModule.cs` is left in place, untouched and
+dormant for Firestorm/AyaneStorm users, so it also picks up
+immediately if either of those is ever patched.
 
 Because of this, **inventory association is done entirely through the
 web** (`/marketplace/manage`) instead, calling the same
