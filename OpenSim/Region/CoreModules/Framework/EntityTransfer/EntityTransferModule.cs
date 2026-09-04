@@ -2639,17 +2639,24 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
             if (m_notFoundLocationCache.Contains(px, py))
                 return null;
 
-            // reduce to next grid corner
-            // this is all that is needed on 0.9 grids
+            // reduce to next grid corner - this is a cheap direct hit for a region whose
+            // actual registered origin happens to be a multiple of the legacy 256 unit,
+            // which covers the common/legacy case without touching the database further.
             uint possibleX = (uint)px & 0xffffff00u;
             uint possibleY = (uint)py & 0xffffff00u;
             GridRegion ret = pGridService.GetRegionByPosition(pScopeID, (int)possibleX, (int)possibleY);
             if (ret != null)
                 return ret;
- 
-            /* obsolete code
-            // for 0.8 regions just make a BIG area request. old code whould do it plus 4 more smaller on region open edges
-            // this is what 0.9 grids now do internally
+
+            // GetRegionByPosition only matches a region's exact registered origin (see its
+            // own doc comment in GridService.cs) - it does NOT find "some region containing
+            // this point". A varregion larger than 256 units (Confluence has several live:
+            // e.g. 512x512, 1024x1024) is registered as a single database row at its origin,
+            // not one row per 256-unit cell, so the direct lookup above only succeeds for
+            // points in the region's first 256x256 cell. Any point elsewhere in a large
+            // region's footprint - a common case for a varregion-aware landmark, map click,
+            // or scripted teleport - falls through here and needs an actual range search
+            // with a bounding-box containment check.
             List<GridRegion> possibleRegions = pGridService.GetRegionRange(pScopeID,
                         (int)(px - Constants.MaximumRegionSize), (int)(px + 1), // +1 bc left mb not part of range
                         (int)(py - Constants.MaximumRegionSize), (int)(py + 1));
@@ -2666,7 +2673,6 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                     }
                 }
             }
-            */
 
             // remember this location was not found so we can quickly not find it next time
             m_notFoundLocationCache.Add(px, py);
