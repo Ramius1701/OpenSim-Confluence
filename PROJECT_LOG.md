@@ -18339,3 +18339,134 @@ LSL/OSSL additions (`llSetRenderMaterial`, `CLICK_ACTION_IGNORE`,
 animations). Flagging rather than guessing at priority - these weren't
 tied to anything already broken or already touched tonight the way the
 two ported fixes were.
+
+### Tranquillity pass completed - all 109 remaining commits triaged (2026-09-04)
+
+User: "Lets complete that Tranquility pass." Went through every one of
+the ~95 commits left unreviewed from the earlier sync, not just the
+handful flagged as "worth a future pass" - triaged each by title/file
+path first (pure Tranquillity build/CI/project-restructuring/SQLite-
+Linux-packaging infra, ~75 commits, confirmed not portable - different
+build system entirely, same reasoning as `opensim-enhanced`), then
+pulled full diffs and checked Confluence's actual current code for
+everything that plausibly touched something real.
+
+**Ported (real bugs/gaps confirmed present, fixed, built, verified,
+committed):**
+- **YEngine best-effort state restore** on a saved `.state` snapshot's
+  migration-version mismatch, instead of always discarding the
+  script's state. Adapted rather than ported verbatim - Tranquillity's
+  own fix depends on a `ScriptStateLoadException`/
+  `ScriptStateLoadFailureReason` metrics subsystem that doesn't exist
+  in this codebase's YEngine (a bigger divergence than the diff alone
+  suggested); kept the core behavior (try the restore, fall back to
+  the original throw only if it actually fails) without importing that
+  scaffolding. Added `StrictStateMigrationVersion` (default false) as
+  an escape hatch back to the old behavior, documented in
+  `OpenSim.ini.example`.
+- **Five small, confirmed-present bugs** from Tranquillity's "A few
+  unmistakable bugs I saw while poking" batch: `NullRegionData`'s
+  region-range query used `sizeX` for both axes (wrong results for
+  non-square regions); `DispatchRegionInfo`'s `map == map.Count < 3`
+  compiled via OSD's implicit bool conversion but wasn't the null/size
+  check it looked like; `EstateAccess`/`ServerReleaseNotesModule` both
+  only ever enabled when their `Cap_*` ini value was literally the
+  string `"localhost"` (neither is configured on live Casperia today,
+  so no current behavior changed - only what happens if someone does
+  configure them); `MapImageServicesConnector`'s `RemoveMapTile`
+  always sent `SCOPE` even for a zero scope unlike `AddMapTile`'s
+  already-correct branching, plus null-safety hardening and a
+  `GetMapTile` stub that constructed but never threw its "not
+  implemented" exception (confirmed dead code - only call site goes
+  through the real server-side service, not this client connector).
+
+**Flagged, not built (needs the user's own call, not a code fix):**
+- **MimeKit is bundled at 4.5.0.0** - the exact vulnerable version the
+  original 482-commit audit already flagged. Tranquillity's own
+  dependabot fix bumps to 4.15.1. Confluence references raw DLLs via
+  `HintPath`, not NuGet, so fixing this means downloading replacement
+  `MimeKit.dll`/`MailKit.dll` - a download, which needs the user's
+  go-ahead rather than being fetched unprompted.
+- **Mantis 9230** (prim inventory not always persisted across every
+  unlink case) - real, but spans 5+ interdependent files
+  (`IEntityInventory.cs`, `SceneGraph.cs`,
+  `SceneObjectGroup(.Inventory).cs`, `SceneObjectPartInventory.cs`)
+  with a persistence-flag semantics change and at least one
+  cross-commit dependency (`SetPartsInventoryChanged(bool)`, called
+  with an argument from a commit that doesn't itself show the
+  overload being added) that couldn't be fully traced from spot-
+  checking two commits. Touches real resident inventory data on a live
+  grid - flagged for its own dedicated, carefully-traced pass rather
+  than a partial port.
+
+**Investigated and ruled out as inapplicable (different code path,
+not just "already fine") - each checked against Confluence's actual
+code, not assumed from the donor diff:**
+- Materials Module compression "fix": Confluence still uses
+  `Ionic.Zlib.ZlibStream`, whose `Write()` is documented to correctly
+  perform decompression in that mode (a deliberate Ionic feature).
+  Tranquillity's bug was self-inflicted by their own migration to
+  `System.IO.Compression`'s `DeflateStream`/`ZLibStream`, which don't
+  support that pattern - Confluence never made that migration, so the
+  bug doesn't exist here.
+- The `reloadOnChange`/inotify fix touches `OpenSim.Server.GridServer`/
+  `OpenSim.Server.MoneyServer`'s `Program.cs` - Tranquillity's own
+  ASP.NET Core "hosted services" rewrite of their server launchers, an
+  entirely different startup architecture Confluence doesn't have
+  (still the traditional Nini/`-inifile=` launchers).
+- Three consecutive "caps still wrong" commits turned out to mean
+  SQLite native-library filename *capitalization* on Linux, not HTTP
+  capabilities - irrelevant to a MySQL-based install.
+
+**Checked and already correctly implemented in Confluence (no action
+needed) - each verified directly, several turning out to already be
+ahead of what Tranquillity was fixing:**
+- WebRTC's parcel-voice authorization (the "do not fully trust
+  viewers about parcels" fix) - all the same `AllowVoice`/
+  `AllowVoiceChat`/ban-check logic already present, consistent with
+  the earlier finding that Confluence's `os-webrtc-janus` copy is
+  already ahead of upstream.
+- HTTP client read timeouts - Confluence already has a more
+  sophisticated `EstimatedReceiveTimeout`-based cancellation that
+  explicitly closes the response stream to unblock a hanging
+  synchronous read, checked across all 8 call sites in `WebUtil.cs`,
+  `RestClient.cs`, and `ScriptsHttpRequests.cs`. This is actually
+  *better* than Tranquillity's own fix, which needed a same-week
+  follow-up commit because a plain `CancellationToken` passed to
+  `ReadAsStream()` didn't reliably interrupt a blocked XML-deserialize
+  read the way Confluence's explicit stream-close already does.
+  Whoever wrote this in Confluence already solved the harder version
+  of the same problem, independently.
+- Find-parcel-by-fakeID (was indexing before `ForceUpdateLandInfo()`
+  computed the real FakeID, plus a missing zero-guard) - both fixes
+  already present verbatim.
+- `llSetRenderMaterial`, `CLICK_ACTION_IGNORE`, `osNpcPlayAnimation`
+  accepting any asset UUID (not just built-ins), and the STUN-servers
+  list reaching viewers via the simulator features cap - all four
+  already fully implemented.
+- The HTTP accept-loop's socket-null-check and `NoDelay` moved inside
+  its `try/catch` (an unguarded null socket or a `NoDelay` exception
+  here could have killed the entire HTTP listener thread) - both
+  already present in `HttpListener.cs`.
+- Three `ServiceURLs`/HG-asset-transfer robustness fixes
+  (`AgentCircuitData` storing a raw `OSD` instead of `.AsString()`,
+  `HGAssetMapper.Get` missing a null/empty asset-URL guard,
+  `HGInventoryAccessModule` returning success with an empty asset
+  server URL) - all three already present.
+- Two real crash risks in `UserProfileModule.cs`: `OnClientClosed`
+  dereferencing a possibly-null `ScenePresence` on every client
+  logout, and a null check on `GetPicks()`'s result placed after the
+  `.ContainsKey()` call that could throw on it - both already fixed
+  (`TryGetScenePresence` guard, and the null check correctly ordered
+  first).
+
+**Net result**: of the 109 commits, roughly 30+ were individually
+examined in detail (the rest confirmed as non-portable build/CI/
+packaging infra by title and file path); 6 real fixes ported this
+session across the two passes, 2 items flagged for the user/a future
+dedicated pass, and everything else either doesn't apply to this
+codebase's actual architecture or turned out to already be correctly
+implemented here - in a few cases, more robustly than the donor repo
+itself. The Tranquillity donor-repo review is now complete against
+today's pull point (`29f312cb79`); [[casperia-fork-review-status]]
+updated accordingly.
