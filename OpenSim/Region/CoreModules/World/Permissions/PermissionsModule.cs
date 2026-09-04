@@ -1154,6 +1154,19 @@ namespace OpenSim.Region.CoreModules.World.Permissions
 
         protected bool GenericParcelOwnerPermission(UUID user, ILandObject parcel, ulong groupPowers, bool allowEstateManager)
         {
+            // Donor-repo review (Halcyon-audit-motivated dedicated pass
+            // over GetLandObject(...) call sites, prompted by a real
+            // live incident from this exact bug class): callers such as
+            // LandManagementModule's ClientOnParcelFreezeUser/
+            // ClientOnParcelEjectUser pass whatever GetLandObject(...)
+            // returned straight through to CanEditParcelProperties with
+            // no null check, and GetLandObject can legitimately return
+            // null (avatar position outside land bounds). No parcel
+            // found means permission can't be verified - deny, the
+            // conservative default, rather than crash.
+            if (parcel is null)
+                return false;
+
             if (parcel.LandData.OwnerID.Equals(user))
                 return true;
 

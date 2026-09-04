@@ -550,7 +550,14 @@ namespace OpenSim.Region.CoreModules.World.Land
                 EnforceBans(over, avatar);
                 pos = avatar.AbsolutePosition;
                 ILandObject newover = GetLandObject(pos.X, pos.Y);
-                if(over != newover || avatar.currentParcelUUID.NotEqual(newover.LandData.GlobalID))
+                // Donor-repo review (GetLandObject audit): newover was
+                // dereferenced unconditionally below, but GetLandObject
+                // can legitimately return null (position outside land
+                // bounds) - this fires on every significant avatar
+                // movement, so an unguarded null here was a real,
+                // frequently-reachable crash risk, not a rare edge case.
+                if (newover is not null &&
+                        (over != newover || avatar.currentParcelUUID.NotEqual(newover.LandData.GlobalID)))
                 {
                     m_scene.EventManager.TriggerAvatarEnteringNewParcel(avatar,
                             newover.LandData.LocalID, m_scene.RegionInfo.RegionID);
@@ -2435,7 +2442,11 @@ namespace OpenSim.Region.CoreModules.World.Land
                         if (e.OwnerID.Equals(targetID))
                         {
                             ILandObject landobject = ((Scene)client.Scene).LandChannel.GetLandObject(e.AbsolutePosition.X, e.AbsolutePosition.Y);
-                            if (landobject.LandData.OwnerID != e.OwnerID)
+                            // Donor-repo review (GetLandObject audit):
+                            // landobject was dereferenced unconditionally
+                            // below with no null check, even though
+                            // GetLandObject can legitimately return null.
+                            if (landobject is not null && landobject.LandData.OwnerID != e.OwnerID)
                             {
                                 if (e.ContainsScripts())
                                 {
