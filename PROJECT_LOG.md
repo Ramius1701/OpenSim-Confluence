@@ -19172,3 +19172,149 @@ control|economy|currency|inventory` against Halcyon specifically, and
 the `teleport|crossing|physics|collision` set against WhiteCore-Dev,
 which has never been run there) are better ROI than re-scanning this
 exhausted grep further.
+
+### Halcyon review - security/permission/economy/currency/inventory category (2026-09-05)
+
+Ran the next fresh category (`security|vulnerab|permission|unauthorized|
+access control|economy|currency|inventory`, 115 total hits). Cross-
+referenced against every hash previously cited anywhere in this file's
+Halcyon sections (177 distinct citations after the last round) - 16
+overlapped with prior categories, 99 genuinely new.
+
+**Two real fixes applied, built, and deployed live:**
+- `Scene.Permissions.cs`/`OpenSimBase.cs`: added `ScenePermissions.IsAvailable()`
+  (true only if something actually hooked `OnGenerateClientFlags`) and an
+  abort-startup check in `OpenSimBase.CreateRegion` if it's false.
+  Confluence already has a `SecurePermissionsLoading` opt-in, but that
+  only validates that explicitly-named modules in config were *found*,
+  not that any permissions module actually *wired itself up* - a
+  misconfigured or failed module would otherwise silently run the
+  region with zero permission checks. Adapted from Halcyon's
+  `4a14598b32`/`b9961ff9e1`.
+- `TaskInventoryDictionary.cs`: suppress the redundant `xmlns:xsi`/
+  `xmlns:xsd` boilerplate `XmlSerializer` emits on every serialized
+  `TaskInventoryItem` - real bloat multiplied across every prim's
+  inventory on every OAR save/backup/region-crossing.
+  `SceneObjectPart`'s own XML serialization already avoids this (the
+  old `ToXml(XmlWriter)` method Halcyon's `d32e9a91c5` patched doesn't
+  even exist anymore here, already restructured), just not this file.
+
+**Real findings, confirmed already correctly implemented (in each case
+via a different, more thorough mechanism than Halcyon's own fix) - no
+code needed:**
+- `4161d8d58c` (avatars/vehicle-passengers bypassing parcel bans by
+  staying seated) - Confluence's `EnforceBans`/`ForceAvatarToPosition`
+  (`LandManagementModule.cs:363-452`) already handles this via
+  `if(avatar.IsSitting) avatar.StandUp()`, plus terrain-relative ban
+  height instead of Halcyon's magic-number Z values.
+- `b9f3ce01ae` (Export permission not cleared when Copy+Modify+Transfer
+  aren't all present) - `SceneObjectPart.cs:4949-4955` already requires
+  `NextOwnerMask == PermissionMask.All` (a superset of Halcyon's
+  Copy+Modify+Transfer check) before Export can be set at all, enforced
+  at set-time rather than read-time.
+- `771dd437fe` (Halcyon *removing* its own User-Agent-header block on
+  LSL custom HTTP headers, calling it "a major security risk anyway" in
+  its own commit message) - confirmed the opposite: Confluence already
+  blocks `User-Agent` via `LSL_Api.cs`'s `HttpForbiddenHeaders`
+  dictionary (`{"User-Agent", true}`), which is more thorough than what
+  Halcyon started from (also blocks `proxy-`/`sec-` prefixes). Nothing
+  to port - if anything this donor commit is evidence to keep the
+  existing behavior, not change it.
+- `cab7c80d21` (swapped UUID argument order in a friend-edit-permission
+  check) - Confluence's `IsFriendWithPerms`/`GetRightsGrantedByFriend`
+  already calls with the correct argument order per the interface's own
+  doc comments (checking what the object owner granted the requesting
+  friend, not the reverse).
+- `d545947ccb`/`38aa4b65c5`/`df9cb72478`/`979089a631`/`a17a541c73`/
+  `52ec4c571d` - a cluster of Halcyon's own internal
+  `GenericObjectPermission`/`TestPermissionBasics`/`FindGroup`/
+  `GenericPermissionResult` helper refactoring from late 2015 (the
+  cluster visibly contradicts itself across commits - fix, revert,
+  re-fix - suggesting Halcyon's own uncertain design churn, not a
+  settled bug). None of these method names exist in Confluence's
+  current `PermissionsModule.cs` at all - already a completely
+  different, independently-evolved structure (confirmed by direct
+  search, not assumed).
+
+**Two real missing-feature gaps found, deliberately flagged rather than
+built** (feature work, not narrow bug fixes - each would need its own
+careful pass):
+- `llReturnObjectsByOwner`/`llReturnObjectsByID` (the real, documented
+  SL LSL functions gated by `PERMISSION_RETURN_OBJECTS`) aren't
+  implemented anywhere in `LSL_Api.cs`, even though the
+  `PERMISSION_RETURN_OBJECTS` constant itself is already defined in
+  `LSL_Constants.cs`. Halcyon's own implementation of this
+  (`c8dd532666`, `d660c41be8`, `8eee29a097`, `ca52400266`) took several
+  iterations to get the group-ownership permission checks right -
+  worth building carefully if this gets picked up, not adapted
+  mechanically.
+- AgentPrefs-driven default object permissions on rez (real SL
+  Preferences feature: new objects inherit the creator's preferred
+  default Copy/Modify/Transfer/Export next-owner permissions). Halcyon's
+  `AgentPreferencesData.cs`/`PackedAgentPrefs.cs`/rez-time application in
+  `ObjectAddModule.cs` (from `3d5b5bdccc`) have no equivalent here -
+  Confluence's own `AgentPreferencesModule.cs` is a same-named but
+  unrelated module (maturity/language prefs cap, not permissions).
+
+**Ruled out as architecture clusters, not individually re-verified per
+commit** (each confirmed dead/not-portable via file-existence or
+grep-for-symbol checks, consistent with this whole review's established
+pattern): Halcyon's own Cassandra-to-MySQL inventory-backend migration
+(11 commits: `88eed19076`, `de58b5f3dd`, `6d2c7c3c8c`, `60898c246b`,
+`48c4ce2af2`, `2bc1aee376`, `d15274864e`, `16423aebf7`, `0c9bbbef71`,
+`1f74c0754e`, `33dc9cfc18`); InWorldz's own custom `iw*` LSL functions,
+not part of the real SL scripting surface (10 commits: `8a143abf77`,
+`06ebbad5c9`, `4b4eef771f`, `f073443c9d`, `c3d6942866`, `f74f289f24`,
+`09dbd8a0f4`, `088520b428`, `7449026af1`, `81dfb7816c`); legacy
+economy/currency config tied to already-dead
+`AvatarCurrency.cs`/`OpenSimProfile`/pre-Robust `LoginService`
+architecture (6 commits: `db0087535c`, `1bcebbbd51`, `fd3a253675`,
+`542651f55d`, `658cab30ee`, `bea0a4bf54`); Phlox-only script-engine
+commits, already-established dead since Confluence uses YEngine (10
+commits: `a1df221623`, `a5f1bf849d`, `8223d8c5a3`, `0d04bc4567`,
+`987a77293e`, `7869332810`, `bcadfc71a0`, `80307da460`, plus the Phlox
+half of `38aa4b65c5`); the dead `InventoryCapsModule.cs` (replaced by
+`BunchOfCaps.cs`'s mesh-upload cost path, already confirmed to have its
+own equivalent `mm != null` guard): `810679d284`, `09e14013a0`,
+`59e4a9a3b6`, `f8e02c5bb2`, `56957834ad`, `6266a63356`, `1fe38485bd`,
+`49ffe13281`; the already-dead `CachedUserInfo`/`UserProfileManager`/
+`CommsManager` legacy layer: `ed7bf6a131`, `6238cea214`, `19026c836f`
+(this one's real underlying UX bug - "purging an empty folder does
+nothing" - could theoretically still exist in some form in the modern
+architecture, but tracing that would need a separate dedicated
+investigation, not a quick check); `e4920515c2` (bot-attachment leak
+fix, Halcyon's own dead bot framework - Confluence uses Tranquillity's);
+`83e239fc8c` (CHANGED_INVENTORY event-trigger correction) was reverted
+by Halcyon itself one day later (`9195a3223e`) - not a settled fix to
+port; pure content/schema/tooling/trivial changes with no portable
+logic (`dac6598f9a`, `c430467ef2`, `007cc3a6f9`, `89fec52fb2`,
+`dcb722daa5`, `3f07dbb6e4` touches a method that no longer exists here,
+`ca52400266` is WIP spanning the dead Phlox/PERMISSION_RETURN_OBJECTS
+work). 22 pure merge commits carried no independent content.
+
+**Deploy note - a real mistake this round, caught and fixed within
+minutes:** after building the two fixes above, only copied
+`OpenSim.dll` and `OpenSim.Framework.dll` to the live grid, missing
+`OpenSim.Region.Framework.dll` - the assembly that actually contains
+`ScenePermissions.IsAvailable()`. All 5 regions crashed at startup with
+`MissingMethodException` as a result (a clean binary-mismatch crash,
+not a code bug - the new code itself was correct). Caught immediately
+via the RegionReady/error log check and the session's own watchdog
+alert, fixed by copying the missing DLL (hash-verified) and restarting
+again - total downtime a few minutes, not repeated overnight like the
+unrelated outage earlier today. Lesson reinforced (already known, not
+new): "0 errors" from `dotnet build` and hash-verifying the files you
+*did* copy is not sufficient - must positively identify every assembly
+a changed file belongs to before deploying, not assume based on which
+files were open in the editor.
+
+**Category status: 99 of 99 new hits from this grep inspected.** Two
+real fixes shipped, two real missing-feature gaps flagged (not built),
+the rest confirmed either already-correct or genuinely not portable.
+Fresh categories still unrun against Halcyon if this resumes:
+`teleport|crossing|physics|collision` has already been run (see the
+prior entries); no fully-fresh keyword set remains obviously
+unexplored for Halcyon specifically - next-best-ROI is likely the
+`teleport|crossing|physics|collision` set against WhiteCore-Dev
+(never run there), or building one of the two flagged missing features
+above.
