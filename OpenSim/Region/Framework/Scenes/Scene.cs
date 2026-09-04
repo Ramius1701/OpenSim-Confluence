@@ -3561,6 +3561,7 @@ namespace OpenSim.Region.Framework.Scenes
         {
             client.OnAddPrim += AddNewPrim;
             client.OnRezObject += RezObject;
+            client.OnRezRestoreToWorld += RezRestoreToWorld;
         }
 
         public virtual void SubscribeToClientInventoryEvents(IClientAPI client)
@@ -3687,6 +3688,7 @@ namespace OpenSim.Region.Framework.Scenes
         {
             client.OnAddPrim -= AddNewPrim;
             client.OnRezObject -= RezObject;
+            client.OnRezRestoreToWorld -= RezRestoreToWorld;
         }
 
         public virtual void UnSubscribeToClientInventoryEvents(IClientAPI client)

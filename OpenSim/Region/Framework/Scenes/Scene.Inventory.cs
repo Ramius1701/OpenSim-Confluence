@@ -2690,6 +2690,55 @@ namespace OpenSim.Region.Framework.Scenes
         }
 
         /// <summary>
+        /// Event handler for the viewer's inventory "Restore to Last Position" action - rez an
+        /// object back into the world at the exact position/rotation it had when it was taken,
+        /// rather than the usual near-avatar/ray-cast placement a normal rez uses.
+        /// </summary>
+        /// <param name="remoteClient"></param>
+        /// <param name="itemID"></param>
+        public virtual void RezRestoreToWorld(IClientAPI remoteClient, UUID itemID)
+        {
+            InventoryItemBase item = InventoryService.GetItem(remoteClient.AgentId, itemID);
+            if (item is null)
+            {
+                remoteClient.SendAgentAlertMessage("Failed to find the item you requested.", false);
+                return;
+            }
+
+            AssetBase rezAsset = AssetService.Get(item.AssetID.ToString());
+            if (rezAsset is null || rezAsset.Data is null || rezAsset.Data.Length == 0)
+            {
+                remoteClient.SendAgentAlertMessage("Failed to find the item you requested.", false);
+                return;
+            }
+
+            // The object's own stored transform (from when it was taken) is what supplies the
+            // "last position" - no separate tracking needed. Only works for a single, non-
+            // coalesced object; GetSingleObjectToRez returns null for a coalesced (multi-object)
+            // take, which this doesn't support.
+            SceneObjectGroup storedGroup = GetSingleObjectToRez(rezAsset.Data);
+            if (storedGroup is null)
+            {
+                remoteClient.SendAgentAlertMessage("This item cannot be restored to its last position.", false);
+                return;
+            }
+
+            if (storedGroup.IsAttachment)
+            {
+                remoteClient.SendAgentAlertMessage("Inventory item is an attachment - use Wear or Add instead.", false);
+                return;
+            }
+
+            Vector3 pos = storedGroup.AbsolutePosition;
+
+            IInventoryAccessModule invAccess = RequestModuleInterface<IInventoryAccessModule>();
+            invAccess?.RezObject(
+                    remoteClient, item, item.GroupID, item.AssetID,
+                    pos, Vector3.Zero, UUID.Zero, 1, true,
+                    false, false, UUID.Zero, false);
+        }
+
+        /// <summary>
         /// Rez an object into the scene from a prim's inventory.
         /// </summary>
         /// <param name="sourcePart"></param>
