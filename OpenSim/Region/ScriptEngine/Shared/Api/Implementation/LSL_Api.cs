@@ -14178,16 +14178,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                     case ScriptBaseClass.PRIM_GLTF_EMISSIVE:
                     case ScriptBaseClass.PRIM_GLTF_BASE_COLOR:
                         // Readback counterpart to the write side in
-                        // SetPrimParams - reads back whatever this same
-                        // per-face override JSON (GetMaterialOverrideData)
-                        // currently holds, not the assigned base material
-                        // merged underneath it. That's a real, smaller
-                        // scope than full SL parity (a face with an
-                        // assigned material but no override returns the
-                        // same "nothing here" defaults a bare prim would),
-                        // but it does make the actually-important property
-                        // hold: a script that sets one of these and reads
-                        // it back on the same face sees what it set.
+                        // SetPrimParams - reads the per-face override JSON
+                        // (GetMaterialOverrideData) merged with the assigned
+                        // base material underneath it (GetGltfMaterialAssetData)
+                        // for anything the override doesn't specify, so a
+                        // face with an assigned material but no override
+                        // reads back that material's real values, not
+                        // "nothing here" defaults - see GetGltfPrimitiveParams.
                         if (remain < 1)
                             return new LSL_List();
 
@@ -24776,61 +24773,90 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         // Read-side counterpart to ApplyGltfPrimitiveParams below - same
         // [texture, repeats, offsets, rotation] shape common to all four
-        // codes, plus the same type-specific extras SetPrimParams accepts,
-        // decoded from the same compact override JSON
-        // (GetMaterialOverrideData) rather than the assigned base
-        // material - see the case block in GetPrimParams for the scope
-        // note on why. Defaults for an unset field match real SL's own
-        // "nothing set" values (repeats 1,1; offset 0,0; rotation 0;
-        // base color white/alpha 1; alpha mode BLEND(1); metallic/
-        // roughness 1,1; emissive black) - the same defaults
-        // getLSLFaceMaterial already uses for its own "material not
-        // found" case just above, kept consistent rather than inventing
-        // new ones.
+        // codes, plus the same type-specific extras SetPrimParams accepts.
+        // Reads two layers - the per-face override JSON
+        // (GetMaterialOverrideData) and, for anything the override doesn't
+        // specify, the assigned base material (GetGltfMaterialAssetData,
+        // already normalized into this exact same compact key scheme by
+        // TryCompactGltfMaterialJson) - so a face with an assigned material
+        // but no override now reads back that material's real values
+        // instead of "nothing set". Every field is read via the same
+        // ReadCompact* parser applied to both strings in turn, not new
+        // parsing logic, so override-only behavior for a face that has no
+        // assigned base material is unchanged. Defaults for a field present
+        // in neither layer match real SL's own "nothing set" values
+        // (repeats 1,1; offset 0,0; rotation 0; base color white/alpha 1;
+        // alpha mode BLEND(1); metallic/roughness 1,1; emissive black) -
+        // the same defaults getLSLFaceMaterial already uses for its own
+        // "material not found" case just above, kept consistent rather
+        // than inventing new ones.
         private void GetGltfPrimitiveParams(ref LSL_List res, int code, SceneObjectPart part, int face)
         {
-            string data = GetMaterialOverrideData(part, face);
+            string overrideData = GetMaterialOverrideData(part, face);
+            string baseData = GetGltfMaterialAssetData(part, face);
             int textureIndex = GltfTextureIndex(code);
 
-            UUID textureID = ReadCompactUuidArrayItem(data, "tex", textureIndex);
+            UUID textureID = ReadCompactUuidArrayItem(overrideData, "tex", textureIndex);
+            if (textureID.IsZero())
+                textureID = ReadCompactUuidArrayItem(baseData, "tex", textureIndex);
             res.Add(new LSL_String(textureID.IsZero() ? ScriptBaseClass.NULL_KEY : textureID.ToString()));
 
-            OSDMap[] transforms = ReadCompactTransformMaps(data, textureIndex + 1);
-            OSDMap transform = transforms[textureIndex];
+            OSDMap overrideTransform = ReadCompactTransformMaps(overrideData, textureIndex + 1)[textureIndex];
+            OSDMap baseTransform = ReadCompactTransformMaps(baseData, textureIndex + 1)[textureIndex];
 
             LSL_Vector repeats = new(1.0, 1.0, 0);
-            if (transform.TryGetValue("s", out OSD sVal) && sVal is OSDArray sArr && sArr.Count >= 2)
+            if (overrideTransform.TryGetValue("s", out OSD sVal) && sVal is OSDArray sArr && sArr.Count >= 2)
                 repeats = new LSL_Vector(sArr[0].AsReal(), sArr[1].AsReal(), 0);
+            else if (baseTransform.TryGetValue("s", out OSD bsVal) && bsVal is OSDArray bsArr && bsArr.Count >= 2)
+                repeats = new LSL_Vector(bsArr[0].AsReal(), bsArr[1].AsReal(), 0);
             res.Add(repeats);
 
             LSL_Vector offsets = new(0, 0, 0);
-            if (transform.TryGetValue("o", out OSD oVal) && oVal is OSDArray oArr && oArr.Count >= 2)
+            if (overrideTransform.TryGetValue("o", out OSD oVal) && oVal is OSDArray oArr && oArr.Count >= 2)
                 offsets = new LSL_Vector(oArr[0].AsReal(), oArr[1].AsReal(), 0);
+            else if (baseTransform.TryGetValue("o", out OSD boVal) && boVal is OSDArray boArr && boArr.Count >= 2)
+                offsets = new LSL_Vector(boArr[0].AsReal(), boArr[1].AsReal(), 0);
             res.Add(offsets);
 
-            double rotation = transform.TryGetValue("r", out OSD rVal) ? rVal.AsReal() : 0.0;
+            double rotation;
+            if (overrideTransform.TryGetValue("r", out OSD rVal))
+                rotation = rVal.AsReal();
+            else if (baseTransform.TryGetValue("r", out OSD brVal))
+                rotation = brVal.AsReal();
+            else
+                rotation = 0.0;
             res.Add(new LSL_Float(rotation));
 
             switch (code)
             {
                 case ScriptBaseClass.PRIM_GLTF_BASE_COLOR:
-                    double[] baseColor = ReadCompactNumberArray(data, "bc", 4);
+                    double[] baseColor = ReadCompactNumberArray(overrideData, "bc", 4) ?? ReadCompactNumberArray(baseData, "bc", 4);
                     res.Add(baseColor is not null
                             ? new LSL_Vector(baseColor[0], baseColor[1], baseColor[2])
                             : new LSL_Vector(1.0, 1.0, 1.0));
                     res.Add(new LSL_Float(baseColor is not null ? baseColor[3] : 1.0));
-                    res.Add(new LSL_Integer(ReadCompactDouble(data, "am", out double alphaMode) ? (int)alphaMode : 1));
-                    res.Add(new LSL_Float(ReadCompactDouble(data, "ac", out double alphaCutoff) ? alphaCutoff : 0.0));
-                    res.Add(new LSL_Integer(ReadCompactBool(data, "ds", out bool doubleSided) && doubleSided ? 1 : 0));
+                    bool hasAlphaMode = ReadCompactDouble(overrideData, "am", out double alphaMode)
+                            || ReadCompactDouble(baseData, "am", out alphaMode);
+                    res.Add(new LSL_Integer(hasAlphaMode ? (int)alphaMode : 1));
+                    bool hasAlphaCutoff = ReadCompactDouble(overrideData, "ac", out double alphaCutoff)
+                            || ReadCompactDouble(baseData, "ac", out alphaCutoff);
+                    res.Add(new LSL_Float(hasAlphaCutoff ? alphaCutoff : 0.0));
+                    bool doubleSided = (ReadCompactBool(overrideData, "ds", out bool ovDs) ? ovDs
+                            : ReadCompactBool(baseData, "ds", out bool baseDs) && baseDs);
+                    res.Add(new LSL_Integer(doubleSided ? 1 : 0));
                     break;
 
                 case ScriptBaseClass.PRIM_GLTF_METALLIC_ROUGHNESS:
-                    res.Add(new LSL_Float(ReadCompactDouble(data, "mf", out double metallic) ? metallic : 1.0));
-                    res.Add(new LSL_Float(ReadCompactDouble(data, "rf", out double roughness) ? roughness : 1.0));
+                    bool hasMetallic = ReadCompactDouble(overrideData, "mf", out double metallic)
+                            || ReadCompactDouble(baseData, "mf", out metallic);
+                    res.Add(new LSL_Float(hasMetallic ? metallic : 1.0));
+                    bool hasRoughness = ReadCompactDouble(overrideData, "rf", out double roughness)
+                            || ReadCompactDouble(baseData, "rf", out roughness);
+                    res.Add(new LSL_Float(hasRoughness ? roughness : 1.0));
                     break;
 
                 case ScriptBaseClass.PRIM_GLTF_EMISSIVE:
-                    double[] emissive = ReadCompactNumberArray(data, "ec", 3);
+                    double[] emissive = ReadCompactNumberArray(overrideData, "ec", 3) ?? ReadCompactNumberArray(baseData, "ec", 3);
                     res.Add(emissive is not null
                             ? new LSL_Vector(emissive[0], emissive[1], emissive[2])
                             : new LSL_Vector(0, 0, 0));
