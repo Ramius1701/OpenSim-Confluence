@@ -19423,3 +19423,105 @@ underscoring that WhiteCore-Dev (a much more actively-maintained,
 currently-live fork vs. Halcyon's largely-2015-2019 abandoned history)
 may be worth prioritizing over further Halcyon scanning if this review
 continues.
+
+### WhiteCore-Dev - security/permission/economy/currency/inventory category (2026-09-05)
+
+Ran the same category previously used against Halcyon
+(`security|vulnerab|permission|unauthorized|access control|economy|
+currency|inventory`) against WhiteCore-Dev for the first time - 97
+total hits, 91 genuinely new after cross-referencing against every
+hash already cited in this file's WhiteCore-Dev sections.
+
+**One real, confirmed missing-feature gap found, deliberately flagged
+rather than built:** the real SL viewer's "Restore to Last Position"
+inventory context-menu action (`RezRestoreToWorldPacket`) is fully
+wired on the *client-protocol* side of Confluence -
+`LLClientView.cs` declares `OnRezRestoreToWorld`, registers the packet
+handler, and forwards it - but **nothing anywhere in the codebase
+subscribes to that event**. A user right-clicking an item that offers
+this option and choosing it currently does nothing server-side, with
+no visible error. Found via `395c1fac03` (WhiteCore's own fix for this
+same feature, `IInventoryAccessModule.RezRestoreToWorld`). Not built
+this session: implementing it correctly
+means tracing where (if anywhere) Confluence records an object's last
+in-world position/rotation when it's taken into inventory, which
+wasn't done as part of this triage pass - a real feature gap worth a
+dedicated look, not a guess.
+
+**Confirmed already correctly implemented (no gap):**
+- `d54cc7d1fd` (`llRequestInventoryData`'s landmark-lookup async
+  callback NRE-crashing on a failed asset fetch, not null-checking the
+  asset before wrapping it) - Confluence's `llRequestInventoryData`
+  (`LSL_Api.cs:5614`) already null-checks the asset before constructing
+  `AssetLandmark`, and uses a synchronous fetch rather than WhiteCore's
+  async-callback pattern, sidestepping the whole timing concern.
+- `80aa7c470e` (OAR-load script lockout from a lock-object-splitting
+  bug WhiteCore introduced in its own earlier commit, two different
+  lock objects guarding the same inventory dictionary) - Confluence's
+  `SceneObjectPartInventory.cs` uses a completely different locking
+  abstraction (`TaskInventoryDictionary.LockItemsForWrite(bool)`, a
+  single consistent lock wrapper, not bare `lock` statements on
+  separate fields) - the specific bug class doesn't exist in this
+  architecture.
+
+**Ruled out - real bug, but tied to a WhiteCore-only concept/interface
+not present in Confluence at all** (confirmed via direct search, not
+assumed): `59f552ff4c` (Mantis #0007 - RealEstate Owner system account
+created with an unhashed password) - `Constants.RealEstateOwnerUUID`/
+`RealEstateOwnerName` don't exist anywhere in Confluence, a WhiteCore-
+specific auto-created economy account concept; `dc6c700f04`
+(`IParcelManagementModule` interface reference NRE-crashing when null)
+- Confluence has no `IParcelManagementModule` interface at all, uses
+`ILandChannel`/`LandManagementModule` directly, and this exact file's
+null-safety has already been separately, extensively audited earlier
+in this review; `7f7d5c7602` ("correct inventory transfers between
+avatars in different regions") - the actual diff is ~95% brace-style/
+whitespace reformatting noise with the real logic change impossible to
+cleanly isolate from it (same "noisy diff, not pursued" call made for
+`127145402d` in this fork's first batch).
+
+**Ruled out as architecture clusters, not individually re-verified per
+commit** (consistent with this review's established pattern; the
+Coverity-cleanup half of this was already sampled and confirmed low-
+yield in the first WhiteCore-Dev batch): WhiteCore's own currency/
+economy system - "SimpleCurrency" -> "BaseCurrency" rename, Group
+Currency feature development, stipend/scheduler payment work, and
+related config/migration commits (~48 commits: `f79f2dede1`,
+`f883fbc26e`, `8d429c43ee`, `e0d5b13153`, `982a8a4820`, `21e9b7e6ba`,
+`4a731b1d1c`, `87fa698b52`, `ec24ca7349`, `2f0af98ae7`, `a0db111405`,
+`919512a52b`, `1fdb9f5225`, `1d35b631ea`, `31b30ab22d`, `3fd1ce4f75`,
+`1278891bf3`, `f4bf074c83`, `1cf2c6f31d`, `7c851ba883`, `6c449f7415`,
+`aa41b18e46`, `62335d93c8`, `f3200b14c6`, `5152824d6b`, `e41c9acf6c`,
+`0c94f74cdb`, `ff096f2e02`, `5ed598d4ce`, `5dd874eca3`, `6e24c87953`,
+`557049e5d2`, `1ab027a756`, `100324716c`, `3b3a30634e`, `3f21c101ae`,
+`cdbec07683`, `c055f81220`, `1420e5041e`, `b359220034`, plus 4 merge
+commits); WhiteCore's own internal Coverity-driven null-ref/resource-
+leak/concurrency cleanup across its Inventory/Archiver/InventoryCAPS
+service layer, architecturally unrelated to Confluence's own inventory
+stack (17 commits: `cf1b72867a`, `81691dfc00`, `9e9573f74d`,
+`fd742795cf`, `e4915a5892`, `9e9f6ca7a6`, `592d567b8c`, `a0ad03b5f9`,
+`1a43ef2288`, `d2c4cedd90`, `28c02cca9d`, `30a2d874a2`, `af36bf501f`,
+`477e9abd6b`, `03ef99c678`, `2fbe155811`, `2b66ed8c1e`); WhiteCore-only
+concepts/files with no Confluence equivalent whatsoever (`c3ce7de940`
+library-inventory protection, `19841aa72b`/`ad2e9b5cf6`/`6a2efb87ce`
+all touching WhiteCore's own `SQLServices/InventoryService.cs` or
+`CapsService/CAPModules/AssetCAPS.cs`, `cf2184420d` touching the same
+architecturally-different `SceneObjectGroup.cs`/
+`SceneObjectPartInventory.cs` already checked twice this round); pure
+content/asset additions (`7a8b0081a5`, `4b46667bd0`); trivial
+namespace/console-message-only changes (`1ac9542153`, `83a7133b55`,
+`1dfe451bc0`, `9e9573f74d`); 6 pure merge commits with no independent
+content (`fa3b86e34f`, `f63bd1c670`, `0ca4ac9142`, `e539d8f8fc`,
+`db65e40c5d`, `eae0f134bc`, `4cad562b20`).
+
+**Category status: 91 of 91 new hits inspected.** Much lower yield
+than the teleport/crossing/physics/collision run - one real missing-
+feature gap flagged (RestoreToWorld), two real bugs confirmed already
+fixed here via different mechanisms, several real WhiteCore bugs
+confirmed tied to concepts/interfaces that simply don't exist in
+Confluence. Between this and the prior WhiteCore-Dev batches, the
+clear pattern by now: WhiteCore's economy/currency and inventory-
+service layers are both entirely its own architecture and consistently
+low-yield to keep re-checking; the LSL/OSSL-API-level category remains
+the one that's found real fixes twice out of two attempts and hasn't
+been re-run with a fresh keyword set since the very first batch.
