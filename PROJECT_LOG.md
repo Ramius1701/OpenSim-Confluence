@@ -19579,3 +19579,60 @@ Build verified via `OpenSim.Region.ScriptEngine.Shared.Api.dll`'s
 timestamp/location (LSL_Api.cs's own project folder, SDK-style
 auto-glob), hash-verified copy, all 5 regions confirmed `RegionReady`
 with no new errors.
+
+### Clarified: OGI vs built-in WebUI storage are two separate systems (2026-09-05)
+
+User asked whether "the WebUI's" `ws_*`/`web_*` tables had been moved
+to SQLite instead of the main OpenSim MySQL database. Initial answer
+was wrong - checked the live `casperia` MySQL database directly and
+found `ws_*`/`web_*`/`webmessages` tables sitting right there alongside
+core grid tables, seemingly contradicting the user's memory. The real
+explanation, found by digging further rather than concluding the
+user misremembered: **two genuinely separate systems exist, and the
+first check was against the wrong one.**
+
+- **OpenSim-Grid-Interface (OGI)** - the real, separate PHP site at
+  `S:\laragon\www\casperia`, served as the actual `casperia.ddns.net`
+  residents visit (`gridsearch.php`, `message.php`, `tickets_admin.php`,
+  `go.php`). This is what owns every `ws_*` table, and it's already
+  correctly, deliberately split into its own SQLite database
+  (`S:\laragon\www\casperia\data\db\website.sqlite`) via
+  `include/ws_db.php` - confirmed live and actively written (its
+  `ws_hub_teleport_log` has 204 rows vs a stale 199 in MySQL). That
+  file's own doc comment states the reason: keep this project from
+  ever needing write access to, or schema changes on, a grid operator's
+  own database. Real engineering care, not just "moved": WAL mode + a
+  busy timeout for safe concurrent access per-request, and a `ws_now()`
+  helper used for every write specifically because SQLite's own
+  `datetime('now')` is always UTC regardless of PHP's timezone -
+  avoids a real two-clocks bug class.
+- **The built-in/ported native C# WebUI**
+  (`WebInterfaceServiceConnector.cs`, served via Robust) is a
+  completely separate system with its own, differently-named,
+  unprefixed tables (`news`, `web_accounts`, `web_account_avatars`,
+  `web_activity_log`, `webmessages`, `search_log`, `support_tickets`),
+  which do live in the shared MySQL `casperia` database by design and
+  were never part of the `ws_*`/SQLite migration. Confirmed via a
+  comment already in that C# file describing its own `webmessages`
+  implementation as "the real counterpart to OpenSim-Grid-Interface's
+  message.php... rather than raw SQL + a hand-created ws_messages
+  table" - the codebase itself already documents these as two parallel
+  systems.
+
+The stale `ws_*` copies still sitting in MySQL are confirmed-harmless
+leftovers from `tools/migrate_ws_tables.php`, a real, documented,
+safely-rerunnable one-time migration script that deliberately never
+drops/truncates the MySQL side ("Never modifies the MySQL side beyond
+SELECT"). User's call: leave them for now, not a priority. Also found,
+not yet acted on: dead defensive schema-upgrade code in
+`include/gridsearch_functions.php` (`ALTER TABLE ws_search_log ADD
+COLUMN...` in try/catch) from before the SQLite migration - harmless
+no-op today, worth removing if that file is ever touched again.
+
+Lesson for next time: "the WebUI" is ambiguous in this project between
+these two systems - confirm which one before investigating or changing
+anything storage-related. Full detail in the
+`casperia-ogi-vs-builtin-webui-storage` memory (Claude's own memory
+system - not visible to a session rooted directly in this repo folder,
+since memory is scoped per working directory, hence this entry here
+too).
