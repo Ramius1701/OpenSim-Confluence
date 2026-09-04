@@ -19318,3 +19318,108 @@ unexplored for Halcyon specifically - next-best-ROI is likely the
 `teleport|crossing|physics|collision` set against WhiteCore-Dev
 (never run there), or building one of the two flagged missing features
 above.
+
+### WhiteCore-Dev - teleport/crossing/physics/collision category (2026-09-05)
+
+Ran the `teleport|crossing|physics|collision` grep against WhiteCore-Dev
+(`whitecore/master`) for the first time - this category had only ever
+been run against Halcyon before. 29 total hits, all 29 individually
+inspected (small enough to fully triage in one pass rather than sample).
+
+**One real, significant bug found, confirmed with real evidence (not
+assumed), and fixed:** `EntityTransferModule.cs`'s
+`GetRegionContainingWorldLocation` - the fallback path used to resolve
+a teleport target (landmark, map click, or scripted `llTeleportAgent`)
+that falls anywhere inside a varregion larger than 256 units, other than
+its exact origin corner. `GetRegionByPosition` (`GridService.cs`) only
+matches a region's *exact* registered origin by its own doc comment -
+"this is NOT 'get a region by some point in the region'" - and a large
+region is stored as a single database row at its origin, not one row
+per 256-unit cell (verified directly against the live `regions` table:
+SailorV Creations, a real 1024x1024 region, has exactly one row).
+`GetRegionContainingWorldLocation`'s only recovery path for this case
+was previously commented out as "obsolete... this is what 0.9 grids now
+do internally" - but the actual current `GetRegionByPosition`
+implementation does no such internal range search, so that assumption
+is false for this codebase. Net effect before the fix: any teleport
+targeting a point inside a large region other than its first 256x256
+cell would fail with "The region you tried to teleport to was not
+found" (a graceful failure, not a crash, which is presumably why this
+had gone unnoticed) despite the destination region being real, online,
+and correctly registered. This affects real, currently-live regions on
+this grid (SailorV Creations at 1024x1024; Starbase Andromeda and
+Section 31 at 512x512 each have 3 of their 4 possible 256-cells
+similarly affected).
+
+Restored the previously-written (not newly-authored) `GetRegionRange` +
+bounding-box fallback that WhiteCore's own equivalent fix
+(`3b4680bce7`, from this same grep) uses the identical approach for -
+confirmed the interface signature (`IGridService.GetRegionRange`)
+still matches exactly what the commented-out code expected. Low
+regression risk: strictly a fallback that only engages when the
+existing direct lookup already failed, so it cannot change behavior
+for any currently-working teleport, only recover ones that currently
+fail. Built, deployed, and verified live (all 5 regions restarted,
+`RegionReady` confirmed clean, no new errors).
+
+**Confirmed already correctly implemented (no gap) - traced against
+real current code, not assumed:**
+- `9293a43657` (WhiteCore's physical-object-crossing "allow entry"
+  check NRE-crashing when `enteringRegion=true` due to dereferencing a
+  null looked-up entity) - Confluence's `CanObjectEntry`
+  (`PermissionsModule.cs:1612`) already uses the `sog` parameter
+  directly (already null-checked earlier in the method) rather than a
+  separately-looked-up-and-possibly-null entity - doesn't have the bug
+  pattern at all.
+- `004c475ffd` (`llTeleportAgent`'s landmark resolution null-checking
+  the *wrapper object* after construction, which can never be null,
+  instead of the underlying asset data) - Confluence's `DoLLTeleport`
+  (`LSL_Api.cs:6066`) already null-checks the raw `AssetBase` and its
+  `.Data`/`.Type` *before* constructing the `AssetLandmark` wrapper -
+  more thorough than even WhiteCore's fixed version.
+- `19dce3cc82` (adding `AvatarSize`/`AvatarBoxSize`/`AvatarFeetOffset`
+  physics-collision-box parameters to `AvatarAppearance`, missing at
+  the time) - Confluence's `AvatarAppearance.cs` already has all three
+  properties plus the identical `AVBOXMINX/Y/Z` clamp constants -
+  already implemented, presumably converged from the same later
+  upstream opensim-master adoption WhiteCore and Confluence both
+  eventually picked up independently.
+
+**Corroborating evidence for the already-flagged `LandingType.Blocked`
+finding** (not a new finding, not built): `952560d329` shows WhiteCore's
+own mature parcel-landing-point enforcement lives in the actual
+teleport-authorization layer (`EstateService.AllowedIncomingTeleport`),
+checking both `LandingType.None` (blocked) and `LandingType.LandingPoint`
+there - structurally confirming this is the right layer to enforce it
+at (matching this review's own earlier conclusion when tracing
+Confluence's `QueryAccess`/`CheckLandPositionAccess` pipeline), even
+though WhiteCore's actual file/class structure isn't portable directly.
+
+**Ruled out - WhiteCore's own independently-forked physics engine,
+entirely different from Confluence's ubODE** (not individually
+re-verified per commit beyond file-path triage, consistent with this
+review's established pattern for confirmed-dead architecture clusters):
+`208212ca39`, `2d52cf1283`, `d2fde03361`, `9df7a1fb80`, `02a0a3af30`,
+`2198f54d25`, `391d285174`, `fd968475bb`, `6a5bcb0beb`, `c84bab1732`,
+`5c24b75c79`, `5449d5216c`, `abb99f3ef5`, `552b7a3104`, `49c576931a`,
+`02d4af16b7` - all confined to `WhiteCore/Physics/OpenDynamicsEngine/`
+(WhiteCore's own "WODE" ODE fork), `WhiteCore/Physics/BulletSPlugin/`,
+`WhiteCore/Physics/Meshing/`, or `WhiteCoreSim/Config/Sim/Physics/`
+(WhiteCore's own config-file layout) - none of these paths/namespaces
+exist in Confluence. `11862d9431` (WhiteCore's own
+`m_lastSigInfiniteRegionPos`/"InfiniteRegion" neighbor-tracking cache,
+removing its own hardcoded-256 assumption) doesn't exist in Confluence's
+`ScenePresence.cs` at all - a genuinely different neighbor-discovery
+mechanism, and a direct search for the same hardcoded-256-in-region-
+crossing pattern here came up empty. `1f15eedcfe` is a pure file
+rename (0 content changes). `e3934ff365` touches only already-dead
+`RenderMaterials.cs`/`BulletSPlugin`. 5 pure merge commits carried no
+independent content.
+
+**Category status: 29 of 29 hits inspected, first WhiteCore-Dev run of
+this category.** One real, live-relevant bug found and fixed - the
+best yield-per-hit-count of any category run this whole review,
+underscoring that WhiteCore-Dev (a much more actively-maintained,
+currently-live fork vs. Halcyon's largely-2015-2019 abandoned history)
+may be worth prioritizing over further Halcyon scanning if this review
+continues.
