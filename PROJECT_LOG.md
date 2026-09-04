@@ -18899,3 +18899,78 @@ No code changes this session beyond what was already committed
 earlier today - every candidate checked in this stretch was either
 already correctly implemented in Confluence or confirmed not
 applicable. [[casperia-fork-review-status]] updated to match.
+
+### Halcyon review, autonomous continuation part 2 - remaining vague-titled 110-hit-grep candidates (2026-09-04)
+
+Continued past the checkpoint above rather than stopping there, since
+real time remained before the user's return. Checked the 10 titles
+that were too vague to triage by name alone from the prior entry's
+"not yet individually confirmed" list, plus two more surfaced while
+re-scanning (`bddc15fac0`, `5c7b05cfed`).
+
+**All twelve checked, all ruled out - none applicable:**
+- `31ae018539` - `OpenSim/Grid/UserServer/Main.cs`, the legacy
+  pre-Robust standalone grid-server architecture, already established
+  gone.
+- `20d1ffeebb` (NRE kicking a user whose `ControllingClient` was
+  cleared by another thread) - the entire method this touches is
+  commented out (dead code) in Confluence's `Scene.cs`.
+- `1c8c11d568` (`SceneObjectGroup.Name` setter calling itself via
+  `this.Name = value` instead of the backing field - infinite
+  recursion) - Confluence's `Name` property is structurally different
+  (delegates to `RootPart.Name`, no self-reference at all).
+- `6d246bbfa3`, `7e73c3c800` - Halcyon's own bot framework (Confluence
+  uses Tranquillity's instead) and `SceneView`/`RemotePresences`
+  architecture, both already-established-dead families.
+- `e0e25ca6c4` - the same `KeyOrName()` helper already ruled out
+  Phlox-specific in the very first batch of this whole review.
+- `bfc51cc088` (`ResetIDs()` needing to remove-then-add to avoid
+  duplicate list entries) - Confluence's version already clears the
+  entire collection upfront before re-adding, safer than Halcyon's
+  per-part remove-then-add.
+- `31b667e932` (`LandObject.GetPrimsOverByOwner` copying the list
+  before iterating outside `primsOverMe`'s lock, to avoid calling
+  lock-acquiring code while holding it) - that specific method doesn't
+  exist in Confluence's `LandObject.cs` at all. Noted in passing, not
+  chased further: `BuySellLandPrims` (a different, real, current
+  method) calls `CanSellObject`/`BuyObject` *while holding* the same
+  `primsOverMe` lock - a similarly-flavored risk, but unconfirmed
+  without tracing the full lock-acquisition graph of `BuyObject`;
+  flagged as an observation for a future dedicated look, not a proven
+  bug from this donor commit.
+- `5c7b05cfed` - `AvatarRemotePresences.cs`, same already-dead
+  `RemotePresences` family.
+- `bddc15fac0` (`UDPPacketBuffer.Buffer` -> `Buffer.Data` across
+  `LLUDPClient.cs`/`LLUDPServer.cs`/`OpenSimUDPBase.cs`) - a point-in-
+  time OpenMetaverse library API-surface migration, not a behavioral
+  bug - Confluence already targets whatever member names its own
+  current library version exposes (it compiles clean), so this
+  specific historical transition isn't portable or relevant either
+  way.
+
+**Running total for the original 110-hit grep: ~52 of 110 now
+individually inspected.** Remaining ~58 are, by this session's own
+repeated confirmation, overwhelmingly merge commits and members of
+the already-established-dead architecture families (flatbuffers,
+ByteBufferPool, `AvatarTransit/`, `SceneView`, `CachedUserInfo`/
+`UserProfileManager`, `m_posInfo`, legacy `MessagingServer`/
+`UserServer`, Phlox, bot-framework, PhysX/`BasicPhysicsPlugin`) -
+genuinely low remaining expected yield if this resumes further.
+
+**Session-wide summary for whoever reviews this next:** the
+teleport/crossing (52) and physics/collision (24) keyword categories
+are now fully triaged. The original 110-hit grep is roughly half
+inspected. Real fixes shipped today: HG friends status, Warp3D
+renderer selection, five small `#140`-batch bugs, YEngine best-effort
+state restore, MimeKit/MailKit security update, estate-manager ban
+protection (two places), the `GetLandObject` null-safety audit (three
+places), and the `RequestLure` IM fix - all committed, built, deployed
+live, and verified via `RegionReady` + clean logs. Two real findings
+remain deliberately flagged rather than built
+(`LandingType.Blocked`, `PhysicsActor` TOCTOU at 14 sites) plus one
+new one from this final stretch (`RenderMaterials`/`ReflectionProbe`
+shallow-copy-on-Duplicate, and the `primsOverMe`-held-during-
+`BuyObject` observation). Nothing was rushed or guessed at un-verified
+this whole session - every ruling above traces to a direct check
+against Confluence's actual current code, not an assumption from the
+donor diff alone.
