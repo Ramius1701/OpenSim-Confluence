@@ -260,12 +260,39 @@ namespace OpenSim.Region.CoreModules.World.Warp3DMap
             m_scene = scene;
 
             List<string> renderers = RenderingLoader.ListRenderers(Util.ExecutingDirectory());
-            if (renderers.Count > 0)
-                m_log.Info("[MAPTILE]: Loaded prim mesher " + renderers[0]);
+            string preferredRenderer = SelectPrimMesherFile(renderers);
+            if (preferredRenderer != null)
+                m_log.Info("[MAPTILE]: Loaded prim mesher " + preferredRenderer);
             else
                 m_log.Info("[MAPTILE]: No prim mesher loaded, prim rendering will be disabled");
 
             m_scene.RegisterModuleInterface<IMapImageGenerator>(this);
+        }
+
+        // Donor-repo sync (OpenSim-Tranquillity, "Fix Warp3D map tile
+        // terrain textures, prim renderer selection, and material
+        // dupes"): renderers[0]/[1] picked whatever the directory scan
+        // happened to list first/second, not necessarily Meshmerizer -
+        // Tranquillity's own commit found this left prims untextured
+        // when a non-Meshmerizer renderer (e.g. a simple bounding-box
+        // renderer) sorted first. Currently harmless on this install
+        // (Meshmerizer happens to load as renderers[0] here), but that's
+        // incidental directory-scan ordering, not a guarantee, and this
+        // module became the default map renderer for every Casperia
+        // Prime region tonight - worth making the selection explicit
+        // rather than relying on it continuing to get lucky.
+        private static string SelectPrimMesherFile(List<string> renderers)
+        {
+            if (renderers.Count == 0)
+                return null;
+
+            foreach (string f in renderers)
+            {
+                if (System.IO.Path.GetFileName(f).IndexOf("Meshmerizer", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return f;
+            }
+
+            return renderers[0];
         }
 
         public void RegionLoaded(Scene scene)
@@ -308,9 +335,10 @@ namespace OpenSim.Region.CoreModules.World.Warp3DMap
         public Bitmap CreateMapTile()
         {
             List<string> renderers = RenderingLoader.ListRenderers(Util.ExecutingDirectory());
-            if (renderers.Count > 0)
+            string rendererFile = SelectPrimMesherFile(renderers);
+            if (rendererFile != null)
             {
-                m_primMesher = RenderingLoader.LoadRenderer(renderers[0]);
+                m_primMesher = RenderingLoader.LoadRenderer(rendererFile);
             }
 
             try
@@ -344,9 +372,10 @@ namespace OpenSim.Region.CoreModules.World.Warp3DMap
         public Bitmap CreateViewImage(Vector3 camPos, Vector3 camDir, float pfov, int width, int height, bool useTextures)
         {
             List<string> renderers = RenderingLoader.ListRenderers(Util.ExecutingDirectory());
-            if (renderers.Count > 0)
+            string rendererFile = SelectPrimMesherFile(renderers);
+            if (rendererFile != null)
             {
-                m_primMesher = RenderingLoader.LoadRenderer(renderers[0]);
+                m_primMesher = RenderingLoader.LoadRenderer(rendererFile);
             }
 
             cameraPos = camPos;
@@ -635,6 +664,24 @@ namespace OpenSim.Region.CoreModules.World.Warp3DMap
             renderer.Scene.addObject("Terrain", obj);
 
             OpenSim.Framework.RegionSettings regionInfo = m_scene.RegionInfo.RegionSettings;
+
+            // NOT porting OpenSim-Tranquillity's TerrainPBRn fallback
+            // here (see their "Fix Warp3D map tile terrain textures..."
+            // commit) - checked it against this codebase's own
+            // TerrainSplat.Splat() first and it isn't a safe drop-in:
+            // Splat() fetches each ID via assetService.Get() and decodes
+            // the bytes straight as J2K image data. TerrainTextureN is a
+            // plain image asset, but TerrainPBRn stores a *material*
+            // asset (GLTF-style JSON referencing separate base-color/
+            // normal/etc texture IDs), not raw image bytes - feeding
+            // that into J2kImage.FromBytes() would throw, get caught,
+            // and silently leave that texture slot blank. That's worse
+            // than today's behavior (a stale-but-valid legacy texture)
+            // for any region actually using PBR terrain. Doing this
+            // right needs the material asset resolved to its base-color
+            // texture ID first, which neither this module nor
+            // TerrainSplat.cs currently does - flagged as a real gap,
+            // not fixed here.
             UUID[] textureIDs = new UUID[4]
             {
                 regionInfo.TerrainTexture1,
