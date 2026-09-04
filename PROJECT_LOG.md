@@ -18974,3 +18974,78 @@ shallow-copy-on-Duplicate, and the `primsOverMe`-held-during-
 this whole session - every ruling above traces to a direct check
 against Confluence's actual current code, not an assumption from the
 donor diff alone.
+
+### Unexplained live-grid outage while unattended (2026-09-04 to 2026-09-05)
+
+The live grid went down for roughly 9.5 hours overnight while the user
+was away, discovered only when they got home. Investigated on return
+using `Robust.log`, `OpenSim.log`, Windows Event Viewer, and the prior
+session's own transcript to establish a timeline with evidence, not
+guesswork.
+
+**Timeline:**
+- 17:18 PM - last live deploy of the night (the `RequestLure` IM fix),
+  a normal staggered restart of the 5 region processes. Confirmed
+  clean: all 5 regions hit `RegionReady` by 17:22:15 with no new
+  errors. This was the last command executed against the live grid
+  before the outage - everything after it was git/PROJECT_LOG/memory
+  documentation work only, no further process control.
+- 17:34:40 - `Robust.log`'s last line, a routine grid-info request.
+  No shutdown or exception logged after this.
+- 17:49:05-17:49:07 - the 5 region processes kept running independently
+  (as expected, they don't depend on Robust for basic operation) long
+  enough to complete a scheduled OAR auto-backup of SailorV Creations
+  cleanly, then `OpenSim.log` also goes silent with no shutdown or
+  exception logged.
+- System `LastBootUpTime` was confirmed unchanged (Sept 3 07:47) across
+  the entire window - this was not a reboot, something killed the
+  `Robust.exe` and `OpenSim.exe` processes directly, roughly 15 minutes
+  apart from each other.
+- Windows Application event log shows a `CbsPackageServicingFailure2`
+  entry for `Package_for_DotNetRollup_481` (a .NET runtime servicing
+  update) in the same general evening window, alongside an unrelated
+  Edge installer crash. This is circumstantial, not confirmed - no
+  direct evidence ties it to these two processes specifically, but a
+  failed/partial .NET runtime update is a plausible mechanism for an
+  external, un-logged kill of multiple .NET host processes with no
+  crash dump and no application-level exception.
+- Neither process was restarted by anyone/anything between 17:49 and
+  03:24 the next morning, when the user got home and the outage was
+  found and fixed.
+
+**Root cause: not conclusively identified.** What's ruled out: this
+was not caused by any command run against the grid (the transcript's
+last process-control command was the verified-successful 17:18 deploy;
+nothing after it touched Robust/OpenSim), and it was not a system
+reboot. What's suspected but unconfirmed: a Windows Update servicing
+action terminating the processes while replacing shared .NET runtime
+files they had loaded.
+
+**The actual process gap, regardless of root cause:** once a deploy is
+verified healthy, monitoring stopped. The rest of that night's session
+did further code-review work for over an hour after 17:22 without ever
+re-checking that Robust/OpenSim were still running. A crash or external
+kill at 17:34-17:49 therefore went undetected for the remainder of the
+autonomous session and the following ~9 hours until the user manually
+noticed. Fixed going forward (this session): a persistent 5-minute
+watchdog now checks `Get-Process -Name Robust,OpenSim` counts against
+the expected 1/5 and alerts on any mismatch, for the remainder of this
+session. This does not fix the underlying unknown cause, only the
+detection gap - if this recurs, the next occurrence should at least be
+caught and fixed within minutes rather than hours.
+
+**Fix applied:** grid restarted 03:24 (confirmed 0 users online at the
+time via the `presence` table, though this check is close to
+meaningless when the grid is already fully down - it wasn't a
+disruption-avoidance check in this instance, just habit). All 5 regions
+confirmed `RegionReady` by 03:25:55 with no new errors beyond the two
+pre-existing, harmless recurring ones already present at every prior
+startup (missing hover-text asset in Welcome Center, one degenerate
+mesh). Robust and all 5 OpenSim processes confirmed running.
+
+**Open follow-up, not yet acted on:** if this recurs, worth checking
+whether Windows Update / `TiWorker.exe` activity correlates with the
+next occurrence, and whether disabling automatic .NET runtime servicing
+restarts (or scheduling updates for a window that includes a
+supervised restart) is worth doing given this is a live production
+service.
