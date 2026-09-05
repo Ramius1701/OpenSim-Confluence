@@ -200,8 +200,13 @@ incompatible with a straight cherry-pick, hand-ported from:
   [Homeworldz](https://github.com/homeworldz/server) — audited as a
   preservation effort for design ideas and code from projects that have
   fallen by the wayside
-- OpenSim-Grid-Interface (a PHP grid portal) — a secondary reference
-  for the Web UI where WhiteCore-Dev had no equivalent page
+- OpenSim-Grid-Interface (ManfredAabye's `oswebinterface` fork, a
+  separate PHP project — not Confluence's own code, not ported from)
+  — referenced for the native Web UI's page structure where
+  WhiteCore-Dev had no equivalent page. Still included and bundled
+  alongside Confluence today as a swappable alternative to the native
+  Web UI, not superseded or merged in — see `FEATURES.md`'s Web &
+  Admin UI section
 
 Historical source provenance remains available in Git history.
 
