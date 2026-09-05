@@ -19636,3 +19636,76 @@ anything storage-related. Full detail in the
 system - not visible to a session rooted directly in this repo folder,
 since memory is scoped per working directory, hence this entry here
 too).
+
+## Phlox script engine — real benchmark run, shelved (2026-09-05)
+
+User asked to look seriously at porting Halcyon's Phlox LSL engine,
+motivated by two beliefs: it'd be faster than YEngine (InWorldz/Halcyon
+reputation), and it might bring SLua support for builders. Both
+premises were checked directly rather than taken on faith, and both
+didn't hold up.
+
+**Provenance/licensing re-confirmed clean** (this part of the earlier
+"corrected" entries above does hold up): the real compiler/VM core
+lives at `HalcyonGrid/phlox` (Apache 2.0, ~63,453 lines, confirmed by
+direct `wc -l`), the OpenSim-integration adapter at `HalcyonGrid/
+halcyon`'s `InWorldz/InWorldz.Phlox.Engine/*` (BSD-3-Clause), and a
+rename branch already exists (`halcyon/iw_to_hal_scripting`) that
+lines up the InWorldz-branded adapter's types against the real
+Halcyon-branded core cleanly - verified directly, 536 of 540 methods on
+the real `ISystemAPI` interface are actually implemented.
+
+**Real, measured benchmark - the actual reason this got shelved.**
+Rather than trust reputation, both engines were actually built and run
+head-to-head: Phlox's real VM (ported its old .NET Framework 4.7.1
+`Halcyon.Phlox.csproj` to modern net8.0 SDK-style with zero source
+changes needed - the checked-in ANTLR-generated parser meant no
+grammar toolchain was needed) compiling and executing real LSL through
+its own `Glue.CompilerFrontend` → `VM.Interpreter`, versus YEngine's
+actual production compiler pipeline (`MMRScriptCompile.cs`'s real
+`TokenBegin.Construct` → `ScriptReduce.Reduce` → `ScriptCodeGen.CodeGen`,
+producing a genuine JIT-compiled `System.Reflection.Emit.DynamicMethod`)
+run from this project's own already-built assemblies. Both were fed the
+identical deterministic script and produced identical output (15.0),
+confirming the comparison was real and not silently broken on one side.
+
+Result: **YEngine is roughly 100-190x faster than Phlox**, not the
+reverse - confirmed across three workload sizes (500K/5M iteration
+float+vector+list arithmetic, 500K pure integer arithmetic), scaling
+linearly so the gap isn't a fixed-cost artifact. The architectural
+reason is straightforward in hindsight: Phlox is a bytecode-dispatch
+interpreter, YEngine compiles LSL all the way to real machine code.
+Whatever made Phlox valuable to InWorldz/Halcyon in production, raw
+execution speed against a modern JIT-compiling engine isn't it -
+InWorldz's reputation for a fast, responsive grid most likely rested on
+other engineering (their own physics/scheduler work), not this specific
+engine being fast at instruction dispatch.
+
+**OSSL support: 0 functions, not ~2 as an earlier pass estimated.**
+Direct inspection found the exact seam that would host OSSL support,
+`EngineInterface.GetApi(UUID, string)`, is a literal `throw new
+NotImplementedException()`. `LSLSystemAPI.cs` (21,508 lines) contains
+zero mentions of "OSSL" anywhere. All ~300+ of this project's OSSL
+functions would need to be written from scratch against Phlox's own
+`ISystemAPI`/glue shape - Confluence's existing `OSSL_Api.cs` doesn't
+carry over mechanically, since it's written against different
+interface assumptions. Real content on Casperia leans on OSSL almost
+everywhere, so a port without this would be unusable on live content
+regardless of the engine's own speed.
+
+**SLua: doesn't exist in the real upstream lineage at all.** Grepped
+the entire `phlox-core` repo for Lua-like syntax - zero real hits. The
+SLua work referenced in this log's earlier Tranquillity entries is
+Tranquillity's own separate addition on top of their copy of Phlox, not
+something that would ride along with a port of the real Halcyon/
+phlox-core source. Wanting SLua specifically means a from-scratch
+language-frontend project, unrelated to whether Phlox itself ever gets
+ported.
+
+**Combined effort estimate: 3-6+ months** to reach real usability
+(engine port + full OSSL build-out + bridging Phlox's own bytecode-
+snapshot state persistence against this project's XML-state contract,
+used by OAR/IAR export and HG teleport) - for an engine that benchmarks
+slower than what's already deployed. Shelved; see ROADMAP.md's
+"Explicitly out of scope" entry. Not revisited unless the underlying
+Phlox VM itself changes to something competitive.

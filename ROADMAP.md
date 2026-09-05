@@ -49,24 +49,6 @@ gap today. For what already exists, see `FEATURES.md`.
 - **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
   set**, to catch anything the current build missed. Ongoing,
   page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.
-- **Phlox script engine / SLua support.** Corrects both this file's
-  prior "not started, would need to be built from nothing" framing and
-  the earlier "closed-source, no clear license" conclusion in "out of
-  scope" below — neither holds up. Full real provenance chain traced
-  and license-checked at every link: Halcyon's own engine
-  (`HalcyonGrid/phlox`, Apache 2.0, ~63,000 lines, the actual
-  compiler/VM core) → InWorldz's branded build of it
-  (`HalcyonGrid/halcyon`, BSD, the OpenSim-integration adapter) →
-  Legion Grid's real port/SLua work (`JohnLegionH/Legion-Grid-Code`,
-  BSD, dated checkpoints) → Tranquillity, which is where this project
-  first found it. A namespace-rename branch already exists
-  (`halcyon/iw_to_hal_scripting`) that makes the InWorldz-branded
-  adapter match the current Halcyon-branded core exactly. Clean license
-  chain, real people, real dated work at every hop. OSSL support in the
-  ported engine is still only ~2 functions against this project's 312,
-  so real usability on live content needs a large follow-on effort
-  regardless of the licensing question being resolved — scoping the
-  actual port is the next real step, not yet started.
 
 ## Planned, not started
 
@@ -98,6 +80,31 @@ gap today. For what already exists, see `FEATURES.md`.
 
 ## Explicitly out of scope for now
 
+- **Phlox script engine / SLua support — investigated and shelved
+  (2026-09-05).** The licensing/provenance chain genuinely checks out
+  (Halcyon's real engine, `HalcyonGrid/phlox`, Apache 2.0; the
+  OpenSim-integration adapter, `HalcyonGrid/halcyon`, BSD; a namespace-
+  rename branch, `halcyon/iw_to_hal_scripting`, that lines up cleanly
+  against the real core's actual types), but two real, measured
+  findings closed this out: **(1)** a real built-and-run benchmark
+  (Phlox's actual VM compiled and executed, YEngine's actual production
+  compiler pipeline compiled and executed, both verified to produce
+  identical output on the same test script) found YEngine roughly
+  100-190x *faster* than Phlox on pure arithmetic, not the reverse -
+  Phlox is a bytecode interpreter, YEngine JIT-compiles LSL to real
+  machine code via `System.Reflection.Emit`, and that architecture gap
+  dominates. **(2)** OSSL support in the real Phlox adapter is 0
+  functions, not the ~2 an earlier pass estimated - the exact seam that
+  would host it (`EngineInterface.GetApi()`) is a literal
+  `throw new NotImplementedException()`. Building out this project's
+  ~300 OSSL functions from scratch against Phlox's own API shape, plus
+  bridging Phlox's own bytecode-snapshot state format against this
+  project's XML-state contract (used by OAR/IAR export and HG
+  teleport), was estimated at 3-6+ months of focused work - and would
+  still ship an engine slower than what's already here. SLua doesn't
+  exist anywhere in the real upstream Halcyon/Phlox lineage either (a
+  from-scratch language-frontend project, unrelated to any Phlox port).
+  Not revisited unless the underlying VM itself changes.
 - **`osPlaySoundURL`** (play audio from an arbitrary external URL,
   ported from Legion-Grid-Code). Built, deployed, and tested live on
   2026-08-30/31 - reproducibly hung the calling script's execution
