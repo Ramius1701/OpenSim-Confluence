@@ -201,12 +201,14 @@ incompatible with a straight cherry-pick, hand-ported from:
   preservation effort for design ideas and code from projects that have
   fallen by the wayside
 - OpenSim-Grid-Interface (ManfredAabye's `oswebinterface` fork, a
-  separate PHP project — not Confluence's own code, not ported from)
-  — referenced for the native Web UI's page structure where
-  WhiteCore-Dev had no equivalent page. Still included and bundled
-  alongside Confluence today as a swappable alternative to the native
-  Web UI, not superseded or merged in — see `FEATURES.md`'s Web &
-  Admin UI section
+  separate PHP project — not Confluence's own code, not ported from,
+  and not distributed with this repository) — referenced for the
+  native Web UI's page structure where WhiteCore-Dev had no equivalent
+  page. It plays the same role as this repo's `addon-modules`: an
+  optional alternative to the built-in Web UI for grid owners who'd
+  rather not run it, maintained independently and under separate,
+  ongoing development — not shipped, bundled, or included with
+  Confluence
 
 Historical source provenance remains available in Git history.
 

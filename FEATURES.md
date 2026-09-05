@@ -7,8 +7,12 @@ planned or still missing, see `ROADMAP.md`.
 ## Web & Admin UI
 
 A native, Robust-hosted grid portal — not an addon-module, and not a
-replacement for the optional `OpenSim-Grid-Interface` PHP site, which
-remains available as a swappable alternative. Login is unchanged
+replacement for `OpenSim-Grid-Interface`, a separate, independently
+maintained PHP project that plays the same role this repo's
+`addon-modules` do: an optional alternative to the built-in Web UI for
+grid owners who'd rather not run it. That project isn't distributed
+with or part of this repository; see README.md's attribution section
+for how its page structure informed this UI's design. Login is unchanged
 since day one — avatar name + in-world password — but the first
 avatar a resident registers or logs in with now becomes a master
 account behind the scenes, auto-linked the moment it has a real
