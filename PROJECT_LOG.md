@@ -19709,3 +19709,109 @@ used by OAR/IAR export and HG teleport) - for an engine that benchmarks
 slower than what's already deployed. Shelved; see ROADMAP.md's
 "Explicitly out of scope" entry. Not revisited unless the underlying
 Phlox VM itself changes to something competitive.
+
+## Pathfinding/Abuse Reports found completely inert grid-wide; real deploy-drift audit (2026-09-05)
+
+Started from a resident-facing question: why is Firestorm's Build >
+Pathfinding menu greyed out? Traced the real gate the viewer checks -
+not `SimulatorFeatures`'s `DynamicPathfindingEnabled` flag (this
+project never sets that key at all, confirmed via grep), but
+`LLPathfindingManager::isPathfindingEnabledForRegion()` in
+`llpathfindingmanager.cpp`, which checks whether the region's granted
+capabilities include a non-empty `RetrieveNavMeshSrc` URL. That cap
+genuinely IS registered by `PathfindingModule.cs` - built, logged as
+"complete for what's achievable in this environment" back on
+2026-08-31 (see the Pathfinding entries above) - but the module itself
+defaults to disabled (`Initialise()` returns early if `[Pathfinding]`
+is absent from a region's ini) and **no region on the live grid had
+that section**. A real, fully-built, previously-verified feature sat
+completely unreachable because nobody ever flipped the config switch.
+
+User's reaction, correctly: "things like this keep the grid going up
+and down" - not literally true (a disabled optional module doesn't
+crash anything), but the underlying frustration was real: repeated
+piecemeal restarts for issues discovered one at a time. Ran a proper
+audit instead of just fixing Pathfinding and moving on, specifically
+checking (1) what else is built-but-never-enabled the same way, and
+(2) how far the live grid's deployed binaries actually are behind this
+repo's committed HEAD, since a DLL-hash mismatch noticed mid-session
+suggested the live deployment might be running stale code more broadly
+than anyone had tracked.
+
+**Finding 1: Abuse Reports - bigger miss than Pathfinding.** The
+in-viewer "Report Abuse" floater backend, plus this project's own
+WebUI admin review page (built 2026-08-09, "Batch 13"), had never been
+turned on anywhere either - gated behind four independent switches
+(`[Messaging] AbuseReportsModule`, `[Modules] AbuseReportsService`, an
+`[AbuseReportsService]` section, `[AbuseReports] Enabled = true`),
+none present on any of the (it turned out) 15 live regions. All
+required code was already deployed - config-only fix, no rebuild.
+
+**A real mid-fix correction, caught before it shipped wrong:** the
+first attempt configured `[Modules] AbuseReportsService =
+LocalAbuseReportsServicesConnector` per-region, pointing each region at
+its own direct MySQL connection - but the live log showed "Remote
+AbuseReportsService enabled" instead of Local, revealing that
+`config-include/GridCommon.ini` already set
+`AbuseReportsService = "RemoteAbuseReportsServicesConnector"`
+grid-wide, and Robust's own `AbuseReportsServiceConnector` was already
+correctly registered and DB-wired to receive it - a deliberate,
+pre-existing, working centralize-on-Robust architecture (the same
+pattern as `ExperienceService`/`EstateDataService`/`MuteListConnector`)
+that the per-region edits were silently overridden by, not helped by.
+Removed the redundant/inert Local-connector config from all 15 region
+inis rather than leaving dead, misleading settings behind. The two
+genuinely-missing pieces were narrower than first assumed: just
+`[Messaging] AbuseReportsModule` and `[AbuseReports] Enabled = true`,
+per region - the connector wiring was never actually broken.
+`GridCommon.ini.example` never documented this Remote setup at all
+despite the live config using it - fixed alongside `OpenSim.ini.example`
+(both `[Pathfinding]` and `[AbuseReports]` now default to
+`Enabled = true`).
+
+**Finding 2: real deploy drift, but small and precisely bounded, not
+"unknown."** Fresh `dotnet build OpenSim.sln -c Release` at HEAD
+compared against every live top-level DLL by cross-referencing `git
+log` on each assembly's actual source paths (not hash alone - hashes
+differ for nearly every DLL from non-deterministic build metadata,
+which isn't proof of drift by itself). Four assemblies were genuinely
+behind, each by one specific already-committed, already-verified fix
+that simply never got copied to the live grid: `OpenSim.Region.
+CoreModules.dll` (the varregion teleport-target fallback from
+`16687c167f`, real high-impact bug - teleports into most of a large
+varregion's footprint were failing "region not found"),
+`OpenSim.Region.Framework.dll` (`RezRestoreToWorld`,
+`06433b0782`), `OpenSim.Region.ScriptEngine.Shared.Api.dll`
+(`PRIM_GLTF_*` readback, `30bb67a112`), and `OpenSim.Framework.dll`/
+`OpenSim.dll` (the permissions-module startup guard + TaskInventory XML
+cosmetic fix, `2eb106ea6f`). Every other live assembly checked
+(LindenCaps, Services.Connectors, Data, YEngine, Server.Handlers,
+OptionalModules, all ApplicationPlugins, Addons.Groups/OfflineIM/
+RegionWeb, OpenSimMarketplace, Capabilities.Handlers, Robust.dll,
+MoneyServer.dll) had zero commits against their source since their
+last deploy - genuinely clean, not just unchecked.
+
+**Deployed in one batched restart** (per the user's explicit ask - one
+combined restart instead of repeated piecemeal ones): all 4 drifted
+assemblies copied and hash-verified, `[Pathfinding]`/the 2 Abuse
+Reports switches added to all 15 region inis (discovered mid-task:
+`GFC` is a 15th live region, running but absent from this session's
+earlier 14-region restart lists - its `.ini` had also visibly drifted
+in structure/date from the other 14's shared template, worth watching
+for future batch edits silently skipping it again). Full grid restart
+(Robust + all 15 regions, since `OpenSim.Framework.dll` is Robust-
+shared): all 15 confirmed `RegionReady`, zero errors in either log
+attributable to any of this, Abuse Reports confirmed live via the
+Remote connector attaching cleanly on every region.
+
+**Patterns checked and explicitly ruled out, not just unchecked:**
+Experience Tools looked like the same gap (identical `Enabled=false`-
+by-default CAPS-gate shape) but is actually already live everywhere -
+`OpenSimDefaults.ini`'s inherited defaults layer already carries
+`[Experience] Enabled = true`, confirmed identical between repo and
+live via `comm -3`. The various addon-module `[ContinuumModules]`
+Include directives are absent from every region ini but don't load
+through that mechanism live (`OpenSimWeather`/`RegionWeb` load from
+their own `addon-modules/*/config/*.ini` independently) - not a gap.
+On-demand region loading is absent too, but that's a considered,
+logged decision (a known discovery-gap bug), not an oversight.
