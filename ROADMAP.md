@@ -122,6 +122,22 @@ gap today. For what already exists, see `FEATURES.md`.
   versions — the OSSL equivalents already exist), roughly 80 `iw*`
   inventory/string/list/agent/group utility functions, Euler-rotation
   LSL functions, and a small JWT auth module.
+- **JPEG2000 texture decoder default: CSJ2K vs. OpenJPEG — found during
+  a WhiteCore-Dev performance audit (2026-09-05), not yet benchmarked.**
+  WhiteCore's own real timing comparison found their native OpenJPEG
+  decoder considerably faster than the managed CSJ2K one on a real hot
+  path (every `GetTexture` cap decode, plus dynamic-texture/terrain-bake
+  decodes) and switched their default accordingly
+  (`J2KDecoderModule.cs`). Confluence still defaults to the slower
+  CSJ2K (`m_useCSJ2K = true`; `OpenSimDefaults.ini`'s matching
+  commented default). Not a clean port, though: OpenJPEG is a native
+  P/Invoke library, and this exact default has historically flip-
+  flopped across the OpenSim ecosystem specifically because native
+  bindings have caused platform-specific stability problems elsewhere -
+  most likely why the slower-but-safer managed decoder is still the
+  default here and in stock OpenSim. Needs real benchmarking on this
+  project's actual Windows deployment before flipping, not a blind
+  config change. Held per the user's call, not tested live yet.
 
 ## Explicitly out of scope for now
 

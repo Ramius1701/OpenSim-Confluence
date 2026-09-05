@@ -19905,3 +19905,72 @@ upstream's and would very likely work unchanged.
 shelved as infeasible - see ROADMAP.md's "Planned, not started" entry.
 Revisit if a resident/admin self-compiled-patch workflow becomes worth
 setting up.
+
+## WhiteCore-Dev, fourth category: performance/speed - lowest yield of the four, functionally done (2026-09-05)
+
+User asked to widen the "what makes the grid faster" question (raised
+during the Phlox investigation) to WhiteCore-Dev's own fork, the leanest
+of the family per the earlier deploy-drift audit. A performance/
+efficiency keyword category (`perf|optimi[sz]|cache|throttle|
+allocat|leak|contention|thread.?pool|async|GC|slow|bottleneck|
+latency|batch|...`) had never been run against WhiteCore before -
+the three prior categories (LSL/OSSL, teleport/crossing/physics/
+collision, security/permission/economy/currency/inventory) are already
+fully triaged. Compared against `whitecore/0.9.7-dev` (confirmed as
+the actually-reviewed branch in all three prior categories, not the
+stale `whitecore/master` remote-tracking ref) vs `origin/master`: 51
+hits, all triaged.
+
+**Zero clean wins - the lowest-yield WhiteCore category run so far.**
+The three prior categories each produced at least one unambiguous
+ship-it fix (a P/Invoke `CharSet` fix; the varregion-teleport bug;
+`RezRestoreToWorld`). This one didn't.
+
+**One real candidate, not a clean port - `d3e594d148`**: WhiteCore
+flips its JPEG2000 texture decoder default from CSJ2K (managed) to
+OpenJPEG (native), citing their own real timing comparison showing
+CSJ2K "considerably slower." Confluence still defaults to CSJ2K
+(`J2KDecoderModule.cs:76`'s `m_useCSJ2K = true`,
+`OpenSimDefaults.ini:372`'s matching commented default) - this path
+runs on every `GetTexture` cap decode plus dynamic-texture/terrain-bake
+decodes, a genuine hot path, not cosmetic. **Real caveat, not
+overlooked**: OpenJPEG is native P/Invoke, CSJ2K is pure managed - this
+exact default has historically flip-flopped in OpenSim specifically
+because native bindings have caused platform-specific stability
+problems (this is most likely *why* the slower-but-safer managed
+decoder is still the default here and in stock OpenSim). Needs real
+benchmarking on this project's actual Windows deployment before
+flipping, not a blind config change - **user's call: log it, don't
+test it live right now.**
+
+**Everything else checked directly against Confluence's actual current
+code, not assumed** - two consistent buckets: already implemented, and
+often more thoroughly (`SmartThreadPool` source-level with configurable
+min/max threads vs WhiteCore's prebuilt DLL; `WebUtil.cs`'s modern
+`SocketsHttpHandler` path already sets `UseProxy = false` more
+completely than WhiteCore's older `HttpWebRequest.Proxy = null` fix,
+whose own equivalent legacy overload in Confluence has zero call
+sites - dead code; `Meshmerizer.cs`'s unique-mesh cache + release pool
+already substantially ahead of WhiteCore's 2015-era mesh caching;
+`FlotsamAssetCache.cs`'s existing 15-minute touch-throttle already
+subsumes WhiteCore's "touch once per sweep" fix) - or WhiteCore's own
+architecture-specific classes with zero Confluence surface area at all
+(its own asset-service layer, `WhiteCoreThreadPool`, `WorldMap`/
+`ObjectCacheModule`/`PhysicsStateModule`, its own legacy `DotNetEngine`
+script compiler - same "different script engine, not portable"
+conclusion already reached for Phlox/SLua). A "resource-leak cluster"
+and a few "optimisation"-titled commits turned out to be mislabeled bug
+fixes (float-equality exactness, a UV-index/reordering fix), not real
+performance changes, once actually read.
+
+No connection found between any of these commits and any other fork
+already tracked in this project's remotes - this reads as WhiteCore's
+own maintainers working directly on WhiteCore's aged, since-diverged
+architecture, not shared lineage worth cross-checking elsewhere.
+
+**Conclusion: WhiteCore-Dev's fork review is functionally complete.**
+Four categories run (LSL/OSSL, teleport/physics, security/economy,
+performance), diminishing returns confirmed directly rather than
+assumed - not scheduled for further keyword-category mining unless a
+real new reason comes up. See ROADMAP.md's new "considered, not
+pursued" entry for the CSJ2K/OpenJPEG default.
