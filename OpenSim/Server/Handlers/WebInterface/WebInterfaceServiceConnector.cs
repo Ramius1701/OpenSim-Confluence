@@ -187,6 +187,48 @@ namespace OpenSim.Server.Handlers.WebInterface
         // sync with what residents actually see in-world again.
         private string m_currencySymbol = "C$";
 
+        // Both underlying reads are real, unconditional full-table scans
+        // (GetUserAccountsWhere(UUID.Zero, "1=1") has no index-usable WHERE
+        // clause at all; GetUniqueVisitorCount iterates every GridUser row
+        // in-process) - and both were being run fresh on every single home-
+        // page/gridstatus/search-page view, several times over across six
+        // call sites, with zero caching. Found 2026-09-05 while mining a
+        // sibling project's (Homeworldz) own design writeup for ideas - its
+        // real fix for the identical shape of problem is exactly this: a
+        // short, deliberate cache, never overwritten by a failed read, never
+        // silently defaulting a missing figure to zero. A stale-by-up-to-
+        // 30-seconds resident/visitor count is a total non-issue for a
+        // stat whose whole purpose is "roughly how big is this grid."
+        private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(30);
+        private int m_cachedTotalAccounts = -1;
+        private DateTime m_cachedTotalAccountsAt = DateTime.MinValue;
+        private readonly Dictionary<int, (int Count, DateTime At)> m_cachedUniqueVisitors = new Dictionary<int, (int, DateTime)>();
+
+        // Deliberately not lock-protected: a rare double read on a cache-miss
+        // race is harmless (both threads just do the same real query once),
+        // and correctness here only needs "roughly current," not exact.
+        private int GetCachedTotalAccountCount()
+        {
+            if (m_cachedTotalAccounts >= 0 && DateTime.UtcNow - m_cachedTotalAccountsAt < StatsCacheDuration)
+                return m_cachedTotalAccounts;
+
+            int count = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count;
+            m_cachedTotalAccounts = count;
+            m_cachedTotalAccountsAt = DateTime.UtcNow;
+            return count;
+        }
+
+        private int GetCachedUniqueVisitorCount(int days)
+        {
+            if (m_cachedUniqueVisitors.TryGetValue(days, out (int Count, DateTime At) cached)
+                    && DateTime.UtcNow - cached.At < StatsCacheDuration)
+                return cached.Count;
+
+            int count = m_GridUserService.GetUniqueVisitorCount(days);
+            m_cachedUniqueVisitors[days] = (count, DateTime.UtcNow);
+            return count;
+        }
+
         public WebInterfaceServiceConnector(IConfigSource config, IHttpServer server, string configName) :
                 base(config, server, configName)
         {
@@ -1600,7 +1642,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (m_UserAccountService != null)
             {
-                int totalAccounts = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count;
+                int totalAccounts = GetCachedTotalAccountCount();
                 AppendStat(sb, "Registered Accounts", totalAccounts.ToString("N0"), "all time");
             }
 
@@ -1615,7 +1657,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 int online = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
                 AppendStat(sb, "Online Now", online.ToString("N0"), "residents");
 
-                int uniqueVisitors30d = m_GridUserService.GetUniqueVisitorCount(30);
+                int uniqueVisitors30d = GetCachedUniqueVisitorCount(30);
                 AppendStat(sb, "Unique Visitors", uniqueVisitors30d.ToString("N0"), "last 30 days");
             }
 
@@ -4557,7 +4599,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 AppendStat(sb, "Largest Region", largestRegionSqm.ToString("N0") + " m²", largestRegionSqm > 256 * 256 ? "VarRegion in use" : "Standard region size");
             }
             if (m_UserAccountService != null)
-                AppendStat(sb, "Registered Residents", m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count.ToString(), string.Empty);
+                AppendStat(sb, "Registered Residents", GetCachedTotalAccountCount().ToString(), string.Empty);
             // Real gap vs. OpenSim-Grid-Interface's features.php ("Main
             // Simulator"/"Main Version" table row) - OpenSim.Framework.
             // VersionInfo is the same compile-time constant the console
@@ -4911,7 +4953,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 sb.Append("<div class=\"stat-strip\">");
                 if (m_UserAccountService != null)
-                    AppendSearchStat(sb, "person", m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count, "residents");
+                    AppendSearchStat(sb, "person", GetCachedTotalAccountCount(), "residents");
                 if (m_GridService != null)
                     AppendSearchStat(sb, "globe", m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000).Count, "regions");
                 if (m_EventsService != null)
@@ -5554,7 +5596,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 try
                 {
-                    totalAccounts = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count;
+                    totalAccounts = GetCachedTotalAccountCount();
                     long cutoff = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
                     newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
                     userAccountsOk = true;
@@ -5574,7 +5616,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // if the region they were last on is confirmed alive
                     // right now, not just flagged online in the DB.
                     onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
-                    uniqueVisitors30d = m_GridUserService.GetUniqueVisitorCount(30);
+                    uniqueVisitors30d = GetCachedUniqueVisitorCount(30);
                 }
                 catch (Exception e)
                 {
@@ -6777,7 +6819,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             else
             {
-                int totalAccounts = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1").Count;
+                int totalAccounts = GetCachedTotalAccountCount();
                 rows.Append("<tr><th>Registered accounts</th><td>").Append(totalAccounts).Append("</td></tr>");
             }
 

@@ -19974,3 +19974,54 @@ performance), diminishing returns confirmed directly rather than
 assumed - not scheduled for further keyword-category mining unless a
 real new reason comes up. See ROADMAP.md's new "considered, not
 pursued" entry for the CSJ2K/OpenJPEG default.
+
+## CSJ2K vs OpenJPEG, actually benchmarked - the WhiteCore finding doesn't transfer (2026-09-05)
+
+Follow-up on the WhiteCore performance audit's one real candidate:
+before flipping `J2KDecoderModule.cs`'s `m_useCSJ2K` default per
+WhiteCore's own timing comparison, benchmarked it directly against this
+project's actual live data rather than trusting a number measured on a
+different codebase's workload.
+
+Built a standalone console harness (in scratchpad, never touched the
+main repo) referencing Confluence's own already-built
+`OpenMetaverse.dll`/`CSJ2K.dll`/`MySql.Data.dll`, pulling 7 real
+texture assets directly from the live `casperia` database (`assetType
+= 0`, sampled across the real size distribution: 153B, 40.7KB, 89.5KB,
+131KB, 261KB, 333KB, 524KB - not synthetic data), and timing both
+decoders on the two real call paths `J2KDecoderModule.cs` actually
+uses (`DoJ2KDecode`'s layer-boundary extraction, and `DecodeToImage`'s
+full pixel decode), with a warm-up pass first so OpenJPEG's one-time
+native-library-load cost didn't unfairly bias its own first
+measurement. Confirmed OpenJPEG's native binary (`openjpeg-dotnet-
+x86_64.dll`) is already bundled and present on this exact Windows
+deployment - not a hypothetical availability question.
+
+**Result: reversed from WhiteCore's own finding, for this codebase's
+actual dominant workload.**
+
+| Path | CSJ2K | OpenJPEG | Winner |
+|---|---|---|---|
+| `DoJ2KDecode` (layer boundaries - called on essentially every texture a client requests) | 3.911 ms/asset | 79.557 ms/asset | **CSJ2K, ~20x faster** |
+| `DecodeToImage` (full pixel decode - dynamic textures/terrain bake, far less frequent) | 169.884 ms/asset | 75.826 ms/asset | OpenJPEG, ~2.2x faster |
+
+Real root cause, not just an observed number: OpenJPEG's layer-boundary
+call costs almost exactly the same as its own full pixel decode
+(79.6ms vs 75.8ms) - its API does a full decode internally regardless
+of which one you ask for. CSJ2K's layer-boundary call is ~43x cheaper
+than its own full decode (3.9ms vs 169.9ms) - it has a genuinely
+lightweight codestream-marker-only path that reads layer offsets
+without decoding pixel data at all, something OpenJPEG's bound API
+doesn't expose. WhiteCore's "CSJ2K considerably slower" finding was
+almost certainly measured on a full-decode-dominated workload -
+doesn't transfer to Confluence, where the layer-boundary path is the
+overwhelmingly hot one (called per unique texture asset requested, not
+just for dynamic textures/terrain).
+
+**Not flipped.** Flipping the default would have made the single most
+common texture operation on this grid ~20x slower - a real regression
+dressed up as an optimization, caught only because this got benchmarked
+against real data instead of ported on another fork's word. Exactly
+the outcome the earlier "needs real benchmarking before flipping, not
+a blind config change" caution was for. See ROADMAP.md's "Explicitly
+out of scope" entry for the full writeup.

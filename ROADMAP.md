@@ -122,24 +122,39 @@ gap today. For what already exists, see `FEATURES.md`.
   versions — the OSSL equivalents already exist), roughly 80 `iw*`
   inventory/string/list/agent/group utility functions, Euler-rotation
   LSL functions, and a small JWT auth module.
-- **JPEG2000 texture decoder default: CSJ2K vs. OpenJPEG — found during
-  a WhiteCore-Dev performance audit (2026-09-05), not yet benchmarked.**
-  WhiteCore's own real timing comparison found their native OpenJPEG
-  decoder considerably faster than the managed CSJ2K one on a real hot
-  path (every `GetTexture` cap decode, plus dynamic-texture/terrain-bake
-  decodes) and switched their default accordingly
-  (`J2KDecoderModule.cs`). Confluence still defaults to the slower
-  CSJ2K (`m_useCSJ2K = true`; `OpenSimDefaults.ini`'s matching
-  commented default). Not a clean port, though: OpenJPEG is a native
-  P/Invoke library, and this exact default has historically flip-
-  flopped across the OpenSim ecosystem specifically because native
-  bindings have caused platform-specific stability problems elsewhere -
-  most likely why the slower-but-safer managed decoder is still the
-  default here and in stock OpenSim. Needs real benchmarking on this
-  project's actual Windows deployment before flipping, not a blind
-  config change. Held per the user's call, not tested live yet.
-
 ## Explicitly out of scope for now
+
+- **JPEG2000 texture decoder default: CSJ2K vs. OpenJPEG — benchmarked
+  for real, keeping CSJ2K (2026-09-05).** WhiteCore-Dev's own timing
+  comparison found their native OpenJPEG decoder considerably faster
+  than the managed CSJ2K one and switched their default accordingly -
+  worth checking directly rather than trusting another fork's number,
+  since this exact default has a real history of native-binding
+  platform stability problems across the OpenSim ecosystem. Built a
+  real benchmark harness against 7 actual texture assets pulled
+  straight from the live `casperia` database (153B-524KB, spanning the
+  real size distribution), timing both decoders on the two real code
+  paths `J2KDecoderModule.cs` actually uses, with a warm-up pass so
+  OpenJPEG's one-time native-library-load cost didn't unfairly bias its
+  first measurement. **Result: the reverse of WhiteCore's finding for
+  this codebase's actual dominant workload.** `DoJ2KDecode` (layer-
+  boundary extraction - called on essentially every texture a client
+  requests) is CSJ2K 3.9ms/asset vs. OpenJPEG 79.6ms/asset - CSJ2K is
+  **~20x faster**, not slower. OpenJPEG only wins on the much-less-
+  frequently-called full pixel decode (`DecodeToImage`: CSJ2K 169.9ms
+  vs. OpenJPEG 75.8ms, ~2.2x). Root cause found, not just observed:
+  OpenJPEG's "layer boundaries" call costs almost exactly the same as
+  its own full decode (79.6ms vs 75.8ms) - it does a full decode
+  internally either way - while CSJ2K's layer-boundary call is ~43x
+  cheaper than its own full decode (3.9ms vs 169.9ms), meaning it has a
+  genuinely lightweight codestream-marker-only path OpenJPEG's API
+  doesn't expose. WhiteCore's own measurement was almost certainly
+  taken on a full-decode-dominated workload, which doesn't match this
+  project's actual usage pattern. Flipping the default would make the
+  single most common texture operation on this grid ~20x slower - a
+  real regression, not the improvement it looked like on paper. Not
+  revisited unless CSJ2K's own layer-boundary path is ever shown to
+  regress, or the dominant workload shape changes.
 
 - **Phlox script engine / SLua support — investigated and shelved
   (2026-09-05).** The licensing/provenance chain genuinely checks out
