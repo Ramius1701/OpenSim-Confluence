@@ -39,9 +39,27 @@ gap today. For what already exists, see `FEATURES.md`.
   smooth (see `FEATURES.md`). Vehicles and other physical objects still
   freeze in place for the duration of a crossing — a deliberate
   server-side safety measure, not a bug, but one that's noticeable on
-  a moving vehicle. Fixing this properly needs a new "staged" object
-  state so a vehicle can be predictively prepared on the destination
-  region without risking a visible duplicate. Designed, not yet built.
+  a moving vehicle. Fixing the freeze properly needs a new "staged"
+  object state so a vehicle can be predictively prepared on the
+  destination region without risking a visible duplicate — that part
+  is designed (informed by a sibling project's own crossing design,
+  see "Design research from other projects" below) but needs a new
+  cross-region "remove object" RPC (`ISimulationService` has no such
+  call today) before it can be built, so it's not started.
+  **A real, related bug it also motivated was found and fixed
+  (2026-09-05)**: `CrossPrimGroupIntoNewRegion` created the object at
+  the destination, then silently swallowed a failure to delete the
+  source copy, still reporting the crossing as successful either way -
+  a genuine, if rare, duplication risk. Since there's no way to undo
+  the destination copy without that same new RPC, the fix is scoped to
+  what's actually buildable today: retries on the delete (the likely
+  real cause of any failure here is transient - a busy scene thread, a
+  momentary lock - not permanent), and if it still fails, the crossing
+  is correctly reported as failed instead of silently swallowed, the
+  owner is alerted in-world if reachable, and it's logged loudly enough
+  for an admin to actually find and manually reconcile the rare case
+  that does happen. The full non-freezing, no-duplication-risk-at-all
+  version still needs the new RPC either way.
 - **Hypergrid teleport reliability.** A single retry on outright
   transport failure is in place. Hypergrid teleports still depend on
   several sequential network calls across independently-run grids, so

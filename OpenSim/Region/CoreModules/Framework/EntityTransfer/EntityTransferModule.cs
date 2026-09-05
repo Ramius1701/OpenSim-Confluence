@@ -2879,16 +2879,50 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
 
                 if (successYN)
                 {
-                    // We remove the object here
-                    try
+                    // The destination now has a live copy of this object - the source
+                    // copy must come out, or the object exists twice simultaneously.
+                    // Previously: a delete failure here was logged and swallowed, with
+                    // successYN left true regardless - a real, silent duplication bug.
+                    // Retry a few times first (immediately, no delay - this can run on
+                    // a thread this method doesn't control, so it doesn't block waiting;
+                    // a lock-contention-style failure typically clears on the very next
+                    // attempt anyway). There's no ISimulationService call to undo the
+                    // destination copy, so a failure that survives every retry can't be
+                    // rolled back from here - what changed is that it's no longer
+                    // silent: it's logged loudly, the owner is alerted if reachable, and
+                    // the crossing is no longer reported as successful.
+                    bool deleted = false;
+                    Exception lastEx = null;
+                    const int maxAttempts = 3;
+                    for (int attempt = 1; attempt <= maxAttempts && !deleted; attempt++)
                     {
-                        grp.Scene.DeleteSceneObject(grp, silent, removeScripts);
+                        try
+                        {
+                            grp.Scene.DeleteSceneObject(grp, silent, removeScripts);
+                            deleted = true;
+                        }
+                        catch (Exception e)
+                        {
+                            lastEx = e;
+                        }
                     }
-                    catch (Exception e)
+
+                    if (!deleted)
                     {
                         m_log.ErrorFormat(
-                            "[ENTITY TRANSFER MODULE]: Exception deleting the old object left behind on a border crossing for {0}, {1}",
-                            grp, e);
+                            "[ENTITY TRANSFER MODULE]: Failed to delete the old copy of {0} ({1}) owned by {2} after {3} attempts during a border crossing to {4} - " +
+                            "the object now exists in both regions and needs manual reconciliation: {5}",
+                            grp.Name, grp.UUID, grp.OwnerID, maxAttempts, destination.RegionName, lastEx);
+
+                        ScenePresence sp = grp.Scene.GetScenePresence(grp.OwnerID);
+                        if (sp != null && !sp.IsChildAgent && sp.ControllingClient != null && sp.ControllingClient.IsActive)
+                        {
+                            sp.ControllingClient.SendAgentAlertMessage(
+                                $"'{grp.Name}' crossed into {destination.RegionName}, but the old copy here couldn't be removed. It may now exist in both places - please contact a grid admin.",
+                                false);
+                        }
+
+                        successYN = false;
                     }
                 }
             }

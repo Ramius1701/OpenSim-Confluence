@@ -20025,3 +20025,70 @@ against real data instead of ported on another fork's word. Exactly
 the outcome the earlier "needs real benchmarking before flipping, not
 a blind config change" caution was for. See ROADMAP.md's "Explicitly
 out of scope" entry for the full writeup.
+
+## Dead RenderGridStatusWidget removed; object-crossing duplication bug found via Homeworldz, fixed (2026-09-05)
+
+Two small, real cleanups picked up while working through the "make the
+grid faster/better" thread's remaining items.
+
+**`RenderGridStatusWidget` removed** - confirmed zero call sites
+anywhere in the tree (clean build after deletion). This was real,
+working code as of 2026-08-12 (live-verified via curl at the time -
+"2 regions, 8 registered accounts, 1 online now"), but the 2026-09-02
+`HandleWelcome` rebuild replaced its whole stats-box section with an
+inline top bar and folded region listing into
+`RenderRegionListCompact`. That rebuild correctly deleted this
+method's sibling (`RenderRegionListWidget`, same original batch) at
+the time - this one was just missed. Nothing lost: the same figures
+(registered accounts, unique visitors) are already one click away via
+the welcome page's existing `/gridstatus` link, through the real,
+still-live call sites the earlier grid-stats caching fix (previous
+entry) touched.
+
+**Object-crossing duplication bug, from earlier the same day's
+Homeworldz design-ideas audit, now fixed.** That audit found a real,
+acknowledged risk in `EntityTransferModule.cs`'s
+`CrossPrimGroupIntoNewRegion`: it creates the object at the destination
+region first, then deletes the source copy - and the *previous* code
+silently swallowed a delete failure in a catch block, still reporting
+the crossing as successful regardless. A delete failure after a
+successful destination create means the object now exists in both
+regions simultaneously, unrecoverable, and nobody would ever know.
+
+Homeworldz's own crossing design (ADR 0037) answers this with a full
+stage-then-activate protocol that biases every failure toward "briefly
+missing" (recoverable) over "briefly duplicated" (not) - but building
+that here would need a new `ISimulationService` RPC to undo/remove an
+object at a remote destination region, which doesn't exist today
+(checked the actual interface - only `CreateObject`/`CloseAgent`
+exist, nothing for object removal). Confirmed with the user before
+building anything: scope this to what's actually buildable without
+that new RPC, rather than starting a bigger cross-region protocol
+project unprompted.
+
+**What got built**: the source delete now retries immediately up to 3
+times before giving up (no artificial delay - this method's calling
+thread context wasn't confirmed safe to block, and a lock-contention-
+style transient failure - the most plausible real cause - typically
+clears on the very next attempt regardless). If it still fails after
+every retry, the crossing is honestly reported as failed
+(`successYN = false`, so the source region correctly keeps treating
+the object as still its own rather than silently pretending it's
+gone) instead of the previous silent success-anyway; the object's
+owner is alerted in-world if they're reachable (same
+`GetScenePresence`/`IsChildAgent`/`ControllingClient.IsActive`/
+`SendAgentAlertMessage` pattern already established for
+`PhysicsShapeFallback` on `SceneObjectPart.cs`, not a new one); and
+it's logged at Error with the object name/UUID/owner/destination and
+the underlying exception, loud enough for an admin to actually find
+and manually reconcile the rare case that does happen.
+
+Doesn't eliminate the underlying risk entirely - without the new RPC,
+a delete that fails on every retry still leaves a real duplicate
+that can't be rolled back from here - but converts a previously
+silent, invisible failure mode into a loud, attributable, rare one.
+The full non-freezing "staged" vehicle-crossing redesign this same
+Homeworldz audit's motion-continuity finding also touches on still
+needs that same new RPC either way; see ROADMAP.md's "Vehicle and
+prim region crossings" entry. Build 0 errors/0 warnings. Not yet
+deployed live.
