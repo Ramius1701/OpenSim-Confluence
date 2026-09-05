@@ -1089,12 +1089,15 @@
     ; Disabled by default
     ; MuteListModule = MuteListModule
 
-    ; Abuse reports handler. Also requires [Modules] AbuseReportsService
-    ; and an [AbuseReportsService] section below, plus
-    ; [AbuseReports] Enabled = true.
+    ; Abuse reports handler - backs the in-viewer "Report Abuse" floater
+    ; and this project's own WebUI admin review page. Also requires
+    ; [Modules] AbuseReportsService and an [AbuseReportsService] section
+    ; below, plus [AbuseReports] Enabled = true - found live on
+    ; 2026-09-05 sitting fully built and unused because these four
+    ; switches were never turned on anywhere; active by default here so
+    ; that doesn't happen again for a fresh deployment.
     ;# {AbuseReportsModule} {AbuseReportsModule:AbuseReportsModule} {} {} None
-    ; Disabled by default
-    ; AbuseReportsModule = AbuseReportsModule
+    AbuseReportsModule = AbuseReportsModule
 
     ;; Control whether group invites and notices are stored for offline users.
     ;; Default is true.
@@ -1105,8 +1108,15 @@
 [Modules]
     ;; Selects which connector AbuseReportsModule (above, under [Messaging])
     ;; uses. For a standalone or single-region setup, use the Local
-    ;; connector; for a grid where abuse reports should be centralized on
-    ;; ROBUST, use the Remote connector instead.
+    ;; connector. For a grid deployment, use the Remote connector instead
+    ;; so every region's reports land in one place for admins to review -
+    ;; this project's own reference grid (see GridCommon.ini.example's
+    ;; [Modules] section, alongside ExperienceService) already centralizes
+    ;; this way, matching the same pattern as EstateDataService/
+    ;; MuteListConnector. Leave unset here if GridCommon.ini already sets
+    ;; it - a per-region [Modules] value here would silently be ignored
+    ;; either way (GridCommon.ini's Include is processed after this
+    ;; section and wins), so don't set both and expect this one to count.
     ; AbuseReportsService = "LocalAbuseReportsServicesConnector"
     ; AbuseReportsService = "RemoteAbuseReportsServicesConnector"
 
@@ -1132,19 +1142,25 @@
 
 [AbuseReports]
     ;; Enables the in-viewer "Report Abuse" floater's CAPS endpoint.
-    ;Enabled = true
+    Enabled = true
 
 
 [Pathfinding]
-    ;; Enables the in-viewer Pathfinding floaters' CAPS endpoints
-    ;; (AgentState, CharacterProperties, TerrainNavMeshProperties,
-    ;; RegionObjects, ObjectNavMeshProperties). Note: real navmesh
-    ;; generation/retrieval (NavMeshGenerationStatus, RetrieveNavMeshSrc)
-    ;; is not yet implemented, so the viewer's own isPathfindingEnabled
-    ;; check (gated on RetrieveNavMeshSrc's presence) will keep the
-    ;; Pathfinding floater from calling any of these caps until that
-    ;; lands too.
-    ;Enabled = true
+    ;; Enables the in-viewer Pathfinding floaters' CAPS endpoints -
+    ;; AgentState, CharacterProperties, TerrainNavMeshProperties,
+    ;; RegionObjects, ObjectNavMeshProperties, NavMeshGenerationStatus,
+    ;; and RetrieveNavMeshSrc are all real and registered (see
+    ;; PathfindingModule.cs) - the viewer's own isPathfindingEnabled
+    ;; check (gated on RetrieveNavMeshSrc's presence) opens once this is
+    ;; on, and linksets/characters/terrain walkability are genuinely
+    ;; editable through the floater. The one real, external gap: the
+    ;; floater's "View/test" 3D navmesh preview stays unavailable, since
+    ;; the actual mesh data the viewer needs is decoded by LLPathingLib,
+    ;; a closed-source Linden Lab library with no public wire-format
+    ;; spec - not fabricated here (see PROJECT_LOG.md's "real navmesh
+    ;; baking is blocked on closed-source LLPathingLib" entry). Every
+    ;; other OpenSim fork checked has this identical gap.
+    Enabled = true
 
 
 [CurrencyService]

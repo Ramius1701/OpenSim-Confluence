@@ -83,6 +83,13 @@
     ;; ExperienceService (see [ExperienceService] below).
     ; ExperienceService = "LocalExperienceServicesConnector"
 
+    ;; Centralizes abuse reports on ROBUST instead of each region keeping
+    ;; its own separate ledger - see [AbuseReportsService] below. Backs
+    ;; the in-viewer "Report Abuse" floater; also requires
+    ;; [Messaging] AbuseReportsModule = AbuseReportsModule and
+    ;; [AbuseReports] Enabled = true in the region's own OpenSim.ini.
+    ; AbuseReportsService = "RemoteAbuseReportsServicesConnector"
+
 [AssetService]
     DefaultAssetLoader = "OpenSim.Framework.AssetLoader.Filesystem.dll"
     AssetLoaderArgs = "assets/AssetSets.xml"
@@ -250,6 +257,13 @@
 
 [MuteListService]
     MuteListServerURI = "${Const|PrivURL}:${Const|PrivatePort}"
+
+[AbuseReportsService]
+    ;; Only needed if [Modules] AbuseReportsService above is set to
+    ;; RemoteAbuseReportsServicesConnector. Point this at your ROBUST
+    ;; instance's own AbuseReportsServiceConnector (see Robust.HG.ini's
+    ;; [Modules] section).
+    ; AbuseReportsServerURI = "${Const|PrivURL}:${Const|PrivatePort}"
 
 [ExperienceService]
     ;; Only needed if [Modules] ExperienceService above is uncommented.
