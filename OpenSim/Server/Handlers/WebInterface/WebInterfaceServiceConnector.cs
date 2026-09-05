@@ -421,8 +421,16 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             // The in-viewer login splash screen (see [GridInfoService] "welcome" -
-            // a viewer fetches exactly this filename). Unauthenticated.
-            server.AddSimpleStreamHandler(new SimpleStreamHandler("/welcome.php", HandleRequest));
+            // a fully operator-configured URL; the viewer just fetches whatever
+            // this ini value points at, there's no protocol requirement on the
+            // filename or extension - confirmed against Robust.HG.ini.example's
+            // own default, "${Const|BaseURL}/welcome", no .php at all). The
+            // .php suffix here was only ever this connector's own naming
+            // choice, not a viewer requirement - dropped 2026-09-05 after it
+            // collided with OpenSim-Grid-Interface's own /ogi/welcome.php in
+            // Apache's redirect whitelist and broke every viewer's login
+            // splash. Unauthenticated.
+            server.AddSimpleStreamHandler(new SimpleStreamHandler("/welcome", HandleRequest));
 
             // Bare "/" is NOT handled through AddSimpleStreamHandler's path table at
             // all - BaseHttpServer.HandleRequest special-cases request.UriPath == "/"
@@ -539,7 +547,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case "/":
                         HandleHome(request, response);
                         break;
-                    case "/welcome.php":
+                    case "/welcome":
                         HandleWelcome(request, response);
                         break;
                     case BasePath + "/dashboard":
@@ -1742,7 +1750,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         // Bare-chrome getting-started page, meant to be opened from a
         // viewer's own Help menu the same way "welcome" already points a
-        // viewer at /welcome.php - an operator can point [GridInfoService]
+        // viewer at /welcome - an operator can point [GridInfoService]
         // help at this URL to wire that up. First-draft content: neither
         // WhiteCore-Dev nor OpenSim-Grid-Interface has a directly equivalent
         // page to build from, so this is new ground, not a port.
