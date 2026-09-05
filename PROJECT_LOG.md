@@ -19815,3 +19815,93 @@ through that mechanism live (`OpenSimWeather`/`RegionWeb` load from
 their own `addon-modules/*/config/*.ini` independently) - not a gap.
 On-demand region loading is absent too, but that's a considered,
 logged decision (a known discovery-gap bug), not an oversight.
+
+## Navmesh visualization: the "closed-source LLPathingLib" conclusion overturned, real cost scoped, held (2026-09-05)
+
+Following straight on from enabling Pathfinding above: with the floater
+finally reachable, its "View/test" tab showed "Cannot find pathing
+library implementation" - a real client-side message, traced to
+`LLPathfindingManager::isPathfindingViewEnabled()` checking
+`LLPathingLib::getInstance() != NULL`
+(`llpathfindingmanager.cpp:173-176`). The earlier conclusion (this
+file, 2026-08-31: "real navmesh generation is out of reach... blocked
+on closed-source LLPathingLib, not just effort") turned out to be
+**wrong about *why*, though right about the practical outcome up to
+this point.**
+
+**What's actually true, found by reading the real viewer source instead
+of trusting the earlier finding:** `LLPathingLib`'s abstract interface
+(`indra/llphysicsextensionsos/llpathinglib.h`) is genuinely LGPL-2.1,
+written by Linden Lab (`prep@lindenlab.com`), sitting directly in the
+open-source viewer tree - not a closed proprietary shell. The concrete
+class the viewer actually links, `LLPathingLibImpl`
+(`LLPathingLibStubImpl.cpp`, same directory), is a real, empty stub -
+every method either no-ops or returns `LLPL_NOT_IMPLEMENTED`,
+`getInstance()` hardcoded to return `NULL`. Confirmed via
+`llphysicsextensionsos/CMakeLists.txt` this stub is the *only*
+implementation built and linked into Firestorm-family viewers - Linden
+Lab's real implementation was simply never open-sourced for
+third-party viewers, no separate closed binary gets swapped in at build
+time. Since implementing this stub means controlling both the server's
+wire format and the client's decoder, the earlier "would be an
+unverifiable guessed format" objection doesn't apply - a self-defined
+format is fine, since nothing needs to match Linden's undocumented one.
+
+**A real, evidence-based scoping pass followed** (not implementation -
+deliberately held per the user's decision below), tracing the actual
+call graph rather than assuming "implement 12 methods and it works":
+
+- The stub class is currently missing 4 of its 16 required methods
+  (`renderSimpleShapes`, `createPhysicsCapsuleRep`,
+  `cleanupPhysicsCapsuleRepResiduals`, `renderSimpleShapeCapsuleID`) -
+  it only compiles today because `getInstance()` returns `NULL` without
+  ever instantiating the class, so the missing methods never get
+  linked. A real implementation would need all 16, and two of the four
+  missing ones also gate a *separate*, currently-inert feature (the
+  Pathfinding Characters floater's physics-capsule debug view,
+  `pipeline.cpp`/`llfloaterpathfindingcharacters.cpp`) - turning this
+  on activates more than just navmesh viewing.
+- All rendering-pipeline plumbing (GLSL shaders, `LLPipeline::
+  renderDebug()`'s per-frame hook, blend/depth state) is already fully
+  built and shipped - client work is confined to building/drawing VBOs
+  inside the stub itself, no pipeline changes needed.
+- Region-crossing navmesh "zone" stitching is safe to trivialize for a
+  first version - `PathfindingRetrieveNeighboringRegion` defaults to 99
+  ("do not download neighbors"), so only one region's data ever flows
+  through in practice.
+- `generatePath()` (the "Test path" tab) is fully client-local, no
+  server round-trip - safe to leave unimplemented for v1 without
+  looking broken (`getPathStatus()` already has a defined graceful
+  `kPathStatusHasInvalidPath` state).
+- Concrete, testable wire constraint found: the client's
+  `unzip_llsdNavMesh()` requires real RFC1952 gzip specifically, not
+  raw zlib/deflate - satisfied trivially by .NET's `GZipStream`.
+- **The real gap turned out to be on this project's own side, not the
+  viewer's**: `BakedNavMesh` (`LSL_Api.cs`) is purely terrain-height
+  derived and has zero awareness of the per-object `navmesh_category`/
+  walkability properties `PathfindingModule.cs` already exposes and
+  lets residents edit through the real Pathfinding floater UI - two
+  disconnected systems today. Producing real, accurate `navmesh_data`
+  needs a new bake-time classification pass, not just serializing
+  what already exists.
+- A concrete wire format was designed, grounded in a real existing
+  precedent already shipped in the viewer for a comparably-shaped
+  problem (SL's own mesh-upload LLSD structure, `llmodel.cpp`/
+  `llvolume.cpp`'s `unpackVolumeFacesInternal`) rather than invented
+  from nothing.
+
+**Cost estimate**: ~3-4 weeks to a working, self-compiled patch
+(server-side wire format ~300-450 LOC/3-5 days, client-side
+`LLPathingLibImpl` ~700-850 LOC/~2 weeks including full-viewer-rebuild
+verification cycles). Shipping it instead as a fully signed, branded
+custom viewer release adds 1-2 weeks plus *recurring* per-upstream-
+release maintenance cost - genuinely the same overhead category as
+forking a viewer wholesale, which this project has already decided
+against broadly. CoolVL doesn't have this floater or library at all
+and wouldn't benefit regardless; AyaneStorm's stub is byte-identical to
+upstream's and would very likely work unchanged.
+
+**User's decision: hold, not started.** Real and buildable, not
+shelved as infeasible - see ROADMAP.md's "Planned, not started" entry.
+Revisit if a resident/admin self-compiled-patch workflow becomes worth
+setting up.

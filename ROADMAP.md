@@ -59,6 +59,51 @@ gap today. For what already exists, see `FEATURES.md`.
   in Mobius (Beta 1.2, PEM-format public/private keys) if this is ever
   prioritized — confirmed genuinely absent from this codebase, not
   already covered under a different name.
+- **Real navmesh visualization (viewer-side `LLPathingLibImpl`) — real,
+  costed option, held for now (2026-09-05).** The Pathfinding floater's
+  "View/test" tab shows "Cannot find pathing library implementation"
+  because Firestorm/CoolVL/AyaneStorm ship `LLPathingLib` (the viewer
+  interface that decodes and renders navmesh geometry) as a genuine,
+  empty stub - not a closed-source blocker as earlier entries assumed.
+  The interface itself is LGPL-2.1 and lives in the viewer's own
+  open-source tree (`indra/llphysicsextensionsos/llpathinglib.h`);
+  Linden Lab's real implementation was simply never open-sourced for
+  third-party viewers, and no separate closed binary gets swapped in at
+  build time to replace it. Since a real implementation would control
+  both the server's wire format and the client's decoder, this doesn't
+  need to reverse-engineer Linden's actual format - a new, self-defined
+  one works, verified because both ends would be ours.
+
+  Real scoping done, not just a guess: the stub is missing 4 of its 16
+  required methods (compiles today only because it's never
+  instantiated - implementing it also activates a second, unrelated
+  debug view, the Pathfinding Characters capsule display, which needs
+  those same 4 methods); all rendering-pipeline/shader plumbing is
+  already fully built and shipped, so client work is confined to the
+  stub itself; the real gap is server-side - `BakedNavMesh`
+  (`LSL_Api.cs`) is purely terrain-height-derived today and has zero
+  awareness of the per-object `navmesh_category`/walkability properties
+  this project's own WebUI already lets residents edit, so a real
+  bake-time classification pass would need building, not just
+  serializing existing data. `generatePath()` (the "Test path" tab) is
+  fully client-local and safe to leave unimplemented for a first
+  version without looking broken.
+
+  **Estimated cost**: ~3-4 weeks to a working, self-compiled patch
+  (server-side wire format + client `LLPathingLibImpl`, applied by
+  someone with an existing Firestorm build environment) - genuinely
+  smaller than forking a viewer wholesale, since the affected client
+  code is one small, isolated static library. Shipping it instead as a
+  fully signed, branded custom viewer release would add another 1-2
+  weeks plus *recurring* cost on every future upstream Firestorm
+  update - that specific path carries the same overhead this project
+  already decided against for a full viewer fork, and isn't
+  recommended unless a patch genuinely isn't viable for residents.
+  CoolVL doesn't have this floater/library at all and wouldn't benefit
+  either way; AyaneStorm's copy of the stub is byte-identical to
+  upstream's and would very likely work unchanged. **Held, not
+  started** - real, buildable, and worth revisiting if a resident/admin
+  build pipeline for a self-compiled patch becomes worth setting up.
 - **wolfvoice** (`wolfsoftwaresystemsltd/wolfvoice`) — an alternative
   WebRTC voice backend for the already-merged `os-webrtc-janus` addon
   (see "WebRTC voice" below), offering per-listener spatial audio
