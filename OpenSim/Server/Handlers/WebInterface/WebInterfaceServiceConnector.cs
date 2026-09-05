@@ -1620,51 +1620,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".welcome-topstats{gap:10px;font-size:12px;}}" +
                 "</style>";
 
-        // Real counterpart to WhiteCore-Dev's welcomescreen/gridstatus.html
-        // (total users/regions, online-now count, unique visitors) - read
-        // directly this time rather than invented, after the splash was
-        // rewritten twice without checking it (see PROJECT_LOG). Reuses the
-        // exact same GetOnlineUserCount/GetUserAccountsWhere/
-        // GetUniqueVisitorCount calls HandleAdminStats/HandleGridStatus
-        // already established as the real data source for these numbers -
-        // not a second, divergent counting method. Currency dropped from
-        // this specific widget per explicit feedback - "Active/Not
-        // configured" isn't useful information for a first-time visitor
-        // deciding whether to sign up, unlike the full /gridstatus page
-        // where it stays. "Voice active" still omitted: no way to tell if
-        // voice is actually configured/working from Robust.
-        private string RenderGridStatusWidget(List<GridRegion> regions)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.Append("<h2>Grid Status</h2><div class=\"stats-grid\">");
-
-            AppendStat(sb, "Regions", regions.Count.ToString("N0"), "online now");
-
-            if (m_UserAccountService != null)
-            {
-                int totalAccounts = GetCachedTotalAccountCount();
-                AppendStat(sb, "Registered Accounts", totalAccounts.ToString("N0"), "all time");
-            }
-
-            if (m_GridUserService != null)
-            {
-                // `regions` here is already FilterOnlineRegions' output (see
-                // HandleWelcome), so this only counts someone as online if
-                // the region they were last on is confirmed alive right
-                // now - a crashed/killed region never clears the "Online"
-                // flag for whoever was on it otherwise.
-                HashSet<string> aliveRegionIDs = new HashSet<string>(regions.Select(r => r.RegionID.ToString()));
-                int online = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
-                AppendStat(sb, "Online Now", online.ToString("N0"), "residents");
-
-                int uniqueVisitors30d = GetCachedUniqueVisitorCount(30);
-                AppendStat(sb, "Unique Visitors", uniqueVisitors30d.ToString("N0"), "last 30 days");
-            }
-
-            sb.Append("</div>");
-            return sb.ToString();
-        }
-
         // Plain name + coordinates + teleport link, no map-tile thumbnail -
         // used on the login splash's region column. Started as a grid of
         // thumbnail cards (RenderRegionListWidget, since removed - this
