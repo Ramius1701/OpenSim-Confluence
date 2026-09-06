@@ -20889,6 +20889,22 @@ used to be copy-pasted at the top of the one giant handler. No setting
 moved, renamed, or changed its stored key - purely a routing/handler
 split, so nothing already saved needed migrating.
 
-Build confirmed clean (0 Warning(s), 0 Error(s)). Not yet deployed -
-touches `OpenSim.Server.Handlers.dll`, already confirmed loaded by
-both Robust and every region.
+Build confirmed clean (0 Warning(s), 0 Error(s)). Touches
+`OpenSim.Server.Handlers.dll`, already confirmed loaded by both Robust
+and every region.
+
+**Deployed same day, while online count was 0 - clean.** Verified the
+copy with a separate command afterward (method names live in the
+ASCII metadata heap, so a plain content grep for
+`HandleAdminSettingsIdentity`/`HandleAdminSettingsAccess`/
+`RequireAdminSettingsSession` worked directly this time, unlike the
+UTF-16 string-literal case from the login-toggle deploy). All 15
+regions plus Robust came up clean, zero genuine `FATAL` anywhere in
+the deploy window (a couple of old `MySqlException` message strings
+containing the word "Fatal" matched a naive search but predate this
+restart - confirmed by checking for real timestamped `FATAL` log
+lines specifically, not just the substring). `/admin/settings` and
+`/admin/settings/identity` both confirmed reachable (clean redirect to
+`/login` for an unauthenticated request). Grid picked back up real
+activity during the restart itself - a resident logged into UFPGC
+before the deploy had even finished bringing up the remaining regions.
