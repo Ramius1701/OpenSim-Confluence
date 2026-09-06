@@ -20818,4 +20818,27 @@ closure. Build confirmed clean (0 Warning(s), 0 Error(s)).
 Touches `OpenSim.Services.LLLoginService.dll` and
 `OpenSim.Server.Handlers.dll` - both already confirmed loaded by both
 Robust and every region earlier this session, so this needs the same
-full-grid deploy scope as the last three changes. Not yet deployed.
+full-grid deploy scope as the last three changes.
+
+**Deployed same day, while online count was 0 - clean this time, no
+repeat of the deploy-tooling incident above.** Applied the lesson from
+that incident directly: verified both files with a *separate* command
+after copying (not chained), and since the new code adds string
+literals (`AllowLogin`/`LoginClosedMessage`/`login_closed_message`)
+rather than new method names, a plain ASCII content grep would have
+false-negatived - .NET stores string literals in the UTF-16 `#US`
+metadata heap, not the UTF-8 `#Strings` heap method/type names live
+in. Verified with a UTF-16LE-aware `grep -P` byte pattern instead
+(`A\x00l\x00l\x00o\x00w\x00...`), confirmed present in both the fresh
+`bin/` build and the deployed copy before restarting anything. All 15
+regions plus Robust came up clean, zero `FATAL` anywhere in the deploy
+window, `[LLOGIN SERVICE]: Starting...` logged (confirms
+`Initialise()` - including the new `IGridSettingsService` load -
+completed without throwing). `/admin/settings` confirmed reachable
+(clean redirect to `/login` for an unauthenticated request, not a
+crash). Grid was at 0 online throughout - no resident impact.
+
+**Not yet exercised end-to-end** - confirming the toggle actually
+blocks an ordinary login and still admits a god-level account needs a
+real admin session to flip it on and a real login attempt to test
+against, which wasn't done as part of this deploy.
