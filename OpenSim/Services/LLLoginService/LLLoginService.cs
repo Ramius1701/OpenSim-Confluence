@@ -70,6 +70,7 @@ namespace OpenSim.Services.LLLoginService
         protected IUserAgentService m_UserAgentService;
         protected IAccessControlService m_AccessControlService;
         protected IUserProfilesService m_UserProfilesService;
+        protected IGridSettingsService m_GridSettingsService;
 
         protected GatekeeperServiceConnector m_GatekeeperConnector;
 
@@ -261,6 +262,21 @@ namespace OpenSim.Services.LLLoginService
                 string userProfilesDll = userProfilesSection.GetString("LocalServiceModule", string.Empty);
                 if (!string.IsNullOrEmpty(userProfilesDll))
                     m_UserProfilesService = ServerUtils.LoadPlugin<IUserProfilesService>(userProfilesDll, new object[] { config, "UserProfilesService" });
+            }
+
+            // Same [GridSettingsService] LocalServiceModule WebInterfaceServiceConnector
+            // already reads AllowRegistration/etc from - LoadPlugin creates an
+            // independent instance here (no cross-connector instance sharing),
+            // but both end up reading/writing the same underlying DB table, so
+            // this reads whatever the WebUI's /admin/settings just saved with
+            // no shared in-memory state needed. Backs the grid-wide login
+            // toggle in Login() below.
+            IConfig gridSettingsSection = config.Configs["GridSettingsService"];
+            if (gridSettingsSection != null)
+            {
+                string gridSettingsDll = gridSettingsSection.GetString("LocalServiceModule", string.Empty);
+                if (!string.IsNullOrEmpty(gridSettingsDll))
+                    m_GridSettingsService = ServerUtils.LoadPlugin<IGridSettingsService>(gridSettingsDll, args);
             }
 
             // Get the Hypergrid inventory service (exists only if Hypergrid is enabled)
@@ -480,6 +496,31 @@ namespace OpenSim.Services.LLLoginService
                         "[LLOGIN SERVICE]: Login failed for {0} {1}, reason: user level is {2} but minimum login level is {3}",
                         firstName, lastName, account.UserLevel, m_MinLoginLevel);
                     return LLFailedLoginResponse.LoginBlockedProblem;
+                }
+
+                // Grid-wide login toggle (/admin/settings, "AllowLogin") - checked
+                // right after the account is known so god-level accounts (>= 200,
+                // the same threshold this file already uses a few lines down for
+                // TeleportFlags.Godlike) can still get in during a closed grid to
+                // actually run maintenance and reopen it - a closed grid that also
+                // locks out the admin who closed it would be a real footgun.
+                // Deliberately checked before the heavier work below (auth,
+                // inventory, presence) rather than after, same reasoning as the
+                // m_MinLoginLevel check above.
+                if (m_GridSettingsService != null && account.UserLevel < 200)
+                {
+                    string allowLogin = m_GridSettingsService.Get("AllowLogin");
+                    if (allowLogin == "false")
+                    {
+                        string closedMessage = m_GridSettingsService.Get("LoginClosedMessage");
+                        if (string.IsNullOrWhiteSpace(closedMessage))
+                            closedMessage = "This grid is temporarily closed for maintenance. Please try again later.";
+
+                        m_log.InfoFormat(
+                            "[LLOGIN SERVICE]: Login failed for {0} {1}, reason: grid logins are closed",
+                            firstName, lastName);
+                        return new LLFailedLoginResponse("presence", closedMessage, "false");
+                    }
                 }
 
                 if (account.PrincipalID.Equals(Constants.servicesGodAgentID))

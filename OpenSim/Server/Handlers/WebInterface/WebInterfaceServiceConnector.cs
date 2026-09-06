@@ -7473,6 +7473,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             string gridNick = GetSetting("GridNickname", m_gridNick);
             string welcomeMessage = GetWebSafeWelcomeMessage();
             bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
+            bool allowLogin = GetSetting("AllowLogin", "true") == "true";
+            string loginClosedMessage = GetSetting("LoginClosedMessage", string.Empty);
             bool announcementEnabled = GetSetting("AnnouncementEnabled", "false") == "true";
             string announcementTitle = GetSetting("AnnouncementTitle", string.Empty);
             string announcementText = GetSetting("AnnouncementText", string.Empty);
@@ -7516,6 +7518,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Grid nickname<br/><input type=\"text\" name=\"grid_nickname\" value=\"" + Html(gridNick) + "\"></label><br/>"
                     + "<label>Welcome message<br/><textarea name=\"welcome_message\" rows=\"3\">" + Html(welcomeMessage) + "</textarea></label><br/>"
                     + "<label><input type=\"checkbox\" name=\"allow_registration\" value=\"true\"" + (allowRegistration ? " checked" : "") + " style=\"width:auto;display:inline\"> Allow new users to self-register</label><br/>"
+                    + "<h2>Grid Access</h2>"
+                    + "<p class=\"news-meta\">Closes the grid to new logins for ordinary residents - existing sessions are not "
+                    + "kicked, and grid administrators (user level 200+) can always still log in to run maintenance and reopen "
+                    + "the grid. Hypergrid visitors arriving from another grid are not covered by this toggle.</p>"
+                    + "<label><input type=\"checkbox\" name=\"allow_login\" value=\"true\"" + (allowLogin ? " checked" : "") + " style=\"width:auto;display:inline\"> Allow residents to log in</label><br/>"
+                    + "<label>Message shown when logins are closed<br/><textarea name=\"login_closed_message\" rows=\"2\" placeholder=\"This grid is temporarily closed for maintenance. Please try again later.\">" + Html(loginClosedMessage) + "</textarea></label><br/>"
                     + "<h2>Special Announcement</h2>"
                     + "<p class=\"news-meta\">Shown as a banner at the top of the home page and splash screen (welcome.php, the viewer's login panel), above everything else - matches WhiteCore-Dev's welcomescreen_manager.html \"special window\" toggle.</p>"
                     + "<label><input type=\"checkbox\" name=\"announcement_enabled\" value=\"true\"" + (announcementEnabled ? " checked" : "") + " style=\"width:auto;display:inline\"> Show announcement banner</label><br/>"
@@ -7591,6 +7599,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             string gridNick = FormValue(form, "grid_nickname").Trim();
             string welcomeMessage = FormValue(form, "welcome_message");
             bool allowRegistration = FormValue(form, "allow_registration") == "true";
+            bool allowLogin = FormValue(form, "allow_login") == "true";
+            string loginClosedMessage = FormValue(form, "login_closed_message").Trim();
             bool announcementEnabled = FormValue(form, "announcement_enabled") == "true";
             string announcementTitle = FormValue(form, "announcement_title").Trim();
             string announcementText = FormValue(form, "announcement_text");
@@ -7617,6 +7627,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_GridSettingsService.Set("GridNickname", gridNick);
             m_GridSettingsService.Set("WelcomeMessage", welcomeMessage);
             m_GridSettingsService.Set("AllowRegistration", allowRegistration ? "true" : "false");
+            m_GridSettingsService.Set("AllowLogin", allowLogin ? "true" : "false");
+            m_GridSettingsService.Set("LoginClosedMessage", loginClosedMessage);
             m_GridSettingsService.Set("AnnouncementEnabled", announcementEnabled ? "true" : "false");
             m_GridSettingsService.Set("AnnouncementTitle", announcementTitle);
             m_GridSettingsService.Set("AnnouncementText", announcementText);

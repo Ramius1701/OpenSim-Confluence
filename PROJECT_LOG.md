@@ -20780,3 +20780,42 @@ link, an accurate "0 residents here now" (matches the grid's own
 Command", 1,048,576 m² - the region's exact full 1024×1024 area,
 For Sale: No) pulled live through the new `GetParcelsByRegion` query
 against real production data, not a synthetic test.
+
+## Grid-wide login toggle built (2026-09-07)
+
+Built the smallest of the three remaining WebUI flagged gaps, per the
+same-day scoping (see WEBUI_PARITY_CHECKLIST.md for the full trace,
+including the finding that WhiteCore-Dev's own reference toggle never
+actually enforced anything).
+
+`LLLoginService` now loads its own `IGridSettingsService` instance
+(`Initialise()`, same `[GridSettingsService]` config section
+`WebInterfaceServiceConnector` already reads - `ServerUtils.LoadPlugin`
+creates an independent instance per caller, both ending up on the same
+DB table, so no shared in-memory state needed between the two
+connectors). `Login()` checks a new `AllowLogin` setting right next to
+the existing `m_MinLoginLevel` gate, for the same reason at the same
+spot - right after the account is known, before the heavier work
+(auth, inventory, presence). Gated to `account.UserLevel < 200`, the
+same god-level threshold this file already uses a few lines further
+down, so an admin can always still get in to run maintenance and
+reopen the grid - not a self-lockout footgun. A closed grid returns a
+real, admin-configurable message (`LoginClosedMessage`, falling back
+to a sensible default if blank) via `LLFailedLoginResponse`'s existing
+custom-message constructor, not a generic "blocked" reason.
+
+WebUI side: `/admin/settings` gained a new "Grid Access" section
+(checkbox + message textarea) right next to the existing
+`AllowRegistration` checkbox, following that same field's exact
+read/render/save pattern (`GetSetting`/form value/`m_GridSettingsService.Set`)
+end to end - no new persistence mechanism, no schema change.
+
+Hypergrid incoming visitors are NOT covered by this toggle (confirmed
+in scoping: separate `UserAgentService`/`GatekeeperService` code path)
+- the WebUI copy says so explicitly rather than implying full grid
+closure. Build confirmed clean (0 Warning(s), 0 Error(s)).
+
+Touches `OpenSim.Services.LLLoginService.dll` and
+`OpenSim.Server.Handlers.dll` - both already confirmed loaded by both
+Robust and every region earlier this session, so this needs the same
+full-grid deploy scope as the last three changes. Not yet deployed.

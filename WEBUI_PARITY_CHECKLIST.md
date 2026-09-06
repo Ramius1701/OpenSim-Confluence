@@ -186,82 +186,16 @@ pass. Not forgotten - each needs its own follow-up pass.
   has no such fields anywhere in the model. Needs a real schema change
   (new column + migration) across MySQL/PGSQL/SQLite - bigger than a
   display-only fix, not yet built.
-- **Grid-wide login toggle — real scoping done, not just a guess
-  (2026-09-07).** Originally flagged from `admin/welcomescreen_manager.html`'s
-  "GridStatus" Online/Offline select. Traced its actual server-side
-  handler (`welcomescreen_manager.cs`) and every other place `GridStatus`
-  is referenced anywhere in WhiteCore-Dev before assuming what it does -
-  **a real, load-bearing correction to the original flagged-gap
-  description**: WhiteCore's own toggle is purely cosmetic. It saves a
-  boolean into `IGenericsConnector` and the *only* other place that
-  value is ever read (`welcomescreen/gridstatus.cs`) just swaps an
-  "Online"/"Offline" label on the welcome page - a full search of every
-  `.cs` file under `WhiteCore/Modules` for `GridStatus` turns up zero
-  hits anywhere near actual login handling. The reference feature does
-  not, and never did, block a single login. So this isn't "port
-  WhiteCore's toggle" - there's no real behavior in it to port. What's
-  actually being scoped here is a real, working version WhiteCore's own
-  name for the feature implies but never built.
-
-  **Real, already-live infrastructure this can build on directly, no
-  new plumbing needed:**
-  - `LLLoginService` already has a real, working login gate -
-    `m_MinLoginLevel`, checked early in `Login()`
-    (`if (account.UserLevel < m_MinLoginLevel) return
-    LLFailedLoginResponse.LoginBlockedProblem;`) - and it's already
-    remotely settable live, no restart needed, via `SetLevel()`.
-    Not the right hook for a WebUI toggle specifically though:
-    `SetLevel` requires re-authenticating with a resident's actual
-    account password over a narrow legacy XML-RPC protocol (real
-    god-tools/viewer convention), not the WebUI's own session-based
-    admin auth.
-  - `IGridSettingsService`/`IGridSettingsData` - the real, already-
-    shipped, DB-backed (MySQL/PGSQL/SQLite, no schema gaps) key-value
-    settings store `/admin/settings` already uses for `AllowRegistration`
-    and friends, read through the existing `GetSetting(key, default)`
-    helper. Confirmed by reading `LoadReusedPlugin` directly: it's
-    `ServerUtils.LoadPlugin` under the hood with no cross-call instance
-    caching, so any connector that loads `[GridSettingsService]`'s
-    configured class gets its own instance reading/writing the *same*
-    underlying table - no shared in-memory state or IPC needed between
-    `WebInterfaceServiceConnector` and `LLLoginService` even though
-    they're different connectors, since both would just be talking to
-    the same DB. `LLLoginService.Initialise()` already loads a dozen
-    other services with this exact `ServerUtils.LoadPlugin<T>(dll, args)`
-    pattern (`m_UserAccountService`, `m_GridUserService`, etc.) -
-    adding `IGridSettingsService` the same way, reading the *already-
-    configured* `[GridSettingsService]` section (no new ini entry
-    needed), is a small, precedented addition.
-
-  **Real design, not just "add a checkbox":** a new `AllowLogin`
-  settings key (default `"true"`), toggled from `/admin/settings` next
-  to `AllowRegistration`, checked early in `LLLoginService.Login()`
-  (before the account lookup, so a closed grid fails cheaply without
-  touching `UserAccountService` at all) - but **admins still need to
-  get in to actually run the maintenance and reopen the grid**, so the
-  gate applies to `UserLevel < 200` only, reusing the exact same
-  god-level threshold this file already checks a few lines later
-  (`if (account.UserLevel >= 200) flags |= TeleportFlags.Godlike;`) -
-  not a self-lockout footgun. A blocked login gets a real,
-  admin-configurable message (a second settings key, e.g.
-  `LoginClosedMessage`) via `LLFailedLoginResponse`'s existing custom-
-  message constructor, not a generic "blocked" reason.
-
-  **Deliberately out of this scope, flagged not silently dropped**:
-  Hypergrid visitors arriving *from* another grid go through
-  `UserAgentService`/`GatekeeperService`, a separate code path this
-  gate doesn't touch - "close the entire grid" in the fullest sense
-  would need a second, smaller gate there too. Not required for a
-  useful v1 (blocking new local-account logins is the actual, common
-  maintenance-window use case), but noted so it isn't mistaken for
-  covered later.
-
-  **Estimated cost**: genuinely the smallest of the three remaining
-  flagged gaps - no schema change, no new DB backend work (unlike
-  abuse-report tracking), reuses 100% existing settings infrastructure.
-  Real new code is one settings key pair, an admin UI checkbox, wiring
-  `IGridSettingsService` into `LLLoginService`, and the early gate
-  check itself. Under a day. Not yet built.
+- **Grid-wide login toggle — built (2026-09-07).** Scoped, then built
+  the same day - see PROJECT_LOG.md for the full trace. WhiteCore-Dev's
+  own reference toggle turned out to be purely cosmetic (never actually
+  enforced a login block anywhere) - what got built here is a real,
+  working version, not a port. `/admin/settings` gained an "Allow
+  residents to log in" checkbox + admin-configurable closed-grid
+  message; `LLLoginService.Login()` enforces it for `UserLevel < 200`
+  so admins can always still get in to reopen the grid. Hypergrid
+  incoming visitors are explicitly not covered (separate code path,
+  documented in the WebUI copy itself). Not yet deployed.
 - **Per-region profile page — built (2026-09-07).** Scoped, then built
   the same day - see the `/region` row above and PROJECT_LOG.md for the
   full trace (what already existed vs. what was genuinely new).
