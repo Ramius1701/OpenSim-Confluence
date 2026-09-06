@@ -60,37 +60,6 @@ gap today. For what already exists, see `FEATURES.md`.
   for an admin to actually find and manually reconcile the rare case
   that does happen. The full non-freezing, no-duplication-risk-at-all
   version still needs the new RPC either way.
-- **Hypergrid teleport reliability - broader retry/backoff built
-  (2026-09-06).** Two of the several sequential network calls a
-  teleport depends on already had a real, careful retry
-  (`GatekeeperServiceConnector`'s `get_region`, `CreateAgent`) - traced
-  every other call in the chain directly rather than assuming they did
-  too, and three genuine gaps turned up: `UpdateAgent` (the full
-  agent-data handoff during a crossing/teleport) and `QueryAccess`
-  (checks whether the destination will accept the avatar) had zero
-  retry at all, and every home-grid identity call in
-  `UserAgentServiceConnector` (`LoginAgentToGrid`, `VerifyAgent`,
-  `VerifyClient`, `GetHomeRegion`, `IsAgentComingHome`,
-  `StatusNotification`, plus the read-only lookups underlying it) had
-  none either - the riskiest gap, since it's the only call reaching a
-  genuinely independent third-party server this deployment doesn't
-  control. Added retry to `UpdateAgent`/`QueryAccess` and to every
-  clearly side-effect-free `UserAgentServiceConnector` call
-  (`CallServer`'s six read-only lookups, plus `GetBoolResponse`'s four
-  callers including the idempotent `LogoutAgent`) - deliberately NOT
-  to `LoginAgentToGrid`, since unlike Confluence's own dedup-by-AgentID
-  guarantee for `CreateAgent`, there's no way to verify a third-party
-  home grid's own implementation is actually safe to call twice.
-  **A real bug surfaced and was fixed during this same pass**: the
-  first version of the new `UpdateAgent` retry check read the wrong
-  OSD key (would never have actually triggered a retry at all) -
-  caught by writing a small, real, empirical test against the actual
-  `OpenMetaverse.StructuredData` library rather than trusting the
-  pattern would transfer by inspection alone; see PROJECT_LOG.md for
-  the full trace, including how this also disproved an initial, much
-  more alarming false alarm (that `UpdateAgent` might have always
-  silently failed even on success) once `WebUtil.CanonicalizeResults`
-  was actually read.
 - **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
   set**, to catch anything the current build missed. Ongoing,
   page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.
