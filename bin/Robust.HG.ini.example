@@ -315,8 +315,12 @@
     ;FallbackService = "OpenSim.Services.AssetService.dll:AssetService";
 
     ;; How many days since last updating the access time before its updated again by FSAssets when accessing an asset
-    ;; Reduces DB calls if asset is requested often. Default value 0 will always update access time
-    ;DaysBetweenAccessTimeUpdates = 30
+    ;; Reduces DB calls if asset is requested often. Default value 0 will always update access time -
+    ;; confirmed 2026-09-06 this isn't theoretical: it doubles every asset read into two fully-
+    ;; serialized MySQL round-trips (the metadata SELECT plus an unthrottled access_time UPDATE)
+    ;; on the hottest path in the grid. Active by default here so a fresh deployment doesn't
+    ;; inherit the same silent cost.
+    DaysBetweenAccessTimeUpdates = 30
 
     ;; Should FSAssets print read/write stats to the robust console, default is true
     ;ShowConsoleStats = true
