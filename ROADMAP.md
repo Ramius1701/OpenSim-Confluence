@@ -139,10 +139,11 @@ gap today. For what already exists, see `FEATURES.md`.
   pass found the original flagged-gap description was wrong,
   WhiteCore-Dev's own reference toggle is purely cosmetic and never
   actually blocked a login, so this was a real feature built from
-  scratch, not a port. Both deployed and confirmed clean (2026-09-07,
-  see PROJECT_LOG.md); the login toggle's own gate/message behavior
-  hasn't been exercised end to end yet, still needs a real admin
-  session to flip it on and test against. The remaining 2, deliberately too
+  scratch, not a port. Both deployed and fully exercised end to end
+  with real accounts (2026-09-07, see PROJECT_LOG.md): an admin logged
+  in through a closed grid, an ordinary resident was blocked with the
+  real message, then logged in cleanly once reopened. Done. The
+  remaining 2, deliberately too
   large for a display-only fix (see `WEBUI_PARITY_CHECKLIST.md`'s
   "Flagged gaps" section): an avatar-selection starter-look carousel on
   `/register`; and abuse-report resolved/assigned tracking (needs a

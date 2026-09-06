@@ -20838,7 +20838,19 @@ completed without throwing). `/admin/settings` confirmed reachable
 (clean redirect to `/login` for an unauthenticated request, not a
 crash). Grid was at 0 online throughout - no resident impact.
 
-**Not yet exercised end-to-end** - confirming the toggle actually
-blocks an ordinary login and still admits a god-level account needs a
-real admin session to flip it on and a real login attempt to test
-against, which wasn't done as part of this deploy.
+**Exercised end-to-end with real accounts the same day, both
+directions confirmed - not just a clean boot.** User toggled
+`AllowLogin` off via `/admin/settings`, then tried two real logins:
+Ramius Easterwood (`UserLevel = 200`, confirmed via a direct DB read of
+`useraccounts`, not assumed) logged in successfully - the gate's
+`UserLevel < 200` check correctly let an admin through a closed grid,
+exactly the self-lockout protection it was designed for. Jessica
+Starlight (an ordinary resident, arriving via Hypergrid) was blocked
+with `Login failed for Jessica Starlight, reason: grid logins are
+closed` in `Robust.log`, matching the new code's own log line exactly.
+Toggled back on (confirmed `AllowLogin = true` via a fresh DB read),
+Jessica logged in cleanly on the next attempt - `[LLOGIN SERVICE]: All
+clear. Sending login response to Jessica Starlight`, no lingering
+block. Both the settings persistence and the login-time enforcement
+are confirmed working against real data, not just a theoretical
+design.
