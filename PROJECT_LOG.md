@@ -20698,4 +20698,85 @@ process module inspection that this touches 5 assemblies, all loaded
 by both Robust and every region: `OpenSim.Services.Interfaces.dll`,
 `OpenSim.Services.SearchService.dll`, `OpenSim.Data.dll`,
 `OpenSim.Data.MySQL.dll`, `OpenSim.Server.Handlers.dll` - same
-full-grid deploy scope as the two changes above. Not yet deployed.
+full-grid deploy scope as the two changes above.
+
+## Per-region profile page deployed - a real, multi-part incident along the way (2026-09-07)
+
+**Two genuine bugs caught and fixed only by actually testing this in a
+browser, not just curling the response**, both worth recording:
+
+1. `/region` was never added to `topLevelRoutes` - the separate array
+   `AddSimpleStreamHandler` registers paths from, distinct from the
+   `switch` statement that dispatches an already-matched path to a
+   handler. Adding a `case` alone isn't enough; without the
+   registration, `BaseHttpServer` never routes the request to this
+   connector at all and OpenSim core's own generic 404 answers instead
+   ("Ooops! ... knomes") - which is exactly what tipped this off, since
+   it's visibly different from this connector's own themed 404. Fixed
+   by adding `/region` next to `/worldmap` in that array.
+2. The parcels table originally linked each parcel to its owner's
+   profile using `parcel.ParcelID` where a user ID was expected -
+   `LandSearchRecord` has no owner field at all (`GetParcelsByOwner`
+   never needed one, since the owner was already the query's own
+   filter). Caught and fixed before deploying - see the build entry
+   above.
+
+**A real, separate deploy-tooling incident, worse than the browser-
+catchable bugs above: two silent copy failures, on two different
+files, during two different deploy attempts tonight**, that hash
+verification alone did not catch. `OpenSim.Server.Handlers.dll` copied
+during this deploy's first attempt reported a hash match immediately
+after `Copy-Item`, but the live file was still the one from 2 days
+earlier when checked again minutes later - caught because the new
+"Details →" worldmap link never appeared. Separately, `OpenSim.Region.
+CoreModules.dll` from the *earlier* `RemoveObject` deploy (Phase 0,
+also logged above) turned out to have had the exact same silent
+failure - undetected at the time because a stale `LocalSimulationConnectorModule`
+compiled against the *old* `ISimulationService` (without `RemoveObject`)
+was still a perfectly valid implementation of the old interface, so
+nothing crashed. It only became visible once this deploy's freshly-built
+`OpenSim.Services.Interfaces.dll` (with `RemoveObject` now required)
+loaded against that same stale class, which promptly threw
+`TypeLoadException: Method 'RemoveObject' ... does not have an
+implementation` and took all 15 regions down at startup - a real, if
+brief, full outage, though the grid was still at 0 online when it
+happened.
+
+Root cause of the copy failures themselves not fully pinned down -
+`Copy-Item -Force` reported success both times with no error, and a
+`match=True` hash check run *in the same script, immediately after*
+also passed, yet the file was provably stale content on independent
+re-verification (a fresh `Get-FileHash` call, or a byte-content grep
+for a known string) minutes later, with a several-day-old timestamp
+that a real fresh copy should not have carried. Possibly a Windows
+file-handle-release race right after `Stop-Process -Force` (the
+process object disappearing from `Get-CimInstance` doesn't necessarily
+mean the OS has finished releasing every file handle) that a same-script
+`Copy-Item` immediately followed by `Get-FileHash` doesn't reliably
+wait out - not conclusively confirmed, flagged for future deploys
+rather than guessed at further. **Lesson applied for the rest of this
+deploy and worth carrying forward**: verify a deploy copy with a
+*separate*, later command - not one chained immediately after the
+copy in the same script - and prefer a content grep for something
+genuinely new (a method name, a distinctive string) over a hash/
+timestamp comparison alone, since both of those can apparently still
+report success against a stale file.
+
+**Recovered by redeploying every assembly touched anywhere this
+session** (not just the ones this specific feature touched) - 10
+files total, each independently verified by hash *and* a raw
+byte-content grep for a real marker - then Robust and all 15 regions
+restarted one at a time as usual. All 15 reached `RegionReady` cleanly
+on this pass. One real resident (not a test account) logged into UFPGC
+partway through this recovery, confirming the grid was usable again
+before the deploy had even fully finished re-verifying every region.
+
+**Fully verified working in an actual browser afterward** (Browser
+tool, not just curl) - clicked "Details →" on `/worldmap`'s UFPGC
+popup, landed on `/region` showing the real owner (linked to their
+profile), location, size, maturity, online status, a working teleport
+link, an accurate "0 residents here now" (matches the grid's own
+0-online count at the time), and a real parcel row ("UFP Galaxy
+Command", 1,048,576 m² - the region's exact full 1024×1024 area,
+For Sale: No) pulled live through the new `GetParcelsByRegion` query
+against real production data, not a synthetic test.

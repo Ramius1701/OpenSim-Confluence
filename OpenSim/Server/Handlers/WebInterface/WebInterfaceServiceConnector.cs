@@ -437,7 +437,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // route and its sub-paths (e.g. /admin and /admin/users) resolve.
             string[] topLevelRoutes =
             {
-                "/dashboard", "/login", "/register", "/viewers", "/destinations", "/worldmap", "/gridstatus", "/economy", "/features",
+                "/dashboard", "/login", "/register", "/viewers", "/destinations", "/worldmap", "/region", "/gridstatus", "/economy", "/features",
                 "/support", "/search", "/landsearch", "/admin", "/profile", "/friends",
                 "/change-password", "/change-email", "/transactions", "/myclassifieds",
                 "/myevents", "/forgot-password", "/reset-password", "/logout",
