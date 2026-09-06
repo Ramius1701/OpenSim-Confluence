@@ -140,7 +140,12 @@ gap today. For what already exists, see `FEATURES.md`.
   change across MySQL/PGSQL/SQLite); a grid-wide login on/off toggle in
   the WebUI; and a per-region profile page (owner/type/maturity/
   terrain/resident list/parcels) that `/worldmap`'s popup doesn't cover
-  today. None started.
+  today - real scoping done (2026-09-07, see
+  `WEBUI_PARITY_CHECKLIST.md`'s "Flagged gaps" section): almost every
+  field traces to data Confluence already exposes elsewhere, the one
+  real new piece is a `GetParcelsByRegion` sibling to the existing
+  `GetParcelsByOwner` search call, estimated 1.5-2 days total. None
+  started.
 
 ## Planned, not started
 
