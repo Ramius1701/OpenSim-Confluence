@@ -142,7 +142,8 @@ gap today. For what already exists, see `FEATURES.md`.
   with real accounts; and abuse-report resolved/assigned tracking
   (`/admin/abuse-reports`) - `Active`/`AssignedTo`/`Notes` are now real
   fields across all 3 DB backends and the admin page is a real
-  editable queue, not read-only. Not yet deployed - see PROJECT_LOG.md.
+  editable queue, not read-only. Deployed and confirmed clean
+  (2026-09-07, see PROJECT_LOG.md).
   The remaining 1 (see `WEBUI_PARITY_CHECKLIST.md`'s "Flagged gaps"
   section): an avatar-selection starter-look carousel on `/register`.
   Not started.

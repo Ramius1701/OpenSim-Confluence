@@ -20979,3 +20979,44 @@ and `OpenSim.Server.Handlers.dll` - the widest set of assemblies any
 single change this session has touched; deploy scope needs checking
 fresh via live process module inspection before restarting anything,
 not assumed from earlier checks of a subset of these files.
+
+**Deployed same day, while online count was 0 - one real miss caught
+immediately, fixed without a second outage.** The deploy-scope list
+above (drawn from the commit message) missed `OpenSim.Framework.dll` -
+where `AbuseReportData.cs` itself actually compiles into, since it's a
+plain data class in `OpenSim/Framework/`, not one of the 7 service/data
+assemblies that reference it. Robust booted clean with no `FATAL`, but
+the very first real request to `/admin/abuse-reports` threw
+`System.MissingFieldException: Field not found:
+'OpenSim.Framework.AbuseReportData.AssignedTo'` - the stale, still-
+loaded `OpenSim.Framework.dll` didn't have the new fields at all.
+Caught by testing the actual route with curl immediately after
+deploying, not assumed clean from a quiet boot. Fixed by stopping
+Robust alone (regions weren't started yet, so no further outage),
+copying and independently verifying `OpenSim.Framework.dll` (hash
+match plus a real ASCII content grep for `AssignedTo` - not the UTF-16
+byte-pattern trick from the login-toggle incident, which does not
+apply to field/method *names* at all: those live in .NET's ASCII
+`#Strings` metadata heap, only string *literal values* live in the
+UTF-16 `#US` heap), restarting Robust, and re-confirming
+`/admin/abuse-reports` now returns a clean 302 to `/login` with no
+exception in the log. All 15 regions then brought up one at a time as
+usual, zero further `FATAL` anywhere. Grid picked back up real
+activity again mid-deploy - the same resident from the last two
+deploys logged into UFPGC before the deploy had finished bringing up
+the remaining regions.
+
+**A genuine, unexplained piece of live-DB drift found and reported,
+not silently worked around**: the live `AbuseReports` table has 5
+columns - `Status`, `ModeratorID`, `ModeratorName`, `ModeratorNotes`,
+`LastUpdated` - that appear nowhere in this repo's current code or its
+git history (`git log -S` across all history found zero hits for any
+of them), and aren't part of this change's own migration. The table
+has zero rows, so there's no data at risk and no conflict with the new
+`Active`/`AssignedTo`/`Notes` columns (different names entirely) - most
+likely a manual, out-of-band `ALTER TABLE` from an earlier, abandoned
+attempt at this same feature, run directly against the live DB outside
+the migration system (which only tracks changes it applied itself, so
+it wouldn't know about or revert this). Flagged to the user rather than
+assumed harmless and left uninvestigated - genuinely dead schema today,
+but worth knowing about if it's ever a surprise later.
