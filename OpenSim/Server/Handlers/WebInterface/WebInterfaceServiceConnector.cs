@@ -730,6 +730,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/worldmap":
                         HandleWorldMap(request, response);
                         break;
+                    case BasePath + "/region":
+                        HandleRegionProfile(request, response);
+                        break;
                     case BasePath + "/gridstatus":
                         HandleGridStatus(request, response);
                         break;
@@ -2451,7 +2454,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     "'<div class=\"wm-meta\">'+r.sizeLabel+' region ('+r.sizeX+'m &times; '+r.sizeY+'m) &middot; ('+r.gridX+', '+r.gridY+')</div>'+" +
                     "'<div class=\"wm-meta\">Owner: '+r.owner.replace(/</g,'&lt;')+'</div>'+" +
                     "'<div class=\"wm-meta\">Hypergrid: '+(r.hgOpen?'Open':'Closed')+'</div>'+" +
-                    "'<a class=\"wm-tp\" href=\"'+r.teleportUrl+'\">Teleport &rarr;</a></div>';");
+                    "'<a class=\"wm-tp\" href=\"'+r.teleportUrl+'\">Teleport &rarr;</a> '+" +
+                    "'<a class=\"wm-tp\" href=\"" + BasePath + "/region?id='+r.uuid+'\">Details &rarr;</a></div>';");
             sb.Append("layer.bindPopup(popupHtml,{className:'region-popup-wrap',closeButton:true});");
             sb.Append("layer.addTo(map);if(!firstLayer)firstLayer=layer;}}");
             sb.Append("byName[r.name.toLowerCase()]={center:[cy,cx],layer:firstLayer};");
@@ -2495,7 +2499,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                         ? "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25"
                         : BuildHopUrl(region.RegionName);
                 bool isOnline = aliveRegionIDs.Contains(region.RegionID.ToString());
-                sb.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>")
+                sb.Append("<tr><td><a href=\"").Append(BasePath).Append("/region?id=").Append(region.RegionID).Append("\">")
+                  .Append(Html(region.RegionName)).Append("</a></td>")
                   .Append("<td><span class=\"pill ").Append(isOnline ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>")
                   .Append("<td>").Append(region.RegionSizeX).Append("x").Append(region.RegionSizeY).Append("</td>")
                   .Append("<td>").Append(Html(ResolveOwnerName(region.EstateOwner))).Append("</td>")
@@ -2504,6 +2509,160 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("</table>");
 
             WritePage(request, response, PageTitle("World Map"), sb.ToString());
+        }
+
+        // Per-region profile page - a real gap found auditing WhiteCore-Dev's
+        // regionprofile/modal_profile.html + modal_parcels.html
+        // (WEBUI_PARITY_CHECKLIST.md, 2026-09-07): /worldmap's popup only
+        // ever showed name/size/teleport/owner, with nowhere for a resident
+        // to click through to actually see who's there or what parcels
+        // exist. One page here rather than WhiteCore's two-modal split
+        // (profile modal + a separate parcel-carousel modal) - a plain
+        // table fits this project's existing server-rendered-page style
+        // (see /myland) better than porting a Bootstrap carousel for what's
+        // fundamentally the same data, per this file's own fidelity
+        // standard (match structure/content, not literal reference markup).
+        private void HandleRegionProfile(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            string idParam = request.QueryString.Get("id");
+            GridRegion region = null;
+            if (!string.IsNullOrEmpty(idParam) && UUID.TryParse(idParam, out UUID regionId) && m_GridService != null)
+                region = m_GridService.GetRegionByUUID(UUID.Zero, regionId);
+
+            if (region == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                WritePage(request, response, PageTitle("Region"), "<h1>Region not found</h1><p>No region matches that link.</p>");
+                return;
+            }
+
+            bool isOnline = IsRegionAlive(region, 1500);
+            bool isViewerContext = IsViewerRequest(request, response);
+            string teleportUrl = isViewerContext
+                    ? "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25"
+                    : BuildHopUrl(region.RegionName);
+
+            // Same 13/21/42 = PG/Mature/Adult mapping this file's own search
+            // maturity filter already uses (HandleSearch) - no existing
+            // byte-to-label formatter to call, so written out directly here.
+            string maturity = region.Access switch
+            {
+                42 => "Adult",
+                21 => "Mature",
+                13 => "General (PG)",
+                _ => "Unknown"
+            };
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>").Append(Html(region.RegionName)).Append("</h1>");
+
+            if (region.TerrainImage != UUID.Zero)
+            {
+                sb.Append("<img class=\"widget-card-thumb\" style=\"max-width:256px;border-radius:8px;\" loading=\"lazy\" alt=\"\" src=\"/CAPS/GetTexture?texture_id=")
+                  .Append(region.TerrainImage).Append("\">");
+            }
+
+            string ownerName = "Unknown";
+            if (region.EstateOwner != UUID.Zero && m_UserAccountService != null)
+            {
+                UserAccount ownerAccount = m_UserAccountService.GetUserAccount(UUID.Zero, region.EstateOwner);
+                if (ownerAccount != null)
+                    ownerName = ownerAccount.Name;
+            }
+
+            sb.Append("<table>");
+            sb.Append("<tr><th>Owner</th><td><a href=\"").Append(BasePath).Append("/profile?id=").Append(region.EstateOwner).Append("\">")
+              .Append(Html(ownerName)).Append("</a></td></tr>");
+            sb.Append("<tr><th>Location</th><td>").Append(region.RegionCoordX).Append(", ").Append(region.RegionCoordY).Append("</td></tr>");
+            sb.Append("<tr><th>Size</th><td>").Append(region.RegionSizeX).Append("x").Append(region.RegionSizeY).Append("</td></tr>");
+            sb.Append("<tr><th>Maturity</th><td>").Append(maturity).Append("</td></tr>");
+            sb.Append("<tr><th>Status</th><td><span class=\"pill ").Append(isOnline ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td></tr>");
+            if (isOnline)
+                sb.Append("<tr><th></th><td><a class=\"cta-secondary\" href=\"").Append(Html(teleportUrl)).Append("\">Teleport &rarr;</a></td></tr>");
+            sb.Append("</table>");
+
+            // Current residents - same GetOnlineUsers(aliveRegionIDs) call
+            // /worldmap's own "Show Users" overlay already makes, filtered
+            // to this one region instead of plotted grid-wide, resolving
+            // both local and Hypergrid-visitor names the same way that
+            // overlay and HandleFriends already do.
+            sb.Append("<h2>Who's Here</h2>");
+            if (!isOnline || m_GridUserService == null)
+            {
+                sb.Append("<p class=\"news-meta\">Region is offline.</p>");
+            }
+            else
+            {
+                HashSet<string> thisRegion = new HashSet<string> { region.RegionID.ToString() };
+                List<string> names = new List<string>();
+                foreach (GridUserInfo info in m_GridUserService.GetOnlineUsers(thisRegion))
+                {
+                    if (info.LastRegionID != region.RegionID)
+                        continue;
+
+                    string userName = null;
+                    if (UUID.TryParse(info.UserID, out UUID localId))
+                    {
+                        UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, localId);
+                        userName = account?.Name;
+                    }
+                    else if (Util.ParseUniversalUserIdentifier(info.UserID, out UUID _, out string _, out string hgFirst, out string hgLast))
+                    {
+                        userName = (hgFirst + " " + hgLast).Trim();
+                    }
+                    if (!string.IsNullOrEmpty(userName))
+                        names.Add(userName);
+                }
+
+                sb.Append("<p class=\"news-meta\">").Append(names.Count).Append(names.Count == 1 ? " resident" : " residents").Append(" here now.</p>");
+                if (names.Count > 0)
+                {
+                    sb.Append("<ul>");
+                    foreach (string name in names)
+                        sb.Append("<li>").Append(Html(name)).Append("</li>");
+                    sb.Append("</ul>");
+                }
+            }
+
+            // Parcels in region - GetParcelsByRegion, same real, native,
+            // indexed backend GetParcelsByOwner already gives /myland,
+            // filtered by region instead of owner.
+            sb.Append("<h2>Parcels</h2>");
+            if (m_SearchService == null)
+            {
+                sb.Append("<p class=\"news-meta\">Search service is not available.</p>");
+            }
+            else
+            {
+                List<LandSearchRecord> parcels = m_SearchService.GetParcelsByRegion(region.RegionID);
+                if (parcels.Count == 0)
+                {
+                    sb.Append("<p class=\"news-meta\">No parcels recorded for this region yet.</p>");
+                }
+                else
+                {
+                    // No per-parcel owner column here - LandSearchRecord/
+                    // GetParcelsByRegion don't carry one (see this pass's
+                    // own PROJECT_LOG.md entry: the shared ReadRecord/
+                    // ReadEnrichedRecord readers used by every ISearchData
+                    // query read fixed column indices across 4 different
+                    // callers, so adding OwnerUUID cleanly means touching
+                    // all of them across all 3 DB backends - flagged as a
+                    // real, separate follow-up rather than shipped wrong).
+                    sb.Append("<table><tr><th>Parcel</th><th>Area</th><th>For Sale</th></tr>");
+                    foreach (LandSearchRecord parcel in parcels)
+                    {
+                        sb.Append("<tr><td>").Append(Html(parcel.Name)).Append("</td>")
+                          .Append("<td>").Append(parcel.Area.ToString("N0")).Append(" m&sup2;</td>")
+                          .Append("<td>").Append(parcel.ForSale ? "Yes" : "No").Append("</td></tr>");
+                    }
+                    sb.Append("</table>");
+                }
+            }
+
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/worldmap\">&larr; Back to World Map</a></p>");
+
+            WritePage(request, response, PageTitle(region.RegionName), sb.ToString());
         }
 
         // Web Profile - the biggest single gap found in the full WhiteCore-Dev

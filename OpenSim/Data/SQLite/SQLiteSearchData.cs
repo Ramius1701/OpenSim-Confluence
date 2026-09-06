@@ -247,6 +247,32 @@ namespace OpenSim.Data.SQLite
             return results;
         }
 
+        public List<LandSearchRecord> GetParcelsByRegion(UUID regionID)
+        {
+            List<LandSearchRecord> results = new List<LandSearchRecord>();
+
+            lock (this)
+            {
+                using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell, " +
+                        "land.RegionUUID, regions.regionName, land.Desc, land.Category, " +
+                        "land.UserLocationX, land.UserLocationY, land.UserLocationZ FROM land " +
+                        "LEFT JOIN regions ON land.RegionUUID = regions.uuid " +
+                        "WHERE land.RegionUUID = :regionid ORDER BY land.Name", m_conn))
+                {
+                    cmd.Parameters.Add(new SQLiteParameter(":regionid", regionID.ToString()));
+
+                    using (IDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                            results.Add(ReadEnrichedRecord(reader));
+                    }
+                }
+            }
+
+            return results;
+        }
+
         private static LandSearchRecord ReadRecord(IDataReader reader)
         {
             uint flags = reader.IsDBNull(2) ? 0 : (uint)System.Convert.ToInt64(reader.GetValue(2));

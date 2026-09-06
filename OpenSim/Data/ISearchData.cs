@@ -54,5 +54,11 @@ namespace OpenSim.Data
         // anywhere on the grid, regardless of ShowDirectory/maxAccess (this
         // is the owner managing their own land, not a search result).
         List<LandSearchRecord> GetParcelsByOwner(UUID ownerID);
+
+        // Per-region profile page source - every parcel in one region,
+        // regardless of ShowDirectory/maxAccess (same rationale as
+        // GetParcelsByOwner: this is grid-wide directory browsing of a
+        // specific region, not a maturity-filtered search result).
+        List<LandSearchRecord> GetParcelsByRegion(UUID regionID);
     }
 }

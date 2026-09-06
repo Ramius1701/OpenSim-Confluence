@@ -20638,3 +20638,64 @@ path only fires on the rare persistent-delete-failure case the
 dedicated live test for `RemoveObject` itself yet beyond the clean
 boot; it'll get real exercise the next time that rare failure path
 actually triggers.
+
+## Per-region profile page built (2026-09-07)
+
+Built the flagged WebUI parity gap scoped earlier the same day (see
+WEBUI_PARITY_CHECKLIST.md's "Flagged gaps" section and ROADMAP.md) - a
+new `/region?id={regionID}` page in `WebInterfaceServiceConnector.cs`,
+reachable from `/worldmap`'s popup ("Details →" link) and its All
+Regions table (region name now links through).
+
+**Confirmed the scoping was right - almost everything reused existing
+code, no new lookups needed:**
+- Owner, coordinates, size, maturity (`Access`), terrain image
+  (`TerrainImage`) - straight off `GridRegion` from
+  `IGridService.GetRegionByUUID`.
+- Online/offline status - `IsRegionAlive`, the same single-region probe
+  `FilterOnlineRegions` already loops over.
+- Region thumbnail - the existing `/CAPS/GetTexture?texture_id=`
+  endpoint, the same one `GetTextureRobustHandler.cs` got
+  `Cache-Control`/`ETag` on 2026-09-06.
+- Current residents ("Who's Here") - `/worldmap`'s own "Show Users"
+  overlay already calls `m_GridUserService.GetOnlineUsers(...)` and
+  matches each `GridUserInfo.LastRegionID` against a region; this page
+  makes the same call filtered to one region ID, resolving both local
+  and Hypergrid-visitor names the same way that overlay and
+  `HandleFriends` already do.
+
+**The one real new backend piece: `GetParcelsByRegion(UUID regionID)`.**
+Added as a sibling to the existing `GetParcelsByOwner(UUID ownerID)` -
+the real, native, indexed backend `/myland` already uses (built on a
+`land` table joined to `regions`, confirmed by reading
+`MySQLSearchData.GetParcelsByOwner` directly) - across `ISearchService`,
+`SearchService.cs`, `ISearchData`, and all three DB backends
+(MySQL/PGSQL/SQLite): each implementation is the exact same query with
+the `WHERE` clause swapped from `land.OwnerUUID` to `land.RegionUUID`.
+
+**One real gap caught before it shipped, not after**: the parcels
+table originally linked each parcel to its owner's profile - except
+`LandSearchRecord` (and the SELECT list both `GetParcelsByOwner` and
+the new `GetParcelsByRegion` share) never selects `land.OwnerUUID` at
+all, since `GetParcelsByOwner` never needed it (the owner was already
+the query's own filter). The link would have pointed `/profile?id=`
+at a *parcel* ID as if it were a *user* ID - a real, live, wrong link.
+Caught before deploying, not after: the parcels table now shows
+Name/Area/For Sale only, with per-parcel owner display flagged as a
+separate, real follow-up (`ReadRecord`/`ReadEnrichedRecord` are shared,
+fixed-column-index readers across 4 different query methods in each of
+3 DB backends, so adding `OwnerUUID` cleanly means touching all of
+them, not just the two region/owner parcel queries - deliberately not
+done in this pass to keep it scoped).
+
+**Deliberate non-port, not a silent drop**: WhiteCore's `RegionType`/
+`RegionTerrain` free-text fields have no equivalent anywhere in
+OpenSim's or Confluence's region data model - same category of call
+already made for `/myevents`' maturity/cover-charge gap.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)). Confirmed via live
+process module inspection that this touches 5 assemblies, all loaded
+by both Robust and every region: `OpenSim.Services.Interfaces.dll`,
+`OpenSim.Services.SearchService.dll`, `OpenSim.Data.dll`,
+`OpenSim.Data.MySQL.dll`, `OpenSim.Server.Handlers.dll` - same
+full-grid deploy scope as the two changes above. Not yet deployed.

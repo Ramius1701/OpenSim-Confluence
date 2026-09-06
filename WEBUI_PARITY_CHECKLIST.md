@@ -53,6 +53,7 @@ literal code."
 | ✅ | `/destinations`, `/guide` | *(no match — Confluence-specific)* | Already audited - `HandleGuide`/`HandleDestinations`'s own extensive code comments (`WebInterfaceServiceConnector.cs:1310-1330`, `:1553-1556`) document these as deliberate ports of OpenSim-Grid-Interface's real `guide.php`/`destinations.php` (two genuinely different pages, not duplicated), not invented from scratch. |
 | ✅ | `/landsearch` | `user/buyland.html` | Done 2026-08-23: reference file is itself a literal "Purchase of land is under construction" 404-style stub, never actually implemented in WhiteCore-Dev. Confluence's `HandleLandSearch` is a real, working parcel/region-for-sale listing backed by `ISearchService.SearchLandForSale`. No gap - Confluence already has what the reference never built. |
 | ✅ | `/auctions`, `/auctions/bid` | *(no match found)* | Confirmed via a case-insensitive full-text search of every file under `WhiteCore-Dev/WhiteCoreSim/bin/html/` for "auction" - zero matches anywhere in the reference set, not just no filename match. Genuinely nothing to audit against. |
+| ✅ | `/region` | `regionprofile/modal_profile.html`, `regionprofile/modal_parcels.html` | Built 2026-09-07 (was a flagged gap - see PROJECT_LOG.md for the full trace). One page, not WhiteCore's two-modal split - owner/location/size/maturity/online status/teleport, a Who's Here resident list (reusing `/worldmap`'s own `GetOnlineUsers` overlay call, filtered to one region), and a Parcels table via the new `GetParcelsByRegion` search call. Reachable from `/worldmap`'s popup ("Details →") and its All Regions table. RegionType/RegionTerrain deliberately not ported (no data-model equivalent); per-parcel owner deliberately not shown yet (`LandSearchRecord` carries no owner column - real, separate follow-up, not shipped wrong). |
 
 ## Messaging (no WhiteCore equivalent found)
 
@@ -164,10 +165,8 @@ Reviewed 2026-08-23, each deliberately, not silently skipped:
   third party's profile). Added, reusing the same `GetRegionsOwnedBy`
   helper against the profile's subject instead of always the session.
 - `regionprofile/modal_parcels.html`, `regionprofile/modal_profile.html`
-  - real gap, not built this pass: a full per-region detail page
-  (owner, type, maturity, terrain, current resident count/list,
-  parcels-in-region). `/worldmap`'s popup only shows name/size/
-  teleport today. Bigger than a display-only fix - flagged below.
+  - now has a real route, `/region` - see that row above and the
+    "Flagged gaps" section below for the full build.
 
 ## Flagged gaps (real, larger scope, deferred)
 
@@ -193,70 +192,9 @@ pass. Not forgotten - each needs its own follow-up pass.
   logins from the web UI. No equivalent exists in Confluence's
   WebInterface - closing logins grid-wide today means editing
   `[LoginService]` config directly. Not yet built.
-- **Per-region profile page — real scoping done, not just a guess
-  (2026-09-07).** Reference shows owner, region type, maturity rating,
-  terrain, current resident count/list, and a parcels-in-region
-  carousel for any region, reachable from search/friends/worldmap
-  links. Confluence's `/worldmap` popup only shows name/size/teleport/
-  owner today - no dedicated region-detail page exists to link those
-  clicks to. Read WhiteCore-Dev's own server-side handlers for this
-  page (`WhiteCore/Modules/Web/html/regionprofile/index.cs`/
-  `parcels.cs`), not just the HTML templates, to see exactly what data
-  it actually pulls together rather than guessing from the markup.
-
-  **Almost everything needed already exists in Confluence, confirmed
-  by tracing each field to a real call site already in
-  `WebInterfaceServiceConnector.cs`:**
-  - Owner, coordinates, size, maturity (`Access`), terrain image
-    (`TerrainImage`) - all plain fields on `GridRegion` from
-    `IGridService.GetRegionByUUID`, no new lookup needed.
-  - Owner *name* resolution and online/offline status - the exact
-    `ResolveOwnerName`/`FilterOnlineRegions` helpers `/worldmap` and
-    `/admin/regions` already use.
-  - Current residents in the region - `/worldmap`'s own "Show Users"
-    overlay already calls `m_GridUserService.GetOnlineUsers
-    (aliveRegionIDs)` and matches each `GridUserInfo.LastRegionID`
-    against a region to place avatar dots on the map (including
-    resolving Hypergrid visitors' universal-identifier names); this
-    page needs the same call filtered to one region ID instead of
-    plotted across all of them - not a new capability, a narrower
-    reuse of an existing one.
-  - Region thumbnail - `TerrainImage` renders via the same
-    `/CAPS/GetTexture?texture_id=` URL pattern already used for
-    classified/marketplace thumbnails elsewhere in this same file (and
-    which now carries `Cache-Control`/`ETag`, see PROJECT_LOG.md
-    2026-09-06).
-
-  **The one real new piece: parcels-in-region.** `ISearchService`
-  already has `GetParcelsByOwner(UUID ownerID)` - the real, native,
-  indexed backend `/myland` uses (not a for-sale-only search) - built
-  on a `land` table joined to `regions` that already carries
-  `RegionUUID` as a column (confirmed reading
-  `MySQLSearchData.GetParcelsByOwner` directly). Adding a sibling
-  `GetParcelsByRegion(UUID regionID)` is mechanically the same query
-  with the `WHERE` clause swapped to filter by region instead of
-  owner - real work, but small and well-precedented: one method each
-  in `ISearchService`, `SearchService.cs`, `ISearchData`, and the three
-  DB backends (MySQL/PGSQL/SQLite), each a near copy-paste of the
-  existing owner-filtered version.
-
-  **Deliberate non-port, not a silent drop**: WhiteCore's `RegionType`/
-  `RegionTerrain` descriptive strings have no equivalent field
-  anywhere in OpenSim's or Confluence's `GridRegion`/region-settings
-  model - same category of decision already made for `/myevents`'
-  maturity/cover-charge gap (real data-model gap, out of scope for a
-  display-only page). Terrain height/heightmap data exists region-side
-  but isn't the same thing as WhiteCore's free-text "terrain type"
-  field and isn't surfaced to Robust today either.
-
-  **Buildable as:** a new `/region/{regionID}` route in
-  `WebInterfaceServiceConnector.cs` (own handler, following the same
-  pattern as every other page here) plus one link added to
-  `/worldmap`'s existing Leaflet popup template (`popupHtml` in
-  `HandleWorldMap`) pointing at it. **Estimated cost**: the page itself
-  (reusing all the already-available data) is roughly a day; the new
-  `GetParcelsByRegion` plumbing across 5 files is another half-day to a
-  day including the three DB backends. Not yet built.
+- **Per-region profile page — built (2026-09-07).** Scoped, then built
+  the same day - see the `/region` row above and PROJECT_LOG.md for the
+  full trace (what already existed vs. what was genuinely new).
 
 ## How to use this list
 

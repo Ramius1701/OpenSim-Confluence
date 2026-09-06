@@ -295,6 +295,34 @@ namespace OpenSim.Data.MySQL
             return results;
         }
 
+        public List<LandSearchRecord> GetParcelsByRegion(UUID regionID)
+        {
+            List<LandSearchRecord> results = new List<LandSearchRecord>();
+
+            using (MySqlConnection dbcon = new MySqlConnection(m_connectionString))
+            {
+                dbcon.Open();
+
+                using (MySqlCommand cmd = new MySqlCommand(
+                        "SELECT land.UUID, land.Name, land.LandFlags, land.SalePrice, land.AuctionID, land.Area, land.Dwell, " +
+                        "land.RegionUUID, regions.regionName, land.Description, land.Category, " +
+                        "land.UserLocationX, land.UserLocationY, land.UserLocationZ FROM land " +
+                        "LEFT JOIN regions ON land.RegionUUID = regions.uuid " +
+                        "WHERE land.RegionUUID = ?regionID ORDER BY land.Name", dbcon))
+                {
+                    cmd.Parameters.AddWithValue("?regionID", regionID.ToString());
+
+                    using (IDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                            results.Add(ReadEnrichedRecord(reader));
+                    }
+                }
+            }
+
+            return results;
+        }
+
         private static LandSearchRecord ReadRecord(IDataReader reader)
         {
             uint flags = reader.IsDBNull(2) ? 0 : (uint)reader.GetInt64(2);

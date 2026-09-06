@@ -237,6 +237,31 @@ namespace OpenSim.Data.PGSQL
             return results;
         }
 
+        public List<LandSearchRecord> GetParcelsByRegion(UUID regionID)
+        {
+            List<LandSearchRecord> results = new List<LandSearchRecord>();
+
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                    "SELECT land.\"UUID\", land.\"Name\", land.\"LandFlags\", land.\"SalePrice\", land.\"AuctionID\", land.\"Area\", land.\"Dwell\", " +
+                    "land.\"RegionUUID\", regions.\"regionName\", land.\"Description\", land.\"Category\", " +
+                    "land.\"UserLocationX\", land.\"UserLocationY\", land.\"UserLocationZ\" FROM land " +
+                    "LEFT JOIN regions ON land.\"RegionUUID\" = regions.uuid " +
+                    "WHERE land.\"RegionUUID\" = :regionid ORDER BY land.\"Name\"", conn))
+            {
+                cmd.Parameters.AddWithValue(":regionid", regionID.ToString());
+                conn.Open();
+
+                using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                        results.Add(ReadEnrichedRecord(reader));
+                }
+            }
+
+            return results;
+        }
+
         private static LandSearchRecord ReadRecord(NpgsqlDataReader reader)
         {
             uint flags = reader.IsDBNull(2) ? 0 : (uint)reader.GetInt64(2);

@@ -29,5 +29,10 @@ namespace OpenSim.Services.Interfaces
 
         // /myland self-service source - see ISearchData for the rationale.
         List<LandSearchRecord> GetParcelsByOwner(UUID ownerID);
+
+        // Per-region profile page source - every parcel in one region,
+        // regardless of ShowDirectory/maxAccess - see ISearchData for the
+        // rationale.
+        List<LandSearchRecord> GetParcelsByRegion(UUID regionID);
     }
 }

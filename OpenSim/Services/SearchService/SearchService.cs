@@ -57,5 +57,10 @@ namespace OpenSim.Services.SearchService
         {
             return m_Database.GetParcelsByOwner(ownerID);
         }
+
+        public List<LandSearchRecord> GetParcelsByRegion(UUID regionID)
+        {
+            return m_Database.GetParcelsByRegion(regionID);
+        }
     }
 }
