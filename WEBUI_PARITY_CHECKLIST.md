@@ -180,12 +180,74 @@ pass. Not forgotten - each needs its own follow-up pass.
   archives), letting a new resident pick a starting avatar at signup.
   Confluence's `/register` currently creates the account with whatever
   default avatar the grid ships. Real feature gap, not yet built.
-- **Abuse report resolved/assigned tracking** (found auditing
-  `/admin/abuse-reports` 2026-08-23): reference's `admin_manager.html`
-  shows Assigned To and Active (resolved) columns; `AbuseReportData`
-  has no such fields anywhere in the model. Needs a real schema change
-  (new column + migration) across MySQL/PGSQL/SQLite - bigger than a
-  display-only fix, not yet built.
+- **Abuse report resolved/assigned tracking — real scoping done, not
+  just a guess (2026-09-07).** Original flagged-gap description holds
+  up this time (unlike the login toggle's own scoping pass, which found
+  its reference was cosmetic) - read WhiteCore-Dev's real model
+  (`Framework/Services/IAbuseReports.cs`) and its admin detail-page
+  handler (`abuse_report.cs`) directly: `Active` (bool, resolved vs.
+  open) and `AssignedTo` (string - the assigned admin's *name*, set
+  from a dropdown of real god-level accounts plus a synthetic "No One"
+  to unassign) are both real, live fields the reference actually uses,
+  not decoration. `Notes` (free-text, admin-added) rides along as a
+  third field the reference edits from the same form. Confluence's
+  `AbuseReportData` genuinely has none of the three.
+
+  **But "needs a schema change" is a smaller, cheaper thing here than
+  it usually sounds, confirmed by reading the actual data layer instead
+  of assuming**: all three backends' `AbuseReportData` handlers
+  (`MySqlAbuseReportsData` etc.) derive from a generic, reflection-based
+  table handler (`MySQLGenericTableHandler<AbuseReportData>` and its
+  PGSQL/SQLite equivalents) that maps every public C# field on
+  `AbuseReportData` to a same-named DB column automatically - `Store()`
+  and `Get()` are already written once, generically, and need zero
+  changes for new fields. Adding `Active`/`AssignedTo`/`Notes` to the
+  plain `AbuseReportData.cs` model is picked up by all three backends
+  with no code change to any of the three `*AbuseReportsData.cs` files
+  at all. The only real per-backend work is a migration adding the
+  matching columns - `AbuseReports.migrations` already has a real,
+  precedented 2-version history for MySQL (`:VERSION 2` widened
+  `Category` from `int` to `varchar` for a real live bug, confirmed
+  reading the file directly), so a new version doing 3 `ADD COLUMN`s is
+  the exact same shape of change already proven safe here, not a new
+  pattern. PGSQL/SQLite are both still at `:VERSION 1` (never needed
+  the Category fix - both already had the correct column type from the
+  start) so this would be their first-ever added version.
+
+  **Real bonus finding: no new "update" capability needs building
+  either.** `Store()` is a MySQL `REPLACE INTO` (PGSQL/SQLite
+  equivalent) keyed on `ReportID`, the table's real auto-increment
+  primary key - confirmed reading the migration's own `CREATE TABLE`.
+  That means calling `Store()` again with an existing `ReportID`
+  already performs a real update in place; `AbuseReportsService.
+  ReportAbuse()` already does exactly `m_Database.Store(report)` for
+  new submissions, so a new `UpdateAbuseReport(AbuseReportData report)`
+  service method is a one-line passthrough to the same call, not new
+  data-layer logic.
+
+  **The real, actually-new work is the WebUI itself**, confirmed by
+  reading `HandleAdminAbuseReports` directly: it's fully **read-only**
+  today - a list and a detail view, no form, no save action anywhere.
+  Building this means: Assigned To/Active columns on the list table;
+  turning the detail page into a real form (Notes textarea, an
+  Active toggle, an AssignedTo dropdown sourced from real admin/
+  god-level accounts via `m_UserAccountService.GetUserAccounts`
+  filtered to `UserLevel >= 200` plus an unassign option - the same
+  real pattern the reference itself uses, not invented); and a new
+  save handler calling the new service method. One detail deliberately
+  left for implementation rather than guessed here: each backend's
+  best-fit column type for the new `Active` boolean differs (MySQL's
+  generic handler reads bools as 0/1 integers; PGSQL has a native
+  `boolean` type Npgsql maps directly) - matched to whichever
+  convention that backend's own generic handler already expects, not
+  assumed to be one universal type across all three.
+
+  **Estimated cost**: smaller than the original "bigger than a
+  display-only fix" framing suggested, now that the data-layer cost is
+  known to be near-zero - three short migration files, a 3-field model
+  addition, a one-line service method, and the WebUI form/list/save
+  work (the actual bulk of it). Realistically under a day. Not yet
+  built.
 - **Grid-wide login toggle — built (2026-09-07).** Scoped, then built
   the same day - see PROJECT_LOG.md for the full trace. WhiteCore-Dev's
   own reference toggle turned out to be purely cosmetic (never actually

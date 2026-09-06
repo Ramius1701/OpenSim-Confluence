@@ -143,11 +143,15 @@ gap today. For what already exists, see `FEATURES.md`.
   with real accounts (2026-09-07, see PROJECT_LOG.md): an admin logged
   in through a closed grid, an ordinary resident was blocked with the
   real message, then logged in cleanly once reopened. Done. The
-  remaining 2, deliberately too
-  large for a display-only fix (see `WEBUI_PARITY_CHECKLIST.md`'s
-  "Flagged gaps" section): an avatar-selection starter-look carousel on
-  `/register`; and abuse-report resolved/assigned tracking (needs a
-  schema change across MySQL/PGSQL/SQLite). Neither started.
+  remaining 2 (see `WEBUI_PARITY_CHECKLIST.md`'s "Flagged gaps"
+  section): an avatar-selection starter-look carousel on `/register`;
+  and abuse-report resolved/assigned tracking - real scoping done
+  (2026-09-07), and cheaper than it sounds: all 3 DB backends use a
+  reflection-based generic table handler, so the 3 new fields need
+  zero data-layer code, just a migration per backend (one already has
+  a precedented 2-version history to copy the shape of) and a WebUI
+  form (the admin abuse-reports page is currently fully read-only).
+  Estimated well under a day. Neither started.
 
 ## Planned, not started
 
