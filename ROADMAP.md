@@ -65,8 +65,8 @@ gap today. For what already exists, see `FEATURES.md`.
   out wrong or the final handoff fails, not the primary mechanism.
 
   **Buildable in phases, not one large change:**
-  - **Phase 0 - the RPC itself - built (2026-09-07), not yet
-    deployed.** Added `RemoveObject(GridRegion destination, UUID
+  - **Phase 0 - the RPC itself - built and deployed (2026-09-07).**
+    Added `RemoveObject(GridRegion destination, UUID
     objectID)` to `ISimulationService`, mirroring the existing
     `CloseAgent` pattern end to end: an HTTP `DELETE` client method in
     `SimulationServiceConnector.cs`, the local-then-remote dispatch in

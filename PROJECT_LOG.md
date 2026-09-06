@@ -20622,4 +20622,19 @@ process module inspection that this touches 4 assemblies, all loaded
 by both Robust and every region: `OpenSim.Services.Interfaces.dll`,
 `OpenSim.Services.Connectors.dll`, `OpenSim.Region.CoreModules.dll`,
 `OpenSim.Server.Handlers.dll` - a full Robust + all-15-regions deploy,
-same scope as the wearables-delay deploy above, not yet done.
+same scope as the wearables-delay deploy above.
+
+**Deployed same day, while online count was 0.** Stopped all 16
+processes, copied and hash-verified all 4 files, started Robust first
+(verified via `Robust.log` and `/gridstatus` - all services Online,
+Operational), then all 15 regions one at a time, each verified against
+`OpenSim.log` before starting the next. All 15 reached `RegionReady`
+cleanly, zero `FATAL` errors anywhere in the deploy window. Grid was at
+0 online throughout, confirmed before/during/after via the WebUI online
+count - no resident impact. This new `/object` `DELETE` route isn't
+exercised by anything except the rollback path added above, and that
+path only fires on the rare persistent-delete-failure case the
+2026-09-05 duplication-bug fix already handles - so there's no
+dedicated live test for `RemoveObject` itself yet beyond the clean
+boot; it'll get real exercise the next time that rare failure path
+actually triggers.
