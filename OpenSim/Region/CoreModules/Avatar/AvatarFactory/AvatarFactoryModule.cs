@@ -57,6 +57,20 @@ namespace OpenSim.Region.CoreModules.Avatar.AvatarFactory
 
         private int m_savetime = 5; // seconds to wait before saving changed appearance
         private int m_sendtime = 2; // seconds to wait before sending changed appearance
+
+        // Reduced from a hardcoded, unexplained 4000ms (2026-09-06) - ancient vanilla-OpenSim
+        // code (predates 2013 in this repo's history), no comment or commit message ever
+        // explained the wait, and direct tracing found no dependency it could be covering:
+        // ScenePresence.Appearance is populated synchronously from AgentCircuitData well
+        // before the AgentWearablesRequest packet that triggers Client_OnRequestWearables can
+        // even physically arrive (that requires a full UDP handshake + RegionHandshake round
+        // trip first). Fires on every single login AND every teleport/region crossing,
+        // grid-wide - a real, direct contributor to "avatar is a grey cloud"/long loading-
+        // screen complaints. Kept as a small, tunable, non-zero delay rather than removed
+        // outright, specifically because a 15-year-old sleep surviving this long sometimes
+        // means an undocumented race it's silently covering - if that turns out to be true
+        // here, this is the value to raise, without needing another code change.
+        private int m_wearablesRequestDelayMs = 200;
         private bool m_temporaryDefaultAppearanceFallback = true;
         private int m_temporaryDefaultAppearanceDelaySeconds = 6;
         private int m_temporaryDefaultAppearanceRestoreSeconds = 12;
@@ -100,6 +114,7 @@ namespace OpenSim.Region.CoreModules.Avatar.AvatarFactory
             {
                 m_savetime = appearanceConfig.GetInt("DelayBeforeAppearanceSave", m_savetime);
                 m_sendtime = appearanceConfig.GetInt("DelayBeforeAppearanceSend", m_sendtime);
+                m_wearablesRequestDelayMs = appearanceConfig.GetInt("WearablesRequestDelayMs", m_wearablesRequestDelayMs);
                 m_temporaryDefaultAppearanceFallback = appearanceConfig.GetBoolean("TemporaryDefaultAppearanceFallback", m_temporaryDefaultAppearanceFallback);
                 m_temporaryDefaultAppearanceDelaySeconds = appearanceConfig.GetInt("TemporaryDefaultAppearanceDelaySeconds", m_temporaryDefaultAppearanceDelaySeconds);
                 m_temporaryDefaultAppearanceRestoreSeconds = appearanceConfig.GetInt("TemporaryDefaultAppearanceRestoreSeconds",
@@ -1410,7 +1425,7 @@ namespace OpenSim.Region.CoreModules.Avatar.AvatarFactory
         {
             Util.FireAndForget(delegate(object x)
             {
-                Thread.Sleep(4000);
+                Thread.Sleep(m_wearablesRequestDelayMs);
 
                 // m_log.DebugFormat("[AVFACTORY]: Client_OnRequestWearables called for {0} ({1})", client.Name, client.AgentId);
                 ScenePresence sp = m_scene.GetScenePresence(client.AgentId);
