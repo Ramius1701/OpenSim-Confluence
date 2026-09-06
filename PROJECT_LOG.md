@@ -20383,3 +20383,54 @@ facing endpoints would be dead weight, not a real optimization.
 Compression and HTTP keep-alive were also checked and confirmed
 already-correct/not-applicable respectively - not padded into findings
 just to seem more thorough.
+
+## Login/region-entry time investigated - a hardcoded 4s sleep found and reduced (2026-09-06)
+
+Third and last of the three "make the grid faster" threads (region-
+crossing/teleport reliability and asset delivery latency both already
+closed above). Traced the real login/region-entry path rather than
+guessing where time might be going.
+
+**The real find:** `AvatarFactoryModule.cs`'s `Client_OnRequestWearables`
+- the handler for the `AgentWearablesRequest` UDP packet, which every
+viewer sends early in *every* new circuit, meaning this fires on every
+single login **and** every teleport/region crossing, grid-wide - had an
+unconditional `Thread.Sleep(4000)` before answering it with what the
+avatar is wearing. Ancient vanilla-OpenSim code (predates 2013 in this
+repo's history); no comment or commit message anywhere ever explained
+the wait. A web search for historical context turned up only
+speculation ("likely for synchronization"), not anything authoritative
+- treated as inconclusive, not relied on.
+
+Traced the actual dependency directly instead of trusting the comment-
+free code: `ScenePresence.Appearance` is populated synchronously from
+`AgentCircuitData.Appearance` (itself filled by `LLLoginService.MakeAgent()`
+from `AvatarService.GetAppearance()`) well before the
+`AgentWearablesRequest` packet can even physically arrive - that packet
+needs a full UDP handshake plus a `RegionHandshake` round trip first.
+No dependency was found that the 4-second wait could have been
+covering.
+
+**Given the real risk flagged along the way - a 15-year-old sleep
+surviving this long sometimes means an undocumented race it's silently
+covering - the user's explicit instruction was to reduce it cautiously,
+not remove it outright:** kept as a small, non-zero, tunable delay
+rather than deleted. Added `[Appearance] WearablesRequestDelayMs`
+(default `200`) to `AvatarFactoryModule.cs`, following the same
+config pattern already used for `m_savetime`/`m_sendtime` in the same
+class, documented in `bin/OpenSimDefaults.ini`. If a genuine race does
+turn out to be hiding behind this after all, raising the value is a
+config-only change on Casperia's live `Robust`/region inis - no rebuild
+needed. Build confirmed clean (0 Warning(s), 0 Error(s)).
+
+**Deploy scope confirmed via live process inspection, not just ini
+grep** (the established lesson from the `OpenSim.Region.Framework.dll`
+miss above): `AvatarFactoryModule.cs` compiles into
+`OpenSim.Region.CoreModules.dll`, which Robust.exe does not have loaded
+as a module at all - region-only, no Robust restart needed for this
+one.
+
+**One smaller, real candidate from the same investigation left open,
+not built - see ROADMAP.md**: `LLLoginService.Login()` runs its
+per-service lookups sequentially rather than in parallel, a real but
+modest ~10-30ms/login gap, far smaller than the 4-second find above.

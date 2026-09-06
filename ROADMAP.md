@@ -111,6 +111,22 @@ gap today. For what already exists, see `FEATURES.md`.
   these correctly, so every repeat pageview re-fetches and re-pays the
   full asset-service cost for an image that never changes. Low effort,
   narrow but real scope (browser-facing traffic only).
+- **Login/region-entry time: one real fix built, one small candidate
+  still open (2026-09-06).** The real find: `AvatarFactoryModule.cs`'s
+  `Client_OnRequestWearables` — triggered by every new circuit's
+  `AgentWearablesRequest` packet, so it fires on every login AND every
+  teleport/region crossing, grid-wide — unconditionally slept 4000ms
+  before answering it, with no comment or commit ever explaining why.
+  Traced the actual dependency and found none: `ScenePresence.Appearance`
+  is populated synchronously from `AgentCircuitData` well before this
+  packet can physically arrive. Reduced to a tunable
+  `[Appearance] WearablesRequestDelayMs`, default 200ms — see
+  PROJECT_LOG.md for the full trace and the reasoning for keeping it
+  non-zero rather than removing it outright. Still open, low priority:
+  `LLLoginService.Login()` runs its per-service lookups (grid info, user
+  account, presence, etc.) sequentially rather than in parallel — a
+  modest ~10-30ms/login gap, not chased yet since it's real but small
+  next to the 4-second find above.
 - **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
   set**, to catch anything the current build missed. Ongoing,
   page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.
