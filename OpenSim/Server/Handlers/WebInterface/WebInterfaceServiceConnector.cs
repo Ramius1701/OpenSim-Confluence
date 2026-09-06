@@ -944,8 +944,41 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/settings":
                         HandleAdminSettings(request, response);
                         break;
-                    case BasePath + "/admin/settings/save":
-                        HandleAdminSettingsSave(request, response);
+                    case BasePath + "/admin/settings/identity":
+                        HandleAdminSettingsIdentity(request, response);
+                        break;
+                    case BasePath + "/admin/settings/identity/save":
+                        HandleAdminSettingsIdentitySave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/access":
+                        HandleAdminSettingsAccess(request, response);
+                        break;
+                    case BasePath + "/admin/settings/access/save":
+                        HandleAdminSettingsAccessSave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/announcement":
+                        HandleAdminSettingsAnnouncement(request, response);
+                        break;
+                    case BasePath + "/admin/settings/announcement/save":
+                        HandleAdminSettingsAnnouncementSave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/economy":
+                        HandleAdminSettingsEconomy(request, response);
+                        break;
+                    case BasePath + "/admin/settings/economy/save":
+                        HandleAdminSettingsEconomySave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/map-tiles":
+                        HandleAdminSettingsMapTiles(request, response);
+                        break;
+                    case BasePath + "/admin/settings/map-tiles/save":
+                        HandleAdminSettingsMapTilesSave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/features":
+                        HandleAdminSettingsFeatures(request, response);
+                        break;
+                    case BasePath + "/admin/settings/features/save":
+                        HandleAdminSettingsFeaturesSave(request, response);
                         break;
                     case BasePath + "/admin/console":
                         HandleAdminConsole(request, response);
@@ -7447,6 +7480,20 @@ namespace OpenSim.Server.Handlers.WebInterface
         // Grid settings editor (task #25) - see the GetSetting helper's
         // comment for why this is a fixed, small set of keys rather than a
         // generic config-file editor.
+        // Grid Settings landing page - a tile hub into 6 separate sub-pages
+        // (same "index of cards linking to their own dedicated pages" shape
+        // as /admin itself, and the same reasoning that already split
+        // Region Management out of the Grid Administration overview: this
+        // used to be one giant form covering 6 unrelated topics, saved by
+        // one handler that wrote all ~14 keys unconditionally on every
+        // submit regardless of which field actually changed. Real problem
+        // that fixed, found by the user (2026-09-07): not performance (each
+        // Set() is a cheap local REPLACE INTO) but a genuine lost-update
+        // risk - the whole form always resubmitted with whatever value each
+        // field held at page-load time, so saving from one browser tab
+        // could silently revert a change another tab/admin had just made to
+        // an unrelated field. Splitting into independent forms/handlers
+        // means a save only ever touches the keys on that one page.
         private void HandleAdminSettings(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -7462,23 +7509,307 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            StringBuilder nav = new StringBuilder();
+            nav.Append("<div class=\"widget-grid\">");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/identity", "bi-signpost", "Grid Identity", "Grid name, nickname and welcome message");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/access", "bi-door-open", "Grid Access", "Self-registration and the grid-wide login toggle");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/announcement", "bi-megaphone", "Announcement", "Banner shown on the home page and login splash");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/economy", "bi-cash-coin", "Economy: Banker Avatar", "Where currency fees and charges flow to");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/map-tiles", "bi-map", "Map Tiles", "Clear cached map tiles on Robust's next restart");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/features", "bi-stars", "Features Content", "Powered By list and Membership Perks");
+            nav.Append("</div>");
+
+            string body = "<h1>Grid Settings</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
+                    + nav.ToString();
+
+            WritePage(request, response, PageTitle("Settings"), body);
+        }
+
+        // Shared by every settings sub-page below - same admin-session check
+        // each one needs, kept in one place rather than copy-pasted six times.
+        // Returns false (and has already written the response) if the caller
+        // should stop.
+        private bool RequireAdminSettingsSession(IOSHttpRequest request, IOSHttpResponse response, string pageTitle)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return false;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle(pageTitle), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return false;
+            }
             if (m_GridSettingsService == null)
             {
-                WritePage(request, response, PageTitle("Settings"),
-                        "<h1>Grid Settings</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Grid settings service is not available.</p>");
-                return;
+                WritePage(request, response, PageTitle(pageTitle),
+                        "<h1>" + Html(pageTitle) + "</h1><p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p><p>Grid settings service is not available.</p>");
+                return false;
             }
+            return true;
+        }
+
+        private static string SettingsMessageBanner(IOSHttpRequest request)
+        {
+            string queryMessage = request.QueryString.Get("message");
+            return string.IsNullOrEmpty(queryMessage) ? string.Empty : "<p>" + Html(queryMessage) + "</p>";
+        }
+
+        private void HandleAdminSettingsIdentity(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Grid Identity"))
+                return;
 
             string gridName = GetSetting("GridName", m_gridName);
             string gridNick = GetSetting("GridNickname", m_gridNick);
             string welcomeMessage = GetWebSafeWelcomeMessage();
+
+            string body = "<h1>Grid Identity</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
+                    + SettingsMessageBanner(request)
+                    + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/identity/save\">"
+                    + "<label>Grid name<br/><input type=\"text\" name=\"grid_name\" value=\"" + Html(gridName) + "\" required></label><br/>"
+                    + "<label>Grid nickname<br/><input type=\"text\" name=\"grid_nickname\" value=\"" + Html(gridNick) + "\"></label><br/>"
+                    + "<label>Welcome message<br/><textarea name=\"welcome_message\" rows=\"3\">" + Html(welcomeMessage) + "</textarea></label><br/>"
+                    + "<button type=\"submit\">Save</button>"
+                    + "</form>";
+
+            WritePage(request, response, PageTitle("Grid Identity"), body);
+        }
+
+        private void HandleAdminSettingsIdentitySave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string gridName = FormValue(form, "grid_name").Trim();
+            string gridNick = FormValue(form, "grid_nickname").Trim();
+            string welcomeMessage = FormValue(form, "welcome_message");
+
+            if (string.IsNullOrEmpty(gridName))
+            {
+                response.Redirect(BasePath + "/admin/settings/identity?message=" + Uri.EscapeDataString("Grid name is required."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            m_GridSettingsService.Set("GridName", gridName);
+            m_GridSettingsService.Set("GridNickname", gridNick);
+            m_GridSettingsService.Set("WelcomeMessage", welcomeMessage);
+
+            response.Redirect(BasePath + "/admin/settings/identity?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSettingsAccess(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Grid Access"))
+                return;
+
             bool allowRegistration = GetSetting("AllowRegistration", "true") == "true";
             bool allowLogin = GetSetting("AllowLogin", "true") == "true";
             string loginClosedMessage = GetSetting("LoginClosedMessage", string.Empty);
+
+            string body = "<h1>Grid Access</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
+                    + SettingsMessageBanner(request)
+                    + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/access/save\">"
+                    + "<label><input type=\"checkbox\" name=\"allow_registration\" value=\"true\"" + (allowRegistration ? " checked" : "") + " style=\"width:auto;display:inline\"> Allow new users to self-register</label><br/>"
+                    + "<h2>Grid Login Toggle</h2>"
+                    + "<p class=\"news-meta\">Closes the grid to new logins for ordinary residents - existing sessions are not "
+                    + "kicked, and grid administrators (user level 200+) can always still log in to run maintenance and reopen "
+                    + "the grid. Hypergrid visitors arriving from another grid are not covered by this toggle.</p>"
+                    + "<label><input type=\"checkbox\" name=\"allow_login\" value=\"true\"" + (allowLogin ? " checked" : "") + " style=\"width:auto;display:inline\"> Allow residents to log in</label><br/>"
+                    + "<label>Message shown when logins are closed<br/><textarea name=\"login_closed_message\" rows=\"2\" placeholder=\"This grid is temporarily closed for maintenance. Please try again later.\">" + Html(loginClosedMessage) + "</textarea></label><br/>"
+                    + "<button type=\"submit\">Save</button>"
+                    + "</form>";
+
+            WritePage(request, response, PageTitle("Grid Access"), body);
+        }
+
+        private void HandleAdminSettingsAccessSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            bool allowRegistration = FormValue(form, "allow_registration") == "true";
+            bool allowLogin = FormValue(form, "allow_login") == "true";
+            string loginClosedMessage = FormValue(form, "login_closed_message").Trim();
+
+            m_GridSettingsService.Set("AllowRegistration", allowRegistration ? "true" : "false");
+            m_GridSettingsService.Set("AllowLogin", allowLogin ? "true" : "false");
+            m_GridSettingsService.Set("LoginClosedMessage", loginClosedMessage);
+
+            response.Redirect(BasePath + "/admin/settings/access?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSettingsAnnouncement(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Announcement"))
+                return;
+
             bool announcementEnabled = GetSetting("AnnouncementEnabled", "false") == "true";
             string announcementTitle = GetSetting("AnnouncementTitle", string.Empty);
             string announcementText = GetSetting("AnnouncementText", string.Empty);
             string announcementColor = GetSetting("AnnouncementColor", "#3b82f6");
+
+            string body = "<h1>Special Announcement</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
+                    + SettingsMessageBanner(request)
+                    + "<p class=\"news-meta\">Shown as a banner at the top of the home page and splash screen (welcome.php, the viewer's login panel), above everything else - matches WhiteCore-Dev's welcomescreen_manager.html \"special window\" toggle.</p>"
+                    + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/announcement/save\">"
+                    + "<label><input type=\"checkbox\" name=\"announcement_enabled\" value=\"true\"" + (announcementEnabled ? " checked" : "") + " style=\"width:auto;display:inline\"> Show announcement banner</label><br/>"
+                    + "<label>Common reasons<br/><select id=\"announcementPreset\" onchange=\"applyAnnouncementPreset(this.value)\">"
+                    + "<option value=\"\">-- Choose a preset to fill in the fields below --</option>"
+                    + "<option value=\"maintenance\">Scheduled Maintenance</option>"
+                    + "<option value=\"restart\">Grid Restart Tonight</option>"
+                    + "<option value=\"downtime\">Unexpected Downtime</option>"
+                    + "<option value=\"feature\">New Feature Announcement</option>"
+                    + "<option value=\"event\">Upcoming Grid Event</option>"
+                    + "</select></label><br/>"
+                    + "<label>Title<br/><input type=\"text\" id=\"announcementTitleInput\" name=\"announcement_title\" value=\"" + Html(announcementTitle) + "\"></label><br/>"
+                    + "<label>Text<br/><textarea id=\"announcementTextInput\" name=\"announcement_text\" rows=\"2\">" + Html(announcementText) + "</textarea></label><br/>"
+                    + "<label>Color<br/><input type=\"color\" name=\"announcement_color\" value=\"" + Html(announcementColor) + "\" style=\"width:auto\"></label><br/>"
+                    + "<button type=\"submit\">Save</button>"
+                    + "</form>"
+                    + AnnouncementPresetScript;
+
+            WritePage(request, response, PageTitle("Announcement"), body);
+        }
+
+        private void HandleAdminSettingsAnnouncementSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            bool announcementEnabled = FormValue(form, "announcement_enabled") == "true";
+            string announcementTitle = FormValue(form, "announcement_title").Trim();
+            string announcementText = FormValue(form, "announcement_text");
+            string announcementColor = FormValue(form, "announcement_color");
+
+            m_GridSettingsService.Set("AnnouncementEnabled", announcementEnabled ? "true" : "false");
+            m_GridSettingsService.Set("AnnouncementTitle", announcementTitle);
+            m_GridSettingsService.Set("AnnouncementText", announcementText);
+            if (!string.IsNullOrEmpty(announcementColor))
+                m_GridSettingsService.Set("AnnouncementColor", announcementColor);
+
+            response.Redirect(BasePath + "/admin/settings/announcement?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSettingsEconomy(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Economy: Banker Avatar"))
+                return;
+
+            string bankerAvatarID = GetSetting("BankerAvatarID", string.Empty);
+            string bankerAvatarName = string.Empty;
+            if (UUID.TryParse(bankerAvatarID, out UUID bankerUUID) && bankerUUID != UUID.Zero && m_UserAccountService != null)
+            {
+                UserAccount bankerAccount = m_UserAccountService.GetUserAccount(UUID.Zero, bankerUUID);
+                if (bankerAccount != null)
+                    bankerAvatarName = bankerAccount.Name;
+            }
+
+            string body = "<h1>Economy: Banker Avatar</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
+                    + SettingsMessageBanner(request)
+                    + "<p class=\"news-meta\">The account ConfluenceCurrency system transfers (fees, currency purchases, upload charges - anything that previously vanished into an untracked void) now flow through, instead of nowhere. "
+                    + "Same concept as the classic MoneyServer's own BankerAvatar setting. Leave blank/zero to keep the old untracked behavior. "
+                    + "<strong>Fund this account with a real starting balance (\"money set &lt;uuid&gt; &lt;amount&gt;\" on the region console) before setting it</strong> - once set, currency purchases and other system credits draw down this account's real balance and will fail if it runs out.</p>"
+                    + (string.IsNullOrEmpty(bankerAvatarName) ? string.Empty : "<p>Currently: " + Html(bankerAvatarName) + "</p>")
+                    + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/economy/save\">"
+                    + "<label>Banker avatar UUID<br/><input type=\"text\" name=\"banker_avatar_id\" value=\"" + Html(bankerAvatarID) + "\" placeholder=\"00000000-0000-0000-0000-000000000000\"></label><br/>"
+                    + "<button type=\"submit\">Save</button>"
+                    + "</form>";
+
+            WritePage(request, response, PageTitle("Economy: Banker Avatar"), body);
+        }
+
+        private void HandleAdminSettingsEconomySave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string bankerAvatarID = FormValue(form, "banker_avatar_id").Trim();
+
+            if (!string.IsNullOrEmpty(bankerAvatarID) && !UUID.TryParse(bankerAvatarID, out _))
+            {
+                response.Redirect(BasePath + "/admin/settings/economy?message=" + Uri.EscapeDataString("Banker avatar UUID is not valid."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            m_GridSettingsService.Set("BankerAvatarID", bankerAvatarID);
+
+            response.Redirect(BasePath + "/admin/settings/economy?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSettingsMapTiles(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Map Tiles"))
+                return;
+
+            bool clearMapTilesOnStartup = GetSetting("ClearMapTilesOnStartup", "false") == "true";
+
+            string body = "<h1>Map Tiles</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
+                    + SettingsMessageBanner(request)
+                    + "<p class=\"news-meta\">Clears every cached map tile the next time Robust starts. Tiles only ever get "
+                    + "refreshed by a region actually uploading a new one, so leaving this on wipes the map back to blank water "
+                    + "tiles on every single Robust restart until each region re-uploads - meant as a one-time cleanup after a "
+                    + "stale tile (a region that's since moved or been rebuilt), not a standing default. Turn it off again after "
+                    + "the next restart clears what you needed cleared. Takes effect on Robust's next restart, not live.</p>"
+                    + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/map-tiles/save\">"
+                    + "<label><input type=\"checkbox\" name=\"clear_map_tiles_on_startup\" value=\"true\"" + (clearMapTilesOnStartup ? " checked" : "") + " style=\"width:auto;display:inline\"> Clear all map tiles on Robust's next restart</label><br/>"
+                    + "<button type=\"submit\">Save</button>"
+                    + "</form>";
+
+            WritePage(request, response, PageTitle("Map Tiles"), body);
+        }
+
+        private void HandleAdminSettingsMapTilesSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            bool clearMapTilesOnStartup = FormValue(form, "clear_map_tiles_on_startup") == "true";
+
+            m_GridSettingsService.Set("ClearMapTilesOnStartup", clearMapTilesOnStartup ? "true" : "false");
+
+            response.Redirect(BasePath + "/admin/settings/map-tiles?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSettingsFeatures(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Features Content"))
+                return;
+
             // "Powered By" infra grid and Membership Perks lists on the
             // Features page - deliberately NOT hardcoded/defaulted the way
             // OpenSim-Grid-Interface's features.php ships generic template
@@ -7494,75 +7825,42 @@ namespace OpenSim.Server.Handlers.WebInterface
             string perksFree = GetSetting("MembershipPerksFree", string.Empty);
             string perksExtra = GetSetting("MembershipPerksExtra", string.Empty);
 
-            bool clearMapTilesOnStartup = GetSetting("ClearMapTilesOnStartup", "false") == "true";
-
-            string bankerAvatarID = GetSetting("BankerAvatarID", string.Empty);
-            string bankerAvatarName = string.Empty;
-            if (UUID.TryParse(bankerAvatarID, out UUID bankerUUID) && bankerUUID != UUID.Zero && m_UserAccountService != null)
-            {
-                UserAccount bankerAccount = m_UserAccountService.GetUserAccount(UUID.Zero, bankerUUID);
-                if (bankerAccount != null)
-                    bankerAvatarName = bankerAccount.Name;
-            }
-
-            string message = string.Empty;
-            string queryMessage = request.QueryString.Get("message");
-            if (!string.IsNullOrEmpty(queryMessage))
-                message = "<p>" + Html(queryMessage) + "</p>";
-
-            string body = "<h1>Grid Settings</h1>"
-                    + "<p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
-                    + message
-                    + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/save\">"
-                    + "<label>Grid name<br/><input type=\"text\" name=\"grid_name\" value=\"" + Html(gridName) + "\" required></label><br/>"
-                    + "<label>Grid nickname<br/><input type=\"text\" name=\"grid_nickname\" value=\"" + Html(gridNick) + "\"></label><br/>"
-                    + "<label>Welcome message<br/><textarea name=\"welcome_message\" rows=\"3\">" + Html(welcomeMessage) + "</textarea></label><br/>"
-                    + "<label><input type=\"checkbox\" name=\"allow_registration\" value=\"true\"" + (allowRegistration ? " checked" : "") + " style=\"width:auto;display:inline\"> Allow new users to self-register</label><br/>"
-                    + "<h2>Grid Access</h2>"
-                    + "<p class=\"news-meta\">Closes the grid to new logins for ordinary residents - existing sessions are not "
-                    + "kicked, and grid administrators (user level 200+) can always still log in to run maintenance and reopen "
-                    + "the grid. Hypergrid visitors arriving from another grid are not covered by this toggle.</p>"
-                    + "<label><input type=\"checkbox\" name=\"allow_login\" value=\"true\"" + (allowLogin ? " checked" : "") + " style=\"width:auto;display:inline\"> Allow residents to log in</label><br/>"
-                    + "<label>Message shown when logins are closed<br/><textarea name=\"login_closed_message\" rows=\"2\" placeholder=\"This grid is temporarily closed for maintenance. Please try again later.\">" + Html(loginClosedMessage) + "</textarea></label><br/>"
-                    + "<h2>Special Announcement</h2>"
-                    + "<p class=\"news-meta\">Shown as a banner at the top of the home page and splash screen (welcome.php, the viewer's login panel), above everything else - matches WhiteCore-Dev's welcomescreen_manager.html \"special window\" toggle.</p>"
-                    + "<label><input type=\"checkbox\" name=\"announcement_enabled\" value=\"true\"" + (announcementEnabled ? " checked" : "") + " style=\"width:auto;display:inline\"> Show announcement banner</label><br/>"
-                    + "<label>Common reasons<br/><select id=\"announcementPreset\" onchange=\"applyAnnouncementPreset(this.value)\">"
-                    + "<option value=\"\">-- Choose a preset to fill in the fields below --</option>"
-                    + "<option value=\"maintenance\">Scheduled Maintenance</option>"
-                    + "<option value=\"restart\">Grid Restart Tonight</option>"
-                    + "<option value=\"downtime\">Unexpected Downtime</option>"
-                    + "<option value=\"feature\">New Feature Announcement</option>"
-                    + "<option value=\"event\">Upcoming Grid Event</option>"
-                    + "</select></label><br/>"
-                    + "<label>Title<br/><input type=\"text\" id=\"announcementTitleInput\" name=\"announcement_title\" value=\"" + Html(announcementTitle) + "\"></label><br/>"
-                    + "<label>Text<br/><textarea id=\"announcementTextInput\" name=\"announcement_text\" rows=\"2\">" + Html(announcementText) + "</textarea></label><br/>"
-                    + "<label>Color<br/><input type=\"color\" name=\"announcement_color\" value=\"" + Html(announcementColor) + "\" style=\"width:auto\"></label><br/>"
-                    + "<h2>Economy: Banker Avatar</h2>"
-                    + "<p class=\"news-meta\">The account ConfluenceCurrency system transfers (fees, currency purchases, upload charges - anything that previously vanished into an untracked void) now flow through, instead of nowhere. "
-                    + "Same concept as the classic MoneyServer's own BankerAvatar setting. Leave blank/zero to keep the old untracked behavior. "
-                    + "<strong>Fund this account with a real starting balance (\"money set &lt;uuid&gt; &lt;amount&gt;\" on the region console) before setting it</strong> - once set, currency purchases and other system credits draw down this account's real balance and will fail if it runs out.</p>"
-                    + (string.IsNullOrEmpty(bankerAvatarName) ? string.Empty : "<p>Currently: " + Html(bankerAvatarName) + "</p>")
-                    + "<label>Banker avatar UUID<br/><input type=\"text\" name=\"banker_avatar_id\" value=\"" + Html(bankerAvatarID) + "\" placeholder=\"00000000-0000-0000-0000-000000000000\"></label><br/>"
-                    + "<h2>Map Tiles</h2>"
-                    + "<p class=\"news-meta\">Clears every cached map tile the next time Robust starts. Tiles only ever get "
-                    + "refreshed by a region actually uploading a new one, so leaving this on wipes the map back to blank water "
-                    + "tiles on every single Robust restart until each region re-uploads - meant as a one-time cleanup after a "
-                    + "stale tile (a region that's since moved or been rebuilt), not a standing default. Turn it off again after "
-                    + "the next restart clears what you needed cleared. Takes effect on Robust's next restart, not live.</p>"
-                    + "<label><input type=\"checkbox\" name=\"clear_map_tiles_on_startup\" value=\"true\"" + (clearMapTilesOnStartup ? " checked" : "") + " style=\"width:auto;display:inline\"> Clear all map tiles on Robust's next restart</label><br/>"
-                    + "<h2>Features Page: Powered By</h2>"
+            string body = "<h1>Features Content</h1>"
+                    + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
+                    + SettingsMessageBanner(request)
+                    + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/features/save\">"
+                    + "<h2>Powered By</h2>"
                     + "<p class=\"news-meta\">Shown on the Features page as an infrastructure grid. Leave blank to hide the section. One item per line, format: <code>Group|icon-name|Title|Subtitle</code> - icon-name is a Bootstrap Icons name without the \"bi-\" prefix (e.g. <code>windows</code>, <code>database</code>, <code>server</code>). Items with the same Group are shown together under that heading.</p>"
                     + "<label>Powered By items<br/><textarea name=\"powered_by\" rows=\"8\" placeholder=\"Infrastructure|windows|Windows|Host OS\nInfrastructure|hdd-network|Proxmox|Virtualization\nGrid Backend|database|MariaDB|Database\">" + Html(poweredBy) + "</textarea></label><br/>"
-                    + "<h2>Features Page: Membership Perks</h2>"
+                    + "<h2>Membership Perks</h2>"
                     + "<p class=\"news-meta\">Shown on the Features page. Leave blank to hide the section. One perk per line.</p>"
                     + "<label>Included free<br/><textarea name=\"perks_free\" rows=\"6\" placeholder=\"Free groups\nFree classifieds advertising\nFree mesh uploads\">" + Html(perksFree) + "</textarea></label><br/>"
                     + "<label>Community extras<br/><textarea name=\"perks_extra\" rows=\"6\" placeholder=\"No region setup fees\nRegion referral program\nHypergrid traveling\">" + Html(perksExtra) + "</textarea></label><br/>"
-                    + "<button type=\"submit\">Save settings</button>"
-                    + "</form>"
-                    + AnnouncementPresetScript;
+                    + "<button type=\"submit\">Save</button>"
+                    + "</form>";
 
-            WritePage(request, response, PageTitle("Settings"), body);
+            WritePage(request, response, PageTitle("Features Content"), body);
+        }
+
+        private void HandleAdminSettingsFeaturesSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string poweredBy = FormValue(form, "powered_by");
+            string perksFree = FormValue(form, "perks_free");
+            string perksExtra = FormValue(form, "perks_extra");
+
+            m_GridSettingsService.Set("PoweredByItems", poweredBy);
+            m_GridSettingsService.Set("MembershipPerksFree", perksFree);
+            m_GridSettingsService.Set("MembershipPerksExtra", perksExtra);
+
+            response.Redirect(BasePath + "/admin/settings/features?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
         }
 
         // Client-side only - just pre-fills the two text fields below so an
@@ -7584,64 +7882,6 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "document.getElementById('announcementTextInput').value=announcementPresets[key].text;" +
                 "}" +
                 "</script>";
-
-        private void HandleAdminSettingsSave(IOSHttpRequest request, IOSHttpResponse response)
-        {
-            WebSession session = GetSession(request);
-            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
-            {
-                response.StatusCode = (int)HttpStatusCode.Forbidden;
-                return;
-            }
-
-            Dictionary<string, string> form = ReadForm(request);
-            string gridName = FormValue(form, "grid_name").Trim();
-            string gridNick = FormValue(form, "grid_nickname").Trim();
-            string welcomeMessage = FormValue(form, "welcome_message");
-            bool allowRegistration = FormValue(form, "allow_registration") == "true";
-            bool allowLogin = FormValue(form, "allow_login") == "true";
-            string loginClosedMessage = FormValue(form, "login_closed_message").Trim();
-            bool announcementEnabled = FormValue(form, "announcement_enabled") == "true";
-            string announcementTitle = FormValue(form, "announcement_title").Trim();
-            string announcementText = FormValue(form, "announcement_text");
-            string announcementColor = FormValue(form, "announcement_color");
-            string poweredBy = FormValue(form, "powered_by");
-            string perksFree = FormValue(form, "perks_free");
-            string perksExtra = FormValue(form, "perks_extra");
-            string bankerAvatarID = FormValue(form, "banker_avatar_id").Trim();
-            bool clearMapTilesOnStartup = FormValue(form, "clear_map_tiles_on_startup") == "true";
-
-            if (string.IsNullOrEmpty(gridName))
-            {
-                response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Grid name is required."), HttpStatusCode.Redirect);
-                return;
-            }
-
-            if (!string.IsNullOrEmpty(bankerAvatarID) && !UUID.TryParse(bankerAvatarID, out _))
-            {
-                response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Banker avatar UUID is not valid."), HttpStatusCode.Redirect);
-                return;
-            }
-
-            m_GridSettingsService.Set("GridName", gridName);
-            m_GridSettingsService.Set("GridNickname", gridNick);
-            m_GridSettingsService.Set("WelcomeMessage", welcomeMessage);
-            m_GridSettingsService.Set("AllowRegistration", allowRegistration ? "true" : "false");
-            m_GridSettingsService.Set("AllowLogin", allowLogin ? "true" : "false");
-            m_GridSettingsService.Set("LoginClosedMessage", loginClosedMessage);
-            m_GridSettingsService.Set("AnnouncementEnabled", announcementEnabled ? "true" : "false");
-            m_GridSettingsService.Set("AnnouncementTitle", announcementTitle);
-            m_GridSettingsService.Set("AnnouncementText", announcementText);
-            if (!string.IsNullOrEmpty(announcementColor))
-                m_GridSettingsService.Set("AnnouncementColor", announcementColor);
-            m_GridSettingsService.Set("PoweredByItems", poweredBy);
-            m_GridSettingsService.Set("MembershipPerksFree", perksFree);
-            m_GridSettingsService.Set("MembershipPerksExtra", perksExtra);
-            m_GridSettingsService.Set("BankerAvatarID", bankerAvatarID);
-            m_GridSettingsService.Set("ClearMapTilesOnStartup", clearMapTilesOnStartup ? "true" : "false");
-
-            response.Redirect(BasePath + "/admin/settings?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
-        }
 
         // Web-based region console (task #26) - see WebConsoleModule.cs
         // (region-side) for the actual command-execution/output-capture

@@ -20854,3 +20854,41 @@ clear. Sending login response to Jessica Starlight`, no lingering
 block. Both the settings persistence and the login-time enforcement
 are confirmed working against real data, not just a theoretical
 design.
+
+## Grid Settings split into 6 dedicated sub-pages (2026-09-07)
+
+User-driven fix, not something flagged in an audit: after the login
+toggle above landed as the latest addition to `/admin/settings`, the
+user asked directly whether that page - by then one `<form>` covering
+~14 keys across 6 unrelated topics (grid identity, registration/login,
+announcement banner, banker avatar, map tiles, Features-page content),
+saved by one handler that wrote every single key unconditionally on
+every submit - should be broken up.
+
+**Real problem, not just tidiness**: not performance (each `Set()` is
+a cheap local `REPLACE INTO`, ~14 extra round trips is nothing on a
+page an admin visits rarely) but a genuine lost-update risk. Since the
+whole form always resubmitted with whatever value every field held at
+page-load time, saving from one browser tab could silently revert a
+change another tab (or another admin) had just made to a completely
+unrelated field - e.g. toggling Grid Access off in one tab, while a
+stale copy of the Announcement tab still open elsewhere gets saved
+moments later, would silently re-write `LoginClosedMessage` back to
+whatever it was when THAT tab loaded, even though nobody touched it.
+
+**Fix**: split into `/admin/settings` (now a tile-hub landing page,
+same "cards linking to their own page" shape `/admin` itself already
+uses, and the same reasoning that already justified splitting Region
+Management out of the old Grid Administration overview) plus 6
+dedicated sub-pages, each with its own `GET` page and its own
+`POST .../save` handler that writes only its own keys:
+`/admin/settings/identity`, `/access`, `/announcement`, `/economy`,
+`/map-tiles`, `/features`. A shared `RequireAdminSettingsSession`
+helper replaces the identical auth/service-availability check that
+used to be copy-pasted at the top of the one giant handler. No setting
+moved, renamed, or changed its stored key - purely a routing/handler
+split, so nothing already saved needed migrating.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)). Not yet deployed -
+touches `OpenSim.Server.Handlers.dll`, already confirmed loaded by
+both Robust and every region.
