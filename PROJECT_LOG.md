@@ -20227,4 +20227,85 @@ identical reason. Confirmed `ServiceOSDRequest` (which
 the `UpdateAgent` case transferring.
 
 Build 0 errors/0 warnings across `SimulationServiceConnector.cs` and
-`UserAgentServiceConnector.cs`. Not yet deployed live.
+`UserAgentServiceConnector.cs`. Deployed same day: this lands in
+`OpenSim.Services.Connectors.dll`, referenced by `Robust.HG.ini`, so
+the deploy needed the full Robust + all-15-regions restart, not just
+regions. Full stop confirmed by command line (not process name alone -
+see the incident above), copy hash-verified, Robust + all 15 regions
+restarted, 14 of 15 confirmed `RegionReady` immediately; Sector_004
+didn't - see the next entry for that investigation.
+
+## Sector_004 startup anomaly: investigated, real diagnostic gap found and closed, root cause left honestly unresolved (2026-09-06)
+
+During the restart above, 14 of 15 regions reported `RegionReady`
+within seconds; Sector_004 didn't, for several minutes, despite its
+process staying alive with no crash and no error logged anywhere.
+Restarting just that one region fixed it immediately (confirmed ready
+within 15 seconds of the fresh start). Investigated why before treating
+"restart fixed it" as the end of the story.
+
+**Traced the real gating logic in `Scene.cs`'s heartbeat loop**: a
+region only becomes ready at the exact moment its `Frame` counter
+(incremented by exactly 1 per `Update()` call, confirmed via
+`++Frame;` - it can't skip a value) equals 20, inside a large `try`
+block shared with most of that frame's other per-tick work, with one
+`catch` at the bottom that just logs and continues. Genuinely fragile
+in principle: an exception thrown anywhere in that shared block during
+precisely the frame-20 iteration would permanently skip this one-shot
+check for the region's whole remaining lifetime, since `Frame` never
+equals 20 again. Checked for the smoking gun (`"[SCENE]: Failed on
+region"`, that catch block's own distinctive log message) across the
+entire startup window, for every region, and found zero matches -
+ruling this out as what actually happened here, not just assuming it
+didn't.
+
+**Traced further and found the real reason this can't be diagnosed
+from logs at all - a genuine logging gap, not (yet) a confirmed
+functional bug.** `RegionReadyModule.AddRegion` only sets `LoginLock =
+true` and subscribes to the script-engine's `OnEmptyScriptCompileQueue`
+event when `[RegionReady] login_disable = true` (confirmed set, in
+`OpenSimDefaults.ini`). For a genuinely empty region like Sector_004 (0
+active scripts), `Scene.cs` also has an independent backstop: once
+`Frame == 20` is reached with `LoginLock` still true, it calls
+`RegionReadyModule.TriggerRegionReady()` directly rather than waiting
+for the event. Read `TriggerRegionReady()`'s actual body: the "is
+ready" log line this whole investigation had been using as a ready/not-
+ready proxy lives *only* inside the event handler
+(`OnEmptyScriptCompileQueue`), never in `TriggerRegionReady()` itself -
+and that method's own only other log statement was commented out
+entirely. **This means the direct backstop path, working completely
+correctly, produces the exact same "no ready log" signature as a
+genuinely stuck region** - there was no way, from the log alone, to
+tell "Sector_004 became ready silently via the backstop" from
+"Sector_004 never became ready at all." Said so plainly rather than
+letting the earlier, more confident "found a stuck region" framing
+stand uncorrected once this came to light.
+
+**What got built**: two new, unconditional log lines (not gated behind
+any of the existing conditionals that made this undiagnosable before) -
+one inside `RegionReadyModule.TriggerRegionReady()` itself confirming
+the method was entered at all, regardless of caller or the
+`StartDisabled` gate around the rest of its body; one at `Scene.cs`'s
+own direct-call site, logged immediately before calling
+`TriggerRegionReady()`, naming the zero-script backstop path
+specifically and including the actual frame number. Together with the
+already-existing outer catch's own "Failed on region" log (which would
+now fire right after the new Scene.cs line if `RequestModuleInterface
+<IRegionReadyModule>()` ever returns null, per the existing code
+comment's own anticipated failure mode), this gives three genuinely
+distinguishable outcomes next time this happens: never entered
+(neither new line appears), entered but the module interface was null
+(the new Scene.cs line appears, immediately followed by "Failed on
+region"), or worked cleanly (both new lines appear, nothing failed).
+
+**Root cause of this specific occurrence remains genuinely unresolved,
+and that's stated honestly rather than papered over** - this pass
+closed the diagnostic gap that made it unanswerable, it didn't answer
+it retroactively. If this recurs, the new logging will show which of
+the three outcomes actually happened, at which point a real fix (or
+confirmation that it's a non-issue) becomes possible. Build 0 errors/0
+warnings across `RegionReadyModule.cs`/`Scene.cs`. Not yet deployed
+live - both land in region-only assemblies (`OpenSim.Region.
+OptionalModules.dll`/`OpenSim.Region.Framework.dll`, neither
+referenced by `Robust.HG.ini`), so this doesn't need a Robust restart
+when it does go out.

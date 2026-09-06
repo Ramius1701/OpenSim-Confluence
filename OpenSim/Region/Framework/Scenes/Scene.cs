@@ -1933,6 +1933,16 @@ namespace OpenSim.Region.Framework.Scenes
                                 // If somehow this hasn't been done then the quickest way to bugfix is to see the
                                 // NullReferenceException
 
+                                // Logged unconditionally (not just on failure) since 2026-09-06 - this path
+                                // (RegionReadyModule.TriggerRegionReady's own "entered" log, added the same day,
+                                // confirms whether it fired at all) never previously had any log signature
+                                // distinguishing it from the normal OnEmptyScriptCompileQueue event path, which
+                                // made a real region that took this exact path indistinguishable in the log from
+                                // one that was genuinely stuck - see the "Sector 004 root cause" investigation.
+                                m_log.InfoFormat(
+                                    "[SCENE]: {0} has 0 active scripts at frame {1} - triggering RegionReady directly via the zero-script backstop, not waiting on the compile-queue-empty event",
+                                    Name, Frame);
+
                                 IRegionReadyModule rrm = RequestModuleInterface<IRegionReadyModule>();
                                 rrm.TriggerRegionReady(this);
                             }

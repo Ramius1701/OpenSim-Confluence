@@ -202,6 +202,18 @@ namespace OpenSim.Region.OptionalModules.Scripting.RegionReady
         /// <param name='scene'></param>
         public void TriggerRegionReady(IScene scene)
         {
+            // Unconditional and independent of the StartDisabled-gated console
+            // message below - added 2026-09-06 after a region (0 active scripts,
+            // reached via Scene.cs's direct zero-script backstop, not the
+            // OnEmptyScriptCompileQueue event below) never printed the event
+            // handler's own "is ready" line, and there was no way to tell from the
+            // log whether this method had actually been entered at all, or hadn't
+            // been called via either path. This line alone answers that going
+            // forward - if it's present, the method ran (regardless of which
+            // caller reached it or whether StartDisabled suppressed the rest);
+            // if it's genuinely missing, neither path fired.
+            m_log.InfoFormat("[RegionReady]: TriggerRegionReady entered for {0}", m_scene.RegionInfo.RegionName);
+
             m_scene.EventManager.OnEmptyScriptCompileQueue -= OnEmptyScriptCompileQueue;
             m_scene.LoginLock = false;
 
