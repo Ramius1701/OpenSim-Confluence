@@ -135,12 +135,19 @@ gap today. For what already exists, see `FEATURES.md`.
   ongoing.** Every route in `WEBUI_PARITY_CHECKLIST.md` is checked off.
   One of the 4 real gaps the audit found - the per-region profile page
   - is now built (2026-09-07, a new `/region` route, see
-  PROJECT_LOG.md). The remaining 3, still deliberately deferred as too
-  large for a display-only fix (see that file's "Flagged gaps"
-  section): an avatar-selection starter-look carousel on `/register`;
-  abuse-report resolved/assigned tracking (needs a schema change across
-  MySQL/PGSQL/SQLite); and a grid-wide login on/off toggle in the
-  WebUI. None started.
+  PROJECT_LOG.md). The remaining 3, deliberately deferred as too large
+  for a display-only fix (see that file's "Flagged gaps" section): an
+  avatar-selection starter-look carousel on `/register`; abuse-report
+  resolved/assigned tracking (needs a schema change across
+  MySQL/PGSQL/SQLite); and a grid-wide login toggle - real scoping done
+  (2026-09-07), genuinely the smallest of the three (reuses the
+  existing `IGridSettingsService` settings store end to end, no schema
+  change, under a day estimated) - **and the scoping pass found the
+  original flagged-gap description was wrong**: WhiteCore-Dev's own
+  reference toggle is purely cosmetic (an Online/Offline label, never
+  actually checked anywhere near its login path), so this was never a
+  port, it's a real feature WhiteCore's own name for it implies but
+  never built. None of the 3 started.
 
 ## Planned, not started
 
