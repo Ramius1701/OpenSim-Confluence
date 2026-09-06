@@ -130,6 +130,18 @@ namespace OpenSim.Capabilities.Handlers
         /// <param name="textureID"></param>
         /// <param name="format"></param>
         /// <returns>False for "caller try another codec"; true otherwise</returns>
+        // This handler is the WebUI's own browser-facing texture endpoint (classified thumbnails
+        // etc.) - not the game-viewer path (GetTextureModule's caps handler), which real viewer
+        // source confirms never sends conditional requests, so headers there would be dead weight.
+        // A real web browser does respect these, so without them every repeat pageview re-fetches
+        // and re-pays the full asset-service cost for an image that, by asset-ID, never changes.
+        private const int CacheMaxAgeSeconds = 86400;
+
+        private static string MakeETag(UUID textureID, string format)
+        {
+            return "\"" + textureID.ToString() + "-" + format + "\"";
+        }
+
         private bool FetchTexture(IOSHttpRequest httpRequest, IOSHttpResponse httpResponse, UUID textureID, string format)
         {
             // m_log.DebugFormat("[GETTEXTURE]: {0} with requested format {1}", textureID, format);
@@ -138,6 +150,16 @@ namespace OpenSim.Capabilities.Handlers
                 string textureUrl = m_RedirectURL + "?texture_id=" + textureID.ToString();
                 httpResponse.Redirect(textureUrl, HttpStatusCode.Moved);
                 m_log.Debug("[GETTEXTURE]: Redirecting texture request to " + textureUrl);
+                return true;
+            }
+
+            string etag = MakeETag(textureID, format);
+            string ifNoneMatch = httpRequest.Headers.GetOne("If-None-Match");
+            if (!String.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch == etag)
+            {
+                httpResponse.StatusCode = (int)System.Net.HttpStatusCode.NotModified;
+                httpResponse.AddHeader("ETag", etag);
+                httpResponse.AddHeader("Cache-Control", "public, max-age=" + CacheMaxAgeSeconds);
                 return true;
             }
 
@@ -152,7 +174,7 @@ namespace OpenSim.Capabilities.Handlers
                 }
                 if (format == DefaultFormat)
                 {
-                    WriteTextureData(httpRequest, httpResponse, texture, format);
+                    WriteTextureData(httpRequest, httpResponse, texture, format, etag);
                     return true;
                 }
 
@@ -165,7 +187,7 @@ namespace OpenSim.Capabilities.Handlers
                 newTexture.Flags = AssetFlags.Collectable;
                 newTexture.Temporary = true;
                 newTexture.Local = true;
-                WriteTextureData(httpRequest, httpResponse, newTexture, format);
+                WriteTextureData(httpRequest, httpResponse, newTexture, format, etag);
                 return true;
             }
 
@@ -175,8 +197,11 @@ namespace OpenSim.Capabilities.Handlers
             return true;
         }
 
-        private void WriteTextureData(IOSHttpRequest request, IOSHttpResponse response, AssetBase texture, string format)
+        private void WriteTextureData(IOSHttpRequest request, IOSHttpResponse response, AssetBase texture, string format, string etag)
         {
+            response.AddHeader("ETag", etag);
+            response.AddHeader("Cache-Control", "public, max-age=" + CacheMaxAgeSeconds);
+
             string range = request.Headers.GetOne("Range");
 
             if (!String.IsNullOrEmpty(range)) // JP2's only

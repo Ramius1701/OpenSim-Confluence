@@ -20492,3 +20492,74 @@ grey-cloud or wrong-wearables report.
 
 No further action planned unless this recurs - the config-only
 `WearablesRequestDelayMs` escape hatch stays in place either way.
+
+## Three small "make the grid faster" leftovers built and deployed (2026-09-06)
+
+Closed out the three remaining low-effort candidates left open from
+the asset-delivery and login-time investigations above.
+
+**1. Asset-fetch worker-thread pools, exposed as ini settings.**
+`GetAssetsModule.cs` (`OpenSim.Region.ClientStack.LindenCaps.dll` -
+the shared, poll-response path for `GetTexture`/`GetMesh`/`GetAsset`,
+one static pool per process, not per region) had its worker count
+hardcoded to 3; added `[ClientStack.LindenCaps] GetAssetWorkerThreads`
+(default 3, same as before - purely a config exposure, not a behavior
+change). `RegionAssetConnectorModule.cs`
+(`OpenSim.Region.CoreModules.dll` - the cache-miss fetch path once
+`FlotsamAssetCache` misses) had its local and remote queues both
+hardcoded to 2; added `[AssetService] LocalAssetWorkerThreads` /
+`RemoteAssetWorkerThreads` (both default 2). Both documented in
+`bin/OpenSimDefaults.ini`. Raising these is now a config-only change if
+a real cache-miss burst ever shows it's warranted - no rebuild needed.
+
+**2. `GetTextureRobustHandler.cs` now sends `Cache-Control`/`ETag`.**
+This is the WebUI's own browser-facing texture endpoint (classified
+thumbnails etc.) - confirmed via real Firestorm/SL viewer source
+(`lltexturefetch.cpp`/`llmeshrepository.cpp`) that the actual
+game-viewer path never sends conditional requests, so this only
+matters for real web browsers, which do. Added a short-circuit at the
+top of `FetchTexture`: computes an ETag from `textureID + format`
+(deterministic and stable, since asset content never changes for a
+given ID) and returns `304 Not Modified` immediately on a matching
+`If-None-Match`, skipping the asset-service call entirely - the
+biggest win, since a repeat pageview now costs nothing beyond the
+conditional check. Successful responses (`WriteTextureData`, both the
+default-format and converted-format paths) now also carry `ETag` and
+`Cache-Control: public, max-age=86400`.
+
+**3. `LLLoginService.Login()` - two safe parallelizations, one
+correctness trap deliberately left alone.** Traced every call in
+`Login()` for real independence before touching anything, since this
+method's calls have real, load-bearing ordering in places (the
+duplicate-presence check must complete before inventory/presence login
+even start, since a duplicate-login early-return relies on presence
+*not* having been touched yet - reordering that would leave an orphaned
+presence entry on a rejected duplicate login, a genuine regression, not
+just wasted work). Left that block untouched. Found two pairs that
+really are independent and parallelized them with `Task.Run`/`.Result`:
+(a) `m_AvatarService.GetAppearance()` now runs alongside
+`FindDestination()` - the two never touch each other's data, and
+`GetAppearance` has no side effects, so on the rare destination-not-
+found path the fetched appearance is just discarded, not cleaned up;
+(b) `m_FriendsService.GetFriends()` now runs alongside
+`m_InventoryService.GetActiveGestures()` - both are read-only, run near
+the very end after the agent is already launched, and neither gates an
+early return. Build confirmed clean (0 Warning(s), 0 Error(s)).
+
+**Deployed same day.** Confirmed via live process module inspection
+(not just ini naming) that this deploy's 4 changed assemblies split
+across both halves of the grid: `OpenSim.Services.LLLoginService.dll`
+and `OpenSim.Capabilities.Handlers.dll` are Robust-loaded;
+`OpenSim.Region.CoreModules.dll` and
+`OpenSim.Region.ClientStack.LindenCaps.dll` are region-loaded (the
+latter two, plus `Capabilities.Handlers.dll`, loaded by every region
+too) - so this needed a full Robust + all-15-regions restart, unlike
+the region-only wearables deploy above. Stopped all 16 processes,
+copied and hash-verified all 4 files, started Robust first (verified
+via `Robust.log` and `/gridstatus` - all services Online, Operational),
+then all 15 regions one at a time, each verified against `OpenSim.log`
+before starting the next - the same proven method the batch-loop
+incident above forced onto this project. All 15 reached `RegionReady`
+cleanly this time, zero `FATAL` errors anywhere in the deploy window.
+Grid was at 0 online throughout, confirmed before/during/after via the
+WebUI online count - no resident impact.

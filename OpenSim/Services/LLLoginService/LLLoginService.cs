@@ -32,6 +32,7 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 using log4net;
 using Nini.Config;
@@ -637,8 +638,15 @@ namespace OpenSim.Services.LLLoginService
                 }
 
                 //
-                // Find the destination region/grid
-                //
+                // Find the destination region/grid, and fetch the avatar's appearance in
+                // parallel - the two are fully independent (FindDestination never touches
+                // appearance, GetAppearance never touches the destination), and GetAppearance
+                // has no side effects, so if destination lookup below fails, this fetch's
+                // result is simply discarded rather than needing any cleanup.
+                Task<AvatarAppearance> avatarTask = m_AvatarService is not null
+                    ? Task.Run(() => m_AvatarService.GetAppearance(account.PrincipalID))
+                    : null;
+
                 string where = string.Empty;
                 Vector3 position = Vector3.Zero;
                 Vector3 lookAt = Vector3.Zero;
@@ -661,14 +669,8 @@ namespace OpenSim.Services.LLLoginService
 
                 if (account.UserLevel >= 200)
                     flags |= TeleportFlags.Godlike;
-                //
-                // Get the avatar
-                //
-                AvatarAppearance avatar = null;
-                if (m_AvatarService is not null)
-                {
-                    avatar = m_AvatarService.GetAppearance(account.PrincipalID);
-                }
+
+                AvatarAppearance avatar = avatarTask?.Result;
 
                 //
                 // Instantiate/get the simulation interface and launch an agent at the destination
@@ -688,22 +690,24 @@ namespace OpenSim.Services.LLLoginService
                 // only now we can assume a login
                 guinfo = m_GridUserService.LoggedIn(PrincipalIDstr);
 
-                // Get Friends list
-                FriendInfo[] friendsList = Array.Empty<FriendInfo>();
-                if (m_FriendsService is not null)
-                {
-                    friendsList = m_FriendsService.GetFriends(account.PrincipalID);
-                    //m_log.DebugFormat("[LLOGIN SERVICE]: Retrieved {0} friends", friendsList.Length);
-                }
+                // Get Friends list and active gestures in parallel - both are read-only,
+                // independent of each other, and neither gates an early return, so there's
+                // nothing to unwind if either comes back empty.
+                Task<FriendInfo[]> friendsTask = m_FriendsService is not null
+                    ? Task.Run(() => m_FriendsService.GetFriends(account.PrincipalID))
+                    : null;
+                Task<List<InventoryItemBase>> gesturesTask = Task.Run(() => m_InventoryService.GetActiveGestures(account.PrincipalID));
 
                 //
                 // Finally, fill out the response and return it
-    
+
                 string username = lastName.ToLower() == "resident" ? firstName : firstName + " " + lastName;
                 processedMessage = m_WelcomeMessage.Replace("<USERNAME>", username);
 
-                // Get active gestures
-                List<InventoryItemBase> gestures = m_InventoryService.GetActiveGestures(account.PrincipalID);
+                FriendInfo[] friendsList = friendsTask?.Result ?? Array.Empty<FriendInfo>();
+                //m_log.DebugFormat("[LLOGIN SERVICE]: Retrieved {0} friends", friendsList.Length);
+
+                List<InventoryItemBase> gestures = gesturesTask.Result;
                 //m_log.DebugFormat("[LLOGIN SERVICE]: {0} active gestures", gestures.Count);
 
                 LLLoginResponse response = new(

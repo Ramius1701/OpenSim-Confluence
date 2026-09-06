@@ -78,6 +78,10 @@ namespace OpenSim.Region.ClientStack.Linden
         private static IAssetService m_assetService = null;
         private static GetAssetsHandler m_getAssetHandler;
         private static ObjectJobEngine m_workerpool = null;
+        // Shared across every region in this process (m_workerpool is static) - was hardcoded to 3;
+        // only matters during a genuine cache-miss burst, not steady-state traffic, so left tunable
+        // rather than just raised, since the right value depends on a grid's own region count/traffic.
+        private static int m_workerThreads = 3;
         private static int m_NumberScenes = 0;
         private static object m_loadLock = new object();
         protected IUserManagement m_UserManagement = null;
@@ -110,6 +114,8 @@ namespace OpenSim.Region.ClientStack.Linden
             m_GetAssetURL = config.GetString("Cap_GetAsset", string.Empty);
             if (m_GetAssetURL != string.Empty)
                 m_Enabled = true;
+
+            m_workerThreads = config.GetInt("GetAssetWorkerThreads", m_workerThreads);
         }
 
         public void AddRegion(Scene pScene)
@@ -158,7 +164,7 @@ namespace OpenSim.Region.ClientStack.Linden
                 m_NumberScenes++;
 
                 if (m_workerpool == null)
-                    m_workerpool = new ObjectJobEngine(DoAssetRequests, "GetCapsAssetWorker", 1000, 3);
+                    m_workerpool = new ObjectJobEngine(DoAssetRequests, "GetCapsAssetWorker", 1000, m_workerThreads);
             }
         }
 

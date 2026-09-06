@@ -73,6 +73,13 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Asset
         private ObjectJobEngine m_localRequestsQueue;
         private ObjectJobEngine m_remoteRequestsQueue;
 
+        // Were hardcoded to 2 each; only matters during a genuine cache-miss burst, not
+        // steady-state traffic (most reads hit FlotsamAssetCache before reaching here), so
+        // left tunable rather than just raised - the right value depends on a grid's own
+        // cache-miss rate.
+        private int m_localWorkerThreads = 2;
+        private int m_remoteWorkerThreads = 2;
+
         public Type ReplaceableInterface
         {
             get { return null; }
@@ -135,8 +142,10 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Asset
                             m_AssetPerms = new AssetPermissions(hgConfig);
                     }
 
-                    m_localRequestsQueue = new ObjectJobEngine(AssetRequestProcessor, "GetAssetsWorkers", 2000, 2);
-                    m_remoteRequestsQueue = new ObjectJobEngine(AssetRequestProcessor, "GetRemoteAssetsWorkers", 2000, 2);
+                    m_localWorkerThreads = assetConfig.GetInt("LocalAssetWorkerThreads", m_localWorkerThreads);
+                    m_remoteWorkerThreads = assetConfig.GetInt("RemoteAssetWorkerThreads", m_remoteWorkerThreads);
+                    m_localRequestsQueue = new ObjectJobEngine(AssetRequestProcessor, "GetAssetsWorkers", 2000, m_localWorkerThreads);
+                    m_remoteRequestsQueue = new ObjectJobEngine(AssetRequestProcessor, "GetRemoteAssetsWorkers", 2000, m_remoteWorkerThreads);
                     m_Enabled = true;
                     m_log.Info("[REGIONASSETCONNECTOR]: enabled");
                 }

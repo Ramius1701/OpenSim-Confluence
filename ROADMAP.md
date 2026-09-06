@@ -91,42 +91,6 @@ gap today. For what already exists, see `FEATURES.md`.
   more alarming false alarm (that `UpdateAgent` might have always
   silently failed even on success) once `WebUtil.CanonicalizeResults`
   was actually read.
-- **Asset delivery: two real, found-but-not-built candidates
-  (2026-09-06).** A live, one-line config fix for the actual biggest
-  finding (an unthrottled `FSAssetService` access-time update doubling
-  every uncached asset read into two serialized DB round-trips) is
-  already applied - see PROJECT_LOG.md. Two smaller, real findings from
-  the same investigation remain open: (1) the per-region asset-cap
-  poll-response path and the cache-miss fetch path both run on
-  hardcoded, not ini-exposed thread-pool sizes (3 workers shared across
-  every region in a process for poll responses, 2+2 for actual
-  cache-miss HTTP fetches) - only matters during a genuine cache-miss
-  burst, not steady-state traffic, but real and buildable (expose as
-  ini settings, raise the defaults); (2) `GetTextureRobustHandler.cs`
-  (the WebUI's own browser-facing texture endpoint, used for classified
-  thumbnails etc.) sets no `Cache-Control`/`ETag` at all - unlike the
-  actual game-viewer path (confirmed via real Firestorm/SL viewer
-  source that the primary client never sends conditional requests, so
-  headers there would be dead weight), a real web browser does respect
-  these correctly, so every repeat pageview re-fetches and re-pays the
-  full asset-service cost for an image that never changes. Low effort,
-  narrow but real scope (browser-facing traffic only).
-- **Login/region-entry time: one real fix built, one small candidate
-  still open (2026-09-06).** The real find: `AvatarFactoryModule.cs`'s
-  `Client_OnRequestWearables` — triggered by every new circuit's
-  `AgentWearablesRequest` packet, so it fires on every login AND every
-  teleport/region crossing, grid-wide — unconditionally slept 4000ms
-  before answering it, with no comment or commit ever explaining why.
-  Traced the actual dependency and found none: `ScenePresence.Appearance`
-  is populated synchronously from `AgentCircuitData` well before this
-  packet can physically arrive. Reduced to a tunable
-  `[Appearance] WearablesRequestDelayMs`, default 200ms — see
-  PROJECT_LOG.md for the full trace and the reasoning for keeping it
-  non-zero rather than removing it outright. Still open, low priority:
-  `LLLoginService.Login()` runs its per-service lookups (grid info, user
-  account, presence, etc.) sequentially rather than in parallel — a
-  modest ~10-30ms/login gap, not chased yet since it's real but small
-  next to the 4-second find above.
 - **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
   set**, to catch anything the current build missed. Ongoing,
   page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.
