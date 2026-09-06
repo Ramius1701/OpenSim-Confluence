@@ -20563,3 +20563,63 @@ incident above forced onto this project. All 15 reached `RegionReady`
 cleanly this time, zero `FATAL` errors anywhere in the deploy window.
 Grid was at 0 online throughout, confirmed before/during/after via the
 WebUI online count - no resident impact.
+
+## Vehicle-crossing RPC, Phase 0 built (2026-09-07)
+
+Built the first phase of the vehicle-crossing scoping from the same
+day (see ROADMAP.md for the full 4-phase breakdown) - the
+`RemoveObject` RPC itself, deliberately scoped small and independently
+useful rather than waiting on the full non-freezing redesign.
+
+Added `bool RemoveObject(GridRegion destination, UUID objectID)` to
+`ISimulationService`, implemented across all three real
+implementations found by grepping for every `: ISimulationService`
+class in the tree (not assumed from memory): `SimulationServiceConnector`
+(HTTP `DELETE` to `object/{objectID}/{regionID}/`, matching
+`CloseAgent`'s URL shape exactly), `RemoteSimulationConnectorModule`
+(try local first, fall back to remote), `LocalSimulationConnectorModule`
+(`Scene.GetSceneObjectGroup(objectID)` then
+`Scene.DeleteSceneObject(sog, true, true)` directly, same call
+`CrossPrimGroupIntoNewRegion` already makes for the source-side
+delete). Server side, `ObjectHandlers.cs`'s `ObjectSimpleHandler` had
+its `DELETE` case wired up for the first time - it was a hardcoded 405,
+and the URL-path parsing (`Utils.GetParams`) needed to read
+`objectID`/`regionID` out of the path was already written but
+commented out ("this things are ignored") since `CreateObject`'s POST
+path never needed it (the object's own ID rides in the POST body's
+serialized `sog`, not the URL) - enabling it doesn't touch `POST`'s
+behavior since `CreateObject`'s own URI already includes the object ID
+as the first path segment (`ObjectPath() + sog.UUID + "/"`), it was
+just never parsed out.
+
+**One deliberate deviation from the scoping doc's sketched signature**:
+dropped the `authToken` parameter. Traced whether there was anything
+real to check it against - there isn't. `CloseAgent`'s auth token is a
+real per-session secret established at `CreateAgent` time; `CreateObject`
+never established an equivalent for objects, and `DoObjectPost` doesn't
+check any auth today either. Adding a parameter with nothing behind it
+to validate would have been dead code presented as security, not actual
+security - `RemoveObject` sits at the same trust level `CreateObject`
+already does (any registered neighbor region can call it), not a
+weaker one than what already exists for the sibling RPC in the same
+`#region Objects`.
+
+**Wired into its first real caller immediately**, not left dormant:
+`CrossPrimGroupIntoNewRegion`'s existing retry-then-alert path (the
+2026-09-05 duplication-bug fix) now attempts a `RemoveObject` rollback
+of the destination copy when the source-side delete exhausts all 3
+retries, before falling back to the log-and-alert behavior. If the
+rollback succeeds, the object simply stays on the source exactly as if
+the crossing had never been attempted - no duplicate anywhere, and the
+in-world owner alert (which exists specifically to warn about a
+duplicate needing manual reconciliation) no longer fires for a
+situation that no longer has one. The alert is now reserved for the
+case where the rollback also fails, the one case where a real
+duplicate genuinely remains.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)). Confirmed via live
+process module inspection that this touches 4 assemblies, all loaded
+by both Robust and every region: `OpenSim.Services.Interfaces.dll`,
+`OpenSim.Services.Connectors.dll`, `OpenSim.Region.CoreModules.dll`,
+`OpenSim.Server.Handlers.dll` - a full Robust + all-15-regions deploy,
+same scope as the wearables-delay deploy above, not yet done.

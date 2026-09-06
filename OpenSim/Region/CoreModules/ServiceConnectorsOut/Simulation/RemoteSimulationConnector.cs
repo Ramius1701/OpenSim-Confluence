@@ -275,6 +275,22 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Simulation
             return false;
         }
 
+        public bool RemoveObject(GridRegion destination, UUID objectID)
+        {
+            if (destination == null)
+                return false;
+
+            // Try local first
+            if (m_localBackend.RemoveObject(destination, objectID))
+                return true;
+
+            // else do the remote thing
+            if (!m_localBackend.IsLocalRegion(destination.RegionID))
+                return m_remoteConnector.RemoveObject(destination, objectID);
+
+            return false;
+        }
+
         #endregion
     }
 }

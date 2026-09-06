@@ -610,6 +610,30 @@ namespace OpenSim.Services.Connectors.Simulation
             return false;
         }
 
+        /// <summary>
+        /// Roll back a just-created object on the destination - see ISimulationService.RemoveObject.
+        /// No auth token: unlike CloseAgent (which checks a real per-session secret established at
+        /// CreateAgent time), CreateObject never established one to check here - this call sits at
+        /// the same trust level CreateObject already does, not a weaker one.
+        /// </summary>
+        public bool RemoveObject(GridRegion destination, UUID objectID)
+        {
+            string uri = destination.ServerURI + ObjectPath() + objectID + "/" + destination.RegionID.ToString() + "/";
+            m_log.DebugFormat("[REMOTE SIMULATION CONNECTOR]: RemoveObject {0}", uri);
+
+            try
+            {
+                WebUtil.ServiceOSDRequest(uri, null, "DELETE", 10000, false, false);
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[REMOTE SIMULATION CONNECTOR] RemoveObject failed with exception; {0}",e.ToString());
+                return false;
+            }
+
+            return true;
+        }
+
         #endregion Objects
     }
 }

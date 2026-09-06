@@ -126,6 +126,17 @@ namespace OpenSim.Services.Interfaces
         /// <returns></returns>
         bool CreateObject(GridRegion destination, Vector3 newPosition, ISceneObject sog, bool isLocalCall);
 
+        /// <summary>
+        /// Remove an object from the destination region by ID. Used to roll back a just-created
+        /// object (via CreateObject) when the crossing that created it can't be completed after
+        /// all - e.g. the source region's own copy couldn't be removed, so the crossing has to be
+        /// undone rather than leaving the object duplicated in both regions.
+        /// </summary>
+        /// <param name="destination"></param>
+        /// <param name="objectID"></param>
+        /// <returns></returns>
+        bool RemoveObject(GridRegion destination, UUID objectID);
+
         #endregion Objects
 
     }

@@ -65,26 +65,32 @@ gap today. For what already exists, see `FEATURES.md`.
   out wrong or the final handoff fails, not the primary mechanism.
 
   **Buildable in phases, not one large change:**
-  - **Phase 0 - the RPC itself, small and independently useful.** Add
-    `RemoveObject(GridRegion destination, UUID objectID, string
-    authToken)` to `ISimulationService`, mirroring the existing
-    `CloseAgent` pattern exactly end to end: an HTTP `DELETE` client
-    method in `SimulationServiceConnector.cs`, the local-then-remote
-    dispatch already present in `RemoteSimulationConnectorModule`, a
-    direct in-process scene call in `LocalSimulationConnectorModule`,
-    and a server-side handler in `ObjectHandlers.cs`'s
-    `ObjectSimpleHandler` - which already has a `DELETE` case
-    (currently a hardcoded 405) and already has the URL-path parsing
-    for `/object/{objectID}/{regionID}/` written but disabled
-    ("this things are ignored") from `CreateObject`'s POST path, so
-    most of the plumbing already exists in a dormant state. This phase
-    has real, standalone value even without the rest: the duplication-
-    bug fix already live (2026-09-05, see PROJECT_LOG.md) currently has
-    no way to undo a destination copy when the source-side delete fails
-    every retry, and just reports the crossing as failed - with
-    `RemoveObject` in place, that same failure path could roll back the
-    destination copy first and avoid the duplicate risk entirely rather
-    than just reporting it. **Estimated 1-2 days.**
+  - **Phase 0 - the RPC itself - built (2026-09-07), not yet
+    deployed.** Added `RemoveObject(GridRegion destination, UUID
+    objectID)` to `ISimulationService`, mirroring the existing
+    `CloseAgent` pattern end to end: an HTTP `DELETE` client method in
+    `SimulationServiceConnector.cs`, the local-then-remote dispatch in
+    `RemoteSimulationConnectorModule`, a direct in-process scene call
+    in `LocalSimulationConnectorModule`, and a server-side handler in
+    `ObjectHandlers.cs`'s `ObjectSimpleHandler` - whose `DELETE` case
+    was a hardcoded 405 and whose URL-path parsing for
+    `/object/{objectID}/{regionID}/` was written but disabled ("this
+    things are ignored") since `CreateObject`'s POST path never needed
+    it; both are live now. Dropped the `authToken` parameter originally
+    sketched here: unlike `CloseAgent`, which checks a real per-session
+    secret established at `CreateAgent` time, `CreateObject` never
+    established an equivalent secret for `RemoveObject` to check -
+    adding a parameter nothing actually validates would be dead code,
+    not real security, so `RemoveObject` sits at the same trust level
+    `CreateObject` already does rather than a fabricated stronger one.
+    Also wired into its first real caller: `CrossPrimGroupIntoNewRegion`
+    (the duplication-bug fix already live, 2026-09-05) now attempts a
+    `RemoveObject` rollback of the destination copy when the source-side
+    delete exhausts all 3 retries, before falling back to the existing
+    log-and-alert path - if the rollback succeeds, the object simply
+    stays on the source with no duplicate anywhere and no owner alert
+    needed; the alert now only fires if the rollback also fails. Build
+    confirmed clean (0 Warning(s), 0 Error(s)).
   - **Phase 1 - a staged/pending object on the destination.** A copy
     exists in the destination scene's memory but isn't added to the
     spatial index, isn't sent to any viewer, and isn't in the physics

@@ -63,14 +63,12 @@ namespace OpenSim.Server.Handlers.Simulation
                 return;
             }
 
-            /*this things are ignored
             if (!Utils.GetParams(httpRequest.UriPath, out UUID objectID, out UUID regionID, out string action))
             {
                 m_log.InfoFormat("[OBJECT HANDLER]: Invalid parameters for object message {0}", httpRequest.UriPath);
                 httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
                 return;
             }
-            */
 
             switch (httpRequest.HttpMethod)
             {
@@ -87,6 +85,16 @@ namespace OpenSim.Server.Handlers.Simulation
                     break;
                 }
                 case "DELETE":
+                {
+                    if (objectID.IsZero() || regionID.IsZero())
+                    {
+                        httpResponse.StatusCode = (int)HttpStatusCode.BadRequest;
+                        httpResponse.RawBuffer = Utils.falseStrBytes;
+                        return;
+                    }
+                    DoObjectDelete(httpRequest, httpResponse, objectID, regionID);
+                    break;
+                }
                 default:
                 {
                     httpResponse.StatusCode = (int)HttpStatusCode.MethodNotAllowed;
@@ -183,6 +191,26 @@ namespace OpenSim.Server.Handlers.Simulation
         protected virtual bool CreateObject(GridRegion destination, Vector3 newPosition, ISceneObject sog)
         {
             return m_SimulationService.CreateObject(destination, newPosition, sog, false);
+        }
+
+        protected void DoObjectDelete(IOSHttpRequest httpRequest, IOSHttpResponse httpResponse, UUID objectID, UUID regionID)
+        {
+            m_log.DebugFormat("[OBJECT HANDLER]: >>> DELETE <<< object {0}; RegionID: {1}; from: {2}",
+                objectID, regionID, httpRequest.RemoteIPEndPoint.Address.ToString());
+
+            GridRegion destination = new GridRegion();
+            destination.RegionID = regionID;
+
+            bool result = RemoveObject(destination, objectID);
+
+            httpResponse.StatusCode = (int)HttpStatusCode.OK;
+            httpResponse.RawBuffer = Util.UTF8.GetBytes(result.ToString());
+        }
+
+        // subclasses can override this
+        protected virtual bool RemoveObject(GridRegion destination, UUID objectID)
+        {
+            return m_SimulationService.RemoveObject(destination, objectID);
         }
     }
 }

@@ -2909,17 +2909,41 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
 
                     if (!deleted)
                     {
-                        m_log.ErrorFormat(
-                            "[ENTITY TRANSFER MODULE]: Failed to delete the old copy of {0} ({1}) owned by {2} after {3} attempts during a border crossing to {4} - " +
-                            "the object now exists in both regions and needs manual reconciliation: {5}",
-                            grp.Name, grp.UUID, grp.OwnerID, maxAttempts, destination.RegionName, lastEx);
-
-                        ScenePresence sp = grp.Scene.GetScenePresence(grp.OwnerID);
-                        if (sp != null && !sp.IsChildAgent && sp.ControllingClient != null && sp.ControllingClient.IsActive)
+                        // Rather than leave the duplicate in place, try to undo the CreateObject
+                        // that just succeeded on the destination - if this works, the object simply
+                        // stays on the source, exactly as if the crossing had never been attempted,
+                        // and there's no duplicate to reconcile at all.
+                        bool rolledBack = false;
+                        try
                         {
-                            sp.ControllingClient.SendAgentAlertMessage(
-                                $"'{grp.Name}' crossed into {destination.RegionName}, but the old copy here couldn't be removed. It may now exist in both places - please contact a grid admin.",
-                                false);
+                            rolledBack = m_scene.SimulationService.RemoveObject(destination, grp.UUID);
+                        }
+                        catch (Exception e)
+                        {
+                            lastEx = e;
+                        }
+
+                        if (rolledBack)
+                        {
+                            m_log.WarnFormat(
+                                "[ENTITY TRANSFER MODULE]: Failed to delete the old copy of {0} ({1}) owned by {2} after {3} attempts during a border crossing to {4} - " +
+                                "rolled back the new copy there instead, object remains only on the source, no duplicate: {5}",
+                                grp.Name, grp.UUID, grp.OwnerID, maxAttempts, destination.RegionName, lastEx);
+                        }
+                        else
+                        {
+                            m_log.ErrorFormat(
+                                "[ENTITY TRANSFER MODULE]: Failed to delete the old copy of {0} ({1}) owned by {2} after {3} attempts during a border crossing to {4}, " +
+                                "and rolling back the new copy there also failed - the object now exists in both regions and needs manual reconciliation: {5}",
+                                grp.Name, grp.UUID, grp.OwnerID, maxAttempts, destination.RegionName, lastEx);
+
+                            ScenePresence sp = grp.Scene.GetScenePresence(grp.OwnerID);
+                            if (sp != null && !sp.IsChildAgent && sp.ControllingClient != null && sp.ControllingClient.IsActive)
+                            {
+                                sp.ControllingClient.SendAgentAlertMessage(
+                                    $"'{grp.Name}' crossed into {destination.RegionName}, but the old copy here couldn't be removed. It may now exist in both places - please contact a grid admin.",
+                                    false);
+                            }
                         }
 
                         successYN = false;

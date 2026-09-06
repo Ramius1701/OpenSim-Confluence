@@ -343,6 +343,25 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Simulation
             return false;
         }
 
+        public bool RemoveObject(GridRegion destination, UUID objectID)
+        {
+            if (destination == null)
+                return false;
+
+            if (m_scenes.ContainsKey(destination.RegionID))
+            {
+                Scene s = m_scenes[destination.RegionID];
+                SceneObjectGroup sog = s.GetSceneObjectGroup(objectID);
+                if (sog == null)
+                    return false;
+
+                s.DeleteSceneObject(sog, true, true);
+                return true;
+            }
+
+            return false;
+        }
+
         #endregion
 
         #region Misc
