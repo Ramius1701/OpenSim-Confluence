@@ -276,6 +276,41 @@ namespace OpenSim.Services.Connectors.Simulation
         /// <summary>
         /// This is the worker function to send AgentData to a neighbor region
         /// </summary>
+        // Same reasoning as PostToServiceWithTransientRetry above, and checked
+        // against WebUtil.CanonicalizeResults directly rather than assumed: every
+        // real reply - whether the destination's plain "true"/"false" text response
+        // or a real OSDMap - gets normalized to carry BOTH "Success" and lowercase
+        // "success". Only WebUtil.ErrorResponseMap (a response that never reached
+        // the peer at all) sets "Success" alone, never lowercase "success" - so
+        // checking for capital "Success" the way UpdateAgent's own success check
+        // below does would never distinguish a real reply from a dead one, and the
+        // retry would never trigger. Checking lowercase "success" here instead is
+        // what actually makes the distinction, matching PostToServiceWithTransientRetry's
+        // own check for the identical reason. This full-state handoff is also a PUT
+        // of the agent's complete current data, not an incremental delta, so a retry
+        // that lands after an already-successful first attempt just overwrites the
+        // destination with the same data again, not a duplicate or partial update.
+        // Not applied to the separate high-frequency position-only UpdateAgent
+        // overload above - that one is deliberately drop-and-blacklist on failure
+        // instead, since retrying a stale position update while a newer one may
+        // already be queued would be actively wrong, not just unhelpful.
+        private static OSDMap PutToServiceWithTransientRetry(string uri, OSDMap args, int timeout)
+        {
+            OSDMap result = null;
+            for (int attempt = 1; attempt <= TransientRetryAttempts; attempt++)
+            {
+                result = WebUtil.PutToServiceCompressed(uri, args, timeout);
+                if (result.ContainsKey("success") || attempt == TransientRetryAttempts)
+                    return result;
+
+                m_log.DebugFormat(
+                    "[REMOTE SIMULATION CONNECTOR]: UpdateAgent to {0} got no response (attempt {1}/{2}), retrying after {3}ms",
+                    uri, attempt, TransientRetryAttempts, TransientRetryDelayMs);
+                Thread.Sleep(TransientRetryDelayMs);
+            }
+            return result;
+        }
+
         private bool UpdateAgent(GridRegion destination, IAgentData cAgentData, EntityTransferContext ctx, int timeout)
         {
             // m_log.DebugFormat("[REMOTE SIMULATION CONNECTOR]: UpdateAgent in {0}", destination.ServerURI);
@@ -296,11 +331,11 @@ namespace OpenSim.Services.Connectors.Simulation
                 OSDMap result;
                 if (ctx.OutboundVersion >= 0.3)
                 {
-                    result = WebUtil.PutToServiceCompressed(uri, args, timeout);
+                    result = PutToServiceWithTransientRetry(uri, args, timeout);
                     return result["Success"].AsBoolean();
                 }
 
-                result = WebUtil.PutToServiceCompressed(uri, args, timeout);
+                result = PutToServiceWithTransientRetry(uri, args, timeout);
                 if (result["Success"].AsBoolean())
                     return true;
                 if(ctx.OutboundVersion < 0.2)
@@ -316,6 +351,32 @@ namespace OpenSim.Services.Connectors.Simulation
             return false;
         }
 
+
+        // Same "only retry when we genuinely got no reply" contract as
+        // PostToServiceWithTransientRetry/PutToServiceWithTransientRetry above -
+        // ServiceOSDRequest also returns through WebUtil.CanonicalizeResults
+        // (confirmed by reading it directly), so the same lowercase "success"
+        // presence check applies. QueryAccess is a pure read - it asks whether
+        // the destination would accept this avatar, with no side effects on
+        // either end - so retrying it after a dropped connection risks nothing
+        // beyond the extra round trip, unlike a call that creates or mutates
+        // state on the far side.
+        private static OSDMap ServiceOSDRequestWithTransientRetry(string uri, OSDMap request, string method, int timeout, bool compressed, bool rpc, bool keepalive)
+        {
+            OSDMap result = null;
+            for (int attempt = 1; attempt <= TransientRetryAttempts; attempt++)
+            {
+                result = WebUtil.ServiceOSDRequest(uri, request, method, timeout, compressed, rpc, keepalive);
+                if (result.ContainsKey("success") || attempt == TransientRetryAttempts)
+                    return result;
+
+                m_log.DebugFormat(
+                    "[REMOTE SIMULATION CONNECTOR]: QueryAccess to {0} got no response (attempt {1}/{2}), retrying after {3}ms",
+                    uri, attempt, TransientRetryAttempts, TransientRetryDelayMs);
+                Thread.Sleep(TransientRetryDelayMs);
+            }
+            return result;
+        }
 
         public bool QueryAccess(GridRegion destination, UUID agentID, string agentHomeURI, bool viaTeleport, Vector3 position, List<UUID> featuresAvailable, EntityTransferContext ctx, out string reason)
         {
@@ -354,7 +415,7 @@ namespace OpenSim.Services.Connectors.Simulation
             OSD tmpOSD;
             try
             {
-                OSDMap result = WebUtil.ServiceOSDRequest(uri, request, "QUERYACCESS", 30000, false, false, true);
+                OSDMap result = ServiceOSDRequestWithTransientRetry(uri, request, "QUERYACCESS", 30000, false, false, true);
 
                 bool success = result["success"].AsBoolean();
 

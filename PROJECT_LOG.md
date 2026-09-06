@@ -20090,5 +20090,141 @@ silent, invisible failure mode into a loud, attributable, rare one.
 The full non-freezing "staged" vehicle-crossing redesign this same
 Homeworldz audit's motion-continuity finding also touches on still
 needs that same new RPC either way; see ROADMAP.md's "Vehicle and
-prim region crossings" entry. Build 0 errors/0 warnings. Not yet
-deployed live.
+prim region crossings" entry. Build 0 errors/0 warnings.
+
+**Deployed same day, during an unrelated incident.** Between building
+this and deploying it, a separate mistake (see the "everything is
+down" recovery below) meant Casperia's whole grid ended up stopped and
+restarted anyway - this fix's `OpenSim.Region.CoreModules.dll` was
+copied into that same restart rather than triggering a second one,
+hash-verified, all 15 regions confirmed `RegionReady` afterward, zero
+new errors in either log.
+
+## Real incident: a stray Stop-Process call took down an unrelated grid too (2026-09-06)
+
+While stopping Casperia's 15 region processes to deploy the object-
+crossing fix above, filtered `Get-CimInstance Win32_Process -Filter
+"Name='OpenSim.exe'"` by process name only, with no check on which
+grid each process actually belonged to. 18 processes matched, not the
+expected 15 - the extra 3 turned out to belong to Continuum-TestGrid,
+a completely separate setup this project has no context on and never
+touched deliberately. All 18 got stopped in one call before that
+discrepancy was even noticed. Caught immediately after (before copying
+any files or restarting anything) by checking `ParentProcessId`/
+`CommandLine` on the still-running Robust processes, which showed a
+second one at `S:\Opensim\Continuum-TestGrid\Runtime\Robust.exe` -
+confirmed unrelated to Casperia rather than assumed. Stopped
+everything else too and reported the mistake plainly rather than
+guessing at a fix for a grid with an unknown directory layout and
+unknown correct startup parameters.
+
+**User follow-up**: Continuum-TestGrid turned out to be unrelated
+tooling (the user's own words: "that's ChatGPT's take on what we have
+done") - not something this project manages or needs to reconcile
+with. Casperia itself was recovered cleanly: Robust + all 15 regions
+restarted in the correct order, all confirmed `RegionReady`, zero
+errors, full site check clean.
+
+**Lesson, in case a similar batch process-management command is ever
+needed again**: filtering only by process name is not enough on a
+machine that might be running more than one grid/service sharing the
+same executable name - check `CommandLine` (or working directory) for
+every PID a filter matches before acting on the batch, not just the
+count.
+
+## Hypergrid teleport reliability: three real retry gaps found and closed, one real bug caught before shipping (2026-09-06)
+
+Direct follow-up to the earlier "Region-crossing/teleport reliability"
+status check - ROADMAP.md's own entry claimed "a single retry on
+outright transport failure is in place" for Hypergrid teleports.
+Traced the actual code instead of trusting that summary at face value:
+confirmed two real, careful, already-existing retry mechanisms
+(`GatekeeperServiceConnector.GetHyperlinkRegion`'s `get_region` call,
+`SimulationServiceConnector.CreateAgent`), each with real reasoning in
+its own comment for why retrying is safe - then checked every other
+network call in the teleport chain individually rather than assuming
+the same protection extended to them.
+
+**Three genuine gaps found, zero retry on any of them:**
+- `SimulationServiceConnector.UpdateAgent` (the full agent-data
+  handoff sent once per crossing/teleport, not the separate high-
+  frequency position-only overload) - a bare try/catch, no retry loop
+  at all.
+- `SimulationServiceConnector.QueryAccess` (checks whether the
+  destination will actually accept the avatar before committing) -
+  same, zero retry.
+- `UserAgentServiceConnector`'s entire home-grid identity surface
+  (`LoginAgentToGrid`, `VerifyAgent`, `VerifyClient`, `GetHomeRegion`,
+  `IsAgentComingHome`, `StatusNotification`, and the read-only lookups
+  underlying `CallServer`) - the riskiest gap of the three, since this
+  is the only call in the whole chain reaching a genuinely independent
+  third-party server (the traveler's actual home grid) that this
+  deployment has zero control over.
+
+**Not a blanket fix - checked idempotency per call before adding
+retry, confirmed with the user first given the scope.** `QueryAccess`
+and the read-only `UserAgentServiceConnector` lookups are clearly
+side-effect-free reads, safe by the same reasoning already used for
+`get_region`. `UpdateAgent`'s full-state handoff is a PUT of the
+agent's complete current data, not an incremental delta, so a retry
+landing after an already-successful attempt just overwrites the
+destination with the same data again - same idempotency argument as
+`CreateAgent`'s own dedup-by-AgentID reasoning. `LogoutAgent` (sharing
+`GetBoolResponse` with three of the identity calls) is idempotent
+too - confirming an already-completed logout twice is harmless -
+included for that reason even though it wasn't in the original three
+named targets. **Deliberately left `LoginAgentToGrid` alone**: unlike
+`CreateAgent`, where Confluence's own `NewUserConnection` dedup logic
+could be read and confirmed, there's no way to inspect a third-party
+home grid's own implementation to confirm calling it twice is actually
+safe - the honest answer here is "don't know," not "probably fine."
+
+**A real bug in the new code, caught before it shipped, not after.**
+The first version of `UpdateAgent`'s new retry check
+(`PutToServiceWithTransientRetry`) checked for the presence of a
+capital `"Success"` key to decide whether a real reply had come back -
+copied directly from `CreateAgent`'s own established pattern without
+first confirming the key case actually meant the same thing in this
+context. Investigating why triggered a much bigger scare: grepping
+`AgentHandlers.cs` for `"Success"`/`"success"` found several matches,
+none of which turned out to belong to the actual `DoAgentPut` handler
+this endpoint hits - that handler doesn't return a JSON/OSD map at all
+for the plain agent-data case, it writes a raw literal `"True"`/
+`"False"` string as the entire HTTP response body
+(`httpResponse.RawBuffer = Util.UTF8.GetBytes(result.ToString())`).
+For a moment this looked like it might mean `UpdateAgent`'s existing,
+long-standing client-side check (`result["Success"].AsBoolean()`) had
+*always* silently read `false` even on genuine success, since a naive
+missing-key lookup on an OSDMap returns an empty OSD rather than
+throwing - confirmed the missing-key behavior itself with a small,
+real, throwaway console harness against the actual built
+`OpenMetaverse.StructuredData.dll` rather than assuming it, exactly
+the same empirical-test standard as the J2K decoder benchmark. That
+would have meant every inter-process avatar crossing on this 15-region
+grid had been reporting failure regardless of real outcome - directly
+contradicted by this entire session's own observed teleport activity,
+which was the signal to keep digging rather than conclude the
+alarming version.
+
+Found the real explanation by reading `WebUtil.CanonicalizeResults`
+directly: every real reply - whether a plain "true"/"false" text body
+(exactly what `DoAgentPut` sends) or a real OSDMap - gets normalized to
+carry **both** `"Success"` and lowercase `"success"`, with the same
+boolean value under each key. Only `WebUtil.ErrorResponseMap` (a
+response that never reached the peer at all) sets `"Success"` alone,
+never lowercase `"success"`. That resolved both things at once: the
+pre-existing `UpdateAgent` code was correct all along (capital
+`"Success"` carries the real value on any genuine reply, whatever its
+wire shape), and the *new* retry-detection code was the one with the
+actual bug - checking capital `"Success"` can never distinguish a real
+reply from `ErrorResponseMap`, since both contain it, so the retry
+path would never have actually triggered on a real transient failure.
+Fixed to check lowercase `"success"` instead, matching
+`PostToServiceWithTransientRetry`'s own already-correct check for the
+identical reason. Confirmed `ServiceOSDRequest` (which
+`QueryAccess`'s new retry wrapper also uses) returns through the same
+`CanonicalizeResults` path by reading it directly, not assumed from
+the `UpdateAgent` case transferring.
+
+Build 0 errors/0 warnings across `SimulationServiceConnector.cs` and
+`UserAgentServiceConnector.cs`. Not yet deployed live.

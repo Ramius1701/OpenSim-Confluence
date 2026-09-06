@@ -32,6 +32,7 @@ using System.IO;
 using System.Net;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
 using OpenSim.Services.Connectors.Simulation;
@@ -152,6 +153,23 @@ namespace OpenSim.Services.Connectors.Hypergrid
             // no-op
         }
 
+        // This underlies every read-only lookup this connector makes against a
+        // resident's home grid (get_home_region, get_user_info, get_server_urls,
+        // locate_user, get_uui, get_uuid) - none of which mutate anything on
+        // either end, so a bounded retry costs nothing beyond the extra round
+        // trip. Deliberately NOT shared with LoginAgentToGrid or the [Obsolete]
+        // StatusNotification, which don't call this method at all (both use their
+        // own separate request/response handling) - unlike the reads here, this
+        // project can't inspect a third-party home grid's own implementation to
+        // confirm a login-style call is actually safe to send twice.
+        // Only retries on a genuine transport failure (XmlRpcRequest.Send itself
+        // throwing - connection refused, DNS failure, timeout) - never on a real
+        // reply that happens to be a fault or an unexpected shape, since that's
+        // the server actually answering, not a dropped connection, and retrying a
+        // deterministic fault would just fault again.
+        private const int TransientRetryAttempts = 2;
+        private const int TransientRetryDelayMs = 1000;
+
         private Hashtable CallServer(string methodName, Hashtable hash)
         {
             IList paramList = new ArrayList();
@@ -161,15 +179,27 @@ namespace OpenSim.Services.Connectors.Hypergrid
 
             // Send and get reply
             XmlRpcResponse response = null;
-            try
+            for (int attempt = 1; attempt <= TransientRetryAttempts; attempt++)
             {
-                using HttpClient hclient = WebUtil.GetNewGlobalHttpClient(10000);
-                response = request.Send(m_ServerURL, hclient);
-            }
-            catch (Exception e)
-            {
-                m_log.DebugFormat("[USER AGENT CONNECTOR]: {0} call to {1} failed: {2}", methodName, m_ServerURL, e.Message);
-                throw;
+                try
+                {
+                    using HttpClient hclient = WebUtil.GetNewGlobalHttpClient(10000);
+                    response = request.Send(m_ServerURL, hclient);
+                    break;
+                }
+                catch (Exception e)
+                {
+                    if (attempt == TransientRetryAttempts)
+                    {
+                        m_log.DebugFormat("[USER AGENT CONNECTOR]: {0} call to {1} failed: {2}", methodName, m_ServerURL, e.Message);
+                        throw;
+                    }
+
+                    m_log.DebugFormat(
+                        "[USER AGENT CONNECTOR]: {0} call to {1} got no response (attempt {2}/{3}), retrying after {4}ms: {5}",
+                        methodName, m_ServerURL, attempt, TransientRetryAttempts, TransientRetryDelayMs, e.Message);
+                    Thread.Sleep(TransientRetryDelayMs);
+                }
             }
 
             if (response == null || response.IsFault)
@@ -556,20 +586,40 @@ namespace OpenSim.Services.Connectors.Hypergrid
             return uuid;
         }
 
+        // Backs IsAgentComingHome/VerifyAgent/VerifyClient/LogoutAgent - all four
+        // are safe to retry on a genuine transport failure for the same reason as
+        // CallServer above: identity-check reads with no mutation on either side
+        // (IsAgentComingHome/VerifyAgent/VerifyClient), or an idempotent one where
+        // confirming an already-completed logout a second time is harmless
+        // (LogoutAgent). Same "retry only when we know we got no reply at all"
+        // rule as everywhere else - a real fault or malformed response below still
+        // returns immediately, unretried.
         private bool GetBoolResponse(XmlRpcRequest request, out string reason)
         {
             //m_log.Debug("[USER AGENT CONNECTOR]: GetBoolResponse from/to " + m_ServerURL);
             XmlRpcResponse response = null;
-            try
+            for (int attempt = 1; attempt <= TransientRetryAttempts; attempt++)
             {
-                using HttpClient hclient = WebUtil.GetNewGlobalHttpClient(10000);
-                response = request.Send(m_ServerURL, hclient);
-            }
-            catch (Exception e)
-            {
-                m_log.DebugFormat("[USER AGENT CONNECTOR]: Unable to contact remote server {0} for GetBoolResponse", m_ServerURL);
-                reason = "Exception: " + e.Message;
-                return false;
+                try
+                {
+                    using HttpClient hclient = WebUtil.GetNewGlobalHttpClient(10000);
+                    response = request.Send(m_ServerURL, hclient);
+                    break;
+                }
+                catch (Exception e)
+                {
+                    if (attempt == TransientRetryAttempts)
+                    {
+                        m_log.DebugFormat("[USER AGENT CONNECTOR]: Unable to contact remote server {0} for GetBoolResponse", m_ServerURL);
+                        reason = "Exception: " + e.Message;
+                        return false;
+                    }
+
+                    m_log.DebugFormat(
+                        "[USER AGENT CONNECTOR]: GetBoolResponse to {0} got no response (attempt {1}/{2}), retrying after {3}ms: {4}",
+                        m_ServerURL, attempt, TransientRetryAttempts, TransientRetryDelayMs, e.Message);
+                    Thread.Sleep(TransientRetryDelayMs);
+                }
             }
 
             if (response.IsFault)
