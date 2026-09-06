@@ -35,31 +35,95 @@ gap today. For what already exists, see `FEATURES.md`.
   service-to-service protocol for an external website, unrelated to the
   real viewer floater), which keeps working unchanged as a legacy/
   external-integration path.
-- **Vehicle and prim region crossings.** Avatar crossings are already
-  smooth (see `FEATURES.md`). Vehicles and other physical objects still
-  freeze in place for the duration of a crossing — a deliberate
-  server-side safety measure, not a bug, but one that's noticeable on
-  a moving vehicle. Fixing the freeze properly needs a new "staged"
-  object state so a vehicle can be predictively prepared on the
-  destination region without risking a visible duplicate — that part
-  is designed (informed by a sibling project's own crossing design,
-  see "Design research from other projects" below) but needs a new
-  cross-region "remove object" RPC (`ISimulationService` has no such
-  call today) before it can be built, so it's not started.
-  **A real, related bug it also motivated was found and fixed
-  (2026-09-05)**: `CrossPrimGroupIntoNewRegion` created the object at
-  the destination, then silently swallowed a failure to delete the
-  source copy, still reporting the crossing as successful either way -
-  a genuine, if rare, duplication risk. Since there's no way to undo
-  the destination copy without that same new RPC, the fix is scoped to
-  what's actually buildable today: retries on the delete (the likely
-  real cause of any failure here is transient - a busy scene thread, a
-  momentary lock - not permanent), and if it still fails, the crossing
-  is correctly reported as failed instead of silently swallowed, the
-  owner is alerted in-world if reachable, and it's logged loudly enough
-  for an admin to actually find and manually reconcile the rare case
-  that does happen. The full non-freezing, no-duplication-risk-at-all
-  version still needs the new RPC either way.
+- **Vehicle and prim region crossings — real scoping done, not just a
+  guess (2026-09-07).** Avatar crossings are already smooth (see
+  `FEATURES.md`). Vehicles and other physical objects still freeze in
+  place for the duration of a crossing — a deliberate server-side
+  safety measure, not a bug, but one that's noticeable on a moving
+  vehicle. Traced the actual freeze mechanism directly rather than
+  assuming: `SceneObjectGroup.cs`'s border-crossing path calls
+  `root.PhysActor?.CrossingStart()` (ubODE's `ODEPrim.CrossingStart()`
+  sets `m_outbounds = true` and zeroes the physics body's velocity) the
+  moment a real destination is confirmed, then blocks synchronously on
+  `EntityTransferModule.CrossPrimGroupIntoNewRegion()` - a full HTTP
+  `CreateObject` POST (serializes and rezzes the whole object on the
+  destination) followed by deleting the source copy only on success.
+  The freeze lasts exactly as long as that synchronous round trip;
+  `ODEPrim.CrossingFailure()` is the existing unfreeze/rollback path,
+  restoring position and velocity if a crossing attempt needs to be
+  aborted outright.
+
+  **Why the "remove object" RPC alone doesn't fix the freeze.** It
+  only lets a *failed* destination copy be cleaned up after the fact -
+  the freeze itself comes from doing create-then-delete synchronously
+  and serially. Making the crossing non-freezing needs the destination
+  copy to already exist and be ready *before* the source stops
+  simulating the object - a predictive, staged handoff (informed by a
+  sibling project's own crossing design, see "Design research from
+  other projects" below) - and the new RPC's real job is the safety
+  valve for that: rolling back a staged copy if the prediction turns
+  out wrong or the final handoff fails, not the primary mechanism.
+
+  **Buildable in phases, not one large change:**
+  - **Phase 0 - the RPC itself, small and independently useful.** Add
+    `RemoveObject(GridRegion destination, UUID objectID, string
+    authToken)` to `ISimulationService`, mirroring the existing
+    `CloseAgent` pattern exactly end to end: an HTTP `DELETE` client
+    method in `SimulationServiceConnector.cs`, the local-then-remote
+    dispatch already present in `RemoteSimulationConnectorModule`, a
+    direct in-process scene call in `LocalSimulationConnectorModule`,
+    and a server-side handler in `ObjectHandlers.cs`'s
+    `ObjectSimpleHandler` - which already has a `DELETE` case
+    (currently a hardcoded 405) and already has the URL-path parsing
+    for `/object/{objectID}/{regionID}/` written but disabled
+    ("this things are ignored") from `CreateObject`'s POST path, so
+    most of the plumbing already exists in a dormant state. This phase
+    has real, standalone value even without the rest: the duplication-
+    bug fix already live (2026-09-05, see PROJECT_LOG.md) currently has
+    no way to undo a destination copy when the source-side delete fails
+    every retry, and just reports the crossing as failed - with
+    `RemoveObject` in place, that same failure path could roll back the
+    destination copy first and avoid the duplicate risk entirely rather
+    than just reporting it. **Estimated 1-2 days.**
+  - **Phase 1 - a staged/pending object on the destination.** A copy
+    exists in the destination scene's memory but isn't added to the
+    spatial index, isn't sent to any viewer, and isn't in the physics
+    scene - held in a pending-objects table keyed by object UUID rather
+    than a new `SceneObjectGroup` state, plus a lightweight "activate"
+    call to promote it to fully live. Moderate complexity, genuinely
+    new.
+  - **Phase 2 - predictive trigger on the source, the hardest and
+    riskiest part.** Today, crossing only starts once the object's
+    position has actually crossed the border - confirmed by tracing
+    `GetObjectDestination()`'s call site directly. A non-freezing
+    design needs staging to begin *before* the border is crossed
+    (velocity + distance lookahead), which is new logic with real edge
+    cases: direction reversal after staging has started (needs the
+    Phase 0 rollback), and the sitting-avatar crossing path - already
+    far more heavily special-cased in `SceneObjectGroup.cs`
+    (`avtocrossInfo`, per-avatar `m_crossingFlags`, far-crossing
+    handling) than the empty-vehicle fast path - that any staged
+    redesign has to not break.
+  - **Phase 3 - matching physics-engine support.** ubODE (confirmed
+    the actual live engine on Casperia via direct profiling, see
+    PROJECT_LOG.md) is the only one that needs to be correct for this
+    grid, but `CrossingStart`/`CrossingFailure` are implemented across
+    BulletS/POS/BasicPhysics too and would silently regress for anyone
+    using a different engine if ignored outright.
+
+  **Estimated cost**: Phase 0 alone is small and worth doing on its
+  own regardless of the rest. The full non-freezing redesign (Phases
+  1-3) is a genuine multi-week effort - realistically 3-5 weeks, larger
+  than the navmesh estimate above, because a wrong predictive trigger
+  risks the exact visible-duplicate failure mode this feature exists to
+  prevent, on a live grid with real vehicles and real residents sitting
+  on them, and this kind of timing-sensitive crossing behavior can't be
+  meaningfully verified without live-grid testing (a real moving
+  vehicle, both the empty and sitting-avatar paths, plus a forced-
+  rollback test). Recommendation: build Phase 0 now, hold Phases 1-3
+  pending a priority call, since the freeze is a working safety measure
+  today, not a correctness bug - this is a comfort/polish improvement,
+  not a fix.
 - **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
   set**, to catch anything the current build missed. Ongoing,
   page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.
