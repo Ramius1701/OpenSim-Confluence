@@ -20468,7 +20468,27 @@ matching the two git-tracked example templates) for documentation/
 future tunability - purely additive, matches the code's own default,
 no behavior change from adding it.
 
-**Still open, per the user's "test carefully" instruction**: watch for
-any wearables/appearance-related warnings on the next real login or
-teleport, ready to raise `WearablesRequestDelayMs` (config-only, no
-rebuild) if anything looks off.
+**"Test carefully" instruction closed out (2026-09-06), verified against
+a real login and two real teleports.** The user logged in to Starbase
+Andromeda, then teleported to GFC, then to Ranchero, on the newly-
+deployed code. Checked `OpenSim.log` end to end across the whole
+window: zero wearables/appearance-related warnings or errors anywhere.
+The only `WARN`/`ERROR` lines in the window were pre-existing, unrelated
+asset-corruption noise (a broken LSL script failing to compile, a
+handful of `GETASSET` "wrong type"/"empty data" warnings - the same
+corrupt-asset category already seen elsewhere on this grid, e.g. GFC's
+own mesh-parsing errors during its earlier boot).
+
+On login, `AVFACTORY`'s temporary-default-appearance-fallback mechanism
+fired and resolved in 1.1 seconds ("Scheduled ... will check once in 6
+seconds" -> "Saved outfit restored") - confirmed this is pre-existing
+behavior, not something this change introduced, by finding the
+identical fallback sequence on the user's two prior logins that same
+day (21:24 and 22:42 UTC), both still running the old, unmodified
+4000ms sleep. Neither teleport needed the fallback at all - appearance
+carried over cleanly on both. The user confirmed outfit/attachments
+looked correct in-viewer after login and after each teleport, no
+grey-cloud or wrong-wearables report.
+
+No further action planned unless this recurs - the config-only
+`WearablesRequestDelayMs` escape hatch stays in place either way.
