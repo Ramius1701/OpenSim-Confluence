@@ -80,5 +80,24 @@ namespace OpenSim.Data.PGSQL
                 return ExecuteNonQuery(cmd) > 0;
             }
         }
+
+        // Store() above always INSERTs (ReportID is deliberately excluded so
+        // the "serial" sequence still assigns it) - calling it again on an
+        // existing report would create a second row, not update the first.
+        // Update() is the real way to change an existing report's
+        // admin-tool fields (Active/AssignedTo/Notes).
+        public bool Update(AbuseReportData row)
+        {
+            using (NpgsqlCommand cmd = new NpgsqlCommand())
+            {
+                cmd.CommandText = "UPDATE " + m_Realm + " SET \"Active\" = :Active, \"AssignedTo\" = :AssignedTo, \"Notes\" = :Notes WHERE \"ReportID\" = :ReportID";
+                cmd.Parameters.Add(m_database.CreateParameter("Active", row.Active));
+                cmd.Parameters.Add(m_database.CreateParameter("AssignedTo", row.AssignedTo ?? string.Empty));
+                cmd.Parameters.Add(m_database.CreateParameter("Notes", row.Notes ?? string.Empty));
+                cmd.Parameters.Add(m_database.CreateParameter("ReportID", row.ReportID));
+
+                return ExecuteNonQuery(cmd) > 0;
+            }
+        }
     }
 }

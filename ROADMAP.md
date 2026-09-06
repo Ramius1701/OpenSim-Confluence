@@ -133,25 +133,19 @@ gap today. For what already exists, see `FEATURES.md`.
 - **Web/Admin UI audit against WhiteCore-Dev's page set — the
   page-by-page pass is done (last row closed 2026-08-23), not
   ongoing.** Every route in `WEBUI_PARITY_CHECKLIST.md` is checked off.
-  Two of the 4 real gaps the audit found are now built (2026-09-07, see
-  PROJECT_LOG.md): the per-region profile page (`/region`), and a
+  3 of the 4 real gaps the audit found are now built (2026-09-07, see
+  PROJECT_LOG.md): the per-region profile page (`/region`); a
   grid-wide login toggle (`/admin/settings`) - the latter's own scoping
   pass found the original flagged-gap description was wrong,
   WhiteCore-Dev's own reference toggle is purely cosmetic and never
-  actually blocked a login, so this was a real feature built from
-  scratch, not a port. Both deployed and fully exercised end to end
-  with real accounts (2026-09-07, see PROJECT_LOG.md): an admin logged
-  in through a closed grid, an ordinary resident was blocked with the
-  real message, then logged in cleanly once reopened. Done. The
-  remaining 2 (see `WEBUI_PARITY_CHECKLIST.md`'s "Flagged gaps"
-  section): an avatar-selection starter-look carousel on `/register`;
-  and abuse-report resolved/assigned tracking - real scoping done
-  (2026-09-07), and cheaper than it sounds: all 3 DB backends use a
-  reflection-based generic table handler, so the 3 new fields need
-  zero data-layer code, just a migration per backend (one already has
-  a precedented 2-version history to copy the shape of) and a WebUI
-  form (the admin abuse-reports page is currently fully read-only).
-  Estimated well under a day. Neither started.
+  actually blocked a login, deployed and fully exercised end to end
+  with real accounts; and abuse-report resolved/assigned tracking
+  (`/admin/abuse-reports`) - `Active`/`AssignedTo`/`Notes` are now real
+  fields across all 3 DB backends and the admin page is a real
+  editable queue, not read-only. Not yet deployed - see PROJECT_LOG.md.
+  The remaining 1 (see `WEBUI_PARITY_CHECKLIST.md`'s "Flagged gaps"
+  section): an avatar-selection starter-look carousel on `/register`.
+  Not started.
 
 ## Planned, not started
 

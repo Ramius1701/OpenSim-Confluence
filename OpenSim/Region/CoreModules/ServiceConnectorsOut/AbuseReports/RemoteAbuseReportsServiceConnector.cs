@@ -103,6 +103,12 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.AbuseReports
         {
             return null;
         }
+
+        // Same reasoning as GetAbuseReports/GetAbuseReport above.
+        public bool UpdateAbuseReport(AbuseReportData report)
+        {
+            return false;
+        }
         #endregion IAbuseReportsService
 
     }

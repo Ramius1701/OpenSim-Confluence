@@ -61,5 +61,10 @@ namespace OpenSim.Services.AbuseReportsService
 
             return found[0];
         }
+
+        public bool UpdateAbuseReport(AbuseReportData report)
+        {
+            return m_Database.Update(report);
+        }
     }
 }

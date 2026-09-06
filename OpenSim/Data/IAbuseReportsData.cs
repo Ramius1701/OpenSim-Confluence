@@ -16,5 +16,15 @@ namespace OpenSim.Data
         /// </summary>
         AbuseReportData[] Get(string field, string key);
         AbuseReportData[] Get(string where);
+
+        /// <summary>
+        /// Updates an existing report's admin-tool fields (Active/AssignedTo/
+        /// Notes) by ReportID. NOT the same as Store() - each backend's own
+        /// Store() override either always INSERTs (PGSQL/SQLite, which
+        /// deliberately exclude ReportID so their auto-increment still
+        /// works) or is a MySQL-only REPLACE INTO upsert, so calling Store()
+        /// again on an existing report is not a portable way to update one.
+        /// </summary>
+        bool Update(AbuseReportData data);
     }
 }

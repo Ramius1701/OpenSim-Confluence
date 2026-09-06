@@ -24,3 +24,18 @@ CREATE TABLE IF NOT EXISTS AbuseReports (
 );
 
 COMMIT;
+
+:VERSION 2
+
+BEGIN;
+
+-- Admin-tool fields (resolved/assigned tracking) - real, working fields on
+-- the C# model since 2026-09-07 (see PROJECT_LOG.md), not present before.
+-- Active defaults to true (open) so every existing row backfills as still
+-- open rather than silently marked resolved.
+ALTER TABLE "AbuseReports"
+	ADD COLUMN "Active" boolean NOT NULL DEFAULT true,
+	ADD COLUMN "AssignedTo" varchar(128) NULL,
+	ADD COLUMN "Notes" varchar(2000) NULL;
+
+COMMIT;

@@ -22,5 +22,13 @@ namespace OpenSim.Framework
         public string Summary;
         public string Version;
         public byte[] ImageData;
+
+        // Admin-tool fields (WebUI abuse-reports queue) - not part of the
+        // viewer's own SendUserReportWithScreenshot submission, only ever
+        // set/read from the admin side. Active defaults true (a freshly
+        // submitted report is open until an admin says otherwise).
+        public bool Active = true;
+        public string AssignedTo = string.Empty;
+        public string Notes = string.Empty;
     }
 }

@@ -20908,3 +20908,74 @@ lines specifically, not just the substring). `/admin/settings` and
 `/login` for an unauthenticated request). Grid picked back up real
 activity during the restart itself - a resident logged into UFPGC
 before the deploy had even finished bringing up the remaining regions.
+
+## Abuse report resolved/assigned tracking built (2026-09-07)
+
+Built the flagged WebUI gap scoped earlier the same day - real
+`Active`/`AssignedTo`/`Notes` fields on `AbuseReportData`, plus turning
+`HandleAdminAbuseReports` from a read-only list+detail view into a
+real editable admin queue.
+
+**A real correction to the same-day scoping doc, caught while actually
+implementing rather than after**: the scoping pass claimed `Store()`
+already worked as a cross-backend upsert (based on MySQL's `REPLACE
+INTO` keyed on `ReportID`), so updating an existing report would be a
+one-line passthrough. Reading PGSQL's and SQLite's own `Store()`
+overrides directly (not assumed from the interface alone) showed both
+are INSERT-only and deliberately *exclude* `ReportID` from the column
+list so their auto-increment/serial sequence still assigns it -
+calling `Store()` again on an existing report there would create a
+second row, not update the first. Added a real `Update(AbuseReportData)`
+to `IAbuseReportsData` instead, with a genuine `UPDATE ... WHERE
+ReportID = ...` in all three backends.
+
+**A second real bug caught in the same pass, in existing code this
+change would otherwise have inherited**: `MySqlAbuseReportsData.Store()`
+writes every field via `value?.ToString()` with no type-specific
+handling except `ImageData` - for a real C# `bool`, that produces the
+literal string `"True"`/`"False"`, not a value MySQL's non-strict mode
+would coerce correctly into the new `Active` `TINYINT(1)` column
+(likely silently becoming `0` regardless of the actual value, since
+neither string parses as a number). Fixed by adding a bool-specific
+branch (`b ? 1 : 0`) to the same `Store()` override, matching its own
+existing `ImageData` special-case pattern - covers both the write path
+for brand-new reports (`Active` defaults `true`) and the new `Update()`
+path. PGSQL/SQLite's own `Store()` overrides already pass `value`
+directly (no forced `.ToString()`), so ADO.NET/Npgsql's normal type
+inference already handles a real bool correctly there - no equivalent
+fix needed on those two.
+
+Migrations: MySQL `:VERSION 3` (already at V2 from a real prior fix),
+PGSQL and SQLite both `:VERSION 2` (never needed a V2 before - both
+had the right `Category` column type from the start, unlike MySQL).
+All three default `Active` to open/true so existing rows backfill as
+still-open, not silently resolved.
+
+Service layer: `IAbuseReportsService.UpdateAbuseReport()` - a real
+one-line call to the new `Update()` for the concrete Robust-side
+service (the only implementation the WebUI actually reaches, via the
+same direct `LoadReusedPlugin` load `GridSettingsService`/`SearchService`
+already use). The three region-side/HTTP implementers
+(`AbuseReportsServicesConnector`, `RemoteAbuseReportsServicesConnector`,
+`LocalAbuseReportsServicesConnector`) needed the new interface member
+too, matching each one's own existing, already-asymmetric pattern for
+`GetAbuseReports`/`GetAbuseReport`: `Local` gets a real pass-through
+(already in-process, no network cost to avoid), `Remote`/HTTP get
+honest stubs returning `false` (same "region-side code has no
+legitimate reason to call this - admin-tool concern" reasoning already
+written there for retrieval).
+
+WebUI: list table gained Assigned To/Status columns; the detail page
+is now a real form (an Active checkbox, an AssignedTo dropdown sourced
+from real `UserLevel >= 200` accounts plus an explicit Unassigned
+option, and a Notes textarea) posting to a new
+`/admin/abuse-reports/save` handler.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)). Not yet deployed -
+touches `OpenSim.Data.MySQL.dll`, `OpenSim.Data.PGSQL.dll`,
+`OpenSim.Data.SQLite.dll`, `OpenSim.Services.AbuseReportsService.dll`,
+`OpenSim.Services.Connectors.dll`, `OpenSim.Region.CoreModules.dll`,
+and `OpenSim.Server.Handlers.dll` - the widest set of assemblies any
+single change this session has touched; deploy scope needs checking
+fresh via live process module inspection before restarting anything,
+not assumed from earlier checks of a subset of these files.

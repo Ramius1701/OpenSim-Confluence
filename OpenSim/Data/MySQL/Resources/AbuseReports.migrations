@@ -38,3 +38,18 @@ ALTER TABLE `AbuseReports` MODIFY `Category` varchar(45) CHARACTER SET utf8mb4 D
 
 COMMIT;
 
+:VERSION 3
+
+BEGIN;
+
+-- Admin-tool fields (resolved/assigned tracking) - real, working fields on
+-- the C# model since 2026-09-07 (see PROJECT_LOG.md), not present before.
+-- Active defaults to 1 (open) so every existing row backfills as still
+-- open rather than silently marked resolved.
+ALTER TABLE `AbuseReports`
+    ADD COLUMN `Active` tinyint(1) NOT NULL DEFAULT 1,
+    ADD COLUMN `AssignedTo` varchar(128) CHARACTER SET utf8mb4 DEFAULT NULL,
+    ADD COLUMN `Notes` varchar(2000) CHARACTER SET utf8mb4 DEFAULT NULL;
+
+COMMIT;
+

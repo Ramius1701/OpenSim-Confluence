@@ -15,5 +15,13 @@ namespace OpenSim.Services.Interfaces
         /// </summary>
         List<AbuseReportData> GetAbuseReports(int start, int count);
         AbuseReportData GetAbuseReport(int reportID);
+
+        /// <summary>
+        /// Admin-tool update - changes an existing report's Active/AssignedTo/
+        /// Notes fields. Same admin-only reasoning as GetAbuseReports/
+        /// GetAbuseReport above; region-side code has no legitimate reason to
+        /// call this either.
+        /// </summary>
+        bool UpdateAbuseReport(AbuseReportData report);
     }
 }

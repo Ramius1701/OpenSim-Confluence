@@ -841,6 +841,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/abuse-reports":
                         HandleAdminAbuseReports(request, response);
                         break;
+                    case BasePath + "/admin/abuse-reports/save":
+                        HandleAdminAbuseReportsSave(request, response);
+                        break;
                     case BasePath + "/admin/abuse-reports/image":
                         HandleAdminAbuseReportImage(request, response);
                         break;
@@ -8163,6 +8166,11 @@ namespace OpenSim.Server.Handlers.WebInterface
             string idParam = request.QueryString.Get("id");
             string body;
 
+            string message = string.Empty;
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                message = "<p>" + Html(queryMessage) + "</p>";
+
             if (!string.IsNullOrEmpty(idParam) && int.TryParse(idParam, out int reportID))
             {
                 AbuseReportData report = m_AbuseReportsService.GetAbuseReport(reportID);
@@ -8179,8 +8187,26 @@ namespace OpenSim.Server.Handlers.WebInterface
                             ? "<p><img src=\"" + BasePath + "/admin/abuse-reports/image?id=" + report.ReportID + "\" style=\"max-width:100%\"></p>"
                             : "<p>No screenshot attached.</p>";
 
+                    // Assignable admins - same real "who's actually an admin"
+                    // query used elsewhere (UserLevel >= 200, the same
+                    // threshold this connector already treats as god-level
+                    // for the grid-wide login toggle). "Unassigned" is a
+                    // real option, not just the initial empty state, so an
+                    // admin can hand a report back to the queue.
+                    string assignedToOptions = "<option value=\"\"" + (string.IsNullOrEmpty(report.AssignedTo) ? " selected" : "") + ">Unassigned</option>";
+                    if (m_UserAccountService != null)
+                    {
+                        foreach (UserAccount admin in m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "UserLevel >= 200"))
+                        {
+                            assignedToOptions += "<option value=\"" + Html(admin.Name) + "\""
+                                    + (admin.Name == report.AssignedTo ? " selected" : "")
+                                    + ">" + Html(admin.Name) + "</option>";
+                        }
+                    }
+
                     body = "<h1>Abuse Report #" + report.ReportID + "</h1>"
                             + "<p><a href=\"" + BasePath + "/admin/abuse-reports\">Back to list</a></p>"
+                            + message
                             + "<table>"
                             + "<tr><th>Time</th><td>" + Html(when) + "</td></tr>"
                             + "<tr><th>Reported by</th><td>" + Html(report.SenderName) + "</td></tr>"
@@ -8193,7 +8219,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "<tr><th>Details</th><td>" + Html(report.Details).Replace("\n", "<br/>") + "</td></tr>"
                             + "<tr><th>Viewer</th><td>" + Html(report.Version) + "</td></tr>"
                             + "</table>"
-                            + image;
+                            + image
+                            + "<form method=\"post\" action=\"" + BasePath + "/admin/abuse-reports/save\">"
+                            + "<input type=\"hidden\" name=\"id\" value=\"" + report.ReportID + "\">"
+                            + "<label><input type=\"checkbox\" name=\"active\" value=\"true\"" + (report.Active ? " checked" : "") + " style=\"width:auto;display:inline\"> Still open (uncheck once resolved)</label><br/>"
+                            + "<label>Assigned to<br/><select name=\"assigned_to\">" + assignedToOptions + "</select></label><br/>"
+                            + "<label>Notes<br/><textarea name=\"notes\" rows=\"4\">" + Html(report.Notes) + "</textarea></label><br/>"
+                            + "<button type=\"submit\">Save</button>"
+                            + "</form>";
                 }
             }
             else
@@ -8206,7 +8239,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 List<AbuseReportData> reports = m_AbuseReportsService.GetAbuseReports(start, pageSize);
 
                 StringBuilder rows = new StringBuilder();
-                rows.Append("<table><tr><th>Time</th><th>Reported by</th><th>Abuser</th><th>Region</th><th>Category</th><th>Summary</th></tr>");
+                rows.Append("<table><tr><th>Time</th><th>Reported by</th><th>Abuser</th><th>Region</th><th>Category</th><th>Summary</th><th>Assigned To</th><th>Status</th></tr>");
                 foreach (AbuseReportData report in reports)
                 {
                     string when = DateTimeOffset.FromUnixTimeSeconds(report.Time).UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
@@ -8218,6 +8251,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     rows.Append("<td>").Append(Html(report.Category)).Append("</td>");
                     rows.Append("<td><a href=\"").Append(BasePath).Append("/admin/abuse-reports?id=").Append(report.ReportID).Append("\">")
                             .Append(Html(report.Summary)).Append("</a></td>");
+                    rows.Append("<td>").Append(string.IsNullOrEmpty(report.AssignedTo) ? "Unassigned" : Html(report.AssignedTo)).Append("</td>");
+                    rows.Append("<td><span class=\"pill ").Append(report.Active ? "pill-warn\">Open" : "pill-yes\">Resolved").Append("</span></td>");
                     rows.Append("</tr>");
                 }
                 rows.Append("</table>");
@@ -8234,12 +8269,45 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 body = "<h1>Abuse Reports</h1>"
                         + "<p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
+                        + message
                         + rows.ToString()
                         + prevLink
                         + nextLink;
             }
 
             WritePage(request, response, PageTitle("Abuse Reports"), body);
+        }
+
+        private void HandleAdminAbuseReportsSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_AbuseReportsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            if (!int.TryParse(FormValue(form, "id"), out int reportID))
+            {
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+
+            AbuseReportData report = m_AbuseReportsService.GetAbuseReport(reportID);
+            if (report == null)
+            {
+                response.Redirect(BasePath + "/admin/abuse-reports?message=" + Uri.EscapeDataString("Report not found."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            report.Active = FormValue(form, "active") == "true";
+            report.AssignedTo = FormValue(form, "assigned_to").Trim();
+            report.Notes = FormValue(form, "notes");
+
+            m_AbuseReportsService.UpdateAbuseReport(report);
+
+            response.Redirect(BasePath + "/admin/abuse-reports?id=" + reportID + "&message=" + Uri.EscapeDataString("Changes saved."), HttpStatusCode.Redirect);
         }
 
         // Abuse report screenshots arrive over the viewer's

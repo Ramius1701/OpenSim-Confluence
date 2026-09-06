@@ -77,5 +77,24 @@ namespace OpenSim.Data.SQLite
                 return ExecuteNonQuery(cmd, m_Connection) > 0;
             }
         }
+
+        // Store() above always INSERTs (ReportID is deliberately excluded so
+        // AUTOINCREMENT still assigns it) - calling it again on an existing
+        // report would create a second row, not update the first. Update()
+        // is the real way to change an existing report's admin-tool fields
+        // (Active/AssignedTo/Notes).
+        public bool Update(AbuseReportData row)
+        {
+            using (SQLiteCommand cmd = new SQLiteCommand())
+            {
+                cmd.CommandText = "update `" + m_Realm + "` set `Active` = :Active, `AssignedTo` = :AssignedTo, `Notes` = :Notes where `ReportID` = :ReportID";
+                cmd.Parameters.Add(new SQLiteParameter(":Active", row.Active));
+                cmd.Parameters.Add(new SQLiteParameter(":AssignedTo", row.AssignedTo ?? string.Empty));
+                cmd.Parameters.Add(new SQLiteParameter(":Notes", row.Notes ?? string.Empty));
+                cmd.Parameters.Add(new SQLiteParameter(":ReportID", row.ReportID));
+
+                return ExecuteNonQuery(cmd, m_Connection) > 0;
+            }
+        }
     }
 }
