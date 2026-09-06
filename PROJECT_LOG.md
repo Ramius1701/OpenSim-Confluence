@@ -20434,3 +20434,41 @@ one.
 not built - see ROADMAP.md**: `LLLoginService.Login()` runs its
 per-service lookups sequentially rather than in parallel, a real but
 modest ~10-30ms/login gap, far smaller than the 4-second find above.
+
+**Deployed same day, while online count was 0 - and the restart
+tooling itself caused a real, if brief, full-grid outage, caught and
+recovered before it could affect anyone.** All 15 region processes
+were stopped cleanly (filtered by `*Casperia*` in the command line,
+per the established rule) and `OpenSim.Region.CoreModules.dll` was
+copied and hash-verified. Restarting them via a single scripted loop
+(`Start-Process` in a `foreach`, 5 seconds apart) failed for all 15:
+every one hit `FATAL ... Configuration file is missing the
+[SimulationDataStore] section` within ~30ms of starting, meaning the
+per-region `-inifile=...` argument never actually loaded that region's
+`OpenSim.ini` at all. **Root cause not fully confirmed** - a single,
+manually-issued `Start-Process` call with the identical arguments
+booted its region cleanly and reached `RegionReady`, and re-running the
+other 14 the same way (one at a time, each verified against
+`OpenSim.log` before starting the next) also succeeded with zero
+further failures, so something about the batch/loop form of the call
+specifically was the trigger - not the new code or the `OpenSimDefaults.ini`
+edit, both of which were confirmed unaffected by the successful
+single-call boots. Not worth risking a live repro to pin down further
+right now; noted here in case it recurs.
+
+No resident impact - the grid was already at 0 online for the entire
+incident, confirmed via the WebUI online count before, during, and
+after. All 15 regions confirmed `RegionReady` once brought up
+one-by-one; `/gridstatus` afterward showed all 15 regions and every
+service (Grid/Accounts/Currency/Search/Inventory/Events/Marketplace/
+Store/Friends/Profiles) Online, status Operational. The
+`WearablesRequestDelayMs = 200` setting was also added to live's own
+`OpenSimDefaults.ini` (`S:\Opensim\Casperia\OpenSimDefaults.ini`,
+matching the two git-tracked example templates) for documentation/
+future tunability - purely additive, matches the code's own default,
+no behavior change from adding it.
+
+**Still open, per the user's "test carefully" instruction**: watch for
+any wearables/appearance-related warnings on the next real login or
+teleport, ready to raise `WearablesRequestDelayMs` (config-only, no
+rebuild) if anything looks off.
