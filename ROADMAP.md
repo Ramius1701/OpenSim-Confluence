@@ -91,6 +91,26 @@ gap today. For what already exists, see `FEATURES.md`.
   more alarming false alarm (that `UpdateAgent` might have always
   silently failed even on success) once `WebUtil.CanonicalizeResults`
   was actually read.
+- **Asset delivery: two real, found-but-not-built candidates
+  (2026-09-06).** A live, one-line config fix for the actual biggest
+  finding (an unthrottled `FSAssetService` access-time update doubling
+  every uncached asset read into two serialized DB round-trips) is
+  already applied - see PROJECT_LOG.md. Two smaller, real findings from
+  the same investigation remain open: (1) the per-region asset-cap
+  poll-response path and the cache-miss fetch path both run on
+  hardcoded, not ini-exposed thread-pool sizes (3 workers shared across
+  every region in a process for poll responses, 2+2 for actual
+  cache-miss HTTP fetches) - only matters during a genuine cache-miss
+  burst, not steady-state traffic, but real and buildable (expose as
+  ini settings, raise the defaults); (2) `GetTextureRobustHandler.cs`
+  (the WebUI's own browser-facing texture endpoint, used for classified
+  thumbnails etc.) sets no `Cache-Control`/`ETag` at all - unlike the
+  actual game-viewer path (confirmed via real Firestorm/SL viewer
+  source that the primary client never sends conditional requests, so
+  headers there would be dead weight), a real web browser does respect
+  these correctly, so every repeat pageview re-fetches and re-pays the
+  full asset-service cost for an image that never changes. Low effort,
+  narrow but real scope (browser-facing traffic only).
 - **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
   set**, to catch anything the current build missed. Ongoing,
   page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.

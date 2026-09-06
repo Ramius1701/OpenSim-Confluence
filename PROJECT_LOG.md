@@ -20304,8 +20304,82 @@ closed the diagnostic gap that made it unanswerable, it didn't answer
 it retroactively. If this recurs, the new logging will show which of
 the three outcomes actually happened, at which point a real fix (or
 confirmation that it's a non-issue) becomes possible. Build 0 errors/0
-warnings across `RegionReadyModule.cs`/`Scene.cs`. Not yet deployed
-live - both land in region-only assemblies (`OpenSim.Region.
-OptionalModules.dll`/`OpenSim.Region.Framework.dll`, neither
-referenced by `Robust.HG.ini`), so this doesn't need a Robust restart
-when it does go out.
+warnings across `RegionReadyModule.cs`/`Scene.cs`.
+
+**Deployed same day - and the "region-only, no Robust restart needed"
+assessment above was wrong, caught mid-deploy rather than after.**
+Stopped only the 15 region processes first; copying
+`OpenSim.Region.Framework.dll` failed with a file-lock error - Robust
+turns out to load it too, as a transitive dependency, despite never
+naming it directly in `Robust.HG.ini` (which is all the earlier check
+had verified). Stopped Robust as well, copied both files, hash-
+verified, full restart. All 15 confirmed `RegionReady`, zero errors.
+The new diagnostic logging fired for all 15 (`TriggerRegionReady
+entered`), confirming it works; none hit the zero-script-backstop line
+specifically, and Sector_004 came up clean this time - no repeat of
+the anomaly. Lesson for future deploy-scope calls: checking whether an
+assembly is *named* in Robust.HG.ini isn't sufficient to rule out a
+Robust-side lock - a transitive reference can still load it.
+
+## Asset delivery latency investigated - real, live, one-line fix found and applied (2026-09-06)
+
+Widened the "make the grid faster" thread to asset/texture delivery,
+the next of the three areas flagged earlier as genuinely unexplored
+(alongside login/region-entry time, still open). Traced the real,
+complete delivery path end to end rather than assuming the two files
+that looked most relevant were actually in use - a real, useful
+correction surfaced along the way: `GetTextureHandler.cs`/
+`GetMeshHandler.cs` are dead code in this project's actual shipped
+config (`Cap_GetTexture`/`Cap_GetMesh`/etc all resolve to `localhost`
+in every example ini, meaning the real per-region path is
+`GetAssetsModule` → `GetAssetsHandler` → `RegionAssetConnector` →
+local `FlotsamAssetCache` disk cache → `FSAssetConnector` on a cache
+miss) - the investigation's own original premise (missing HTTP
+Cache-Control/ETag headers) needed correcting once the actual live
+path was traced, not assumed from file names alone.
+
+**The real find: `FSAssetService`'s access-time-tracking default
+silently doubles every uncached asset read into two fully-serialized
+MySQL round-trips.** `MySQLFSAssetData.Get()` runs the real metadata
+SELECT, then unconditionally calls `UpdateAccessTime()` - which is
+supposed to skip the write when `DaysBetweenAccessTimeUpdates > 0`
+and the asset was accessed recently, but the shipped default is `0`,
+and `0 > 0` is false, so the skip check never actually triggers and
+the UPDATE runs on every single read, every time. The example config's
+own comment already said as much ("Default value 0 will always update
+access time") but still shipped the setting commented out everywhere -
+`Robust.ini`/`Robust.pg.ini`/`Robust.sqlite.ini`/`Robust.HG.ini.example`
+all matched. **Confirmed live, not just theoretical**: Casperia's own
+`Robust.HG.ini` had this exact commented-out default. On top of the
+extra query cost, both the metadata read and the access-time update
+are serialized behind one process-wide lock
+(`FSAssetConnector.m_readLock`), so this cost compounds under any real
+concurrent asset traffic across the grid's 15 regions.
+
+**Fixed with a one-line config change, no code/build/deploy needed**:
+`DaysBetweenAccessTimeUpdates = 30`, both in Casperia's live
+`Robust.HG.ini` (takes effect on Robust's next restart, since
+`FSAssetService` reads this once at startup) and in the two real,
+git-tracked example templates (`Robust.HG.ini.example`,
+`Robust.ini.example` - `Robust.ini`/`Robust.pg.ini`/`Robust.sqlite.ini`
+turned out to be local untracked files, not real repo source, left
+alone).
+
+**Two more real, evidence-based findings from the same pass, not yet
+built - see ROADMAP.md**: hardcoded (not ini-exposed), narrow
+worker-thread ceilings (3 threads for the shared per-region poll-
+response path, 2+2 for actual cache-miss fetches) that only bite
+during a genuine cache-miss burst (a resident entering freshly-rezzed
+content, not steady-state traffic); and a real but narrow HTTP-caching
+gap specifically on `GetTextureRobustHandler.cs` (the WebUI's own
+browser-facing texture endpoint - used for classified thumbnails etc.)
+- unlike the actual game-viewer path, ordinary web browsers do respect
+`Cache-Control`/`ETag` correctly, confirmed by checking real Firestorm/
+official-SL-viewer source directly (`lltexturefetch.cpp`/
+`llmeshrepository.cpp`) and finding zero conditional-request logic
+anywhere in either - the primary client never re-validates a cached
+asset with the server at all, so headers on the actual game-viewer-
+facing endpoints would be dead weight, not a real optimization.
+Compression and HTTP keep-alive were also checked and confirmed
+already-correct/not-applicable respectively - not padded into findings
+just to seem more thorough.
