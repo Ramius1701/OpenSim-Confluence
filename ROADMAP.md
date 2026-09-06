@@ -130,9 +130,17 @@ gap today. For what already exists, see `FEATURES.md`.
   pending a priority call, since the freeze is a working safety measure
   today, not a correctness bug - this is a comfort/polish improvement,
   not a fix.
-- **A wider audit of the Web/Admin UI against WhiteCore-Dev's page
-  set**, to catch anything the current build missed. Ongoing,
-  page-by-page — see `WEBUI_PARITY_CHECKLIST.md`.
+- **Web/Admin UI audit against WhiteCore-Dev's page set — the
+  page-by-page pass is done (last row closed 2026-08-23), not
+  ongoing.** Every route in `WEBUI_PARITY_CHECKLIST.md` is checked off;
+  what's left is the 4 real gaps the audit found and deliberately
+  deferred as too large for a display-only fix (see that file's
+  "Flagged gaps" section): an avatar-selection starter-look carousel on
+  `/register`; abuse-report resolved/assigned tracking (needs a schema
+  change across MySQL/PGSQL/SQLite); a grid-wide login on/off toggle in
+  the WebUI; and a per-region profile page (owner/type/maturity/
+  terrain/resident list/parcels) that `/worldmap`'s popup doesn't cover
+  today. None started.
 
 ## Planned, not started
 
