@@ -1145,23 +1145,23 @@ namespace OpenSim.Framework
 
         public void UnpackRegionInfoData(OSDMap args)
         {
-            if (args["region_id"] != null)
+            if (args.ContainsKey("region_id"))
                 RegionID = args["region_id"].AsUUID();
-            if (args["region_name"] != null)
+            if (args.ContainsKey("region_name"))
                 RegionName = args["region_name"].AsString();
-            if (args["external_host_name"] != null)
+            if (args.ContainsKey("external_host_name"))
                 ExternalHostName = args["external_host_name"].AsString();
-            if (args["http_port"] != null)
+            if (args.ContainsKey("http_port"))
                 UInt32.TryParse(args["http_port"].AsString(), out m_httpPort);
-            if (args["server_uri"] != null)
+            if (args.ContainsKey("server_uri"))
                 ServerURI = args["server_uri"].AsString();
-            if (args["region_xloc"] != null)
+            if (args.ContainsKey("region_xloc"))
             {
                 uint locx;
                 UInt32.TryParse(args["region_xloc"].AsString(), out locx);
                 RegionLocX = locx;
             }
-            if (args["region_yloc"] != null)
+            if (args.ContainsKey("region_yloc"))
             {
                 uint locy;
                 UInt32.TryParse(args["region_yloc"].AsString(), out locy);
@@ -1176,23 +1176,23 @@ namespace OpenSim.Framework
                 RegionSizeZ = (uint)osdtmp.AsInteger();
 
             IPAddress ip_addr = null;
-            if (args["internal_ep_address"] != null)
+            if (args.ContainsKey("internal_ep_address"))
             {
                 IPAddress.TryParse(args["internal_ep_address"].AsString(), out ip_addr);
             }
             int port = 0;
-            if (args["internal_ep_port"] != null)
+            if (args.ContainsKey("internal_ep_port"))
             {
                 Int32.TryParse(args["internal_ep_port"].AsString(), out port);
             }
             InternalEndPoint = new IPEndPoint(ip_addr, port);
-            if (args["remoting_address"] != null)
+            if (args.ContainsKey("remoting_address"))
                 RemotingAddress = args["remoting_address"].AsString();
-            if (args["remoting_port"] != null)
+            if (args.ContainsKey("remoting_port"))
                 UInt32.TryParse(args["remoting_port"].AsString(), out m_remotingPort);
-            if (args["proxy_url"] != null)
+            if (args.ContainsKey("proxy_url"))
                 proxyUrl = args["proxy_url"].AsString();
-            if (args["region_type"] != null)
+            if (args.ContainsKey("region_type"))
                 m_regionType = args["region_type"].AsString();
         }
 

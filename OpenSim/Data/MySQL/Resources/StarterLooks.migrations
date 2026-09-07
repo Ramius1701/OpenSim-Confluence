@@ -1,0 +1,15 @@
+# -----------------
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE `StarterLooks` (
+  `LookID` int(11) NOT NULL AUTO_INCREMENT,
+  `Name` varchar(128) CHARACTER SET utf8mb4 DEFAULT NULL,
+  `ModelAccountID` char(36) COLLATE utf8_unicode_ci NOT NULL,
+  `SortOrder` int(11) NOT NULL DEFAULT 0,
+  `Enabled` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`LookID`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+COMMIT;

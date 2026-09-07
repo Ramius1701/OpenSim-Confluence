@@ -21020,3 +21020,213 @@ the migration system (which only tracks changes it applied itself, so
 it wouldn't know about or revert this). Flagged to the user rather than
 assumed harmless and left uninvestigated - genuinely dead schema today,
 but worth knowing about if it's ever a surprise later.
+
+---
+
+## OSDMap missing-key indexer audit and null-check bug fixes
+
+A stray background `find /` search from earlier in the session (meant
+to answer "does `OSDMap`'s indexer throw on a missing key?") had been
+running unnoticed for 12h53m - `find /` on this Windows box walks the
+whole filesystem, so it was never going to finish, and it also
+couldn't have succeeded even scoped correctly: `OpenMetaverseTypes` is
+referenced in every `.csproj` here as a compiled `bin/OpenMetaverseTypes.dll`
+only, no `.cs` source vendored anywhere in the repo. Killed by the
+user; the actual question was answered instead by pulling the real
+source from upstream LibreMetaverse (the maintained fork this dll
+corresponds to): `LibreMetaverse.StructuredData/OSDMap.cs`'s indexer
+is `get => _mMap.TryGetValue(key, out var llsd) ? llsd : new OSD();` -
+a missing key never throws and never returns a C# `null`, it returns a
+fresh `new OSD()` (`OSDType.Unknown`).
+
+That means any code testing "is this key present" with
+`someOsdMap["key"] != null` (or `== null`) is dead logic - always
+`true`/always `false` regardless of the key's actual presence. Asked a
+search agent to trace this specific pattern repo-wide, carefully
+distinguishing genuine `OSDMap`-typed variables from the many reused
+names (`map`, `req`, `resp`, `args`, `data`) that are actually
+`Hashtable`/`Dictionary<string,object>`/`NameValueCollection` elsewhere
+and whose indexers legitimately do return/throw on a missing key.
+Found 5 real hits, all fixed by swapping the null-check for
+`.ContainsKey(...)` (the pattern already used correctly a few lines
+away in most of these same methods):
+
+- `OpenSim/Framework/RegionInfo.cs` -
+  `UnpackRegionInfoData(OSDMap args)`: ~13 fields (`region_id`,
+  `region_name`, `external_host_name`, `http_port`, `server_uri`,
+  `region_xloc`/`_yloc`, `internal_ep_address`/`_port`,
+  `remoting_address`/`_port`, `proxy_url`, `region_type`) were each
+  gated by a dead `!= null` check, so a missing field silently fell
+  through to `UUID.Zero`/`""`/`TryParse("")` instead of being skipped -
+  the method already used the correct `args.TryGetValue(...)` pattern
+  for `region_size_x/y/z` a few lines down.
+- `OpenSim/Server/Handlers/Simulation/ObjectHandlers.cs` -
+  `args["state"] != null` before an `AllowScriptCrossings` check;
+  harmless in practice since a second `stateXmlStr != ""` check
+  happened to catch the empty-string case anyway.
+- `OpenSim/Server/Handlers/Simulation/AgentHandlers.cs` - the worst of
+  the five: `args["message_type"] != null` being always-true meant the
+  intended `else` branch (a warning log plus an `"AgentData"` fallback
+  for a genuinely missing field) was dead code that could never run.
+- `OpenSim/Server/Handlers/Neighbour/NeighbourHandlers.cs` -
+  `args["destination_handle"] != null`; benign, a missing handle just
+  fed `TryParse("")` and left the handle at 0 either way.
+- `OpenSim/Services/Connectors/Simulation/SimulationServiceConnector.cs` -
+  `reason = result["Message"] != null ? ... : "error"`; the `"error"`
+  fallback could never fire, so a remote simulator's failure response
+  with no `Message` field silently produced an empty-string reason
+  instead of the intended generic `"error"`.
+
+No `catch (KeyNotFoundException)` in the repo wraps a genuine `OSDMap`
+access (the few that exist all wrap real `Dictionary<K,V>` indexers,
+which do throw) - so that half of the anti-pattern wasn't present
+anywhere.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)) after all five fixes.
+Touches `OpenSim.Framework.dll`, `OpenSim.Server.Handlers.dll`, and
+`OpenSim.Services.Connectors.dll`.
+
+**Deployed same day, while online count was 0.** Clean deploy, no
+incidents. All three assemblies copied via `cp -f` and verified with a
+separate, later `md5sum` + timestamp check (not chained to the copy).
+Robust restarted first and confirmed healthy via `/gridstatus` before
+touching any region. All 15 regions restarted one at a time as usual,
+each confirmed via a real `TriggerRegionReady entered for <name>` log
+line before starting the next - two of my own verification greps
+initially came up empty not because a region failed, but because I'd
+guessed the wrong in-log display name (`Sector_001` logs as `Sector
+001` with a space; `SVC` logs as `SailorV Creations`, its actual
+region name, not its folder name) - caught immediately by reading the
+log tail directly instead of assuming a non-match meant a real
+problem. Final sweep found zero `FATAL` lines anywhere in the restart
+window; `/gridstatus` confirmed all 15 regions back online afterward.
+
+---
+
+## Avatar-selection starter-look carousel (WEBUI_PARITY_CHECKLIST.md's
+## last flagged gap) - built
+
+Scoped, then built the same day (2026-09-07) - see ROADMAP.md's own
+entry for the full design rationale. Summary: WhiteCore-Dev's reference
+sources its carousel from `.aa` "Avatar Archive" files, a whole
+subsystem absent from this codebase; built instead on
+`RemoteAdminPlugin.cs`'s existing, proven `EstablishAppearance`/
+`CopyWearablesAndAttachments`/`CopyInventoryFolders` (already used by
+the XML-RPC admin `model=`/`gender=` params), ported to run without a
+live Scene.
+
+**New files**: `OpenSim/Framework/StarterLookData.cs`;
+`OpenSim/Data/IStarterLookData.cs` +
+`MySQL/PGSQL/SQLite/*StarterLookData.cs` (generic-table-handler
+pattern, same as `AbuseReportsData`) + matching `.migrations` in all
+three; `OpenSim/Services/Interfaces/IStarterLookService.cs`; a new
+`OpenSim.Services.StarterLookService` project
+(`StarterLookServiceBase.cs`/`StarterLookService.cs`, mirroring
+`GridSettingsService`'s structure). `GetEnabledLooks()` deliberately
+filters in C# rather than querying `Get("Enabled", "1")` - `Enabled`'s
+on-the-wire type differs per backend (MySQL tinyint, PGSQL boolean,
+SQLite integer) and fetch-then-filter sidesteps relying on each
+backend's own string-to-bool coercion for a WHERE clause.
+
+**WebInterfaceServiceConnector.cs changes**: `m_StarterLookService`
+field + load (mirrors `m_GridSettingsService`); `ApplyStarterLook`/
+`CopyStarterLookFolder`/`CopyStarterLookItem` (the ported appearance-
+copy logic, using `m_AvatarService`/`m_InventoryService` directly -
+traced the original mechanism's actual calls and confirmed the one
+Scene call it makes, `Scene.AddInventoryItem`, is a thin wrapper that
+reduces to a plain `InventoryService.AddItem(item)` for an offline
+target); `GetStarterLookThumbnail` (reuses the existing
+`AvatarPropertiesRequest`/`/CAPS/GetTexture` pattern, no new plumbing);
+`BuildStarterLookTiles` (a tile grid using the site's existing
+`.widget-grid`/`.widget-card` classes plus a small `:has()`-based
+selected-state style, not a new bespoke design or a carousel library);
+`RegisterForm` gained one new parameter (pre-rendered tile HTML,
+selection state baked in - kept the method static, so the trailer
+render happens in the caller); `HandleRegister` reads `starter_look`
+from the POST and calls `ApplyStarterLook` after
+`CreateUserInventory`; three new `/admin/starter-looks` handlers
+(list+add/edit form, save, delete) plus an admin-dashboard tile link.
+
+**A real security check added during implementation, not present in
+the original scoping pass**: the carousel's submitted `starter_look`
+value is just another account's UUID. `HandleRegister` validates it
+against the current request's own `GetEnabledLooks()` result
+server-side before ever calling `ApplyStarterLook` - without that
+check, anyone could submit an arbitrary principal ID in the POST body
+and clone that account's Clothing/Body Parts inventory items, not just
+pick a real carousel option. Caught while writing `HandleRegister`,
+not by a later review pass.
+
+**Admin UX simplification vs. the scoping doc**: the doc proposed a
+`GetUserAccountsWhere(UUID.Zero, "1=1")` account-listing dropdown for
+picking a look's model account; built as a "First Last" text field
+resolved server-side instead, reusing the exact same name-resolution
+`HandleAdminTransactions`'s own agent filter already does - simpler,
+and doesn't grow unwieldy on a grid with many accounts.
+
+**Two build-tooling snags hit and fixed, unrelated to the feature
+logic itself**:
+- `dotnet sln add` (adding the new `OpenSim.Services.
+  StarterLookService.csproj` to `OpenSim.sln`) triggered a latent
+  `MSB5004 - "the solution file has two projects named OpenSim"` -
+  a pre-existing collision between the real `OpenSim.csproj`
+  (`OpenSim/Region/Application/`) and an identically-named solution
+  folder used purely for Visual-Studio-style organization, dormant
+  until `dotnet sln add` rewrote the file in a way that triggered
+  stricter validation. `OpenSim.sln` is gitignored (a locally-
+  regenerated build artifact, not tracked), so this was safe to fix
+  directly - renamed the folder's display name to "OpenSim Root"
+  (cosmetic only, no build-graph effect) rather than trying to revert
+  the `dotnet sln` rewrite.
+- Several of this repo's older `.csproj` files (`OpenSim.Framework`,
+  `OpenSim.Data`, and all three `Data.MySQL`/`Data.PGSQL`/`Data.SQLite`
+  projects) use explicit `<Compile Include="File.cs">` lists rather
+  than the newer SDK-style implicit globbing `GridSettingsService`'s
+  own csproj uses - a new file dropped into one of those folders
+  silently never compiles in without an explicit entry. First surfaced
+  as a confusing `CS0246: type not found` in a project that doesn't
+  even reference the file directly (`OpenSim.Services.Interfaces`
+  failing to find `StarterLookData`, actually because
+  `OpenSim.Framework` had silently never compiled it in at all).
+  Fixed by adding explicit `<Compile Include>` entries to all five
+  affected csproj files.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)) after all of the
+above. `[StarterLookService]` wired into `Robust.HG.ini.example` and
+`Robust.ini.example` (both pointing at the new
+`OpenSim.Services.StarterLookService.dll:StarterLookService` +
+`MySqlStarterLookData`) and into the live grid's actual
+`Robust.HG.ini` (Casperia's real MySQL connection string, same as the
+`GridSettingsService`/`AbuseReportsService` sections right next to it).
+Touches `OpenSim.Framework.dll`, `OpenSim.Data.dll`,
+`OpenSim.Data.MySQL.dll`, `OpenSim.Data.PGSQL.dll`,
+`OpenSim.Data.SQLite.dll`, `OpenSim.Services.Interfaces.dll`, the new
+`OpenSim.Services.StarterLookService.dll`, and
+`OpenSim.Server.Handlers.dll`.
+
+**Deployed same day, while online count was 0.** One real, pre-existing
+discrepancy caught before touching anything: only 6 of the 15 regions
+(Welcome_Center, Ranchero, Starbase_Andromeda, SVC, Section_31,
+Sandbox) were actually running at deploy time - the other 9 were
+already stopped with zero `FATAL`/crash evidence anywhere in the log,
+so almost certainly a deliberate stop from earlier, not a fault. Asked
+the user rather than assuming either way; confirmed to leave the 9
+down and scope this deploy to Robust + the 6 regions actually running,
+not force a full 15-region restart. All 8 assemblies copied via `cp -f`
+and verified with a separate, later `md5sum` check (not chained to the
+copy) - all matched. Robust restarted first; its own log showed the
+new `StarterLooks` table being created cleanly on boot
+(`OpenSim.Data.Migration [MIGRATIONS]: Creating StarterLooks at version
+1`) and the service starting with no errors. `/gridstatus` and
+`/register` both confirmed responding (200) before touching any
+region. All 6 running regions restarted one at a time as usual, each
+confirmed via a real `TriggerRegionReady entered for <name>` log line
+before starting the next. Final sweep found zero `FATAL` lines
+anywhere in the restart window. `/admin/starter-looks` confirmed
+dispatching correctly (302 to `/login` for an unauthenticated request,
+not a 404).
+
+No starter looks are configured yet, so the `/register` carousel won't
+show anything until at least one is added via `/admin/starter-looks`
+against a real account that's been dressed up in-world - expected,
+not a bug.

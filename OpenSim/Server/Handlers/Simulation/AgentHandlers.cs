@@ -618,7 +618,7 @@ namespace OpenSim.Server.Handlers.Simulation
             destination.RegionName = regionname;
 
             string messageType;
-            if (args["message_type"] != null)
+            if (args.ContainsKey("message_type"))
                 messageType = args["message_type"].AsString();
             else
             {

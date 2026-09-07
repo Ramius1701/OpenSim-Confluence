@@ -129,7 +129,7 @@ namespace OpenSim.Server.Handlers.Neighbour
 
             // retrieve the regionhandle
             ulong regionhandle = 0;
-            if (args["destination_handle"] != null)
+            if (args.ContainsKey("destination_handle"))
                 UInt64.TryParse(args["destination_handle"].AsString(), out regionhandle);
 
             RegionInfo aRegion = new RegionInfo();

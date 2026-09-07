@@ -182,7 +182,7 @@ namespace OpenSim.Services.Connectors.Simulation
                 m_log.WarnFormat(
                     "[REMOTE SIMULATION CONNECTOR]: Failed to create agent {0} {1} at remote simulator {2}",
                     aCircuit.firstname, aCircuit.lastname, destination.RegionName);
-                reason = result["Message"] != null ? result["Message"].AsString() : "error";
+                reason = result.ContainsKey("Message") ? result["Message"].AsString() : "error";
                 return false;
             }
             catch (Exception e)

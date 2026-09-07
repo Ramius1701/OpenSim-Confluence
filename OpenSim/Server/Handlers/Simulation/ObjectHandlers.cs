@@ -154,7 +154,7 @@ namespace OpenSim.Server.Handlers.Simulation
             else
                 sog.HasGroupChanged = false;
 
-            if ((args["state"] != null) && s.AllowScriptCrossings)
+            if (args.ContainsKey("state") && s.AllowScriptCrossings)
             {
                 stateXmlStr = args["state"].AsString();
                 if (stateXmlStr != "")

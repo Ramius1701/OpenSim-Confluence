@@ -130,6 +130,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private ISuggestionService m_SuggestionService;
         private IRecoveryCodeService m_RecoveryCodeService;
         private IGridSettingsService m_GridSettingsService;
+        private IStarterLookService m_StarterLookService;
         private IUserProfilesService m_UserProfilesService;
         private IFriendsService m_FriendsService;
         private ISearchService m_SearchService;
@@ -271,6 +272,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_SuggestionService = LoadReusedPlugin<ISuggestionService>(config, "SuggestionService", args);
             m_RecoveryCodeService = LoadReusedPlugin<IRecoveryCodeService>(config, "RecoveryCodeService", args);
             m_GridSettingsService = LoadReusedPlugin<IGridSettingsService>(config, "GridSettingsService", args);
+            m_StarterLookService = LoadReusedPlugin<IStarterLookService>(config, "StarterLookService", args);
             // Same [UserProfilesService] LocalServiceModule the region-side
             // LocalUserProfilesServiceConnector already reuses - backs the
             // splash page's "Featured Classifieds" widget with the real
@@ -846,6 +848,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/admin/abuse-reports/image":
                         HandleAdminAbuseReportImage(request, response);
+                        break;
+                    case BasePath + "/admin/starter-looks":
+                        HandleAdminStarterLooks(request, response);
+                        break;
+                    case BasePath + "/admin/starter-looks/save":
+                        HandleAdminStarterLooksSave(request, response);
+                        break;
+                    case BasePath + "/admin/starter-looks/delete":
+                        HandleAdminStarterLooksDelete(request, response);
                         break;
                     case BasePath + "/admin/users":
                         HandleAdminUsers(request, response);
@@ -6726,6 +6737,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             StringBuilder adminNav = new StringBuilder();
             adminNav.Append("<h2>Manage</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "Abuse Reports", "Review reports filed by residents");
+            AppendDashboardLink(adminNav, BasePath + "/admin/starter-looks", "bi-person-bounding-box", "Starter Looks", "Manage the avatar-selection carousel on /register");
             AppendDashboardLink(adminNav, BasePath + "/admin/users", "bi-people", "User Management", "Search, ban, message and edit accounts");
             AppendDashboardLink(adminNav, BasePath + "/admin/regions", "bi-map", "Region Management", "Search regions, Hypergrid, maptiles, backups, restart, create");
             AppendDashboardLink(adminNav, BasePath + "/admin/estates", "bi-building", "Estate Management", "Edit estate settings and access lists");
@@ -8308,6 +8320,168 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_AbuseReportsService.UpdateAbuseReport(report);
 
             response.Redirect(BasePath + "/admin/abuse-reports?id=" + reportID + "&message=" + Uri.EscapeDataString("Changes saved."), HttpStatusCode.Redirect);
+        }
+
+        // /admin/starter-looks - CRUD for the /register carousel's tiles.
+        // Each look just points at an ordinary UserAccount ("model") an
+        // admin has already dressed up in-world; picked by typing its name
+        // (same "First Last" resolution AdminTransactions' agent filter
+        // already uses) rather than a UUID field or a fresh account-search
+        // widget. See ROADMAP.md's "Avatar-selection starter-look carousel"
+        // entry for the full design.
+        private void HandleAdminStarterLooks(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Starter Looks"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+            if (m_StarterLookService == null)
+            {
+                WritePage(request, response, PageTitle("Starter Looks"),
+                        "<h1>Starter Looks</h1><p><a href=\"" + BasePath + "/admin\">Back to admin</a></p><p>Starter look service is not available.</p>");
+                return;
+            }
+
+            string message = string.Empty;
+            string queryMessage = request.QueryString.Get("message");
+            if (!string.IsNullOrEmpty(queryMessage))
+                message = "<p>" + Html(queryMessage) + "</p>";
+
+            string idParam = request.QueryString.Get("id");
+            StarterLookData editing = null;
+            if (!string.IsNullOrEmpty(idParam) && int.TryParse(idParam, out int editId))
+                editing = m_StarterLookService.GetLook(editId);
+
+            StringBuilder body = new StringBuilder();
+            body.Append("<h1>Starter Looks</h1>")
+                .Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>")
+                .Append(message);
+
+            List<StarterLookData> all = m_StarterLookService.GetAllLooks();
+            body.Append("<table><tr><th>Order</th><th>Name</th><th>Model Account</th><th>Status</th><th></th></tr>");
+            foreach (StarterLookData look in all)
+            {
+                UserAccount model = m_UserAccountService?.GetUserAccount(UUID.Zero, look.ModelAccountID);
+                bool hasAppearance = m_AvatarService?.GetAppearance(look.ModelAccountID) != null;
+
+                body.Append("<tr>");
+                body.Append("<td>").Append(look.SortOrder).Append("</td>");
+                body.Append("<td><a href=\"").Append(BasePath).Append("/admin/starter-looks?id=").Append(look.LookID).Append("\">")
+                        .Append(Html(look.Name)).Append("</a></td>");
+                body.Append("<td>").Append(model != null ? Html(model.Name) : "<span class=\"error\">Account not found</span>").Append("</td>");
+                body.Append("<td>");
+                body.Append("<span class=\"pill ").Append(look.Enabled ? "pill-yes\">Enabled" : "pill-no\">Disabled").Append("</span>");
+                if (!hasAppearance)
+                    body.Append(" <span class=\"pill pill-warn\">No appearance yet</span>");
+                body.Append("</td>");
+                body.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/starter-looks/delete\" onsubmit=\"return confirm('Remove this starter look?');\">")
+                        .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(look.LookID).Append("\"><button type=\"submit\">Remove</button></form></td>");
+                body.Append("</tr>");
+            }
+            body.Append("</table>");
+            if (all.Count == 0)
+                body.Append("<p>No starter looks configured yet - the /register page shows no carousel until at least one is added.</p>");
+
+            string formTitle = editing != null ? "Edit \"" + Html(editing.Name) + "\"" : "Add a starter look";
+            string modelAccountName = editing != null ? (m_UserAccountService?.GetUserAccount(UUID.Zero, editing.ModelAccountID)?.Name ?? string.Empty) : string.Empty;
+
+            body.Append("<h2>").Append(formTitle).Append("</h2>")
+                .Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/starter-looks/save\">")
+                .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(editing?.LookID ?? 0).Append("\">")
+                .Append("<label>Name<br/><input type=\"text\" name=\"name\" value=\"").Append(Html(editing?.Name ?? string.Empty)).Append("\" required></label><br/>")
+                .Append("<label>Model account (First Last - must already be dressed in-world)<br/><input type=\"text\" name=\"model_account\" value=\"").Append(Html(modelAccountName)).Append("\" required></label><br/>")
+                .Append("<label>Sort order<br/><input type=\"number\" name=\"sort_order\" value=\"").Append(editing?.SortOrder ?? (all.Count > 0 ? all[all.Count - 1].SortOrder + 10 : 0)).Append("\"></label><br/>")
+                .Append("<label><input type=\"checkbox\" name=\"enabled\" value=\"true\"").Append(editing == null || editing.Enabled ? " checked" : string.Empty).Append(" style=\"width:auto;display:inline\"> Enabled (shown on /register)</label><br/>")
+                .Append("<button type=\"submit\">Save</button>")
+                .Append("</form>");
+
+            WritePage(request, response, PageTitle("Starter Looks"), body.ToString());
+        }
+
+        private void HandleAdminStarterLooksSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_StarterLookService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            int.TryParse(FormValue(form, "id"), out int lookID);
+            string name = FormValue(form, "name").Trim();
+            string modelAccountName = FormValue(form, "model_account").Trim();
+            int.TryParse(FormValue(form, "sort_order"), out int sortOrder);
+            bool enabled = FormValue(form, "enabled") == "true";
+
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(modelAccountName))
+            {
+                response.Redirect(BasePath + "/admin/starter-looks?id=" + lookID + "&message=" + Uri.EscapeDataString("Name and model account are required."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            string[] nameParts = modelAccountName.Split(new[] { ' ' }, 2);
+            UserAccount modelAccount = nameParts.Length == 2 && m_UserAccountService != null
+                    ? m_UserAccountService.GetUserAccount(UUID.Zero, nameParts[0], nameParts[1])
+                    : null;
+            if (modelAccount == null)
+            {
+                response.Redirect(BasePath + "/admin/starter-looks?id=" + lookID + "&message=" + Uri.EscapeDataString("No account found matching \"" + modelAccountName + "\" (use \"First Last\")."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            string warning = m_AvatarService?.GetAppearance(modelAccount.PrincipalID) == null
+                    ? " (Note: this account has no appearance yet - dress it up in-world before residents see this tile, or they'll get the default look.)"
+                    : string.Empty;
+
+            StarterLookData look;
+            bool isNew = lookID <= 0;
+            if (isNew)
+            {
+                look = new StarterLookData();
+            }
+            else
+            {
+                look = m_StarterLookService.GetLook(lookID);
+                if (look == null)
+                {
+                    response.Redirect(BasePath + "/admin/starter-looks?message=" + Uri.EscapeDataString("Starter look not found."), HttpStatusCode.Redirect);
+                    return;
+                }
+            }
+
+            look.Name = name;
+            look.ModelAccountID = modelAccount.PrincipalID;
+            look.SortOrder = sortOrder;
+            look.Enabled = enabled;
+
+            bool ok = isNew ? m_StarterLookService.AddLook(look) : m_StarterLookService.UpdateLook(look);
+
+            response.Redirect(BasePath + "/admin/starter-looks?message=" + Uri.EscapeDataString((ok ? "Saved." : "Could not save.") + warning), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminStarterLooksDelete(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_StarterLookService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            if (int.TryParse(FormValue(form, "id"), out int lookID))
+                m_StarterLookService.DeleteLook(lookID);
+
+            response.Redirect(BasePath + "/admin/starter-looks?message=" + Uri.EscapeDataString("Removed."), HttpStatusCode.Redirect);
         }
 
         // Abuse report screenshots arrive over the viewer's
@@ -10706,6 +10880,200 @@ namespace OpenSim.Server.Handlers.WebInterface
             WritePage(request, response, PageTitle("Login"), LoginForm(string.Empty, string.Empty, null));
         }
 
+        // Renders the /register starter-look picker as a grid of clickable
+        // tiles (WhiteCore-Dev's reference is a Bootstrap carousel; this
+        // reuses the site's own existing .widget-grid/.widget-card/
+        // .widget-card-thumb classes - already used for marketplace/region
+        // thumbnails elsewhere - rather than pulling in a carousel library
+        // for what's really just a picker). Each tile is a full <label>
+        // wrapping a radio input, so clicking anywhere on the tile selects
+        // it; :has() highlights the checked tile without any JS.
+        private string BuildStarterLookTiles(List<StarterLookData> looks, UUID selectedModelAccountId)
+        {
+            if (looks == null || looks.Count == 0)
+                return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<style>.starter-look-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin:0 0 16px;}")
+              .Append(".starter-look-tile{display:block;cursor:pointer;text-align:center;border:2px solid var(--border);border-radius:8px;padding:8px;background:var(--input-bg);}")
+              .Append(".starter-look-tile:has(input:checked){border-color:var(--accent);}")
+              .Append(".starter-look-tile input{position:absolute;opacity:0;pointer-events:none;}")
+              .Append(".starter-look-tile img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:6px;margin:0 0 6px;background:var(--card-bg);}")
+              .Append(".starter-look-tile span{font-size:12.5px;color:var(--text);}</style>");
+
+            sb.Append("<div class=\"starter-look-grid\">");
+
+            // "No preference" tile - the default, matching today's behavior
+            // of just using whatever default avatar the grid ships. Not
+            // radio-required, so submitting the form with nothing picked
+            // (or JS disabled and never touching the group) still works.
+            sb.Append("<label class=\"starter-look-tile\"><input type=\"radio\" name=\"starter_look\" value=\"\"")
+              .Append(selectedModelAccountId == UUID.Zero ? " checked" : string.Empty)
+              .Append("><div style=\"width:100%;aspect-ratio:1/1;border-radius:6px;margin:0 0 6px;background:var(--card-bg);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;\">Default</div><span>No preference</span></label>");
+
+            foreach (StarterLookData look in looks)
+            {
+                UUID thumbnail = GetStarterLookThumbnail(look.ModelAccountID);
+                sb.Append("<label class=\"starter-look-tile\"><input type=\"radio\" name=\"starter_look\" value=\"").Append(look.ModelAccountID).Append('"')
+                  .Append(look.ModelAccountID.Equals(selectedModelAccountId) ? " checked" : string.Empty)
+                  .Append('>');
+                if (thumbnail != UUID.Zero)
+                    sb.Append("<img loading=\"lazy\" alt=\"\" src=\"/CAPS/GetTexture?texture_id=").Append(thumbnail).Append("\">");
+                else
+                    sb.Append("<div style=\"width:100%;aspect-ratio:1/1;border-radius:6px;margin:0 0 6px;background:var(--card-bg);\"></div>");
+                sb.Append("<span>").Append(Html(look.Name)).Append("</span></label>");
+            }
+
+            sb.Append("</div>");
+            return sb.ToString();
+        }
+
+        // Resolves a starter-look model account's profile snapshot for the
+        // /register carousel's thumbnail - same AvatarPropertiesRequest +
+        // /CAPS/GetTexture pattern already used for other profile-picture
+        // and region/marketplace thumbnails in this file, not new plumbing.
+        private UUID GetStarterLookThumbnail(UUID modelAccountId)
+        {
+            if (m_UserProfilesService == null)
+                return UUID.Zero;
+
+            UserProfileProperties props = new UserProfileProperties { UserId = modelAccountId };
+            string propsResult = string.Empty;
+            m_UserProfilesService.AvatarPropertiesRequest(ref props, ref propsResult);
+            return props.ImageId;
+        }
+
+        // Clones a "model" account's full look (shape, skin, clothing,
+        // attachments) onto a freshly registered one - a Robust-side port of
+        // RemoteAdminPlugin.cs's EstablishAppearance/CopyWearablesAndAttachments/
+        // CopyInventoryFolders (used today by the XML-RPC admin_create_user's
+        // model=/gender= parameters), adapted to use m_AvatarService/
+        // m_InventoryService directly instead of a live Scene - traced that
+        // mechanism's actual calls and confirmed it never genuinely needs one
+        // (see ROADMAP.md's "Avatar-selection starter-look carousel" entry).
+        // Always copies the Clothing/Body Parts folders (not just the simple
+        // wearable-item copy RemoteAdminPlugin's copy_folders=false path
+        // does) since a brand-new account's folders are guaranteed to exist
+        // fresh from CreateUserInventory.
+        private void ApplyStarterLook(UUID destination, UUID modelAccountId)
+        {
+            if (m_AvatarService == null || m_InventoryService == null || modelAccountId == UUID.Zero)
+                return;
+
+            // No appearance on the model yet (never actually dressed in-world) -
+            // no-op rather than erroring, matching EstablishAppearance's own
+            // null-check. The admin page warns at save time so a broken
+            // carousel tile shouldn't reach here in practice.
+            AvatarAppearance avatarAppearance = m_AvatarService.GetAppearance(modelAccountId);
+            if (avatarAppearance == null)
+                return;
+
+            try
+            {
+                Dictionary<UUID, UUID> inventoryMap = new Dictionary<UUID, UUID>();
+                CopyStarterLookFolder(destination, modelAccountId, FolderType.Clothing, inventoryMap, avatarAppearance);
+                CopyStarterLookFolder(destination, modelAccountId, FolderType.BodyPart, inventoryMap, avatarAppearance);
+
+                AvatarWearable[] wearables = avatarAppearance.Wearables;
+                for (int i = 0; i < wearables.Length; i++)
+                {
+                    if (inventoryMap.TryGetValue(wearables[i][0].ItemID, out UUID newItemId))
+                    {
+                        AvatarWearable wearable = new AvatarWearable();
+                        wearable.Wear(newItemId, wearables[i][0].AssetID);
+                        avatarAppearance.SetWearable(i, wearable);
+                    }
+                }
+
+                m_AvatarService.SetAppearance(destination, avatarAppearance);
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[WEB INTERFACE]: Error applying starter look {0} to {1}: {2}", modelAccountId, destination, e.Message);
+            }
+        }
+
+        // Copies one Clothing/Body Parts folder's contents from the model
+        // account to the new one, wiring worn items into avatarAppearance's
+        // wearables/attachments as it goes - see ApplyStarterLook's own
+        // comment for where this logic comes from.
+        private void CopyStarterLookFolder(UUID destination, UUID source, FolderType assetType, Dictionary<UUID, UUID> inventoryMap, AvatarAppearance avatarAppearance)
+        {
+            InventoryFolderBase sourceFolder = m_InventoryService.GetFolderForType(source, assetType);
+            InventoryFolderBase destinationFolder = m_InventoryService.GetFolderForType(destination, assetType);
+            if (sourceFolder == null || destinationFolder == null)
+                return;
+
+            List<InventoryFolderBase> subFolders = m_InventoryService.GetFolderContent(source, sourceFolder.ID)?.Folders ?? new List<InventoryFolderBase>();
+            foreach (InventoryFolderBase folder in subFolders)
+            {
+                InventoryFolderBase newFolder = new InventoryFolderBase
+                {
+                    ID = UUID.Random(),
+                    Name = folder.Name,
+                    Owner = destination,
+                    Type = folder.Type,
+                    Version = 1,
+                    ParentID = destinationFolder.ID
+                };
+                m_InventoryService.AddFolder(newFolder);
+
+                List<InventoryItemBase> items = m_InventoryService.GetFolderContent(source, folder.ID)?.Items ?? new List<InventoryItemBase>();
+                foreach (InventoryItemBase item in items)
+                {
+                    InventoryItemBase newItem = CopyStarterLookItem(item, destination, newFolder.ID);
+                    m_InventoryService.AddItem(newItem);
+                    inventoryMap[item.ID] = newItem.ID;
+
+                    int attachpoint = avatarAppearance.GetAttachpoint(item.ID);
+                    if (attachpoint != 0)
+                        avatarAppearance.SetAttachment(attachpoint, newItem.ID, newItem.AssetID);
+                }
+            }
+        }
+
+        private static InventoryItemBase CopyStarterLookItem(InventoryItemBase item, UUID destination, UUID folderId)
+        {
+            InventoryItemBase newItem = new InventoryItemBase(UUID.Random(), destination)
+            {
+                Name = item.Name,
+                Description = item.Description,
+                InvType = item.InvType,
+                CreatorId = item.CreatorId,
+                CreatorData = item.CreatorData,
+                NextPermissions = item.NextPermissions,
+                CurrentPermissions = item.CurrentPermissions,
+                BasePermissions = item.BasePermissions,
+                EveryOnePermissions = item.EveryOnePermissions,
+                GroupPermissions = item.GroupPermissions,
+                AssetType = item.AssetType,
+                AssetID = item.AssetID,
+                GroupID = item.GroupID,
+                GroupOwned = item.GroupOwned,
+                SalePrice = item.SalePrice,
+                SaleType = item.SaleType,
+                Flags = item.Flags,
+                CreationDate = item.CreationDate,
+                Folder = folderId
+            };
+
+            // Same folding as RemoteAdminPlugin's ApplyNextOwnerPermissions -
+            // a model's own restrictively-permissioned items (no-mod/no-copy
+            // attached objects, in particular) shouldn't land unusable on a
+            // brand-new owner who never agreed to those restrictions.
+            if (newItem.InvType == (int)InventoryType.Object)
+            {
+                uint perms = newItem.CurrentPermissions;
+                PermissionsUtil.ApplyFoldedPermissions(newItem.CurrentPermissions, ref perms);
+                newItem.CurrentPermissions = perms;
+            }
+            newItem.CurrentPermissions &= newItem.NextPermissions;
+            newItem.BasePermissions &= newItem.NextPermissions;
+            newItem.EveryOnePermissions &= newItem.NextPermissions;
+
+            return newItem;
+        }
+
         // Public self-service account creation, linked from the home page and
         // login form. Mirrors UserAccountService's own "create user" console
         // command step for step (account -> password -> home region ->
@@ -10743,10 +11111,11 @@ namespace OpenSim.Server.Handlers.WebInterface
             // cheap (Robust already caches this) and safe to call on every
             // GET, matching the reference page always showing the picker.
             List<GridRegion> homeRegionChoices = m_GridService?.GetDefaultRegions(UUID.Zero) ?? new List<GridRegion>();
+            List<StarterLookData> starterLooks = m_StarterLookService?.GetEnabledLooks() ?? new List<StarterLookData>();
 
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(string.Empty, string.Empty, string.Empty, null, homeRegionChoices, UUID.Zero));
+                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(string.Empty, string.Empty, string.Empty, null, homeRegionChoices, UUID.Zero, BuildStarterLookTiles(starterLooks, UUID.Zero)));
                 return;
             }
 
@@ -10757,6 +11126,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string password = FormValue(form, "password");
             string confirmPassword = FormValue(form, "confirm_password");
             UUID.TryParse(FormValue(form, "home_region"), out UUID selectedHomeRegionId);
+            UUID.TryParse(FormValue(form, "starter_look"), out UUID selectedStarterLookModelId);
 
             string error = ValidateRegistration(firstName, lastName, password, confirmPassword);
             // One email, one master account - same rule SL enforces at
@@ -10770,7 +11140,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 error = "An account already exists for that email. Log in, then use Create Avatar or Import Avatar to add another avatar to it.";
             if (error != null)
             {
-                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, error, homeRegionChoices, selectedHomeRegionId));
+                WritePage(request, response, PageTitle("Sign Up"), RegisterForm(firstName, lastName, email, error, homeRegionChoices, selectedHomeRegionId, BuildStarterLookTiles(starterLooks, selectedStarterLookModelId)));
                 return;
             }
 
@@ -10785,7 +11155,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!m_UserAccountService.StoreUserAccount(account))
             {
                 WritePage(request, response, PageTitle("Sign Up"),
-                        RegisterForm(firstName, lastName, email, "Could not create that account. Please try again.", homeRegionChoices, selectedHomeRegionId));
+                        RegisterForm(firstName, lastName, email, "Could not create that account. Please try again.", homeRegionChoices, selectedHomeRegionId, BuildStarterLookTiles(starterLooks, selectedStarterLookModelId)));
                 return;
             }
 
@@ -10804,6 +11174,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             m_InventoryService?.CreateUserInventory(account.PrincipalID);
+            // Only ever clone from a currently-enabled carousel option, never
+            // an arbitrary client-submitted UUID - the form value is just
+            // another account's UUID, and applying it unchecked would let
+            // anyone clone any account's inventory items by guessing/
+            // submitting their principal ID.
+            if (selectedStarterLookModelId != UUID.Zero && starterLooks.Exists(l => l.ModelAccountID == selectedStarterLookModelId))
+                ApplyStarterLook(account.PrincipalID, selectedStarterLookModelId);
 
             string loginError = TryLogin(request, firstName, lastName, password, out string token);
             if (loginError == null)
@@ -14435,7 +14812,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         private static string RegisterForm(string firstName, string lastName, string email, string error,
-                List<GridRegion> homeRegionChoices, UUID selectedHomeRegionId)
+                List<GridRegion> homeRegionChoices, UUID selectedHomeRegionId, string starterLookTiles)
         {
             string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
 
@@ -14452,6 +14829,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                 homeRegionField = "<label>Starting region<br/><select name=\"home_region\">" + options + "</select></label><br/>";
             }
 
+            string starterLookField = string.IsNullOrEmpty(starterLookTiles) ? string.Empty
+                    : "<label>Starting look (optional)</label>" + starterLookTiles;
+
             return "<h1>Sign Up</h1>"
                     + errorHtml
                     + "<form method=\"post\" action=\"" + BasePath + "/register\">"
@@ -14461,6 +14841,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Password<br/><input type=\"password\" name=\"password\" required></label><br/>"
                     + "<label>Confirm password<br/><input type=\"password\" name=\"confirm_password\" required></label><br/>"
                     + homeRegionField
+                    + starterLookField
                     + "<button type=\"submit\">Create account</button>"
                     + "</form>"
                     + "<p><a href=\"" + BasePath + "/login\">Already have an account? Log in</a></p>";

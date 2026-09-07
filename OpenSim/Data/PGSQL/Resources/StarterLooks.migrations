@@ -1,0 +1,14 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS StarterLooks (
+	"LookID" serial NOT NULL,
+	"Name" varchar(128) NULL,
+	"ModelAccountID" uuid NOT NULL,
+	"SortOrder" integer NOT NULL DEFAULT 0,
+	"Enabled" boolean NOT NULL DEFAULT true,
+	PRIMARY KEY ("LookID")
+);
+
+COMMIT;

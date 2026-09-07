@@ -35,7 +35,7 @@ literal code."
 |---|---|---|---|
 | ✅ | `/`, `/welcome.php` | `welcomescreen/index.html` + `region_box.html` + `news.html` + `gridstatus.html` + `info_box.html` | Done 2026-08-21: full-viewport background, real 2-column split, translucent boxes |
 | ✅ | `/login` | `login.html` | Done 2026-08-23: real reference is a minimal 2-field form (no illustration column needed - decorative, not structural). Found and fixed two real gaps: the visible H1 hardcoded "Confluence Grid Login" (a leftover the earlier title-only regex sweep missed, since it has no " - " separator), and missing auto-focus on the first field (reference does `$("#login_input").focus()`; used plain `autofocus` instead of adding a jQuery dependency). First/Last name (vs. reference's single username field) is a correct divergence, not a gap - OpenSim's real identity model needs both. |
-| ✅ | `/register` | `register.html`, `admin/user_register.html` | Done 2026-08-22: added a real Home Region selector (`<select name="home_region">` populated from `IGridService.GetDefaultRegions`, matching reference's `UserHomeRegion` select), with `HandleRegister` honoring the resident's actual selection (falls back to first default region if tampered/missing) instead of always silently picking `defaultRegions[0]`. DOB and ToS-checkbox fields are correct non-gaps - Confluence has no maturity-rating system tied to age (DOB) and account creation elsewhere in this codebase doesn't gate on a web ToS click. Avatar Selection starter-look carousel (Bootstrap carousel + `{AvatarArchiveArrayBegin}` inventory-archive picker) is a real gap but out of scope for this pass - flagged below as its own follow-up, not silently dropped. |
+| ✅ | `/register` | `register.html`, `admin/user_register.html` | Done 2026-08-22: added a real Home Region selector (`<select name="home_region">` populated from `IGridService.GetDefaultRegions`, matching reference's `UserHomeRegion` select), with `HandleRegister` honoring the resident's actual selection (falls back to first default region if tampered/missing) instead of always silently picking `defaultRegions[0]`. DOB and ToS-checkbox fields are correct non-gaps - Confluence has no maturity-rating system tied to age (DOB) and account creation elsewhere in this codebase doesn't gate on a web ToS click. Avatar Selection starter-look carousel (Bootstrap carousel + `{AvatarArchiveArrayBegin}` inventory-archive picker) was flagged as its own follow-up and is now built (2026-09-07, see "Flagged gaps" below) - a tile grid sourced from admin-managed `/admin/starter-looks` entries, not a literal `.aa` archive picker. |
 | ✅ | `/forgot-password` | `forgot_pass.html` | Done 2026-08-23: reference's 2-field form (username + email) vs. Confluence's single email field is an intentional, correct divergence - `HandleForgotPassword` looks the account up by email and always returns the same generic success message either way (no enumeration signal), so a username field would add nothing. Added missing `autofocus` on the email field for parity with the `/login` fix. |
 | ✅ | `/logout` | `logout.html` | Done 2026-08-23: real gap - Confluence's `HandleLogout` did an instant server-side redirect straight to `/login` with no confirmation shown at all, unlike the reference's "Logged out successfully" page with a 3-second auto-redirect. Now clears the session and shows a real confirmation page with the same client-side delayed redirect pattern. |
 | ✅ | `/help` | `help.html` | Already audited 2026-08-12 (see `HandleHelp`'s own code comment) but never checked off here: reference's login-URI framing is kept as the lead section; its viewer-download gallery is intentionally not duplicated since Confluence has a dedicated `/viewers` page for that; the "Using Search"/"Troubleshooting" sections are real content ported from OpenSim-Grid-Interface's `help.php`, which covers ground WhiteCore-Dev's version doesn't. |
@@ -173,13 +173,24 @@ Reviewed 2026-08-23, each deliberately, not silently skipped:
 Found during a row's audit but judged too large to fold into that same
 pass. Not forgotten - each needs its own follow-up pass.
 
-- **Avatar Selection starter-look carousel** (found auditing
-  `/register` 2026-08-22): reference's `register.html` includes a
-  Bootstrap carousel of starter-look options sourced from
-  `{AvatarArchiveArrayBegin}...{AvatarArchiveArrayEnd}` (inventory
-  archives), letting a new resident pick a starting avatar at signup.
-  Confluence's `/register` currently creates the account with whatever
-  default avatar the grid ships. Real feature gap, not yet built.
+- **Avatar Selection starter-look carousel — built and deployed
+  (2026-09-07).** Found auditing `/register` 2026-08-22: reference's
+  `register.html` includes a Bootstrap carousel of starter-look options
+  sourced from `{AvatarArchiveArrayBegin}...{AvatarArchiveArrayEnd}`
+  (`.aa` Avatar Archive files) - a whole subsystem that doesn't exist
+  anywhere in this codebase or its history. Built instead on a smaller,
+  already-proven mechanism: `RemoteAdminPlugin.cs`'s existing
+  `EstablishAppearance`/`CopyWearablesAndAttachments` (used today by the
+  XML-RPC admin `model=`/`gender=` account-creation params), ported into
+  a new Robust-side `ApplyStarterLook`/`CopyStarterLookFolder` on
+  `WebInterfaceServiceConnector` - confirmed that logic never genuinely
+  needed a live Scene. See ROADMAP.md's own entry and PROJECT_LOG.md for
+  the full build trace, including a real security check added during
+  implementation (the carousel's submitted value is validated against
+  the current enabled-looks list server-side, not trusted as an
+  arbitrary account UUID to clone from) and two build-tooling snags hit
+  and fixed along the way (a `dotnet sln add` naming collision, a
+  legacy explicit-`<Compile Include>` csproj gotcha).
 - **Abuse report resolved/assigned tracking — built (2026-09-07).**
   Scoped, then built the same day - see PROJECT_LOG.md for the full
   trace, including a real correction the scoping doc got wrong (`Store()`
