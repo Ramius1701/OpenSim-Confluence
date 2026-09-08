@@ -91,6 +91,21 @@ gap today. For what already exists, see `FEATURES.md`.
     stays on the source with no duplicate anywhere and no owner alert
     needed; the alert now only fires if the rollback also fails. Build
     confirmed clean (0 Warning(s), 0 Error(s)).
+  - **A separate, real, small fix - built same day the Jolt evaluation
+    resumed the Legion-Grid-Code review (2026-09-08).** Not part of
+    the freeze/staged-handoff work above - a genuine bug in the entry-
+    position clamp itself, found by sampling Legion's own commit
+    history and confirmed present in this codebase before porting
+    anything: `EntityTransferModule.GetObjectDestination()` used a
+    flat `0.2f` entry-distance clamp regardless of the crossing
+    object's velocity, which (per Legion's own measured repro on their
+    grid) can place a >2m vehicle's root ON the region seam and cause
+    a near-stationary vehicle to ping-pong between regions - 16
+    crossings observed in 90 seconds. Fixed with a velocity-
+    proportional entry offset (`|velocity| * 0.25s`, floored at the
+    old `0.2f` for slow objects, capped at `4.0f`), small and
+    orthogonal to the freeze redesign below. Build confirmed clean.
+    See PROJECT_LOG.md for the full trace.
   - **Phase 1 - a staged/pending object on the destination.** A copy
     exists in the destination scene's memory but isn't added to the
     spatial index, isn't sent to any viewer, and isn't in the physics

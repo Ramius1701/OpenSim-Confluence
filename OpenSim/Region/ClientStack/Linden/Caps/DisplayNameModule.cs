@@ -138,22 +138,6 @@ namespace OpenSim.Region.ClientStack.LindenCaps
 
             var userData = m_Scene.UserManagementModule.GetUserData(agent_id);
 
-            if (userData.NameChanged.AddDays(7) > DateTime.UtcNow)
-            {
-                m_Scene.GetScenePresence(agent_id).ControllingClient.SendAlertMessage("You can only change your display name once a week!");
-
-                // Was falling through with the default 200 OK / empty body. The viewer's
-                // LLViewerDisplayName::set() only resolves its callback (and disconnects its
-                // signal slot) either from a non-OK HTTP status here, or from an async
-                // SetDisplayNameReply event queue message - neither of which happened, so the
-                // resident got the in-world alert but the floater's own success/failure
-                // notification never fired, and the connected callback slot leaked (the next
-                // successful rename would fire this stale slot too). A non-OK status here
-                // routes through the viewer's existing generic-failure path instead.
-                httpResponse.StatusCode = (int)HttpStatusCode.Forbidden;
-                return;
-            }
-
             OSDMap req = (OSDMap)OSDParser.DeserializeLLSDXml(httpRequest.InputStream);
             if (req.ContainsKey("display_name"))
             {
@@ -165,20 +149,48 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                 bool resetting = string.IsNullOrWhiteSpace(newName);
                 if (resetting) newName = string.Empty;
 
+                // SL semantics, ported from Legion-Grid-Code (a real live repro on their own
+                // grid: a resident who set a regrettable name was stuck for a week): only
+                // SETTING a new display name is once-per-week throttled - CLEARING (reverting
+                // to username) is allowed anytime. Firestorm sends "" for both the Reset button
+                // and typing your own username (llfloaterdisplayname.cpp converts the latter to
+                // "" itself), which is exactly what `resetting` above already detects.
+                if (!resetting && userData.NameChanged.AddDays(7) > DateTime.UtcNow)
+                {
+                    m_Scene.GetScenePresence(agent_id).ControllingClient.SendAlertMessage("You can only change your display name once a week!");
+
+                    // Was falling through with the default 200 OK / empty body. The viewer's
+                    // LLViewerDisplayName::set() only resolves its callback (and disconnects its
+                    // signal slot) either from a non-OK HTTP status here, or from an async
+                    // SetDisplayNameReply event queue message - neither of which happened, so the
+                    // resident got the in-world alert but the floater's own success/failure
+                    // notification never fired, and the connected callback slot leaked (the next
+                    // successful rename would fire this stale slot too). A non-OK status here
+                    // routes through the viewer's existing generic-failure path instead.
+                    httpResponse.StatusCode = (int)HttpStatusCode.Forbidden;
+                    return;
+                }
+
                 bool success = m_Scene.UserManagementModule.SetDisplayName(agent_id, newName);
 
                 if (success)
                 {
                     // Update the current object
                     userData.DisplayName = newName;
-                    userData.NameChanged = DateTime.UtcNow;
+                    // A clear does NOT touch NameChanged - clearing doesn't grant a free rename,
+                    // the once-per-week window still counts from the last real SET.
+                    if (!resetting)
+                        userData.NameChanged = DateTime.UtcNow;
 
                     if (resetting)
                         m_log.InfoFormat("[DISPLAY NAMES] {0} {1} reset their display name", userData.FirstName, userData.LastName);
                     else
                         m_log.InfoFormat("[DISPLAY NAMES] {0} {1} changed their display name to {2}", userData.FirstName, userData.LastName, userData.DisplayName);
 
-                    DateTime next_update = DateTime.UtcNow.AddDays(7);
+                    // Computed from the (possibly-preserved-across-a-clear) NameChanged, not a
+                    // fresh "now + 7 days" - after a clear this truthfully reports the real
+                    // remaining window instead of falsely restarting it.
+                    DateTime next_update = userData.NameChanged.AddDays(7);
 
                     OSD update = FormatDisplayNameUpdate(oldName, userData, next_update);
 

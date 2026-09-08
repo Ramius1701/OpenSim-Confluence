@@ -2846,9 +2846,22 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
             newpos.X = targetPosition.X - (neighbourRegion.RegionLocX - (int)scene.RegionInfo.WorldLocX);
             newpos.Y = targetPosition.Y - (neighbourRegion.RegionLocY - (int)scene.RegionInfo.WorldLocY);
 
-            const float enterDistance = 0.2f;
-            newpos.X = Utils.Clamp(newpos.X, enterDistance, newRegionSizeX - enterDistance);
-            newpos.Y = Utils.Clamp(newpos.Y, enterDistance, newRegionSizeY - enterDistance);
+            // Velocity-proportional entry offset (Halcyon dead-reckoning analogue), ported from
+            // Legion-Grid-Code (a real, measured fix on their own grid: a flat 0.2m placed a
+            // >2m vehicle's root ON the seam, and with a 0-margin exit trigger the effective
+            // hysteresis was 0.2m - a near-stationary vehicle ping-ponged between regions, 16
+            // crossings observed in 90s). Land a moving object |v|*0.25s inside instead (~2.6m
+            // at driving speed) - clear of the re-cross band. Floored at the old 0.2m so slow/
+            // stationary objects behave exactly as before; capped so a very fast object cannot
+            // skip metres of parcel checks.
+            const float enterDistance = 0.2f;        // floor: legacy behaviour for slow objects
+            const float enterLeadSeconds = 0.25f;    // seconds of travel converted into entry depth
+            const float enterMaxDistance = 4.0f;     // cap: bounded even at extreme speeds
+            Vector3 vel = grp.RootPart.Velocity;
+            float enterX = Utils.Clamp(Math.Abs(vel.X) * enterLeadSeconds, enterDistance, enterMaxDistance);
+            float enterY = Utils.Clamp(Math.Abs(vel.Y) * enterLeadSeconds, enterDistance, enterMaxDistance);
+            newpos.X = Utils.Clamp(newpos.X, enterX, newRegionSizeX - enterX);
+            newpos.Y = Utils.Clamp(newpos.Y, enterY, newRegionSizeY - enterY);
 
             return neighbourRegion;
         }

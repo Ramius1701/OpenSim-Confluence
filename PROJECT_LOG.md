@@ -21398,3 +21398,73 @@ to click Apply and confirm), and Display Names'/Abuse Reports' own
 flagged fixes from the same audit initiative are also still pending a
 real in-world trigger. Not new information, just re-surfaced while
 verifying this area specifically so it doesn't quietly drop off.
+
+---
+
+## Two real bugs found sampling Legion-Grid-Code's remaining ~115
+## uncategorized commits, both confirmed and fixed (2026-09-08)
+
+Continuation of the `slua-tier2-tables` resume: after the Experience
+(23 commits) and LegionJolt (~65 commits) clusters were disentangled,
+~115 commits remained genuinely uncharacterized - a much larger and
+more diverse set than expected (a systematic LAND/ESTATE audit series,
+a full DisplayNames effort, Search/Classifieds work, a real
+DirectDelivery marketplace implementation, terrain/vegetation
+generation tooling, a transactional-region-store persistence effort,
+still more Phlox/SLua work). Sampled 5, confirmed 2 real bugs, 1
+false-positive (already fixed here independently), 2 more still
+unsampled.
+
+**1. Vehicle border-crossing bounce loop (`26f300ed6d`).** Confirmed
+the exact same bug in Confluence's own
+`EntityTransferModule.cs:2849-2851` before porting anything: a flat
+`enterDistance = 0.2f` clamp on the destination-region entry position,
+with no adjustment for the crossing object's own velocity. Legion's
+own commit message documents a real, measured problem on their grid:
+a >2m vehicle's root landed ON the region seam, and with a 0-margin
+exit trigger the effective hysteresis was only 0.2m - a near-
+stationary vehicle ping-ponged between regions, 16 crossings observed
+in 90 seconds. Directly relevant to this project's own active
+"Vehicle and prim region crossings" scoping work (see ROADMAP.md).
+Ported the fix as-is: entry depth becomes `|velocity| * 0.25s`
+(~2.6m at driving speed - clear of the re-cross band), floored at the
+old `0.2f` so slow/stationary objects behave exactly as before, capped
+at `4.0f` so a very fast object can't skip metres of parcel checks.
+Small, well-bounded, low-risk.
+
+**2. DisplayNames: clearing a name is throttled the same as setting
+one (`0b993b464a`).** Confirmed Confluence's own
+`DisplayNameModule.cs` had the identical gap: the once-per-week
+throttle check (`userData.NameChanged.AddDays(7) > DateTime.UtcNow`)
+ran unconditionally, before the request body was even parsed, with no
+exemption for reverting to username. Real SL semantics: only
+*setting* a new display name is throttled; *clearing* (Reset button,
+or typing your own username - Firestorm's
+`llfloaterdisplayname.cpp` converts the latter to `""` itself, same as
+the Reset path) is allowed anytime. Legion's commit message documents
+a live repro: a resident who set a regrettable name was stuck unable
+to revert it for a week. Fixed by reordering (parse the request body
+first so `resetting` - Confluence's own pre-existing name for exactly
+this condition - is known before the throttle check runs), exempting
+`resetting` from the throttle, and NOT touching `NameChanged` on a
+clear (so clearing doesn't grant a free subsequent rename - the window
+still counts from the last real set). Also fixed the same bug's second
+half: `next_update` in the broadcast `DisplayNameUpdate` was hardcoded
+to `now + 7 days` regardless of whether this was a real set or a
+clear - now computed from the (possibly-preserved-across-a-clear)
+`NameChanged`, so after a clear it truthfully reports the real
+remaining window instead of falsely restarting it.
+
+**One confirmed non-issue, good cross-validation**: Legion's
+"`J2KImageComparer` not wired into `LLImageManager`'s priority queue -
+crash on every viewer connect" (`88276b8119`) does not apply here -
+checked `LLImageManager.cs` directly, Confluence's `C5.IntervalHeap`
+constructor already passes the comparer
+(`new C5.IntervalHeap<J2KImage>(10, new J2KImageComparer())`).
+Already correct, not a gap.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)) after both fixes.
+Touches `OpenSim.Region.CoreModules.dll` (crossing fix) and
+`OpenSim.Region.ClientStack.LindenCaps.dll` (DisplayNames fix). Not
+yet deployed. **~110 commits still genuinely unsampled** in this
+branch's remaining clusters - resume there if this continues.
