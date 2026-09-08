@@ -62,6 +62,12 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private SQuaternion _axisCorrection = SQuaternion.Identity;
         private string _shapeKind = "?";
 
+        // The sculpt/mesh texture ID we've already asked LegionJoltScene to fetch (UUID.Zero = none
+        // outstanding). Guards RequestMeshAssetRebuild against firing more than once for the same
+        // texture - a fetch that fails just leaves this set, so CookShape won't loop retrying it; a
+        // later edit to a genuinely different sculpt texture clears the match and allows a fresh fetch.
+        private UUID _meshAssetRequestedFor = UUID.Zero;
+
         private int _subscribedMs;   // collision-event subscription window; stored for M6.6, inert now
 
         // Linksets (M7). OpenSim adds each prim as its own PhysicsActor then calls child.link(root) per
@@ -125,9 +131,38 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         private void Build()
         {
-            _shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = CookShape();
             CreateBodyInternal();
         }
+
+        // Thin wrapper around LegionJoltScene.CookPrimShape shared by Build/Rebuild/RecreateBody: cooks
+        // the shape as normal, and if the mesher came back empty specifically because a sculpt/mesh
+        // texture hasn't been fetched yet, kicks off exactly one async re-fetch+rebuild for it (see
+        // LegionJoltScene.RequestMeshAssetRebuild) so the bounding-box fallback below self-heals instead
+        // of staying wrong until some unrelated edit happens to re-cook this prim.
+        private ShapeId CookShape()
+        {
+            ShapeId shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind, out bool needsAssetFetch);
+            if (needsAssetFetch && _pbs.SculptTexture != _meshAssetRequestedFor)
+            {
+                _meshAssetRequestedFor = _pbs.SculptTexture;
+                _module.RequestMeshAssetRebuild(this, _pbs.SculptTexture);
+            }
+            return shape;
+        }
+
+        // Called (off the step thread) by LegionJoltScene.RequestMeshAssetRebuild's async asset callback
+        // once the sculpt/mesh texture this prim was waiting on has arrived. Only touches a plain field -
+        // safe from an arbitrary callback thread. The actual native shape/body rebuild is deferred to the
+        // step thread via RegisterPendingMeshRebuild/DrainPendingMeshRebuild.
+        internal void ApplyFetchedSculptData(byte[] data)
+        {
+            if (_pbs != null) _pbs.SculptData = data;
+        }
+
+        // Drives the real re-cook from LegionJoltScene.DrainPendingMeshRebuild, on the step thread, once
+        // ApplyFetchedSculptData has populated the real geometry.
+        internal void RebuildAfterAssetFetch() => Rebuild();
 
         // Create the Jolt body for the CURRENT _isPhysical / _shape / _axisCorrection and cached
         // transform + velocity. Non-physical -> Static (no MotionProperties: the 65k-prim startup guard).
@@ -250,7 +285,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         {
             if (!_body.IsValid) { Build(); return; }
             ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = CookShape();
             _backend.SetBodyShape(_body, _shape, recomputeMass: false);   // keeps the body at its current transform
             if (old.IsValid)
                 _backend.ReleaseShape(old);
@@ -391,7 +426,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private void RecreateBody()
         {
             ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = CookShape();
             if (_body.IsValid)
                 _backend.RemoveBody(_body);
             CreateBodyInternal();

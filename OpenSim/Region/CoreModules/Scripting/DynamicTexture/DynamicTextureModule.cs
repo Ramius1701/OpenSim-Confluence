@@ -480,7 +480,17 @@ namespace OpenSim.Region.CoreModules.Scripting.DynamicTexture
 
                 SceneObjectPart part = scene.GetSceneObjectPart(PrimID);
 
-                if (part == null || data == null || data.Length <= 1)
+                if (part == null)
+                {
+                    // The prim is gone (deleted, or the region unloaded) by the time this async
+                    // render callback returned - nothing left to report the error against or chat from.
+                    m_log.WarnFormat(
+                        "DynamicTextureModule: prim {0} no longer exists; dropping result for URL {1}",
+                        PrimID, Url);
+                    return UUID.Zero;
+                }
+
+                if (data == null || data.Length <= 1)
                 {
                     string msg = string.Format("DynamicTextureModule: Error preparing image using URL {0}", Url);
                     scene.SimChat(Utils.StringToBytes(msg), ChatTypeEnum.Say,

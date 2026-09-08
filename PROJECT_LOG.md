@@ -22284,3 +22284,79 @@ throwaway region. Next step is confirming `[LEGION JOLT] enabled
 (physics = Jolt)` in the region's log once it's started, then real
 in-world testing (vehicles, existing physical prims/scripts, real
 avatar interaction).
+
+## Real Jolt content-testing gap found and fixed on first live start;
+## an unrelated DynamicTextureModule crash found and fixed along the
+## way (2026-09-09)
+
+Starbase Andromeda started with `physics = Jolt` for the first time
+against real content and immediately exposed a genuine gap: 5,160
+occurrences of `[LEGION JOLT] IMesher returned null (unfetched sculpt
+asset or empty geometry); bounding-box fallback.` in a single ~4.4s
+burst during region load - confirmed via the log timestamps
+(11:32:25-11:32:29), not a per-frame ongoing cost. Root cause, found
+in `LegionJoltScene.CookMeshShape`: a prim whose sculpt/mesh asset
+hadn't been fetched by the mesher yet at physics-actor-creation time
+falls back to a bounding-box collision shape - normal so far - but
+unlike BulletSim (`BSShapes.VerifyMeshCreated`, which explicitly
+re-requests the missing asset and calls `ForceBodyShapeRebuild` once
+it lands), LegionJolt never retried. `base.Initialise(scene.
+PhysicsRequestAsset, ...)` wired the request-asset delegate but
+nothing ever called it. Confirmed this wasn't stale per-process state
+a restart would clear: the operator restarted the region as a first
+attempt and the exact same warning fired again on the fresh boot
+(11:39:00), proving it's a real timing race at every region load, not
+something a restart papers over.
+
+**Fix**: gave LegionJolt the same self-healing path BulletSim already
+has, using the SAME off-thread-callback / step-thread-drain split the
+module already established for deferred body activation
+(`_pendingActivation`/`DrainPendingActivation`) - native shape/body
+mutation isn't safe from an arbitrary asset-service callback thread,
+so the callback only sets a plain field and the real rebuild happens
+on the step thread next frame.
+
+- `LegionJoltScene.CookMeshShape`/`CookPrimShape` gained an
+  `out bool needsAssetFetch`, true only for the specific "sculpt/mesh
+  entry, texture ID non-zero, mesher returned null" case - not every
+  bbox fallback (a genuinely broken/degenerate mesh re-fetching the
+  same broken asset forever would be pointless).
+- New `LegionJoltScene.RequestMeshAssetRebuild(prim, textureId)` calls
+  `RequestAssetMethod` once per texture ID; on arrival it stashes the
+  data via the prim's own `ApplyFetchedSculptData` and queues
+  `RegisterPendingMeshRebuild`. A null/mismatched asset (fetch failed)
+  is dropped silently rather than retried forever.
+- New `_pendingMeshRebuild` set + `DrainPendingMeshRebuild`, called
+  from `Simulate()` right after `DrainPendingActivation`, re-cooks each
+  queued prim via `JoltPrim.RebuildAfterAssetFetch` - guarded against
+  the prim having been removed from the scene (or its LocalID reused)
+  while the fetch was in flight, by checking `_prims` (the live-scene
+  source of truth) rather than trusting the queued reference alone.
+- `JoltPrim` gained a `CookShape()` wrapper (now the single call point
+  for all three of `Build`/`Rebuild`/`RecreateBody`) plus a
+  `_meshAssetRequestedFor` guard field keyed on texture ID, so a fetch
+  fires at most once per prim per distinct texture - a failed fetch
+  doesn't loop, and a later edit to a genuinely different sculpt
+  texture still gets its own fresh attempt.
+
+**Separately, an unrelated real bug** surfaced in the same restart's
+shutdown log - a `NullReferenceException` in
+`DynamicTextureModule.DynamicTextureUpdater.DataReceived`
+(`OS Visitor Script` on a "Display Board v1.0 (Mesh)" prim, via
+`osSetDynamicTextureDataBlendFace`/VectorRender). The error-handling
+branch for `part == null || data == null || data.Length <= 1`
+unconditionally dereferenced `part` in its own error-reporting call -
+exactly wrong for the `part == null` case that can trigger that
+branch. Not physics-related and not shutdown-specific: any dynamic-
+texture render that completes after its target prim was deleted mid-
+session would hit the same NRE. Fixed by splitting the null-part case
+into its own branch (log a warning, return - there's no valid prim
+left to chat an error from) ahead of the data-length check.
+
+Both fixes built clean (0 errors) and deployed to live (`OpenSim.
+Region.PhysicsModule.LegionJolt.dll`+pdb, `OpenSim.Region.
+CoreModules.dll`+pdb, copy verified via a separate `md5sum` check).
+Not yet verified live under real content - that's the operator's next
+restart. `OpenSim.Region.CoreModules.dll` is shared by every region
+process, so the DynamicTextureModule fix takes effect on any region
+once it's next restarted, not just Starbase Andromeda.

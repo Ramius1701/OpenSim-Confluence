@@ -124,6 +124,36 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 if (!_pendingActivation.Contains(p)) _pendingActivation.Add(p);
         }
 
+        // A prim whose sculpt/mesh asset wasn't fetched yet when CookMeshShape needed it (bounding-box
+        // fallback, needsAssetFetch out-param) gets queued here by RequestMeshAssetRebuild's async
+        // callback and re-cooked on the step thread by DrainPendingMeshRebuild - the same
+        // off-thread-callback / step-thread-drain split _pendingActivation uses, for the same reason
+        // (native shape/body mutation isn't safe from an arbitrary asset-service callback thread).
+        private readonly HashSet<JoltPrim> _pendingMeshRebuild = new HashSet<JoltPrim>();
+        internal void RegisterPendingMeshRebuild(JoltPrim p)
+        {
+            lock (_pendingMeshRebuild) _pendingMeshRebuild.Add(p);
+        }
+
+        // Kicks off the async fetch for a sculpt/mesh texture that wasn't cached yet when a prim's
+        // shape was cooked. Mirrors BulletSim's BSShapes.VerifyMeshCreated: request the asset once: on
+        // arrival, stash the data on the prim's own PrimitiveBaseShape and queue a real re-cook, so the
+        // bounding-box fallback self-heals instead of staying wrong until something else edits the prim.
+        // A null/mismatched asset (fetch failed) is dropped silently - JoltPrim's own
+        // _meshAssetRequestedFor guard means this fires at most once per prim per distinct texture ID.
+        internal void RequestMeshAssetRebuild(JoltPrim prim, UUID textureId)
+        {
+            if (RequestAssetMethod == null || textureId == UUID.Zero)
+                return;
+            RequestAssetMethod(textureId, delegate (AssetBase asset)
+            {
+                if (asset == null || asset.ID != textureId.ToString())
+                    return;
+                prim.ApplyFetchedSculptData(asset.Data);
+                RegisterPendingMeshRebuild(prim);
+            });
+        }
+
         // M6.5: the logged-in avatars, keyed by their CharacterId handle (the value the character drain
         // echoes back). Keyed by handle rather than LocalID so the drain mapping is independent of when
         // ScenePresence assigns LocalID after AddAvatar returns.
@@ -498,7 +528,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
                 // Decision-point check (physical -> convex hull, delta #31): cook the SAME prism physical,
                 // inline, purely to confirm routing (cook+release, no body). Real physical dynamics is M6.4.
-                ShapeId hull = CookPrimShape(GetPrismPbs(), size, true, out _, out string hullKind);
+                ShapeId hull = CookPrimShape(GetPrismPbs(), size, true, out _, out string hullKind, out _);
                 MainConsole.Instance.Output($"  decision-point: physical prism cooks to '{hullKind}' (expect 'hull(mesher)' - a mesh's Volume=0 would rez a physical prim mass-0; hull avoids it).");
                 if (hull.IsValid) _backend.ReleaseShape(hull);
 
@@ -2596,9 +2626,10 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // twisted, sculpt/mesh, non-uniform sphere/cylinder) falls back to a bounding box for now; the
         // real IMesher path is M6.3 Task 2. `axisCorrection` (System.Numerics) is folded into the body
         // orientation by JoltPrim; `kind` is for the proof read-out.
-        internal ShapeId CookPrimShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind)
+        internal ShapeId CookPrimShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind, out bool needsAssetFetch)
         {
             axisCorrection = SQuaternion.Identity;
+            needsAssetFetch = false;
             float hx = size.X * 0.5f, hy = size.Y * 0.5f, hz = size.Z * 0.5f;
 
             if (pbs != null && PrimHasNoCuts(pbs))
@@ -2639,7 +2670,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
             // else mesh). Contract (delta #31): a triangle MeshShape has Volume 0, so a PHYSICAL prim
             // MUST use the convex hull or it would rez with mass 0 at M6.4 - hence physical -> hull here.
-            ShapeId cooked = CookMeshShape(pbs, size, isPhysical, out kind);
+            ShapeId cooked = CookMeshShape(pbs, size, isPhysical, out kind, out needsAssetFetch);
             if (cooked.IsValid)
                 return cooked;
 
@@ -2652,9 +2683,13 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // getIndexListAsInt -> CreateMeshShape (non-physical triangle mesh) or CreateConvexHullShape
         // (physical hull). Returns ShapeId.Invalid on any failure so the caller can fall back. Also
         // stashes a characterization of the RAW mesher output (_lastMeshStats) for the proof read-out.
-        private ShapeId CookMeshShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind)
+        // needsAssetFetch is true only for the specific "sculpt/mesh asset not fetched yet" case - the
+        // caller (JoltPrim) uses it to kick off RequestMeshAssetRebuild so the bbox fallback self-heals
+        // once the asset arrives, instead of staying wrong until something else edits the prim.
+        private ShapeId CookMeshShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind, out bool needsAssetFetch)
         {
             kind = "bbox(fallback)";
+            needsAssetFetch = false;
             if (m_mesher == null)
             {
                 m_log.Warn($"{LogHeader} no IMesher - cannot cook mesh; bounding-box fallback.");
@@ -2680,8 +2715,12 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 if (mesh == null)
                 {
                     // A sculpt whose asset (texture) has not been fetched meshes to null - it needs the
-                    // async asset path (M6 request-asset delegate) first. Bounding box for now.
+                    // async asset path (RequestMeshAssetRebuild) first. Bounding box for now; only flag
+                    // needsAssetFetch when there's an actual sculpt/mesh texture to go fetch (a plain
+                    // cut/hollow prim with no sculpt entry meshing to null is a different, unrelated
+                    // failure that a re-fetch can't fix).
                     m_log.Debug($"{LogHeader} IMesher returned null (unfetched sculpt asset or empty geometry); bounding-box fallback.");
+                    needsAssetFetch = pbs.SculptEntry && pbs.SculptTexture != UUID.Zero;
                     return ShapeId.Invalid;
                 }
 
@@ -3396,6 +3435,30 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
         }
 
+        // Companion to DrainPendingActivation: re-cooks any prim RequestMeshAssetRebuild queued once its
+        // sculpt/mesh asset arrived. Runs on the step thread for the same reason activation does. Guarded
+        // against the prim having been removed from the scene (or its LocalID reused by a different prim)
+        // while the fetch was still in flight - _prims is the live-scene source of truth, not this list.
+        private void DrainPendingMeshRebuild()
+        {
+            JoltPrim[] pend;
+            lock (_pendingMeshRebuild)
+            {
+                if (_pendingMeshRebuild.Count == 0) return;
+                pend = new JoltPrim[_pendingMeshRebuild.Count];
+                _pendingMeshRebuild.CopyTo(pend);
+                _pendingMeshRebuild.Clear();
+            }
+            foreach (JoltPrim p in pend)
+            {
+                lock (_prims)
+                    if (!_prims.TryGetValue(p.LocalID, out JoltPrim current) || !ReferenceEquals(current, p))
+                        continue;
+                try { p.RebuildAfterAssetFetch(); }
+                catch (Exception e) { m_log.Error($"{LogHeader} mesh-asset rebuild EXCEPTION for prim {p.LocalID}: {e}"); }
+            }
+        }
+
         private void DrainDirtyLinksets()
         {
             // WELD AT LOAD: rebuild dirty linkset roots at the TOP of Simulate, BEFORE StepOnce - so a
@@ -3432,6 +3495,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // just below, before StepOnce), so it can NEVER free-fall during load or the reload stall. Mirrors
             // BulletSim draining ALL taints before PE.PhysicsStep().
             DrainPendingActivation();
+
+            // Re-cook any prim whose sculpt/mesh asset finished fetching since the last frame (queued by
+            // RequestMeshAssetRebuild off the step thread). Same ordering rationale as activation above -
+            // before the step, so a newly-real shape is what actually collides this frame.
+            DrainPendingMeshRebuild();
 
             // M8: run each active vehicle's Halcyon controller BEFORE the physics step, so its
             // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).

@@ -433,11 +433,20 @@ gap today. For what already exists, see `FEATURES.md`.
   Casperia's shared runtime folder and confirmed showing on the live
   `/features` Platform Overview page. Starbase Andromeda's own
   `OpenSim.ini` has since been switched to `physics = Jolt` +
-  `meshing = Meshmerizer` at the operator's request, as a real-content
-  test case - not yet running with it live (region was stopped at the
-  time of the switch), so in-world verification under actual Casperia
-  content (vehicles, existing prims/scripts, real avatars) is still
-  the open item once that region comes back up.
+  `meshing = Meshmerizer` at the operator's request, as the first
+  real-content test case.
+
+  **First real-content start found and fixed a genuine gap**: 5,160
+  prims fell back to a bounding-box collision shape during region load
+  (sculpt/mesh asset not fetched yet when the shape was cooked), and -
+  unlike BulletSim - LegionJolt never retried once the asset actually
+  arrived, so the wrong shape stuck permanently. Confirmed real via a
+  restart (same warning fired again, ruling out stale state). Fixed by
+  giving LegionJolt the same async-fetch-then-rebuild path BulletSim
+  already has (`RequestMeshAssetRebuild` + a step-thread-deferred
+  drain, mirroring the module's existing `_pendingActivation` pattern).
+  Built clean and deployed; not yet confirmed live under real content -
+  that's the next restart. Full detail in `PROJECT_LOG.md`.
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters
