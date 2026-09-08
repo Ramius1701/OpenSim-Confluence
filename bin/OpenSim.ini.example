@@ -254,12 +254,19 @@
     ; meshing = ubODEMeshmerizer
 
     ;; Choose one of the physics engines below
-    ;# {physics} {} {Select physics engine} {OpenDynamicsEngine BulletSim basicphysics POS} ubODE
+    ;# {physics} {} {Select physics engine} {OpenDynamicsEngine BulletSim basicphysics POS Jolt} ubODE
     ;; Default is ubODE
     ; physics = BulletSim
     ; physics = basicphysics
     ; physics = POS
     ; physics = ubODE
+    ; Jolt (MIT-licensed, ported from Legion-Grid-Code) - an additional selectable
+    ; engine alongside BulletSim/ubODE, not a replacement for either. Requires
+    ; meshing = Meshmerizer below. Evaluated 2026-09-08 (portability/performance,
+    ; see ROADMAP.md), integrated and boot-tested 2026-09-09 - not yet run on a
+    ; live region with real content/vehicles, so treat as newer/less-proven than
+    ; the two established engines above.
+    ; physics = Jolt
 
     ; ubODE does allocate a lot of memory on stack. On linux you may need to increase its limit
     ; script opensim-ode-sh starts opensim setting that limit. You may need to increase it even more on large regions

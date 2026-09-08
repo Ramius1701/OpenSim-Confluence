@@ -22017,3 +22017,119 @@ current networking stack to port mechanically.
 
 `phlox-core` and `homeworldz` re-verification still pending as of this
 entry - see next PROJECT_LOG entry if this continues.
+
+---
+
+## Jolt physics integrated as a selectable third engine (2026-09-09)
+
+`phlox-core`/`homeworldz` re-verification completed (both held up -
+`phlox-core`'s recent commits are genuinely just build/rename/CI
+maintenance in its final weeks before going dormant; `homeworldz`'s
+original pass already used the correct code-first methodology). That
+re-verification led into a real pushback exchange: the user challenged
+the "non-essential" framing on Jolt and Phlox given wider ecosystem
+adoption. Checked directly rather than assumed: Tranquillity (this
+project's closest peer) has a real, substantial Phlox integration
+(`#182 Add Phlox: LSL/SLua compiler, VM, and region script engine`,
+plus per-script stats, transient suspend/resume, RegionReady wiring) -
+genuinely several active forks on Phlox now, not a dead end, correcting
+an outdated characterization carried forward without re-checking. Jolt
+adoption checked across every configured remote: confirmed only in
+Legion-Grid-Code and Homeworldz, the two already known and documented -
+no third found, reported honestly rather than assumed either way.
+
+The user's actual ask, once clarified: add Jolt (and/or Phlox) as an
+**additional, pluggable, operator-selectable** engine - explicitly "like
+BulletSim is to ubODE," not a replacement and not required to have
+day-one parity with the established engines. That's a much narrower,
+concretely actionable scope than the "second-physics-backend-sized
+project, held pending a priority call" framing from the original
+2026-09-08 evaluation - the priority call was made.
+
+**Integration, done for real (built, boot-tested, committed - not just
+evaluated a second time)**: Legion's own repo already laid LegionJolt
+out as a self-contained module matching Confluence's own
+`PhysicsModules/BulletS`/`ubOde` sibling convention exactly
+(`OpenSim/Region/PhysicsModules/LegionJolt/` +
+`OpenSim/Addons/LegionPhysics/{Legion.Physics,Legion.Vehicles}/`, 17
+source files total, self-selecting on `[Startup] physics = Jolt`).
+Pulled all of it in as-is via `git show legion/slua-tier2-tables:<path>`
+per file, added the three csproj files to `OpenSim.sln`.
+
+Two real integration bugs found and fixed, both confirmed via an actual
+build/run rather than assumed from Legion's own code comments:
+
+1. **Latent `OpenSim.sln` MSB5004 collision** - the same documented
+   gotcha from earlier this project's history (`casperia-repo-build-
+   tooling-gotchas` memory), pre-existing, just surfaced by `dotnet sln
+   add`. Same fix: renamed the colliding Visual-Studio-style solution
+   folder's display name from "OpenSim" to "OpenSim (folder)" (cosmetic,
+   `OpenSim.sln` is gitignored/local-only).
+2. **`Legion.Physics.dll`/`Legion.Vehicles.dll` never actually reaching
+   the shared `bin\`**, despite the module csproj's own `ProjectReference`s
+   and an in-file comment explicitly claiming "Copies to the shared bin."
+   Confirmed false by directly checking `bin\` after a real build: both
+   DLLs landed only in their own project-local output folders. Root
+   cause: both dependency projects deliberately build to their own local
+   `bin\` (by design, per their own csproj comments - kept out of the
+   shared tree so a work-in-progress build can't touch a running grid's
+   physics selection), and a plain `ProjectReference` doesn't reliably
+   flow output across that custom-output-path boundary. Fixed with the
+   same explicit `<None Include=... CopyToOutputDirectory>` workaround
+   the csproj already used for the native `joltc.dll`/`JoltPhysicsSharp.dll`
+   copy (its own comment already explained why a plain reference doesn't
+   work for THOSE - same underlying MSBuild limitation, just not yet
+   applied to these two).
+
+Deliberately did NOT bring in Legion's vendored, custom-patched
+`joltc.dll` (their fix for multiple `PhysicsSystem` instances sharing
+one static `TempAllocator` when several regions run in the SAME
+process, so regions can step in parallel again) - checked Casperia's
+actual live process list first: it's one `OpenSim.exe` process PER
+region, so that specific multi-region-in-one-process failure mode
+doesn't apply here. Using the stock NuGet-provided native instead is
+simpler and sufficient for this deployment topology; removed the
+vendored binary + patch file from the working tree rather than solve a
+`.gitignore` `*.dll` exception for something unused.
+
+**Boot-tested for real** - a clean `dotnet build -c Release` alone
+proves compilation, not that the module actually loads and runs inside
+OpenSim.exe. Copied the built `bin\` to an isolated scratch directory,
+configured a throwaway SQLite-backed standalone region with
+`physics = Jolt` + `meshing = Meshmerizer` (required, mirrors
+BulletSim's own `Meshmerizer` requirement), and ran a real instance
+(launching a Windows console app fully detached/backgrounded threw a
+`Console.TreatControlCAsInput` `IOException` a couple of times before
+landing on `Start-Process -WindowStyle Hidden` without stream
+redirection, relying on OpenSim's own log4net file logging instead of
+captured stdout). Confirmed live in `OpenSim.log`: `Plugin Loaded:
+OpenSim.Region.PhysicsModule.LegionJolt`, `[LEGION JOLT] enabled
+(physics = Jolt)`, a real terrain heightfield conversion log line with
+actual sampled height values, `backend initialised, MaxBodies=65536.
+Jolt 5.x`, and `TriggerRegionReady entered for JoltBootTest` - the full
+region-startup sequence completing successfully with Jolt as the active
+engine, across two regions in the same test process without incident.
+The only ERROR lines in that log were unrelated MySQL connection
+failures from search/marketplace/currency services (no real DB
+configured for this throwaway test) - not Jolt-related. Cleaned up the
+test process and scratch directory afterward (same Windows file-lock
+"Device or resource busy" quirk on a `bin\` subfolder as the original
+2026-09-08 evaluation's scratch dir - harmless, left in place).
+
+Wired `physics = Jolt` into both `bin/OpenSim.ini.example` and
+`bin/OpenSimDefaults.ini`, commented out by default (matching how
+BulletSim itself is presented) with an explicit note that it's
+newer/less-proven than the two established engines - real in-world
+testing under Casperia's actual content (vehicles, existing prims and
+scripts, real avatars, not a throwaway empty test region) genuinely
+hasn't happened yet. Build confirmed clean (0 Warning(s) on the final
+pass, 0 Error(s)). Touches: 17 new source files across 3 new csproj
+projects (all correctly un-ignored via nested `.gitignore` `!*.csproj`
+exceptions Legion's own repo already provided - verified with `git add
+-n` that Confluence's own root `.gitignore`'s blanket `*.csproj` rule,
+documented in the repo-build-tooling-gotchas memory, doesn't silently
+drop them), `OpenSim.sln`, and the two ini templates. **Not deployed to
+the live grid** - available as a selectable option, not switched on for
+any live Casperia region. Phlox integration (the scripting-engine half
+of this same "additional, like BulletSim" ask) not started yet - Jolt
+was tackled first as the more de-risked, already-evaluated half.

@@ -386,16 +386,52 @@ gap today. For what already exists, see `FEATURES.md`.
   comfortably fast on its own terms; it is not a proven "faster than
   ubODE" claim.
 
-  **Not evaluated yet, genuinely open**: real integration cost into
-  Confluence specifically (config/`[Startup] physics = Jolt` wiring,
-  vehicle physics parity - `Legion.Vehicles` exists as its own project
-  and wasn't inspected this pass, multi-region native-allocator
-  behavior beyond what the vendored `joltc` patch already addresses,
-  and real in-world testing under Casperia's actual content, not a
-  synthetic benchmark). **Held pending a priority call** - this is the
-  size of a genuine second-physics-backend project, not a small
-  cherry-pick, same category of decision as Phlox was before it got
-  shelved on its own (different) merits.
+  **Integrated as a selectable third physics engine, 2026-09-09** - the
+  user's explicit call: add it "like BulletSim is to ubODE," a
+  pluggable operator choice, not a replacement for either existing
+  engine and not required to have full day-one parity. Legion's own
+  repo already laid this out as a self-contained, drop-in module
+  (`OpenSim/Region/PhysicsModules/LegionJolt/` +
+  `OpenSim/Addons/LegionPhysics/{Legion.Physics,Legion.Vehicles}/`,
+  matching Confluence's own `PhysicsModules/BulletS`/`ubOde` sibling
+  convention exactly, self-selecting on `[Startup] physics = Jolt`
+  with no other config edits needed) - pulled all 17 source files in
+  as-is. Two real integration gaps found and fixed, neither present in
+  Legion's own build environment apparently, both confirmed live here:
+  a latent `OpenSim.sln` MSB5004 name collision (pre-existing, just
+  surfaced by `dotnet sln add` - same documented gotcha as before, same
+  fix, cosmetic solution-folder rename) and `Legion.Physics.dll`/
+  `Legion.Vehicles.dll` not actually landing in the shared `bin\`
+  despite the module's own `ProjectReference`s and a code comment
+  claiming they would - added explicit copy items, the same workaround
+  pattern the csproj already used for the native `joltc.dll`/
+  `JoltPhysicsSharp.dll`. Deliberately did NOT bring in Legion's
+  vendored, custom-patched `joltc.dll` (their fix for multiple
+  `PhysicsSystem`s sharing one static `TempAllocator` when several
+  regions run in ONE process) - Casperia's real deployment is one
+  `OpenSim.exe` process per region, confirmed from the live process
+  list, so that specific patch doesn't apply here; using the stock
+  NuGet-provided native instead keeps the integration simpler.
+
+  **Boot-tested for real, not just built** - built the full solution
+  clean, then ran an actual isolated `OpenSim.exe` instance (scratch
+  copy, throwaway SQLite-backed region, `physics = Jolt` +
+  `meshing = Meshmerizer`) rather than trusting a successful compile
+  alone. Confirmed live in the log: Mono.Addins discovered and loaded
+  the plugin, `[LEGION JOLT] enabled (physics = Jolt)` self-selection
+  fired correctly, the native backend initialised with a real terrain
+  heightfield conversion and `MaxBodies=65536` on actual Jolt 5.x, and
+  the region reached full `TriggerRegionReady`. Ran cleanly across two
+  regions in the same test process too. Config documented in both
+  `bin/OpenSim.ini.example` and `bin/OpenSimDefaults.ini`, commented
+  out by default (matching BulletSim's own template presentation) with
+  an explicit "newer/less-proven than the two established engines"
+  note, since real in-world testing under Casperia's actual content
+  (vehicles, existing prims/scripts, real avatars) hasn't happened yet
+  - genuinely open, not a blocker to having it available as a choice.
+  **Not deployed to the live grid** - built, boot-tested, and committed
+  to the repo; switching any live Casperia region to `physics = Jolt`
+  is a separate, deliberate operator decision.
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters
