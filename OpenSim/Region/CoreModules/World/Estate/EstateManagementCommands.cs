@@ -95,8 +95,29 @@ namespace OpenSim.Region.CoreModules.World.Estate
         public void Close() {}
 
         #region CommandHandlers
+
+        // EstateManagementModule (and so this companion class) is INonSharedRegionModule -
+        // one instance per region, and Scene.AddCommand's "shared" flag is derived from
+        // that, so every instance registers these same command names ("set terrain ...",
+        // "set water height", "estate show") on the single global MainConsole. Without a
+        // scope guard, one console invocation fires once per region on a multi-region
+        // grid - independent of (and in addition to) the existing optional x/y coordinate
+        // filter these terrain/water setters already have, which lets an operator target
+        // specific coordinates grid-wide but does nothing to honor a console `region
+        // select` scoping to just the selected region. Ported from Legion-Grid-Code's
+        // CONSOLE-GUARD-SWEEP (confirmed every handler below had no such guard here
+        // before porting; "estate reload"/"estate reload all" from the same sweep don't
+        // exist under those names here, so that part doesn't apply).
+        private bool ConsoleScopedToThisRegion()
+        {
+            return MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_module.Scene;
+        }
+
         protected void consoleSetTerrainTexture(string module, string[] args)
         {
+            if (!ConsoleScopedToThisRegion())
+                return;
+
             string num = args[3];
             string uuid = args[4];
             int x = (args.Length > 5 ? int.Parse(args[5]) : -1);
@@ -136,6 +157,9 @@ namespace OpenSim.Region.CoreModules.World.Estate
         }
         protected void consoleSetTerrainPBR(string module, string[] args)
         {
+            if (!ConsoleScopedToThisRegion())
+                return;
+
             string num = args[3];
             string uuid = args[4];
             int x = (args.Length > 5 ? int.Parse(args[5]) : -1);
@@ -174,6 +198,9 @@ namespace OpenSim.Region.CoreModules.World.Estate
         }
         protected void consoleSetWaterHeight(string module, string[] args)
         {
+            if (!ConsoleScopedToThisRegion())
+                return;
+
             string heightstring = args[3];
 
             int x = (args.Length > 4 ? int.Parse(args[4]) : -1);
@@ -197,6 +224,9 @@ namespace OpenSim.Region.CoreModules.World.Estate
         }
         protected void consoleSetTerrainHeights(string module, string[] args)
         {
+            if (!ConsoleScopedToThisRegion())
+                return;
+
             string num = args[3];
             string min = args[4];
             string max = args[5];
@@ -253,6 +283,9 @@ namespace OpenSim.Region.CoreModules.World.Estate
 
         protected void ShowEstatesCommand(string module, string[] cmd)
         {
+            if (!ConsoleScopedToThisRegion())
+                return;
+
             StringBuilder report = new StringBuilder();
             RegionInfo ri = m_module.Scene.RegionInfo;
             EstateSettings es = ri.EstateSettings;

@@ -165,6 +165,17 @@ namespace OpenSim.Region.CoreModules.Avatar.Attachments
 
         private void HandleDebugAttachmentsLog(string module, string[] args)
         {
+            // This module is INonSharedRegionModule - one instance per region, and
+            // Scene.AddCommand's "shared" flag is derived from that, so every instance
+            // registers this same "debug attachments log" command name on the single
+            // global MainConsole. Without a scope guard, one console invocation fires
+            // once per region on a multi-region grid. Scope to the console-selected
+            // region; at root every instance still acts on its own scene. Ported from
+            // Legion-Grid-Code's CONSOLE-GUARD-SWEEP (confirmed this handler had no such
+            // guard here before porting).
+            if (!(MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_scene))
+                return;
+
             if (!(args.Length == 4 && int.TryParse(args[3], out int debugLevel)))
             {
                 MainConsole.Instance.Output("Usage: debug attachments log [0|1]");
@@ -178,6 +189,10 @@ namespace OpenSim.Region.CoreModules.Avatar.Attachments
 
         private void HandleDebugAttachmentsStatus(string module, string[] args)
         {
+            // See HandleDebugAttachmentsLog - same per-region multi-fire risk.
+            if (!(MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_scene))
+                return;
+
             MainConsole.Instance.Output($"Settings for {m_scene.Name}");
             MainConsole.Instance.Output($"Debug logging level: {DebugLevel}");
         }

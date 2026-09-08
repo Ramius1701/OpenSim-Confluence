@@ -1640,6 +1640,27 @@ namespace OpenSim.Region.Framework.Scenes
                 m_items.LockItemsForRead(true);
                 datastore.StorePrimInventory(m_part.UUID, m_items.Values);
             }
+            catch (Exception e)
+            {
+                // HasInventoryChanged was cleared BEFORE the store above (see the first try
+                // block) - without restoring it, a failed store here would never retry: the
+                // gate at the top of this method (if (!HasInventoryChanged) return;) skips
+                // the store entirely on every later backup cycle, unlike
+                // SceneObjectGroup.ProcessBackup's own retry fix which only covers the
+                // group-level HasGroupChanged flag, not this part-level one. Log with enough
+                // context to find the prim, restore the flag, then rethrow so the enclosing
+                // ProcessBackup catch also re-flags HasGroupChanged (this method's only
+                // caller). Ported from Legion-Grid-Code's PERSIST-1.1-TX (confirmed this
+                // exact silent-failure gap here before porting, though Confluence's own
+                // ProcessInventoryBackup keeps its HasInventoryChanged gate active where
+                // Legion's is commented out - so the same fix needed one more line here
+                // than Legion's own commit applied).
+                m_log.ErrorFormat(
+                    "[PRIM INVENTORY]: StorePrimInventory FAILED for prim {0} '{1}' ({2} item(s)): {3}",
+                    m_part.UUID, m_part.Name, m_items.Values.Count, e.Message);
+                HasInventoryChanged = true;
+                throw;
+            }
             finally
             {
                 m_items.LockItemsForRead(false);

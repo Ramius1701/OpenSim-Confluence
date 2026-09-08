@@ -2495,7 +2495,17 @@ namespace OpenSim.Region.Framework.Scenes
             }
             catch (Exception e)
             {
-                m_log.Error($"[SCENE]: Storing of {Name}, {UUID} in {m_scene.RegionInfo.RegionName} failed: {e.Message}");
+                m_log.Error($"[SCENE]: Storing of {Name}, {UUID} ({PrimCount} prim(s)) in {m_scene.RegionInfo.RegionName} failed: {e.Message} - object kept in memory and re-flagged dirty; the next backup cycle retries.");
+                // HasGroupChanged was cleared BEFORE the store above - without restoring it,
+                // a transient store failure (deadlock, timeout, dropped connection) meant
+                // this object was never retried until something else touched it again.
+                // Re-flagging is strictly safe: worst case is one redundant store. Ported
+                // from Legion-Grid-Code's PERSIST-1.1-TX (confirmed this catch block here
+                // swallowed the failure with no retry before porting - directly relevant
+                // now that a failed StoreObject/StorePrimInventory throws instead of
+                // silently leaving a torn write, per the transactional store fix in
+                // MySQLSimulationData.cs).
+                HasGroupChanged = true;
             }
         }
 

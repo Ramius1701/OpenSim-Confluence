@@ -134,6 +134,15 @@ namespace OpenSim.Region.ClientStack.Linden
 
         protected void HandleDebugEq(string module, string[] args)
         {
+            // This module is INonSharedRegionModule - one instance per region, and each
+            // instance registers this same "debug eq" command name on the single global
+            // MainConsole. Without a scope guard, one console invocation fires once per
+            // region on a multi-region grid. Scope to the console-selected region; at root
+            // every instance still acts on its own scene (the per-region intent). Ported
+            // from Legion-Grid-Code's CONSOLE-GUARD-SWEEP (confirmed this handler had no
+            // such guard here before porting).
+            if (!(MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_scene))
+                return;
 
             if (!(args.Length == 3 && int.TryParse(args[2], out int debugLevel)))
             {
@@ -148,6 +157,10 @@ namespace OpenSim.Region.ClientStack.Linden
 
         protected void HandleShowEq(string module, string[] args)
         {
+            // See HandleDebugEq - same per-region multi-fire risk on "show eq".
+            if (!(MainConsole.Instance.ConsoleScene == null || MainConsole.Instance.ConsoleScene == m_scene))
+                return;
+
             MainConsole.Instance.Output($"Events in Scene {m_scene.Name} agents queues :");
 
             lock (queues)

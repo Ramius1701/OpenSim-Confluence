@@ -396,6 +396,30 @@ gap today. For what already exists, see `FEATURES.md`.
   size of a genuine second-physics-backend project, not a small
   cherry-pick, same category of decision as Phlox was before it got
   shelved on its own (different) merits.
+- **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
+  (2026-09-08).** The ~115 commits left uncharacterized after the
+  Experience (23 commits) and LegionJolt (~65 commits, above) clusters
+  were pulled out have now all been checked against Confluence's
+  actual current code. Real bugs found and fixed across several
+  entries in PROJECT_LOG.md: a vehicle border-crossing bounce loop, a
+  DisplayNames clear-throttle bug plus a deeper DisplayNames
+  persistence gap in Confluence's own independently-built code, ~16
+  LAND/ESTATE bugs (group-power bypasses, missing root-agent guards on
+  a money-moving handler and 11 others, missing-return NRE/permission-
+  bypass bugs, loop-variable bugs, a data-integrity flag bug), a real
+  MySQL data-integrity bug (`StorePrimInventory`'s unprotected
+  DELETE-then-INSERT could destroy already-persisted prim inventory on
+  a crash - now transactional with a kill-switch and retry-on-failure
+  semantics), and a real multi-region console-command bug (`debug
+  eq`/`debug attachments log`/several estate commands firing once per
+  region on invocation). Search/Classifieds and DirectDelivery were
+  checked and confirmed already superseded by Confluence's own more
+  mature, independently-built implementations - not porting targets.
+  Terrain-gen tooling and a new inbound-email-IMAP capability were
+  identified but are out of scope for a bug-porting pass (external
+  tooling / a genuinely new feature needing an operator decision,
+  respectively) - available on request. See `casperia-fork-review-status.md`
+  memory and PROJECT_LOG.md for the full trail.
 - **wolfvoice** (`wolfsoftwaresystemsltd/wolfvoice`) — an alternative
   WebRTC voice backend for the already-merged `os-webrtc-janus` addon
   (see "WebRTC voice" below), offering per-listener spatial audio

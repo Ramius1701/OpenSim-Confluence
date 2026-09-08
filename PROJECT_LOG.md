@@ -21640,3 +21640,189 @@ now fully sampled; DisplayNames cluster is now fully sampled. Remaining
 unsampled clusters: Search/Classifieds, DirectDelivery, terrain-gen,
 persistence (`PERSIST-1.1-TX`), and misc (`CONSOLE-GUARD-SWEEP`, Email
 IMAP fetcher) - resuming there next.
+
+---
+
+## Remaining clusters sampled to completion: a real data-integrity fix
+## (PERSIST-1.1-TX), a real multi-region console bug
+## (CONSOLE-GUARD-SWEEP), and confirmation that Search/Classifieds +
+## DirectDelivery are already superseded by Confluence's own more
+## mature native implementations (2026-09-08)
+
+Closes out Legion-Grid-Code's remaining ~115 uncharacterized
+`slua-tier2-tables` commits - every cluster identified at the start of
+this "sample to completion" pass has now been checked against
+Confluence's actual current code, not assumed.
+
+### PERSIST-1.1-TX (`2a9444c0a5`) - real data-integrity bug, fixed
+
+Confirmed Confluence's own `MySQLSimulationData.cs` had the exact bug
+Legion's own audit found: `StorePrimInventory` was a naked
+DELETE-then-INSERT with no transaction. A crash, dropped connection,
+or deadlock between the two statements didn't just lose the *new*
+inventory - it **destroyed inventory that was already safely
+persisted** (the DELETE commits alone). `StoreObject` (per-prim
+autocommit - a partial linkset survives a mid-write crash as a
+Frankenstein object) and `RemoveObject` (three separate DELETEs -
+partial completion leaves orphan `primshapes`/`primitems` rows) had
+the same class of gap, lower severity. Directly relevant to Casperia's
+live grid: real residents' real prim inventories (scripts, notecards,
+textures) on a MySQL-backed region store.
+
+Ported the full fix:
+- Wrapped all three methods in one `MySqlTransaction` per logical
+  operation (commit on success, rollback + rethrow with a
+  mode-aware `ERROR` log on failure - the log explicitly says whether
+  the DB kept the old complete state or, in legacy mode, may now hold
+  a partial write).
+- Added the `UseTransactionalStore` kill-switch (default `true`) as a
+  settable property on `MySQLSimulationData`, discovered and wired via
+  reflection from `SimulationDataService`'s constructor (the
+  `ISimulationDataStore` plugin contract only carries a connection
+  string, so this keeps the service layer provider-agnostic - a
+  provider without the property is silently unaffected; `false` with
+  no such property logs a WARN naming the ignored setting).
+- **Retry-on-failure, extended beyond Legion's own fix to match
+  Confluence's actual architecture.** Legion's version only needed to
+  restore `SceneObjectGroup.HasGroupChanged = true` in
+  `ProcessBackup`'s catch, because their own `ProcessInventoryBackup`
+  had its `HasInventoryChanged` gate commented out (inventory stores
+  ran unconditionally every group backup, so the group-level retry
+  covered inventory too). Confluence's `ProcessInventoryBackup` keeps
+  that gate **active** (`if (!HasInventoryChanged) return;`) - a real
+  efficiency win normally, but it meant restoring only
+  `HasGroupChanged` would leave a failed inventory store never
+  retried: the group would re-attempt `StoreObject` next cycle, but
+  `ProcessInventoryBackup` would skip straight past its own store
+  because `HasInventoryChanged` was already cleared before the failed
+  attempt. Fixed both flags: `SceneObjectGroup.ProcessBackup`'s catch
+  now re-flags `HasGroupChanged = true` (matches Legion), and
+  `SceneObjectPartInventory.ProcessInventoryBackup` (which previously
+  had no catch at all around the store, just a `finally` to release
+  the read lock) now catches, ERROR-logs with prim UUID/name/item
+  count, restores `HasInventoryChanged = true`, and rethrows so the
+  enclosing `ProcessBackup` catch also re-flags the group.
+- PGSQL/SQLite backends left as follow-ups, matching Legion's own
+  documented scope decision (PGSQL has the identical unwrapped
+  DELETE+INSERT and the fix applies mechanically via
+  `NpgsqlTransaction`; SQLite is a structurally different ADO
+  DataSet/adapter-flush architecture) - Casperia's live grid runs
+  MySQL, so this is the backend that matters today.
+
+Build confirmed clean. Touches `OpenSim.Data.MySQL.dll`,
+`OpenSim.Region.Framework.dll`, and the `Robust`/`OpenSim`-hosted
+`SimulationDataService` inside `OpenSim.Services.SimulationService`.
+Not yet deployed - this is a persistence-layer change on a live grid
+with real data and deserves an explicit deploy+restart window, not a
+quiet hot-swap.
+
+### CONSOLE-GUARD-SWEEP (`f1221906bc`) - real multi-region console bug, fixed
+
+Legion's own audit describes the disease precisely: a non-shared
+(`INonSharedRegionModule`) region module registers a console command
+once per region instance; `CommandConsole` accumulates one delegate
+per region on the *same* global command name; one console invocation
+fires N times on an N-region simulator process. Casperia runs a real
+multi-region simulator (per `casperia-*` memory: GFC is a real 15th
+region among several named regions in one process), so this isn't a
+theoretical risk. Checked every handler Legion's own sweep flagged
+against Confluence's actual code, rather than assuming the disease
+carried over 1:1:
+
+- **`EventQueueGetModule.cs`** (`INonSharedRegionModule`, confirmed):
+  `HandleDebugEq`/`HandleShowEq` ("debug eq"/"show eq") register via
+  the same global `MainConsole.Instance.Commands.AddCommand` every
+  region instance shares, with zero scope guard. Fixed both with the
+  `ConsoleScene == null || ConsoleScene == m_scene` guard.
+- **`AttachmentsModule.cs`** (`INonSharedRegionModule`, confirmed):
+  `HandleDebugAttachmentsLog`/`HandleDebugAttachmentsStatus` ("debug
+  attachments log"/"status") go through `Scene.AddCommand`, which is
+  just a thin wrapper that computes `shared = module is
+  ISharedRegionModule` (false here) before calling the same global
+  registrar - traced this wrapper directly rather than assuming it
+  had its own scoping. Fixed both.
+- **`EstateManagementCommands.cs`** (companion to the confirmed-non-shared
+  `EstateManagementModule`): the four terrain/water console setters
+  (`set terrain texture/pbr/heights`, `set water height`) and `estate
+  show` all had the same gap. These setters already have an *unrelated*
+  optional x/y coordinate filter (lets an operator target specific
+  region coordinates grid-wide) - added the console-selection guard
+  *alongside* that filter, not in place of it, matching Legion's own
+  note that the two are orthogonal. Legion's "estate reload"/"estate
+  reload all" N²-reload finding from the same sweep doesn't apply -
+  no command by that name exists in Confluence's version of this file.
+
+Verified-safe-by-Legion's-own-sweep items (FlotsamAssetCache,
+ExperienceModule, RestartModule, etc.) were not independently
+re-audited here - out of scope for porting Legion's specific commit;
+a from-scratch sweep of every console command Confluence itself
+registers would be a separate, larger audit.
+
+Build confirmed clean. Touches `OpenSim.Region.ClientStack.LindenUDP.dll`
+(EventQueueGetModule lives under the Linden namespace but builds into
+this),`OpenSim.Region.CoreModules.dll`. Not yet deployed.
+
+### Search/Classifieds and DirectDelivery - confirmed already superseded, no porting needed
+
+Both clusters turned out to be real features Confluence has already
+built independently, more completely than Legion's own commits in
+this range:
+
+- **Search/Classifieds** (`8eb8ef99f2`, `bdcd5b54d0`, `b780726e45`,
+  `27e3147ec9`, `f281adde74`): Legion's commits wire `Dir*Query`
+  handlers into `BasicSearchModule.cs` and add `SearchClassifieds` to
+  the profiles layer. Confluence already has its own, more complete,
+  independently-built `ConfluenceSearchModule.cs` (670 lines) covering
+  `DirPlacesQuery`/`DirLandQuery`/`DirFindQuery`/`DirPopularQuery`/
+  `DirClassifiedQuery`/`EventInfoRequest`/`ClassifiedInfoRequest`,
+  backed by a genuine grid-wide `ISearchService`/`ISearchData` service
+  with dedicated MySQL/PGSQL/SQLite implementations (also used by the
+  WebUI's own "Land for Sale" page) - and `IUserProfilesService.SearchClassifieds`
+  already exists and is already wired in. SEARCH-DEDUPE's specific bug
+  (`OnMakeRootAgent` firing more than once per client without an
+  intervening child-agent transition, stacking duplicate handlers) is
+  structurally impossible in Confluence's version: it subscribes on
+  `OnNewClient` instead, which fires exactly once per `IClientAPI`
+  instance, not on every child->root transition - confirmed by reading
+  the subscribe/unsubscribe pair, not assumed from the different event
+  name alone.
+- **DirectDelivery** (`1f2dc3ba8d`, `2cabc43ac0`, `3f1296db1f`):
+  Legion's own commits describe themselves as "phase 1" and explicitly
+  defer "UuidGatherer deep/cross-grid gathering + copy-to-vault" as
+  future work. Confluence's `DirectDeliveryModule.cs` (418 lines,
+  region-side CAP module - architecturally different from Legion's
+  Robust-side connector/handler pair) already has a full merchant
+  listing CRUD API and content-addressed snapshot-based inventory
+  association (`MarketplaceInventoryOperations.SnapshotListingItem`)
+  that Legion's own commit messages describe as still-deferred there.
+  Different architecture, further along - not a porting target.
+
+### Deliberately not built - flagged for a real operator/scope decision, matching this project's established practice for live-grid-risk items
+
+- **Email inbound IMAP fetcher** (`f9ed5114ab`): a genuinely new,
+  self-contained 329-line capability (deliver external email to
+  in-world objects via an `email()` event) that doesn't exist in
+  Confluence at all - `EmailModule.cs` here is outbound-only. Not a
+  bug fix; requires an operator to actually want this and supply real
+  IMAP mailbox credentials via the new secrets `.ini`. Available to
+  build on request.
+- **`RemoteUserAccountServiceConnector.StoreUserAccount`'s hard
+  refusal stub** - covered in the previous entry; still flagged, still
+  not wired through (needs `AllowSetAccount=true`, a live-grid security
+  decision).
+- Terrain-gen cluster (`b8e2e2762c` and its `terrain-gen`/`GENVEG`
+  siblings): Legion's own history shows the Python generator tooling
+  was later extracted to an external `legion-tools` repo
+  (`c3f108b484`) - external tooling, not region-server code, out of
+  scope for this pass.
+
+**This closes the "sample to completion" pass.** Every cluster
+identified when the remaining ~115 commits were first triaged has now
+been checked against Confluence's actual current code: LAND/ESTATE
+audit (R1/R2/R3, fully sampled, ~16 real bugs fixed across two
+entries), DisplayNames (14 commits, fully sampled, 1 significant
+persistence bug + several smaller fixes), Search/Classifieds and
+DirectDelivery (confirmed already superseded), terrain-gen (confirmed
+out of scope, external tooling), PERSIST-1.1-TX (1 significant
+data-integrity fix), and CONSOLE-GUARD-SWEEP (1 real multi-region
+bug). Nothing from the original 115-commit set remains unsampled.
