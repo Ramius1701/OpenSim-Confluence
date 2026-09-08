@@ -294,7 +294,7 @@ namespace OpenSim.Services.Connectors
         {
         }
 
-        public bool SetDisplayName(UUID agentID, string displayName)
+        public bool SetDisplayName(UUID agentID, string displayName, bool resetting)
         {
             //m_log.DebugFormat("[ACCOUNTS CONNECTOR]: SetDisplayName {0}", agentID);
             Dictionary<string, object> sendData = new Dictionary<string, object>();
@@ -304,6 +304,11 @@ namespace OpenSim.Services.Connectors
 
             sendData["PrincipalID"] = agentID.ToString();
             sendData["DisplayName"] = displayName;
+            // A clear (resetting) must not bump NameChanged server-side, or the once-per-week
+            // throttle silently restarts from the clear instead of the last real set. Ported
+            // from Legion-Grid-Code's DISPLAYNAMES-C redesign (confirmed this wire dropped the
+            // clear/set distinction entirely before porting - Robust always re-stamped "now").
+            sendData["Resetting"] = resetting.ToString();
 
             return SendAndGetBoolReply(sendData);
         }
@@ -333,10 +338,45 @@ namespace OpenSim.Services.Connectors
                 sendData[kvp.Key] = kvp.Value.ToString();
             }
 
-            if (SendAndGetReply(sendData) != null)
-                return true;
-            else
+            // Inlined (rather than SendAndGetReply) so a failed store is diagnosable: reads
+            // legitimately return null (user not found), but a store returning false is worth
+            // a single WARN naming the URI and classifying the reply, rather than a silent
+            // false all the way back up the call chain. Success semantics are unchanged: a
+            // "result" account dictionary came back. Ported from Legion-Grid-Code (confirmed
+            // this store path had no such diagnostics here before porting).
+            string uri = m_ServerURI + "/accounts";
+            string reply;
+            try
+            {
+                reply = SynchronousRestFormsRequester.MakeRequest("POST", uri,
+                        ServerUtils.BuildQueryString(sendData), m_Auth);
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[ACCOUNTS CONNECTOR]: StoreUserAccount to {0} failed: exception: {1}", uri, e.Message);
                 return false;
+            }
+
+            if (string.IsNullOrEmpty(reply))
+            {
+                m_log.WarnFormat("[ACCOUNTS CONNECTOR]: StoreUserAccount to {0} failed: empty reply (is AllowSetAccount enabled on the UserAccountService?)", uri);
+                return false;
+            }
+
+            Dictionary<string, object> replyData = ServerUtils.ParseXmlResponse(reply);
+            string snippet = reply.Length > 200 ? reply.Substring(0, 200) : reply;
+            if (replyData == null)
+            {
+                m_log.WarnFormat("[ACCOUNTS CONNECTOR]: StoreUserAccount to {0} failed: unparseable reply: {1}", uri, snippet);
+                return false;
+            }
+            if (!replyData.ContainsKey("result") || replyData["result"] is not Dictionary<string, object>)
+            {
+                m_log.WarnFormat("[ACCOUNTS CONNECTOR]: StoreUserAccount to {0} failed: reply lacked a result account (AllowSetAccount gate?): {1}", uri, snippet);
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>

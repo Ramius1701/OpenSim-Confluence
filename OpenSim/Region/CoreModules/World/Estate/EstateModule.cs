@@ -220,7 +220,11 @@ namespace OpenSim.Region.CoreModules.World.Estate
                 if (s.RegionInfo.EstateSettings.EstateID != estateID)
                     continue;
 
-                ScenePresence p = scene.GetScenePresence(prey);
+                // Loop-variable bug: was looking up the target in the CALLER's scene instead of
+                // the loop's own sibling region (s), so a kick/teleport-home request silently
+                // no-op'd for every region except the one the command was issued from. Ported
+                // from Legion-Grid-Code (confirmed this exact bug here before porting).
+                ScenePresence p = s.GetScenePresence(prey);
                 if (p != null && !p.IsChildAgent && !p.IsDeleted && !p.IsInTransit)
                 {
                     if (kick)
@@ -259,12 +263,18 @@ namespace OpenSim.Region.CoreModules.World.Estate
                 if (s.RegionInfo.EstateSettings.EstateID != estateID)
                     continue;
 
-                scene.ForEachScenePresence(delegate(ScenePresence p)
+                // Same loop-variable bug as OnEstateTeleportOneUserHomeRequest above - was
+                // enumerating and teleporting from the CALLER's scene instead of the loop's own
+                // sibling region, so "teleport everyone home" silently no-op'd for every region
+                // except the one the command was issued from (plus a stray redundant
+                // scene.TeleportClientHome call that duplicated the real s.TeleportClientHome
+                // just below it). Ported from Legion-Grid-Code (confirmed both here before
+                // porting).
+                s.ForEachScenePresence(delegate(ScenePresence p)
                     {
                         if (p != null && !p.IsChildAgent && !p.IsDeleted && !p.IsInTransit)
                         {
                             p.ControllingClient.SendTeleportStart(16);
-                            scene.TeleportClientHome(p.ControllingClient.AgentId, client);
                             if (!s.TeleportClientHome(p.ControllingClient.AgentId, client))
                             {
                                 p.ControllingClient.Kick("You were teleported home by the region owner, but the TP failed - you have been logged out.");

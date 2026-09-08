@@ -507,15 +507,22 @@ namespace OpenSim.Services.UserAccountService
             return ret;
         }
 
-        public bool SetDisplayName(UUID agentID, string displayName)
+        public bool SetDisplayName(UUID agentID, string displayName, bool resetting)
         {
             var account = GetUserAccount(UUID.Zero, agentID);
 
-            if (account is null) 
+            if (account is null)
                 return false;
 
             account.DisplayName = displayName;
-            account.NameChanged = Utils.GetUnixTime();
+            // A clear (resetting) does not grant a free rename - it must not restart the
+            // once-per-week throttle window, so NameChanged is only re-stamped on a real set.
+            // Ported from Legion-Grid-Code's DISPLAYNAMES-C redesign (confirmed this method
+            // re-stamped NameChanged unconditionally, on both sets AND clears, before porting -
+            // this defeated the region-side clear-exemption fix as soon as the region's cached
+            // UserData was invalidated or the region restarted and re-fetched from here).
+            if (!resetting)
+                account.NameChanged = Utils.GetUnixTime();
 
             return StoreUserAccount(account);
         }

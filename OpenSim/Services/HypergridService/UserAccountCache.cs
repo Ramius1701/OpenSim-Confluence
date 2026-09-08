@@ -130,7 +130,7 @@ namespace OpenSim.Services.HypergridService
             return false;
         }
 
-        public bool SetDisplayName(UUID agentID, string displayName)
+        public bool SetDisplayName(UUID agentID, string displayName, bool resetting)
         {
             return false;
         }

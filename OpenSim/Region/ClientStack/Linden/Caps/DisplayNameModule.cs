@@ -171,7 +171,7 @@ namespace OpenSim.Region.ClientStack.LindenCaps
                     return;
                 }
 
-                bool success = m_Scene.UserManagementModule.SetDisplayName(agent_id, newName);
+                bool success = m_Scene.UserManagementModule.SetDisplayName(agent_id, newName, resetting);
 
                 if (success)
                 {

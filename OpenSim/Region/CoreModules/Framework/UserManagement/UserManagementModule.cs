@@ -1357,9 +1357,9 @@ namespace OpenSim.Region.CoreModules.Framework.UserManagement
             return true;
         }
 
-        public bool SetDisplayName(UUID agentID, string displayName)
+        public bool SetDisplayName(UUID agentID, string displayName, bool resetting)
         {
-            return m_userAccountService.SetDisplayName(agentID, displayName);
+            return m_userAccountService.SetDisplayName(agentID, displayName, resetting);
         }
 
         #endregion IUserManagement

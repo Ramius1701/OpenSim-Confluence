@@ -1971,18 +1971,32 @@ namespace OpenSim.Region.CoreModules.World.Estate
                 return;
             }
 
+            // Each of these three early-exit branches below was missing its return - the code
+            // fell through and kept running regardless, including one path (scriptModule ==
+            // null) that immediately dereferenced the very reference just confirmed null (a
+            // guaranteed NRE crash). Ported from Legion-Grid-Code (confirmed this exact
+            // fall-through here before porting).
             if (reportType != 0)
+            {
                 remoteClient.SendLandStatReply(reportType, requestFlags, 0, new LandStatReportItem[0]);
+                return;
+            }
 
             IScriptModule scriptModule = Scene.RequestModuleInterface<IScriptModule>();
             if (scriptModule == null)
+            {
                 remoteClient.SendLandStatReply(reportType, requestFlags, 0, new LandStatReportItem[0]);
+                return;
+            }
 
             ICollection<ScriptTopStatsData>  sceneData = scriptModule.GetTopObjectStats(
                     0.001f, 1024, out float totaltime, out float totalmemory);
 
             if(sceneData == null || sceneData.Count == 0)
+            {
                 remoteClient.SendLandStatReply(0, requestFlags, 0, new LandStatReportItem[0]);
+                return;
+            }
 
             IUrlModule urlModule = Scene.RequestModuleInterface<IUrlModule>();
 
@@ -2093,8 +2107,15 @@ namespace OpenSim.Region.CoreModules.World.Estate
 
         private void LandCollidersStatRequest(int parcelID, uint requestFlags, string filter, IClientAPI remoteClient)
         {
+            // Missing return meant the denial reply was sent but the code kept going and sent
+            // the REAL Top Colliders data right after it anyway - the permission check was
+            // bypassed in practice. Ported from Legion-Grid-Code (confirmed this exact
+            // fall-through here before porting).
             if (!Scene.Permissions.CanIssueEstateCommand(remoteClient.AgentId, false))
+            {
                 remoteClient.SendLandStatReply(1, requestFlags, 0, new LandStatReportItem[0]);
+                return;
+            }
 
             Dictionary<uint, float> sceneData = Scene.PhysicsScene.GetTopColliders();
 

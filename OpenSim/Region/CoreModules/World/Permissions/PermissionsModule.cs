@@ -1197,7 +1197,12 @@ namespace OpenSim.Region.CoreModules.World.Permissions
             DebugPermissionInformation(MethodInfo.GetCurrentMethod().Name);
             if (m_bypassPermissions) return m_bypassPermissionsValue;
 
-            return GenericParcelOwnerPermission(user, parcel, 0,true);
+            // groupPowers=0 let ANY group member with ANY nonzero power reclaim
+            // (IsGroupMember treats powers==0 as "any power passes"), not just
+            // members actually granted Land Release. Ported from Legion-Grid-Code
+            // (confirmed this exact bug here before porting; CanAbandonParcel just
+            // above already does this correctly).
+            return GenericParcelOwnerPermission(user, parcel, (ulong)GroupPowers.LandRelease, true);
         }
 
         private bool CanDeedParcel(UUID user, ILandObject parcel)

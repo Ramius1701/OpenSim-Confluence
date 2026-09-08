@@ -110,7 +110,14 @@ namespace OpenSim.Server.Handlers.UserAccounts
                         if (m_AllowSetAccount)
                             return StoreAccount(request);
                         else
+                        {
+                            // Previously a silent rejection: the region saw only a generic
+                            // store failure with no way to discover the cause. Ported from
+                            // Legion-Grid-Code (confirmed this rejection path was silent here
+                            // before porting).
+                            m_log.Warn("[USER SERVICE HANDLER]: setaccount rejected because AllowSetAccount is false. Set AllowSetAccount = true in the UserAccountService config to permit remote account stores.");
                             return FailureResult();
+                        }
                 }
 
                 m_log.DebugFormat("[USER SERVICE HANDLER]: unknown method request: {0}", method);
@@ -271,8 +278,14 @@ namespace OpenSim.Server.Handlers.UserAccounts
 
             if (!request.TryGetValue("DisplayName", out otmp))
                 return FailureResult();
-            
-            if (!m_UserAccountService.SetDisplayName(principalID, otmp.ToString()))
+            string displayName = otmp.ToString();
+
+            // Older simulator builds won't send "Resetting" - default to false (bump
+            // NameChanged), the prior unconditional behavior, so a mixed-version grid
+            // degrades safely rather than silently misbehaving.
+            bool resetting = request.TryGetValue("Resetting", out otmp) && bool.TryParse(otmp.ToString(), out bool r) && r;
+
+            if (!m_UserAccountService.SetDisplayName(principalID, displayName, resetting))
                 return FailureResult();
 
             Dictionary<string, object> result = new Dictionary<string, object>();
@@ -321,6 +334,14 @@ namespace OpenSim.Server.Handlers.UserAccounts
 
             if (request.TryGetValue("UserTitle", out otmp))
                 existingAccount.UserTitle = otmp.ToString();
+
+            // UserCountry is present in UserAccount.ToKeyValuePairs (and read remotely by
+            // osGetAgentCountry/osGetAgentCountryByUUID) but was missing from this apply
+            // whitelist, so a setaccount round-trip would silently drop it. Ported from
+            // Legion-Grid-Code (a drive-by fix noted alongside their DisplayName whitelist
+            // fix; confirmed the same field-drop here before porting).
+            if (request.TryGetValue("UserCountry", out otmp))
+                existingAccount.UserCountry = otmp.ToString();
 
             if (!m_UserAccountService.StoreUserAccount(existingAccount))
             {

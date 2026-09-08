@@ -248,9 +248,9 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.UserAccounts
             m_Cache.Invalidate(userID);
         }
 
-        public bool SetDisplayName(UUID agentID, string displayName)
+        public bool SetDisplayName(UUID agentID, string displayName, bool resetting)
         {
-            return UserAccountService.SetDisplayName(agentID, displayName);
+            return UserAccountService.SetDisplayName(agentID, displayName, resetting);
         }
 
         #endregion

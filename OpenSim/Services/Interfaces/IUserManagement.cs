@@ -93,6 +93,6 @@ namespace OpenSim.Framework
         bool RemoveUser(UUID uuid);
         bool IsLocalGridUser(UUID uuid);
 
-        bool SetDisplayName(UUID agentID, string displayName);
+        bool SetDisplayName(UUID agentID, string displayName, bool resetting);
     }
 }

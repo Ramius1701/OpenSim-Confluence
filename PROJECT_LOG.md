@@ -21468,3 +21468,175 @@ Touches `OpenSim.Region.CoreModules.dll` (crossing fix) and
 `OpenSim.Region.ClientStack.LindenCaps.dll` (DisplayNames fix). Not
 yet deployed. **~110 commits still genuinely unsampled** in this
 branch's remaining clusters - resume there if this continues.
+
+---
+
+## LAND/ESTATE audit R2+R3, and the full DisplayNames cluster,
+## sampled to completion - 16 more real bugs found and fixed
+## (2026-09-08)
+
+Continuing the "sample to completion" pass with no stopping between
+findings, per explicit instruction. Covered the rest of the LAND/ESTATE
+audit series and the entire DisplayNames cluster (14 commits) from
+Legion-Grid-Code's remaining ~115 uncharacterized `slua-tier2-tables`
+commits. Every fix below was confirmed present in Confluence's own
+current code before porting - several turned out to need a different
+shape here because Confluence's architecture already diverged from
+Legion's starting point.
+
+### LAND/ESTATE audit R2 (`624c35a1e5`) - 4 fixes, `PermissionsModule.cs` / `LandManagementModule.cs` / `LandObject.cs`
+
+- **`CanReclaimParcel` group-power bypass.** Was calling
+  `GenericParcelOwnerPermission(user, parcel, 0, true)` - passing
+  `groupPowers=0`. Confirmed via Confluence's own `IsGroupMember`:
+  `powers==0` is special-cased to mean "any member with any nonzero
+  power passes," not "no group power required." Any group member with
+  *any* power could reclaim any parcel owned by that group, not just
+  members actually granted Land Release. Fixed to
+  `(ulong)GroupPowers.LandRelease` - `CanAbandonParcel` right above it
+  already did this correctly, confirming the fix.
+- **`CanReleaseParcel` estate-manager allowance** - not applicable.
+  Legion's fix targets a method that doesn't exist under this or any
+  equivalent name in Confluence; the closest analogues
+  (`CanAbandonParcel`/`CanReclaimParcel`) already have their own
+  correct estate-manager handling.
+- **`SetParcelOtherCleanTime`** had two gaps: no root-agent guard
+  (LocalIDs collide grid-wide - a stale neighbor-region circuit could
+  set another region's parcel clean time), and gated on
+  `GroupPowers.LandOptions` instead of the viewer's actual permission
+  set for this field (`llfloaterland.cpp`: any of
+  `ReturnGroupOwned`/`ReturnGroupSet`/`ReturnNonGroup`, the same set
+  `CanReturnObjects` already uses). Fixed both.
+- **`AllowTerraform`/`MaturePublish` flag-gating relocated** in
+  `LandObject.cs`'s `UpdateLandProperties`: `AllowTerraform` was
+  folded into the broader `LandOptions` gate but the viewer actually
+  requires `GP_LAND_ALLOW_EDIT_LAND` (`GroupPowers.LandEdit`) - moved
+  to its own gate. `MaturePublish` was folded into the `FindPlaces`
+  gate but the viewer requires `GP_LAND_CHANGE_IDENTITY` (the same
+  power as name/description/snapshot) - moved there instead.
+
+### LAND-XREGION R3 (`66821841b9`, `9efe2865c3`, `22951b3742`) - root-agent/actor-residency guards on 12 handlers, `LandManagementModule.cs`
+
+Parcel LocalIDs collide grid-wide (every full-region parcel is
+commonly LocalID 1) and region-relative coords collide the same way -
+a stale circuit left over after a teleport (agent is only a *child*
+presence in the handling region, root elsewhere) could otherwise
+target the wrong region's colliding-LocalID parcel. Added the K1
+guard (`TryGetScenePresence` + reject on `IsChildAgent`, WARN naming
+region/LocalID/agent) to every remaining write handler with none:
+`ClientParcelBuyPass` (**money-moving** - charges the buyer and pays
+the parcel owner before this fix could even resolve the *right*
+region's parcel), `ClientOnParcelAccessListUpdateRequest`,
+`ClientOnParcelDivideRequest`, `ClientOnParcelJoinRequest`,
+`ClientOnParcelSelectObjects`, `ClientOnParcelObjectOwnerRequest`,
+`ClientOnParcelAbandonRequest`, `ClientOnParcelReclaim`,
+`ClientOnParcelDeedToGroup`, `ReturnObjectsInParcel` (WARN-level), plus
+a DEBUG-level guard on the already-god-gated
+`ClientOnParcelGodForceOwner` (gods teleport cross-region constantly,
+making a stale circuit the likely real trigger). Belt-and-suspenders
+follow-up: `ClientOnParcelEjectUser`/`ClientOnParcelFreezeUser`
+already required a co-located *target*, bounding exposure, but never
+checked the *actor's* own residency - added that too.
+
+### DisplayNames cluster (14 commits) - sampled to completion
+
+Confluence's DisplayNames implementation is architecturally its own
+design (a dedicated `DisplayNameModule.cs` cap module + a
+`GetDisplayNames` cap in `BunchOfCaps.cs`), independently convergent
+with Legion's in places and already ahead of Legion's starting point in
+others (Pass A's 3-backend UserAccount migrations already existed here,
+including further-than-Legion utf8mb4/emoji support; Pass B's
+EventQueue `SetDisplayNameReply` and Pass B2's live `DisplayNameUpdate`
+broadcast already existed; USERNAME-1's SL-convention lowercase
+`first.last` already existed via `UserData.LowerUsername`). Checked
+every remaining commit against Confluence's actual code rather than
+assuming the port was needed:
+
+- **Real bug found and fixed - the throttle-exemption fix from the
+  last entry didn't survive a cache invalidation or region restart.**
+  Tracing DISPLAYNAMES-C's "scoped setdisplayname wire" fix led to a
+  genuine gap in Confluence's *own* independently-built persistence
+  path: `IUserAccountService.SetDisplayName(UUID, string)` on the
+  Robust side unconditionally re-stamped `NameChanged = Utils.GetUnixTime()`
+  on *every* call, including clears - so the "clearing doesn't restart
+  the 7-day throttle" fix from the previous entry only held in the
+  region's in-memory `UserData` cache until that cache was invalidated
+  or the region restarted, at which point a fresh fetch from Robust
+  would show the clear's own timestamp and silently re-arm the
+  throttle. Fixed by threading a `bool resetting` parameter through the
+  entire chain end to end and confirming each link compiles against it:
+  `IUserAccountService`/`IUserManagement` interfaces,
+  `UserManagementModule`, `LocalUserAccountServiceConnector`,
+  `UserAccountServicesConnector` (the wire connector `Remote` inherits
+  from - added a `Resetting` form field), `UserAccountService` (Robust,
+  now conditional on `!resetting`), `UserAccountServerPostHandler`
+  (parses `Resetting`, defaults to `false` - i.e. old behavior - if a
+  mixed-version simulator omits it), `UserAccountCache` (HG stub),
+  and the `DisplayNameModule.cs` call site.
+- **FIX-1 (poisoned cache on a failed store) - not applicable.**
+  Confluence's `DisplayNameModule.cs` only mutates its local `userData`
+  cache *after* confirming `success == true` from the store call, so
+  there's no premature-mutation-then-rollback needed by construction -
+  cleaner than Legion's fetch-mutate-then-maybe-rollback shape.
+- **FIX-2 (log the silent `AllowSetAccount=false` rejection) -
+  applied.** Confluence's `setaccount` case had the same silent
+  rejection; added the same WARN.
+- **FIX-5's UserCountry drive-by - applied; the DisplayName/NameChanged
+  part is not applicable** (Confluence's display names bypass the
+  general `setaccount` whitelist entirely via the scoped wire above).
+  But the same drive-by finding held independently: `UserCountry` is a
+  real field (read by `osGetAgentCountry`/`osGetAgentCountryByUUID` in
+  `OSSL_Api.cs`, present in `UserAccount.ToKeyValuePairs`) that was
+  simply missing from `StoreAccount`'s apply-whitelist in
+  `UserAccountServerPostHandler.cs` - a `setaccount` round-trip would
+  silently drop it. Added.
+- **FIX-6, diagnosability half - applied.** `UserAccountServicesConnector.StoreUserAccount`
+  (the base the `Remote` connector inherits) returned a bare
+  true/false from `SendAndGetReply` with zero logging on failure -
+  replaced with the same inlined wire call + classified WARN logging
+  (exception / empty reply / unparseable reply / reply-without-a-result-account)
+  already applied to the new `SetDisplayName` wire, so a future failure
+  here is diagnosable instead of a silent `false`.
+- **FIX-6, connector-delegates-through half - deliberately NOT
+  applied, flagged instead.** Confluence's own
+  `RemoteUserAccountServiceConnector.StoreUserAccount` is a hard stub
+  (`return false;`, comment: "This remote connector refuses to serve
+  this method") - it never even attempts the wire call. Grepping every
+  caller of `StoreUserAccount` found one real, live, region-side
+  consumer on a path this stub would silently break on any
+  split-Robust deployment: `RegionWebModule.ApplyDonorPerk` (assigns
+  the Supporter membership badge + delivers a perk item on a real
+  donation) calls `scene.UserAccountService.StoreUserAccount(account)`
+  to set the badge, wrapped in its own try/catch so the failure is
+  swallowed silently. If Casperia's live grid runs a split Robust
+  process (ServiceLauncher-style, matching this project's own
+  established architecture), **this donor-perk membership badge write
+  may be silently no-op'ing today.** Not fixed here: making the
+  connector actually delegate through only *works* if Robust's
+  `AllowSetAccount=true`, a broad remote-account-write capability - the
+  same category of change (`AllowSetAccount`, `DenyAnonymous`/`DenyMinors`)
+  this project has consistently held back from flipping blind on a live
+  grid with real currency and unknown current config. Needs an explicit
+  operator decision, not a silent code change; the DisplayNames scoped
+  wire above is the model for doing this narrowly if/when that decision
+  is made for `StoreUserAccount` generally.
+- **CLEAR-1** (clearing bypasses the once-per-week throttle) - already
+  fixed in the previous entry.
+- **USERNAME-1** (SL-convention lowercase `first.last`) - already
+  correct; `UserData.Username`/`LowerUsername` already produce it.
+- **Pass A/B/B2/DISPLAYNAMES-C** (persist on UserAccount across 3
+  backends; EventQueue reply; live broadcast; `GetDisplayNames` cap) -
+  all already present in Confluence's own design, confirmed by direct
+  read rather than assumed from the earlier fork-review pass.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)) after every batch (4
+separate `dotnet build -c Release` checkpoints across this entry).
+Touches `OpenSim.Region.CoreModules.dll`,
+`OpenSim.Region.ClientStack.LindenCaps.dll`, `Robust.dll`
+(`UserAccountService`, `UserAccountServerPostHandler`), and
+`OpenSim.Services.Connectors`/`OpenSim.Region.CoreModules` service-
+connector assemblies. Not yet deployed. LAND/ESTATE audit series is
+now fully sampled; DisplayNames cluster is now fully sampled. Remaining
+unsampled clusters: Search/Classifieds, DirectDelivery, terrain-gen,
+persistence (`PERSIST-1.1-TX`), and misc (`CONSOLE-GUARD-SWEEP`, Email
+IMAP fetcher) - resuming there next.

@@ -929,7 +929,17 @@ namespace OpenSim.Region.Framework.Scenes
             {
                 EstateSettings es = estateDataService.LoadEstateSettings(RegionInfo.RegionID, false);
                 if (es == null)
-                    m_log.Error($"[SCENE]: Region {Name} failed to load estate settings. Using defaults");
+                {
+                    // Do NOT null RegionInfo.EstateSettings - every later
+                    // IsEstateManagerOrOwner/flag check would NRE, effectively bricking the
+                    // region on the very next permission check. The log message here always
+                    // claimed "Using defaults" but nothing actually loaded any - actually load
+                    // real defaults via the sanctioned create path instead. Ported from
+                    // Legion-Grid-Code (confirmed this exact unconditional-null-assign bug here
+                    // before porting).
+                    m_log.Warn($"[SCENE]: Region {Name} failed to load estate settings; creating/loading defaults");
+                    es = estateDataService.LoadEstateSettings(RegionInfo.RegionID, true);
+                }
                 RegionInfo.EstateSettings = es;
             }
 
@@ -6041,7 +6051,14 @@ Environment.Exit(1);
                 bool parcelEnvOvr = RegionInfo.EstateSettings.AllowEnvironmentOverride;
                 EstateSettings es = estateDataService.LoadEstateSettings(RegionInfo.RegionID, false);
                 if (es == null)
-                    m_log.Error($"[SCENE]: Region {RegionInfo.RegionName} failed to reload estate settings. Using defaults");
+                {
+                    // A reload must never blank good in-memory settings on a transient miss -
+                    // the old unconditional assign below would NRE immediately on the very next
+                    // line (parcelEnvOvr check), not just in some later caller. Ported from
+                    // Legion-Grid-Code (confirmed this exact bug here before porting).
+                    m_log.Warn($"[SCENE]: Region {RegionInfo.RegionName} failed to reload estate settings; keeping current in-memory settings");
+                    return;
+                }
                 RegionInfo.EstateSettings = es;
                 if(parcelEnvOvr && !RegionInfo.EstateSettings.AllowEnvironmentOverride)
                     ClearAllParcelEnvironments();

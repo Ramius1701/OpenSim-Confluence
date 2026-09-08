@@ -10813,7 +10813,28 @@ namespace OpenSim.Region.ClientStack.LindenUDP
                 UserLookAt = parcelPropertiesPacket.ParcelData.UserLookAt
             };
 
-            c.OnParcelPropertiesUpdateRequest?.Invoke(args, parcelPropertiesPacket.ParcelData.LocalID, c);
+            // The UDP ParcelPropertiesUpdate packet has NO fields for SeeAVs / AnyAVSounds /
+            // GroupAVSounds, so leaving them at LandUpdateArgs' default (false) would silently
+            // disable "See Avatars" + AV sounds on any UDP-path save. Preserve the parcel's
+            // current values instead (mirroring how the newer CAP-based update path already
+            // defaults these to true when its own keys are absent). Ported from
+            // Legion-Grid-Code (real gap, confirmed present here before porting).
+            int localID = parcelPropertiesPacket.ParcelData.LocalID;
+            ILandObject curr = c.m_scene.LandChannel.GetLandObject(localID);
+            if (curr is not null && curr.LandData is not null)
+            {
+                args.SeeAVs = curr.LandData.SeeAVs;
+                args.AnyAVSounds = curr.LandData.AnyAVSounds;
+                args.GroupAVSounds = curr.LandData.GroupAVSounds;
+            }
+            else
+            {
+                args.SeeAVs = true;
+                args.AnyAVSounds = true;
+                args.GroupAVSounds = true;
+            }
+
+            c.OnParcelPropertiesUpdateRequest?.Invoke(args, localID, c);
         }
 
         private static void HandleParcelSelectObjects(LLClientView c, Packet Pack)
@@ -11111,10 +11132,20 @@ namespace OpenSim.Region.ClientStack.LindenUDP
                     }
                     return;
                 case "colliders":
-                    c.OnLandStatRequest?.Invoke(0, 1, 0, "", c);
+                    // Estate-manager-only report, ported guard from Legion-Grid-Code (confirmed
+                    // this case had no permission check here before porting - any resident
+                    // could trigger the Top Colliders estate report).
+                    if (c.m_scene.Permissions.CanIssueEstateCommand(c.m_agentId, false))
+                        c.OnLandStatRequest?.Invoke(0, 1, 0, "", c);
+                    else
+                        m_log.DebugFormat("[LLCLIENTVIEW]: Denying Top Colliders estate report to non-estate agent {0}", c.m_agentId);
                     return;
                 case "scripts":
-                    c.OnLandStatRequest?.Invoke(0, 0, 0, "", c);
+                    // Same as "colliders" above - Top Scripts is an estate-manager-only report.
+                    if (c.m_scene.Permissions.CanIssueEstateCommand(c.m_agentId, false))
+                        c.OnLandStatRequest?.Invoke(0, 0, 0, "", c);
+                    else
+                        m_log.DebugFormat("[LLCLIENTVIEW]: Denying Top Scripts estate report to non-estate agent {0}", c.m_agentId);
                     return;
                 case "terrain":
                     if (c.m_scene.Permissions.CanIssueEstateCommand(c.m_agentId, false))

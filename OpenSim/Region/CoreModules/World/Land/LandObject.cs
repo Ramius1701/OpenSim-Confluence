@@ -60,7 +60,16 @@ namespace OpenSim.Region.CoreModules.World.Land
         protected readonly RegionInfo m_regionInfo;
         protected readonly RegionSettings m_regionSettings;
         protected readonly ScenePermissions m_scenePermissions;
-        protected readonly EstateSettings m_estateSettings;
+
+        // Read the region's CURRENT estate settings live rather than a reference captured at
+        // construction. ReloadEstateData()/the 'estate reload' console command/in-world estate
+        // changes REPLACE RegionInfo.EstateSettings with a new object, so a captured field
+        // reference goes stale - e.g. a manager removed via reload stayed exempt from parcel
+        // bans (IsEstateManagerOrOwner checks below read the old object) until a full region
+        // restart rebuilt every LandObject. m_regionInfo itself is stable; only its
+        // EstateSettings property is swapped. Ported from Legion-Grid-Code (confirmed the
+        // identical stale-reference bug here before porting).
+        protected EstateSettings m_estateSettings => m_regionInfo?.EstateSettings;
 
         protected readonly List<SceneObjectGroup> primsOverMe = new();
         private readonly ExpiringCacheOS<uint, UUID> m_listTransactions = new(30000);
@@ -330,7 +339,6 @@ namespace OpenSim.Region.CoreModules.World.Land
 
             m_regionInfo = scene.RegionInfo;
             m_regionSettings = scene.RegionInfo.RegionSettings;
-            m_estateSettings = m_regionInfo.EstateSettings;
 
             m_regionSizeX = (int)m_regionInfo.RegionSizeX;
             m_regionSizeY = (int)m_regionInfo.RegionSizeY;
@@ -352,7 +360,6 @@ namespace OpenSim.Region.CoreModules.World.Land
                 m_scenePermissions = scene.Permissions;
                 m_regionInfo = scene.RegionInfo;
                 m_regionSettings = scene.RegionInfo.RegionSettings;
-                m_estateSettings = m_regionInfo.EstateSettings;
 
                 m_regionSizeX = (int)m_regionInfo.RegionSizeX;
                 m_regionSizeY = (int)m_regionInfo.RegionSizeY;
@@ -543,7 +550,6 @@ namespace OpenSim.Region.CoreModules.World.Land
             if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId, this, GroupPowers.LandOptions, false))
             {
                 allowedDelta |= (uint)(ParcelFlags.AllowLandmark |
-                        ParcelFlags.AllowTerraform |
                         ParcelFlags.AllowDamage |
                         ParcelFlags.CreateObjects |
                         ParcelFlags.RestrictPushObject |
@@ -556,6 +562,16 @@ namespace OpenSim.Region.CoreModules.World.Land
                 newData.SeeAVs = args.SeeAVs;
                 newData.AnyAVSounds = args.AnyAVSounds;
                 newData.GroupAVSounds = args.GroupAVSounds;
+            }
+
+            // The viewer gates "Allow Terraform" on GP_LAND_ALLOW_EDIT_LAND
+            // (roles_constants.h), a distinct group power from the rest of the
+            // LandOptions-gated flags above - it was folded into LandOptions here,
+            // which is broader than what the viewer actually grants. Ported from
+            // Legion-Grid-Code (confirmed this exact gate here before porting).
+            if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId, this, GroupPowers.LandEdit, false))
+            {
+                allowedDelta |= (uint)ParcelFlags.AllowTerraform;
             }
 
             if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId, this, GroupPowers.LandSetSale, true))
@@ -587,9 +603,13 @@ namespace OpenSim.Region.CoreModules.World.Land
             {
                 newData.Category = args.Category;
 
+                // Do NOT OR in (1 << 23) here - that bit is ParcelFlags.LindenHome (0x800000),
+                // which the client must never set/clear. Including it let any FindPlaces
+                // (search/options) edit silently clear LindenHome, since owner-editable flags
+                // are taken entirely from the incoming word. Ported from Legion-Grid-Code
+                // (confirmed this exact bug here before porting).
                 allowedDelta |= (uint)(ParcelFlags.ShowDirectory |
-                        ParcelFlags.AllowPublish |
-                        ParcelFlags.MaturePublish) | (uint)(1 << 23);
+                        ParcelFlags.AllowPublish);
             }
 
             if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId,this, GroupPowers.LandChangeIdentity, false))
@@ -597,6 +617,13 @@ namespace OpenSim.Region.CoreModules.World.Land
                 newData.Description = args.Desc;
                 newData.Name = args.Name;
                 newData.SnapshotID = args.SnapshotID;
+
+                // The viewer gates the parcel's maturity rating (MaturePublish) on
+                // GP_LAND_CHANGE_IDENTITY (roles_constants.h), the same power as
+                // name/description/snapshot, not GP_LAND_FIND_PLACES - it was
+                // folded into the FindPlaces block above. Ported from
+                // Legion-Grid-Code (confirmed this exact gate here before porting).
+                allowedDelta |= (uint)ParcelFlags.MaturePublish;
             }
 
             if (m_scenePermissions.CanEditParcelProperties(remote_client.AgentId,this, GroupPowers.SetLandingPoint, false))

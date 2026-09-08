@@ -567,6 +567,20 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         public void ClientParcelBuyPass(IClientAPI remote_client, UUID targetID, int landLocalID)
         {
+            // Parcel LocalIDs collide grid-wide (every full-region parcel is LocalID 1),
+            // and this handler charges the buyer and pays the parcel owner - a stale/
+            // neighbor circuit could charge for and grant a pass against the WRONG
+            // region's colliding-LocalID parcel. Require a ROOT presence in THIS scene
+            // before any land resolution or money movement. Ported from Legion-Grid-Code
+            // (confirmed this money-moving handler had no such guard here before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence buyerSp) || buyerSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelBuyPass for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    landLocalID, m_scene.Name, remote_client.AgentId);
+                return;
+            }
+
             ILandObject land;
             lock (m_landList)
             {
@@ -696,6 +710,18 @@ namespace OpenSim.Region.CoreModules.World.Land
                 uint flags, UUID transactionID, int landLocalID, List<LandAccessEntry> entries,
                 IClientAPI remote_client)
         {
+            // LocalIDs collide grid-wide; require a ROOT presence in THIS scene before
+            // touching another region's colliding-LocalID parcel access list. Ported
+            // from Legion-Grid-Code (confirmed this handler had no such guard here
+            // before porting).
+            if (!m_scene.TryGetScenePresence(agentID, out ScenePresence alSp) || alSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelAccessListUpdateRequest for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    landLocalID, m_scene.Name, agentID);
+                return;
+            }
+
             // Todo: update the actual AccessList enum!
 
             if ((flags & (uint)0x1Bu) == 0)
@@ -1646,6 +1672,19 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         public void ClientOnParcelPropertiesUpdateRequest(LandUpdateArgs args, int localID, IClientAPI remote_client)
         {
+            // Parcel LocalIDs are region-local and collide across regions (every full-region
+            // parcel is commonly the same small int), so a stale viewer circuit held after a
+            // teleport could otherwise edit a NEIGHBOR region's parcel under the same LocalID.
+            // Require a ROOT presence in THIS scene. Ported from Legion-Grid-Code (confirmed
+            // this handler had no such guard here before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence sp) || sp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting UDP ParcelPropertiesUpdate for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    localID, m_scene.Name, remote_client.AgentId);
+                return;
+            }
+
             ILandObject land;
             lock (m_landList)
             {
@@ -1659,22 +1698,73 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         public void ClientOnParcelDivideRequest(int west, int south, int east, int north, IClientAPI remote_client)
         {
+            // Coords are region-relative, same misdirection risk as LocalID collisions -
+            // a stale/neighbor circuit could otherwise subdivide this region's parcel.
+            // Ported from Legion-Grid-Code (confirmed this handler had no such guard
+            // here before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence divSp) || divSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelDivideRequest in {0}: agent {1} is not a root presence here (stale circuit after teleport?).",
+                    m_scene.Name, remote_client.AgentId);
+                return;
+            }
             Subdivide(west, south, east, north, remote_client.AgentId);
         }
 
         public void ClientOnParcelJoinRequest(int west, int south, int east, int north, IClientAPI remote_client)
         {
+            // Same region-relative-coord misdirection risk as Divide above. Ported from
+            // Legion-Grid-Code (confirmed this handler had no such guard here before
+            // porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence joinSp) || joinSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelJoinRequest in {0}: agent {1} is not a root presence here (stale circuit after teleport?).",
+                    m_scene.Name, remote_client.AgentId);
+                return;
+            }
             Join(west, south, east, north, remote_client.AgentId);
         }
 
         public void ClientOnParcelSelectObjects(int local_id, int request_type,
                                                 List<UUID> returnIDs, IClientAPI remote_client)
         {
-            m_landList[local_id].SendForceObjectSelect(local_id, request_type, returnIDs, remote_client);
+            // Raw m_landList[local_id] threw KeyNotFoundException on a stale or foreign
+            // LocalID (parcel LocalIDs collide grid-wide). Resolve safely and drop misses.
+            // Ported from Legion-Grid-Code (confirmed this exact crash risk here before
+            // porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence selSp) || selSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelSelectObjects for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    local_id, m_scene.Name, remote_client.AgentId);
+                return;
+            }
+
+            ILandObject land;
+            lock (m_landList)
+            {
+                if (!m_landList.TryGetValue(local_id, out land) || land is null)
+                    return;
+            }
+
+            land.SendForceObjectSelect(local_id, request_type, returnIDs, remote_client);
         }
 
         public void ClientOnParcelObjectOwnerRequest(int local_id, IClientAPI remote_client)
         {
+            // LocalIDs collide grid-wide; require a ROOT presence in THIS scene. Ported
+            // from Legion-Grid-Code (confirmed this handler had no such guard here
+            // before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence ownReqSp) || ownReqSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelObjectOwnerRequest for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    local_id, m_scene.Name, remote_client.AgentId);
+                return;
+            }
+
             ILandObject land;
             lock (m_landList)
             {
@@ -1690,6 +1780,17 @@ namespace OpenSim.Region.CoreModules.World.Land
         {
             if (!m_scene.Permissions.IsGod(remote_client.AgentId))
                 return;
+
+            // Already god-gated, but gods teleport cross-region constantly, making a
+            // stale circuit the likely real trigger here. Ported from Legion-Grid-Code
+            // (confirmed this handler had no such guard here before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence godSp) || godSp.IsChildAgent)
+            {
+                m_log.DebugFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelGodForceOwner for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    local_id, m_scene.Name, remote_client.AgentId);
+                return;
+            }
 
             ILandObject land;
             lock (m_landList)
@@ -1709,6 +1810,17 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         public void ClientOnParcelAbandonRequest(int local_id, IClientAPI remote_client)
         {
+            // LocalIDs collide grid-wide; require a ROOT presence in THIS scene. Ported
+            // from Legion-Grid-Code (confirmed this handler had no such guard here
+            // before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence abSp) || abSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelAbandonRequest for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    local_id, m_scene.Name, remote_client.AgentId);
+                return;
+            }
+
             ILandObject land;
             lock (m_landList)
             {
@@ -1731,6 +1843,17 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         public void ClientOnParcelReclaim(int local_id, IClientAPI remote_client)
         {
+            // LocalIDs collide grid-wide; require a ROOT presence in THIS scene. Ported
+            // from Legion-Grid-Code (confirmed this handler had no such guard here
+            // before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence rcSp) || rcSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelReclaim for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    local_id, m_scene.Name, remote_client.AgentId);
+                return;
+            }
+
             ILandObject land;
             lock (m_landList)
             {
@@ -1813,6 +1936,17 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         void ClientOnParcelDeedToGroup(int parcelLocalID, UUID groupID, IClientAPI remote_client)
         {
+            // LocalIDs collide grid-wide; require a ROOT presence in THIS scene. Ported
+            // from Legion-Grid-Code (confirmed this handler had no such guard here
+            // before porting).
+            if (!m_scene.TryGetScenePresence(remote_client.AgentId, out ScenePresence deedSp) || deedSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelDeedToGroup for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    parcelLocalID, m_scene.Name, remote_client.AgentId);
+                return;
+            }
+
             ILandObject land;
             lock (m_landList)
             {
@@ -1910,6 +2044,18 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         public void ReturnObjectsInParcel(int localID, uint returnType, UUID[] agentIDs, UUID[] taskIDs, IClientAPI remoteClient)
         {
+            // LocalIDs collide grid-wide; require a ROOT presence in THIS scene before
+            // returning another region's colliding-LocalID parcel's objects. Ported
+            // from Legion-Grid-Code (confirmed this handler had no such guard here
+            // before porting).
+            if (!m_scene.TryGetScenePresence(remoteClient.AgentId, out ScenePresence retSp) || retSp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ReturnObjectsInParcel for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    localID, m_scene.Name, remoteClient.AgentId);
+                return;
+            }
+
             if (localID != -1)
             {
                 ILandObject selectedParcel;
@@ -2020,6 +2166,20 @@ namespace OpenSim.Region.CoreModules.World.Land
             {
                 m_log.WarnFormat("[LAND MANAGEMENT MODULE]: Unable to retrieve IClientAPI for {0}", agentID);
                 response.StatusCode = (int)HttpStatusCode.Gone;
+                return;
+            }
+
+            // TryGetClient above succeeds for a child agent too, so it is not enough - a stale
+            // cap held after a teleport to a neighbor region could otherwise edit the WRONG
+            // region's parcel (LocalIDs are region-local and commonly collide, e.g. every
+            // full-region parcel). Require a ROOT presence in THIS scene. Ported from
+            // Legion-Grid-Code (confirmed this handler had no such guard here before porting).
+            if (!m_scene.TryGetScenePresence(agentID, out ScenePresence sp) || sp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelPropertiesUpdate for agent {0} in {1}: not a root presence here (stale cap after teleport?).",
+                    agentID, m_scene.Name);
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
                 return;
             }
 
@@ -2291,6 +2451,18 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         public void SetParcelOtherCleanTime(IClientAPI remoteClient, int localID, int otherCleanTime)
         {
+            // LocalIDs are region-local and commonly collide across regions; a stale
+            // circuit from a neighbor region could otherwise set another region's parcel
+            // clean time. Require a ROOT presence in THIS scene. Ported from
+            // Legion-Grid-Code (confirmed this handler had no such guard here before porting).
+            if (!m_scene.TryGetScenePresence(remoteClient.AgentId, out ScenePresence sp) || sp.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting SetParcelOtherCleanTime for LocalID {0} in {1}: agent {2} is not a root presence here (stale circuit after teleport?).",
+                    localID, m_scene.Name, remoteClient.AgentId);
+                return;
+            }
+
             ILandObject land;
             lock (m_landList)
             {
@@ -2298,7 +2470,14 @@ namespace OpenSim.Region.CoreModules.World.Land
                     return;
             }
 
-            if (!m_scene.Permissions.CanEditParcelProperties(remoteClient.AgentId, land, GroupPowers.LandOptions, false))
+            // "Other Clean Time" is part of the object-return permission set in the
+            // viewer (llfloaterland.cpp), not LandOptions - gate on ANY of the three
+            // return powers, matching CanReturnObjects below. Ported from
+            // Legion-Grid-Code (confirmed this handler used the wrong power here
+            // before porting).
+            if (!m_scene.Permissions.CanEditParcelProperties(remoteClient.AgentId, land, GroupPowers.ReturnGroupOwned, false) &&
+                !m_scene.Permissions.CanEditParcelProperties(remoteClient.AgentId, land, GroupPowers.ReturnGroupSet, false) &&
+                !m_scene.Permissions.CanEditParcelProperties(remoteClient.AgentId, land, GroupPowers.ReturnNonGroup, false))
                 return;
 
             land.LandData.OtherCleanTime = otherCleanTime;
@@ -2478,6 +2657,18 @@ namespace OpenSim.Region.CoreModules.World.Land
                 return;
             if(!clientScene.TryGetScenePresence(client.AgentId, out ScenePresence parcelManager))
                 return;
+            // Land is resolved from the co-located TARGET's position, bounding exposure,
+            // but the ACTOR's residency was never checked - a stale/neighbor circuit
+            // could still drive a freeze in this region. Belt-and-suspenders guard.
+            // Ported from Legion-Grid-Code (confirmed this handler had no such guard
+            // here before porting).
+            if (parcelManager.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelFreezeUser in {0}: actor {1} is not a root presence here (stale circuit after teleport?).",
+                    clientScene.Name, client.AgentId);
+                return;
+            }
             System.Threading.Timer Timer;
 
             if (targetAvatar.GodController.UserLevel < 200)
@@ -2519,6 +2710,19 @@ namespace OpenSim.Region.CoreModules.World.Land
             if (!m_scene.TryGetScenePresence(target, out ScenePresence targetAvatar) ||
                 !m_scene.TryGetScenePresence(client.AgentId, out ScenePresence parcelManager))
                 return;
+
+            // Land is resolved from the co-located TARGET's position, bounding exposure,
+            // but the ACTOR's residency was never checked - a stale/neighbor circuit
+            // could still drive an eject in this region. Belt-and-suspenders guard.
+            // Ported from Legion-Grid-Code (confirmed this handler had no such guard
+            // here before porting).
+            if (parcelManager.IsChildAgent)
+            {
+                m_log.WarnFormat(
+                    "[LAND MANAGEMENT MODULE]: Rejecting ParcelEjectUser in {0}: actor {1} is not a root presence here (stale circuit after teleport?).",
+                    m_scene.Name, client.AgentId);
+                return;
+            }
 
             // Cannot eject estate managers or gods
             if (m_scene.Permissions.IsAdministrator(target))

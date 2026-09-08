@@ -220,7 +220,7 @@ namespace OpenSim.Services.Interfaces
         UserAccount GetUserAccount(UUID scopeID, string FirstName, string LastName);
         UserAccount GetUserAccount(UUID scopeID, string Email);
 
-        bool SetDisplayName(UUID agentID, string displayName);
+        bool SetDisplayName(UUID agentID, string displayName, bool resetting);
 
         /// <summary>
         /// Returns the list of avatars that matches both the search criterion and the scope ID passed
