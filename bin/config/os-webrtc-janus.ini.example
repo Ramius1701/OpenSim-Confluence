@@ -13,6 +13,9 @@
     ;WebRtcVoiceServerURI = ${Const|PrivURL}:${Const|PrivatePort}
     ; Debugging: output to log file messages sent and received from the viewer. Very verbose.
     MessageDetails = false
+    ; STUN servers to advertise to the viewer via the region's SimulatorFeatures
+    ; (VoiceStunServers). Comma-separated host:port list.
+    ; StunServers = stun2.l.google.com:19302,stun.l.google.com:19302
 
 [JanusWebRtcVoice]
     ; URI to access the Janus Gateway

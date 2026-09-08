@@ -187,7 +187,22 @@ namespace osWebRtcVoice
 
                 ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
                 simFeatures?.AddFeature("VoiceServerType", OSD.FromString("webrtc"));
+                if (TryGetStunServers(out string stuns))
+                    simFeatures?.AddFeature("VoiceStunServers", OSD.FromString(stuns));
             }
+        }
+
+        // Get the configured STUN server list. Returns false if none are configured.
+        // Ported from Robert Adams' (Misterblue) upstream fix, via
+        // wolfsoftwaresystemsltd/os-webrtc-janus's feature/loginResponseAdds branch -
+        // the SimulatorFeatures half only; the companion login-response addition
+        // needs a real ILoginService.OnLoginResponse event this codebase's
+        // ILoginService interface doesn't have (see ROADMAP.md), so that half is
+        // deliberately not ported here.
+        private bool TryGetStunServers(out string stunServers)
+        {
+            stunServers = m_Config?.GetString("StunServers", string.Empty) ?? string.Empty;
+            return !string.IsNullOrWhiteSpace(stunServers);
         }
 
         // ISharedRegionModule.Close
@@ -743,22 +758,73 @@ namespace osWebRtcVoice
 
             switch (method.ToLower())
             {
-                // Several different method requests that we don't know how to handle.
-                // Just return OK for now.
+                // Methods we do not implement but which do not gate session initialisation.
+                // Answering OK is enough; the viewer does not wait on a reply for these.
+                // Ported from wolfsoftwaresystemsltd/os-webrtc-janus's
+                // chatsession-p2p-session-id-and-fast-fail branch (real bug found
+                // diagnosing text-IM breakage on a large production grid).
                 case "decline p2p voice":
                 case "decline invitation":
-                case "start conference":
-                case "fetch history":
+                case "accept invitation":
+                case "call":
+                case "invite":
+                case "mute update":
+                case "session update":
                     response.StatusCode = (int)HttpStatusCode.OK;
                     break;
+
+                // chatterBoxHistoryCoro (llimview.cpp) only does anything if the response
+                // body is an ARRAY, and merely logs otherwise. Answer an explicit empty
+                // array: this is fired automatically after every successful "start p2p
+                // voice" when the viewer's FetchGroupChatHistory setting is on, so it's a
+                // hot path, not a rare one.
+                case "fetch history":
+                    response.StatusCode = (int)HttpStatusCode.OK;
+                    response.RawBuffer = Util.UTF8.GetBytes("<llsd><array /></llsd>");
+                    break;
+
+                // Ad-hoc/conference chat is not supported here. Returning a bare OK left
+                // the viewer waiting out its full 30s SESSION_INITIALIZATION_TIMEOUT
+                // before it reported anything - reply with an explicit failure instead so
+                // it fails fast. NOTE the error field is a strings.xml KEY, resolved
+                // through LLTrans::getString (llimview.cpp LLIMMgr::showSessionStartError)
+                // - an arbitrary string renders as a missing-string placeholder, so this
+                // uses a real one.
+                case "start conference":
+                {
+                    IEventQueue confQueue = scene.RequestModuleInterface<IEventQueue>();
+                    if (confQueue is null)
+                    {
+                        response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                        break;
+                    }
+                    confQueue.ChatterBoxSessionStartReply(
+                            sessionID, string.Empty, 1,
+                            false, true, sessionID,
+                            false, "no_ability_error", agentID);
+                    response.StatusCode = (int)HttpStatusCode.OK;
+                    break;
+                }
+
                 // Asking to start a P2P voice session. We need to generate a new session ID and return
                 //     it to the client in a ChatterBoxSessionStartReply event.
                 case "start p2p voice":
-                    UUID newSessionID;
-                    if (reqmap.TryGetUUID("params", out UUID otherID))
-                        newSessionID = new(otherID.ulonga ^ agentID.ulonga, otherID.ulongb ^ agentID.ulongb);
-                    else
-                        newSessionID = UUID.Random();
+                    // The viewer's P2P session id is the XOR of the two agent ids
+                    // (llimview.cpp LLIMMgr::computeSessionID), and that same id is what
+                    // inbound UDP ImprovedInstantMessage traffic is filed under - so it
+                    // must be reproduced exactly. A random id here would be worse than an
+                    // error: the viewer re-keys its floater to whatever we return
+                    // (processSessionInitializedReply -> setKey), after which arriving IMs
+                    // land in a different session than the one the user is typing into. If
+                    // "params" is absent we cannot compute it, so refuse rather than
+                    // invent one.
+                    if (!reqmap.TryGetUUID("params", out UUID otherID))
+                    {
+                        m_log.Warn($"{LogHeader} ChatSessionRequest: 'start p2p voice' with no 'params' for agent {agentID}");
+                        response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        break;
+                    }
+                    UUID newSessionID = new(otherID.ulonga ^ agentID.ulonga, otherID.ulongb ^ agentID.ulongb);
 
                     IEventQueue queue = scene.RequestModuleInterface<IEventQueue>();
                     if (queue is null)
@@ -781,10 +847,6 @@ namespace osWebRtcVoice
 
                         response.StatusCode = (int)HttpStatusCode.OK;
                     }
-                    break;
-                case "call":
-                    m_log.Debug($"{LogHeader}: ChatSessionRequest call: {reqmap}");
-                    response.StatusCode = (int)HttpStatusCode.BadRequest;
                     break;
                 default:
                     response.StatusCode = (int)HttpStatusCode.BadRequest;

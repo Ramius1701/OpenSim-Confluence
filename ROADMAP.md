@@ -504,6 +504,53 @@ reimplementation, but well-documented design rationale):
   sites with the same OSD-parsing bug pattern, but upstream has the
   identical bug at some of the same spots - not something to "catch up
   on," a latent bug neither codebase has fixed yet.
+
+  **Four more real gaps found and fixed (2026-09-08)**, this time via a
+  different Wolf Software Systems Ltd fork
+  (`wolfsoftwaresystemsltd/os-webrtc-janus` - the maintainer, Mike
+  Dickson, is also a confirmed core Tranquillity developer; see
+  ROADMAP.md's fork-ecosystem context) rather than the real upstream -
+  checked directly against Confluence's own code, not assumed missing:
+  STUN servers were never advertised at all (added via
+  `ISimulatorFeaturesModule.AddFeature("VoiceStunServers", ...)`,
+  config-gated, off by default); `JanusMessages.cs` was missing
+  `OSDToString`/`OSDMapToStringMap`/`PluginRespDataList`/
+  `AudioBridgeListRoomsResp`/`AudioBridgeListParticipantsResp` (only
+  `OSDToLong` existed, from the earlier reconciliation - also added a
+  null-check `OSDToLong` itself was missing); and `ChatSessionRequest`
+  had three real bugs found by a different contributor (CodeWolf, same
+  org) diagnosing text-IM breakage on a large production grid: `start
+  p2p voice` fell back to `UUID.Random()` when `params` was absent,
+  silently splitting the conversation (the viewer re-keys its floater
+  to whatever id is returned, but inbound IM traffic stays filed under
+  the real XOR-of-agent-ids) - now refuses the request instead; `start
+  conference` returned a bare OK, leaving the viewer to wait out its
+  full 30s timeout before reporting anything - now fails fast with a
+  real `strings.xml` error key; and `accept invitation`/`call`/
+  `invite`/`mute update`/`session update` all fell to a `400 Bad
+  Request` the viewer doesn't actually expect - now answer `OK` like
+  the other no-op methods, matching upstream's model of only gating on
+  what actually blocks session init. `LoginResponse`-based STUN
+  advertisement (the same fork's `feature/loginResponseAdds`) was
+  deliberately NOT ported - it needs a real `ILoginService.OnLoginResponse`
+  event this codebase's `ILoginService` interface doesn't have at all
+  (a plain `Login()` call, no event, no `AddAdditionalData`), a bigger,
+  separate change to the core login contract, not a same-pass addon
+  fix. Build confirmed clean. Still present-but-unverified overall -
+  none of this changes that a real client has never connected through
+  this addon end to end.
+
+  **Real, durable reason this stays unverified on Casperia
+  specifically, per the operator (2026-09-08): the Janus Gateway
+  backend this addon talks to requires Linux**, and this grid runs on
+  Windows - not a "haven't gotten to it yet" gap but an actual
+  infrastructure constraint, matching the operator's own stated
+  standard for what's worth carrying (native Windows only, no
+  VirtualBox/Docker/WSL2). End-to-end verification here would need
+  either a separate Linux host running Janus that this Windows grid
+  connects to over the network, or the operator's own future call to
+  stand up Linux infrastructure for it - not something to keep chasing
+  as if it's just an untested checkbox.
 - **Aurora** (`OpenSimWeather`'s northern-lights effect) is built and
   deployed but not yet visually confirmed working in a live viewer —
   same present-but-unverified caveat as WebRTC voice above.

@@ -21230,3 +21230,113 @@ No starter looks are configured yet, so the `/register` carousel won't
 show anything until at least one is added via `/admin/starter-looks`
 against a real account that's been dressed up in-world - expected,
 not a bug.
+
+---
+
+## WebRTC voice: four real gaps found and fixed via a fork found by
+## checking a real person, not a keyword scan (2026-09-08)
+
+Continuation of the fork-ecosystem work from 2026-09-07 (see
+`casperia-fork-ecosystem-lineage` memory): checking
+`intelligentwolf`/`wolfsoftwaresystemsltd`'s own fork of
+`os-webrtc-janus` (the same GitHub org as the `wolfvoice` remote
+already tracked here) turned up real, unbuilt gaps the earlier
+upstream-reconciliation pass (`PROJECT_LOG.md`, "os-webrtc-janus vs
+real upstream") never found, because that pass only diffed against
+`Misterblue/os-webrtc-janus`'s own `main`, not any of its forks.
+
+**Identity confirmed, not assumed**: the fork's `main` branch is 1
+commit ahead of real upstream (confirmed shared history via
+`git merge-base`), authored by Robert Adams (Misterblue, the real
+upstream maintainer) - so this specific fork is carrying a genuine
+upstream fix that just hasn't landed on `main` yet, not third-party
+drift. Several other branches on the same fork (`dev/commands-20250113`,
+`feature/loginResponseAdds`) are also Robert-Adams-authored. One branch
+(`chatsession-p2p-session-id-and-fast-fail`) is instead authored by
+"CodeWolf" (`paul@wolf.uk.com`), co-authored by Wolf Software Systems
+Ltd, with a real `Claude-Session:` trailer - a different, real
+individual within the same org, diagnosing a production issue on their
+own large (~1000-region) grid.
+
+**1. STUN servers were never advertised at all.** Confluence's
+`WebRtcVoiceRegionModule.cs` had zero mentions of "stun" anywhere,
+confirmed via direct grep before assuming a gap. Added
+`TryGetStunServers()` (config-gated, `[WebRtcVoice] StunServers`,
+comma-separated host:port list, commented-out/opt-in in the
+`.ini.example` rather than defaulted on, since this whole addon is
+still present-but-unverified) and wired it into the existing
+`RegionLoaded`-time `ISimulatorFeaturesModule.AddFeature` call, right
+next to the existing `VoiceServerType` feature. Did NOT port the
+companion login-response half of the same upstream fix (adding STUN
+servers to `LoginResponse.AddAdditionalData("voice-config", ...)`) -
+traced it and found Confluence's actual `ILoginService` interface has
+no `OnLoginResponse` event and `LoginResponse` has no
+`AddAdditionalData` method at all; the real upstream/fork version this
+was written against has a materially different, event-based
+`ILoginService` contract. Porting that properly means changing the
+core login service interface, not a same-pass addon fix - flagged as
+its own future item, not rushed in.
+
+**2. `JanusMessages.cs` was missing several parsing helpers.** Only
+`OSDToLong` existed (from the earlier reconciliation pass) - confirmed
+via direct grep that `OSDToString`, `OSDMapToStringMap`,
+`PluginRespDataList`, `AudioBridgeListRoomsResp`, and
+`AudioBridgeListParticipantsResp` did not exist anywhere in this
+codebase before this pass. Ported all five from the fork's
+`dev/commands-20250113` branch (Robert Adams), matching Confluence's
+own existing style (`protected static` helpers on `JanusMessage`,
+matching `OSDToLong`'s own visibility rather than the fork's `public`).
+Also ported a real null-safety fix bundled in the same upstream commit:
+`OSDToLong` itself had no null-check on its input before switching on
+`.Type` - a real, if narrow, NRE risk - now returns `0` for a null
+input like its new siblings do for their own empty defaults.
+
+**3. `ChatSessionRequest` had three real bugs**, all confirmed present
+in Confluence's own current code first, not assumed from the fork's
+commit message alone:
+   - `start p2p voice` fell back to `UUID.Random()` when the request's
+     `params` field was absent. The viewer's own P2P session id is the
+     XOR of the two agent ids (per the fix's own citation of
+     `llimview.cpp LLIMMgr::computeSessionID`), and inbound UDP
+     `ImprovedInstantMessage` traffic stays filed under that same real
+     id regardless of what this cap returns - so a random id doesn't
+     just fail loudly, it silently splits the conversation: the viewer
+     re-keys its chat floater to the random id
+     (`processSessionInitializedReply -> setKey`), while replies keep
+     arriving under the real XOR id. Now refuses the request (400)
+     instead of inventing an id that would actively make things worse
+     than an outright failure.
+   - `start conference` returned a bare `200 OK` with no
+     `ChatterBoxSessionStartReply` event at all - the viewer then waits
+     out its full 30-second `SESSION_INITIALIZATION_TIMEOUT` before
+     telling the user anything, since conference/ad-hoc chat isn't
+     actually supported here. Now replies with an explicit
+     `success=false` + a real `strings.xml` key (`"no_ability_error"`)
+     so it fails fast instead - the error field is resolved through the
+     viewer's own `LLTrans::getString`, so an arbitrary string would
+     have rendered as a missing-string placeholder, not a real message.
+   - `accept invitation`/`call`/`invite`/`mute update`/`session update`
+     all fell through to `default: BadRequest` (400). The real viewer
+     does send all of these, and per the fix's own testing on a real
+     grid, none of them actually gate session initialisation - now
+     answer `200 OK` like the other genuine no-ops
+     (`decline p2p voice`/`decline invitation`), rather than a
+     rejection the viewer isn't built to recover from gracefully.
+   - Also ported, same commit: `fetch history` now returns an explicit
+     empty `<llsd><array /></llsd>` instead of a bare OK with no body -
+     the viewer's `chatterBoxHistoryCoro` only acts on an actual array
+     response and otherwise just logs, but it fires automatically after
+     every successful `start p2p voice` when the viewer's
+     `FetchGroupChatHistory` setting is on, making this a real hot
+     path, not a rare edge case.
+
+Build confirmed clean (0 Warning(s), 0 Error(s)) after all four
+changes. Touches `WebRtcVoiceRegionModule.dll` (the STUN advertisement
+and `ChatSessionRequest` fixes) and `WebRtcJanusService.dll`
+(`JanusMessages.cs`'s new helpers - it compiles into this assembly,
+not a `JanusMessages.dll` of its own), plus
+`bin/config/os-webrtc-janus.ini.example`. Not yet deployed - this
+addon remains present-but-unverified overall (built, compiles, but no
+real client has ever connected through it end to end), so these fixes
+improve correctness for whenever that real test happens rather than
+closing out a known-working path.

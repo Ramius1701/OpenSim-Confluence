@@ -26,6 +26,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 
 using OpenMetaverse.StructuredData;
@@ -130,9 +131,12 @@ namespace osWebRtcVoice
         //    and one fetches it with .AsInteger(), it will return the first 4 bytes as an integer
         //    and not the long value. So this function looks at the type of the OSD object and
         //    extracts the number appropriately.
+        // Can be called with a null object and will return 0.
         protected static long OSDToLong(OSD pIn)
         {
             long ret = 0;
+            if (pIn is null)
+                return ret;
             switch (pIn.Type)
             {
                 case OSDType.Integer:
@@ -160,6 +164,68 @@ namespace osWebRtcVoice
                     }
                     break;
             }
+            return ret;
+        }
+
+        // Convert any OSD object to a string. Does not handle OSDMap.
+        // This function exists because there is no OSDLong type and the JSON to OSD
+        //    conversion functions pack JSON integers as an OSDArray of 8 bytes.
+        // This is NOT a general purpose function but is used in this class to convert
+        //    the values to what is expected so things like arrays are presumed to be numbers.
+        // Can be called with a null object and will return String.Empty.
+        // Ported from Robert Adams' (Misterblue) upstream, via
+        // wolfsoftwaresystemsltd/os-webrtc-janus's dev/commands-20250113 branch.
+        protected static string OSDToString(OSD pIn)
+        {
+            string ret = string.Empty;
+            if (pIn is null)
+                return ret;
+            switch (pIn.Type)
+            {
+                case OSDType.Boolean:
+                    ret = (pIn as OSDBoolean).AsString();
+                    break;
+                case OSDType.Real:
+                    ret = (pIn as OSDReal).AsString();
+                    break;
+                case OSDType.String:
+                    ret = (pIn as OSDString).AsString();
+                    break;
+                case OSDType.Integer:
+                    ret = (pIn as OSDInteger).AsString();
+                    break;
+                case OSDType.Binary:
+                    byte[] value = (pIn as OSDBinary).value;
+                    if (value.Length == 4)
+                        ret = (pIn as OSDBinary).AsInteger().ToString();
+                    if (value.Length == 8)
+                        ret = (pIn as OSDBinary).AsLong().ToString();
+                    break;
+                case OSDType.Array:
+                    if ((pIn as OSDArray).Count == 4)
+                        ret = pIn.AsInteger().ToString();
+                    if ((pIn as OSDArray).Count == 8)
+                        ret = pIn.AsLong().ToString();
+                    break;
+            }
+            return ret;
+        }
+
+        // Convert an OSDMap to a Dictionary of string to string.
+        // Note that all values are converted to strings.
+        // Also note that this does not handle nested OSDMaps.
+        // Can be called with a null object and will return an empty dictionary.
+        protected static Dictionary<string, string> OSDMapToStringMap(OSDMap pMap)
+        {
+            Dictionary<string, string> ret = new();
+            if (pMap is null)
+                return ret;
+
+            foreach (KeyValuePair<string, OSD> kvp in pMap)
+            {
+                ret[kvp.Key] = OSDToString(kvp.Value);
+            }
+
             return ret;
         }
 
@@ -517,6 +583,33 @@ namespace osWebRtcVoice
                 return string.Empty;
             return m_data.TryGetValue(pKey, out OSD okey) ? okey.AsString() : string.Empty;
         }
+
+        // Many of the plugin responses are lists of dictionaries. This function
+        //    returns a list of dictionaries for a key in the response data.
+        // If the key is not there or it's not an OSDArray, an empty list is returned.
+        // Ported from Robert Adams' (Misterblue) upstream, via
+        // wolfsoftwaresystemsltd/os-webrtc-janus's dev/commands-20250113 branch.
+        public List<Dictionary<string, string>> PluginRespDataList(string pKey)
+        {
+            List<Dictionary<string, string>> ret = new();
+            if (m_data is null)
+                return ret;
+            try
+            {
+                if (m_data.TryGetValue(pKey, out OSD list) && list is OSDArray items)
+                {
+                    foreach (OSDMap item in items)
+                    {
+                        ret.Add(OSDMapToStringMap(item));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.ErrorFormat("{0} PluginRespDataList. Exception {1}", LogHeader, e);
+            }
+            return ret;
+        }
     }
 
     // ==============================================================
@@ -656,9 +749,20 @@ namespace osWebRtcVoice
     {
         public AudioBridgeListRoomsReq() : base(new OSDMap() {
                                                 { "request", "list" }
-                                            })  
+                                            })
         {
         }
+    }
+
+    // Ported from Robert Adams' (Misterblue) upstream, via
+    // wolfsoftwaresystemsltd/os-webrtc-janus's dev/commands-20250113 branch.
+    public class AudioBridgeListRoomsResp : AudioBridgeResp
+    {
+        public AudioBridgeListRoomsResp(JanusMessageResp pResp) : base(pResp)
+        {
+        }
+
+        public List<Dictionary<string, string>> Rooms { get { return PluginRespDataList("list"); } }
     }
 
     // ==============================================================
@@ -670,6 +774,17 @@ namespace osWebRtcVoice
                                             })
         {
         }
+    }
+
+    // Ported from Robert Adams' (Misterblue) upstream, via
+    // wolfsoftwaresystemsltd/os-webrtc-janus's dev/commands-20250113 branch.
+    public class AudioBridgeListParticipantsResp : AudioBridgeResp
+    {
+        public AudioBridgeListParticipantsResp(JanusMessageResp pResp) : base(pResp)
+        {
+        }
+
+        public List<Dictionary<string, string>> Participants { get { return PluginRespDataList("participants"); } }
     }
 
     // ==============================================================
