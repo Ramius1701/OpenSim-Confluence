@@ -4735,6 +4735,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<tr><th>Core Platform</th><td>OpenSimulator (Confluence build)</td></tr>")
               .Append("<tr><th>Core Version</th><td><span title=\"commit ").Append(global::OpenSim.VersionInfo.BuildCommitHash).Append("\">")
               .Append(global::OpenSim.VersionInfo.DisplayVersionNumber).Append("</span></td></tr>")
+              .Append("<tr><th>Physics Engines</th><td>").Append(Html(AvailablePhysicsEngines())).Append("</td></tr>")
               .Append("</tbody></table></div>");
 
             sb.Append("<h2><i class=\"bi bi-activity\"></i> Live Grid Snapshot</h2><div class=\"stats-grid\">");
@@ -16188,6 +16189,30 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "document.getElementById('appSidebar').classList.remove('open');" +
                 "document.getElementById('sidebarBackdrop').classList.remove('open');" +
                 "}});</script>";
+
+        // A statement of platform capability ("this software supports these
+        // engines"), not a claim about any one engine's quality or a
+        // recommendation - same neutral treatment as "Core Platform"/"Core
+        // Version" just above. Detected from which physics module DLLs are
+        // actually present next to this process (Robust and every region
+        // process share the same bin\ - confirmed live on Casperia's own
+        // deployment), not a hand-typed list that could drift out of sync
+        // with what this build actually ships. ubODE ships as the
+        // OpenSimDefaults.ini default; the others are opt-in per region via
+        // [Startup] physics = <name>, an operator choice, not something an
+        // individual resident selects.
+        private static string AvailablePhysicsEngines()
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            List<string> engines = new List<string>();
+            if (File.Exists(Path.Combine(baseDir, "OpenSim.Region.PhysicsModule.ubOde.dll")))
+                engines.Add("ubODE (default)");
+            if (File.Exists(Path.Combine(baseDir, "OpenSim.Region.PhysicsModule.BulletS.dll")))
+                engines.Add("BulletSim");
+            if (File.Exists(Path.Combine(baseDir, "OpenSim.Region.PhysicsModule.LegionJolt.dll")))
+                engines.Add("Jolt");
+            return engines.Count > 0 ? string.Join(", ", engines) : "ubODE (default)";
+        }
 
         private static string Html(string s)
         {
