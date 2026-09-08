@@ -5915,34 +5915,43 @@ namespace OpenSim.Server.Handlers.WebInterface
             // above already computed live - no separate/duplicate queries.
             if (request.QueryString.Get("format") == "json")
             {
-                OSDMap statsMap = new OSDMap
+                // OSDParser.SerializeJsonString (used elsewhere in this file for
+                // string arrays) silently DROPS any OSDInteger field whose value
+                // is 0 - confirmed live: Online_Now read 0 residents online and
+                // vanished from the response entirely, while every non-zero
+                // field came through fine. A grid legitimately reads 0 on any of
+                // these fields at some point (nobody online, no varregions...),
+                // so this endpoint needs every key present every time. Using
+                // System.Text.Json directly instead - no such quirk, and no
+                // dependency on OSD's own (LLSD-oriented) serialization rules.
+                var statsMap = new Dictionary<string, object>
                 {
-                    ["GridStatus"] = OSD.FromString(servicesOk ? "ONLINE" : "DEGRADED"),
-                    ["Online_Now"] = OSD.FromInteger(onlineNow),
+                    ["GridStatus"] = servicesOk ? "ONLINE" : "DEGRADED",
+                    ["Online_Now"] = onlineNow,
                     // Confluence tracks unique 30-day visitors as one combined
                     // total (including hypergrid), not a separate local/HG split
                     // the way OS_Simple_Stats' reference implementation does -
                     // rather than fabricate a breakdown this codebase doesn't
                     // have, the split fields are honestly reported as 0 and the
                     // real combined figure goes in Total_Active_Last_30_Days.
-                    ["HG_Visitors_Last_30_Days"] = OSD.FromInteger(0),
-                    ["Local_Users_Last_30_Days"] = OSD.FromInteger(0),
-                    ["Total_Active_Last_30_Days"] = OSD.FromInteger(uniqueVisitors30d),
-                    ["Registered_Users"] = OSD.FromInteger(totalAccounts),
-                    ["Regions"] = OSD.FromInteger(totalRegions),
-                    ["Var_Regions"] = OSD.FromInteger(varRegions),
-                    ["Single_Regions"] = OSD.FromInteger(singleRegions),
+                    ["HG_Visitors_Last_30_Days"] = 0,
+                    ["Local_Users_Last_30_Days"] = 0,
+                    ["Total_Active_Last_30_Days"] = uniqueVisitors30d,
+                    ["Registered_Users"] = totalAccounts,
+                    ["Regions"] = totalRegions,
+                    ["Var_Regions"] = varRegions,
+                    ["Single_Regions"] = singleRegions,
                     // Matches OS_Simple_Stats' own convention: summed sizeX*sizeY
                     // (square meters) divided by 1000, not square kilometres.
-                    ["Total_LandSize"] = OSD.FromInteger((int)(totalAreaSqm / 1000)),
-                    ["Login_URL"] = OSD.FromString(m_publicBaseUrl),
-                    ["Website"] = OSD.FromString(m_publicBaseUrl),
-                    ["Login_Screen"] = OSD.FromString(m_publicBaseUrl + BasePath + "/welcome"),
-                    ["timestamp"] = OSD.FromDate(DateTime.UtcNow),
+                    ["Total_LandSize"] = (int)(totalAreaSqm / 1000),
+                    ["Login_URL"] = m_publicBaseUrl,
+                    ["Website"] = m_publicBaseUrl,
+                    ["Login_Screen"] = m_publicBaseUrl + BasePath + "/welcome",
+                    ["timestamp"] = DateTime.UtcNow,
                 };
 
                 response.ContentType = "application/json";
-                response.RawBuffer = Encoding.UTF8.GetBytes(OSDParser.SerializeJsonString(statsMap));
+                response.RawBuffer = Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(statsMap));
                 return;
             }
 
