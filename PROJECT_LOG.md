@@ -21340,3 +21340,61 @@ addon remains present-but-unverified overall (built, compiles, but no
 real client has ever connected through it end to end), so these fixes
 improve correctness for whenever that real test happens rather than
 closing out a known-working path.
+
+---
+
+## Experience Tools: three separate fork lineages disentangled, then
+## re-verified current and clean (2026-09-08)
+
+Follow-up to the WebRTC fork-ecosystem work above: checking
+Tranquillity's Experience system against Gunthar's "Experience-Lite"
+directly (user's explicit ask, after the earlier claim that Confluence
+was "verified better than Experience-Lite" turned out to conflate two
+different comparisons) found the two were never actually related.
+Full trace: Gunthar's `IsScriptExperienceTrusted()` (`LSL_Api.cs`) is a
+single, grid-wide, config-driven static trust list - no database, no
+multi-experience concept, no acquisition workflow, no fee. Tranquillity's
+own `ExperienceModule.cs` (lines 41-44, Mike Dickson) explicitly states
+its `ExperienceCreators` config key matches **Legion-Grid-Code's**
+`[Experience] ExperienceCreators`, not Gunthar's design - and Legion
+turns out to have its own, separate, fuller Experience system
+(`CoreModules/Experience/ExperienceModule.cs`,
+`OpenSim/Services/Interfaces/IExperienceService.cs`) never previously
+distinguished from Gunthar's in this project's own docs. Three
+genuinely separate lineages, not one - see ROADMAP.md's updated
+Gunthar entry and the `casperia-fork-ecosystem-lineage` memory for the
+full writeup.
+
+**Then verified Confluence's own current Experience code, not just
+the comparison:**
+- Full solution build: clean (0 Warning(s), 0 Error(s)).
+- Re-confirmed all 4 bugs from the original ported-code-viewer-audit
+  pass are still actually present and haven't regressed:
+  `ExperienceQueryGetHandler` exists; `GetExperienceInfoGetHandler`
+  uses the real `info.quota` field with zero hardcoded `128` left
+  anywhere; `PROPERTY_PRIVATE` handling is present; `RegionExperiences`
+  is registered via `RegisterSimpleHandler` with a real
+  `HandleRegionExperiences` GET/POST dispatch (`BuildRegionExperiencesResponse`/
+  `HandleSetRegionExperiences`), not the old GET-only handler.
+- **New comparison, never done before**: diffed Confluence's
+  `IExperienceModule` interface against Legion's own
+  `IExperienceService` (discovered as a separate system during the
+  Tranquillity/Gunthar trace above, not previously compared to
+  Confluence's). Near 1:1 on permissions, KVP storage, and
+  region/estate allow-block lists. One real difference: Legion has an
+  explicit hard `DeleteExperience(UUID)`; Confluence only has
+  `IsExperienceEnabled` (soft enable/disable) plus per-resident
+  permission-forgetting, no destructive delete. Not flagged as a gap -
+  matches real SL's own soft-delete-via-properties-flag model, the
+  same pattern Confluence's system already follows elsewhere, not a
+  missing capability. Confluence also exposes `GetSize(experience)`
+  (total KVP storage used), which Legion's own interface doesn't have
+  at all.
+
+**Still outstanding, unchanged from the original audit**: the
+`RegionExperiencesGetHandler`/Estate-Info-floater Apply-button round
+trip has never been live-tested in-world (no estate manager available
+to click Apply and confirm), and Display Names'/Abuse Reports' own
+flagged fixes from the same audit initiative are also still pending a
+real in-world trigger. Not new information, just re-surfaced while
+verifying this area specifically so it doesn't quietly drop off.

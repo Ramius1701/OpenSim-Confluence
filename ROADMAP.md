@@ -406,6 +406,41 @@ gap today. For what already exists, see `FEATURES.md`.
   (pathfinding, Combat2, GLTF overrides, RSA signing, region-level EEP
   scripting) has already been ported on its own; the permission/trust
   layer itself was deliberately left out.
+
+  **Direct comparison done (2026-09-08), not just an architecture-
+  incompatibility call taken on faith.** Checked Gunthar's actual
+  `IsScriptExperienceTrusted()` (`LSL_Api.cs`): it's a single,
+  grid-wide, config-driven trust list - one experience ID/name total
+  (`[ScriptExperiences]`), a static `TrustedOwners`/`TrustedObjects`
+  UUID allowlist plus an estate-manager toggle, granting a fixed
+  script-permission bitmask. No database, no multi-experience concept,
+  no acquisition workflow, no fee - a permission shortcut, not an
+  experience marketplace.
+
+  **Real finding, not previously established: Tranquillity's own
+  Experience system is NOT related to Gunthar's at all - it's modeled
+  on Legion-Grid-Code's separate, fuller system instead**, confirmed
+  directly in Tranquillity's own source comment
+  (`Source/OpenSim.Region.ClientStack.LindenCaps/ExperienceModule.cs:41-44`,
+  authored by Mike Dickson): *"name + values + default as Legion
+  ([Experience] ExperienceCreators) so operators moving between Legion
+  and Tranquillity see the same knob."* Legion-Grid-Code has its own
+  `CanAcquireExperience` (`CoreModules/Experience/ExperienceModule.cs:778`)
+  that Tranquillity's role-based switch (`Anyone`/`AdminsOnly`/
+  `EstateManagersAndRegionOwners`, config key `ExperienceCreators`)
+  directly matches. So the earlier PROJECT_LOG comparison ("Confluence's
+  CanCreateExperience vs. Tranquillity's simpler role-only gate") was
+  never actually a comparison against Gunthar's design at all - three
+  genuinely separate lineages exist in this ecosystem, not one.
+
+  The real three-way comparison: Confluence's `CanCreateExperience`
+  uses a per-resident count cap (`m_maxExperiencesPerResident`) plus an
+  `IMoneyModule`-charged creation fee; Legion/Tranquillity share a
+  role-based switch with no per-resident limit or cost; Gunthar's is a
+  static, admin-config-only allowlist with no creation concept at all.
+  Confluence's is the only one of the three with both a per-resident
+  limit and a real economic cost attached - a genuine, evidence-backed
+  "better than" claim now, not an assumed one.
 - **Tranquillity's Entity Framework Core / ASP.NET Core Identity data
   layer.** A wholesale architecture swap for how that fork stores data,
   not a cherry-pickable feature. Not pursued.
