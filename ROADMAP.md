@@ -429,9 +429,15 @@ gap today. For what already exists, see `FEATURES.md`.
   note, since real in-world testing under Casperia's actual content
   (vehicles, existing prims/scripts, real avatars) hasn't happened yet
   - genuinely open, not a blocker to having it available as a choice.
-  **Not deployed to the live grid** - built, boot-tested, and committed
-  to the repo; switching any live Casperia region to `physics = Jolt`
-  is a separate, deliberate operator decision.
+  **Deployed to the live grid (2026-09-09).** Module DLLs copied to
+  Casperia's shared runtime folder and confirmed showing on the live
+  `/features` Platform Overview page. Starbase Andromeda's own
+  `OpenSim.ini` has since been switched to `physics = Jolt` +
+  `meshing = Meshmerizer` at the operator's request, as a real-content
+  test case - not yet running with it live (region was stopped at the
+  time of the switch), so in-world verification under actual Casperia
+  content (vehicles, existing prims/scripts, real avatars) is still
+  the open item once that region comes back up.
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters

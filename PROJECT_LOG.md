@@ -22249,3 +22249,38 @@ both confirmed absent from Confluence's current code, held pending
 explicit direction given the size. See `casperia-fork-review-status`
 memory for the full, corrected picture (including the gunthar "wrongly
 closed as a mirror" episode and its correction).
+
+## Reader-facing docs reorganized; Jolt enabled on Starbase Andromeda
+## for testing (2026-09-09)
+
+`FEATURES.md` had drifted well behind this session's actual work -
+last touched September 5, before Jolt physics, the gOSWI grid-stats/
+offline-message polish, and several bug fixes landed. Reorganized the
+"Web & Admin UI" section (previously four dense, single-paragraph
+blocks - Public pages/Resident self-service/Admin console/Store) into
+scannable bulleted sub-sections, matching the style already used
+everywhere else in the file (Scripting, Moderation, etc.); added a
+table of contents; added a `### Physics` section replacing the old
+ubODE-only `### Physics realism (ubODE)`, now covering all three
+selectable engines (ubODE default, BulletSim, Jolt) with Jolt's
+`meshing = Meshmerizer` requirement noted. `ROADMAP.md`'s LegionJolt
+entry updated - its "Not deployed to the live grid" closing line was
+stale as of yesterday's live deploy; replaced with the actual current
+status.
+
+Separately, at the operator's request: switched Starbase Andromeda
+(`Simulators/Starbase_Andromeda/OpenSim.ini`) from the implicit ubODE
+default to `physics = Jolt` + `meshing = Meshmerizer`, picked as the
+region to run Jolt against real content for the first time. Confirmed
+the Jolt module DLLs are already present in Casperia's shared runtime
+folder from the earlier live deploy, so no additional file copy was
+needed - just the config switch. Neither Robust nor any region process
+was running on this machine at the time (the whole grid was stopped,
+not just this region); left it stopped per the operator's own call
+rather than starting it. This is a genuine gap in in-world Jolt
+verification flagged in `ROADMAP.md` and in the earlier Jolt
+readiness write-up: real scripted/physical content, not a scratch
+throwaway region. Next step is confirming `[LEGION JOLT] enabled
+(physics = Jolt)` in the region's log once it's started, then real
+in-world testing (vehicles, existing physical prims/scripts, real
+avatar interaction).

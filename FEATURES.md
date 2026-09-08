@@ -4,6 +4,16 @@ What OpenSim-Confluence actually has, organized by area. For how any of
 this was built, tested, or debugged, see `PROJECT_LOG.md`. For what's
 planned or still missing, see `ROADMAP.md`.
 
+- [Web & Admin UI](#web--admin-ui)
+- [Native Economy, Search & Grid Services](#native-economy-search--grid-services)
+- [Moderation & Access Control](#moderation--access-control)
+- [Display Names & Identity](#display-names--identity)
+- [Scripting: LSL and OSSL](#scripting-lsl-and-ossl)
+- [World and Environment](#world-and-environment)
+- [Database](#database)
+- [Included Add-on Modules](#included-add-on-modules)
+- [MoneyServer](#moneyserver)
+
 ## Web & Admin UI
 
 A native, Robust-hosted grid portal — not an addon-module, and not a
@@ -25,101 +35,124 @@ resident's account just by knowing their email. A
 resident-facing suggestion box, reviewed from the admin console, sits
 alongside the existing support-ticket system.
 
-**Public pages:** home/splash with live grid stats, self-service
-sign-up with a starting-region picker (defaults to the grid's
-`DefaultRegion`-flagged regions), grid-wide search (People/Places/
-Events/Classifieds/Groups, plus a dedicated Land for Sale page with
-size buckets, per-region maturity filtering, and trending/autocomplete),
-an interactive Leaflet world map (region search, live "Show Users"
-online-resident markers, popups with owner name/size/Hypergrid status,
-draws only regions actually online right now — an all-regions table
-below covers the full roster with its own status column), a viewer
-download page, a live grid-capability "Features"
-page, guest support tickets, admin-managed static pages (About/ToS/
-DMCA) and news/events feeds.
+### Public pages
 
-**Resident self-service:** dashboard (stat cards, a "you have new
-activity" banner surfacing unread mail/waiting offline messages/open
-tickets in one place, a Recent Activity audit log for the linked
-account, quick links), public profile (with the resident's own full
-group-membership list — always visible to themselves regardless of
-each group's "show on public profile" flag, which only ever gates
-what *other people* see — and regions-owned, both privacy-aware),
-friends list (split into This Grid / Hypergrid, each showing what
-rights you've granted them), a full partner proposal flow (propose/
-accept/decline/cancel/breakup), transaction history, classifieds/
-events management, My Regions (estate-owner region management — OAR
-backup, restart, full estate settings/access-list editing for any
-resident who owns one, not just admins — in a compact per-region
-table, not a repeated stacked block) and My Land (per-parcel search/
-Destination Guide visibility toggles) as separate pages, inventory
-backup (IAR), account changes (password/email), self-service account
-deletion, self-service recovery codes (5 one-time backup codes to
-reset your own password without needing a working email). Offline
-messages are a real persistent inbox — visiting the page no longer
-silently deletes them, per-message delete alongside Clear All. Create
-a brand-new avatar (email-verified, so an unclaimed request can't
-squat a name), import an existing avatar by proving its in-world
-password once (never stored) — including absorbing that avatar's own
-solo account into yours if it already has one, self-service, no
-support ticket needed — and switch between every avatar linked to the
-account. Backup (save) only, by design — see `ROADMAP.md`.
+- Home/splash with live grid stats.
+- Self-service sign-up with a starting-region picker (defaults to the
+  grid's `DefaultRegion`-flagged regions).
+- Grid-wide search (People/Places/Events/Classifieds/Groups, plus a
+  dedicated Land for Sale page with size buckets, per-region maturity
+  filtering, and trending/autocomplete).
+- An interactive Leaflet world map — region search, live "Show Users"
+  online-resident markers, popups with owner name/size/Hypergrid
+  status, drawing only regions actually online right now, with an
+  all-regions table below covering the full roster and its own status
+  column.
+- A viewer download page.
+- A live grid-capability "Features" page.
+- Guest support tickets.
+- Admin-managed static pages (About/ToS/DMCA) and news/events feeds.
 
-**Admin console:** user management (search, create, edit, ban with
-optional auto-expiry, soft-delete (reversible lockout — scrambles the
-password and marks the account Deleted, recoverable by un-banning plus
-a fresh password reset) or a separate permanent Remove (deletes the
-account, credentials, home/last location, friendships, inventory
-structure, appearance, and currency history outright — refuses if the
-resident is online or owns an estate; anything they ever uploaded stays
-in the asset store untouched either way), kick/message an online
-resident, admin-set password reset, login-as-user for support), estate
-management (create estates, edit settings, manage managers/access/ban/
-group lists), grid-wide group oversight (list every group, moderate
-visibility/enrollment flags, delete a group), abuse report review,
-financial/transaction reporting, grid statistics, static page and
-news/events content management, grid settings (including an opt-in
-"clear all map tiles on next restart" toggle, for the rare case tiles
-have gone stale — off by default, since tiles only ever refresh when a
-region re-uploads one), a web-based region console, per-region
-Hypergrid open/close toggling, on-demand map-tile regeneration, a
-region config file browser/editor (every region's raw `.ini`,
-discovered automatically — no filesystem/RDP access needed — with a
-restart button for changes that need one to take effect), a Simulators
-page listing every discovered region process with live Running/Stopped
-status and per-row Start, graceful Stop (with a pre-flight check that
-refuses if the region is mid-backup, so a shutdown can never land on
-top of one in progress), and permanent Remove actions — plus Start
-All/Stop All for everything at once, both running in the background so
-a full-grid bulk action can't time out a reverse proxy sitting in front
-of the WebUI. Remove works the same way for any region, self-service
-Store order or originally static — it deletes the simulator's config
-folder and any grid-registration rows referencing it (never the
-region's actual content or any asset), and releases a Store order's
-held port/grid-location for reuse if there was one. Only Robust itself
-needs to be running for the WebUI to work — regions are separate
-processes. A settable Banker Avatar (Grid Settings) rounds this out —
-an account fee/purchase transfers actually flow through instead of an
-untracked void, same concept as the classic MoneyServer's own
-BankerAvatar setting.
+### Resident self-service
 
-**Store:** residents spend in-world currency — ConfluenceCurrency or
-Gloebit, their choice at checkout — on an admin-managed catalog of
-prim-capacity packs and self-service region orders. Prim packs add to
-whatever the region's current cap already is — every region can have a
-different baseline — and apply instantly, persisting through the
-target region's own remote console (no restart needed); region orders
-auto-generate the new region's `.ini`/port/grid location and launch it
-automatically on successful payment, no admin click needed, with an
-admin "Start Region" button in the Store Orders queue as a manual
-retry path for the rare case the automatic launch itself fails. At
-checkout, region orders also let the resident join one of their own
-existing estates instead of always creating a new one. Gloebit
-purchases run through this feature's own Robust-native OAuth2
-integration — independent of the region-side Gloebit module, reusing
-the same merchant key so it's the same real account either way.
-One-time purchases; an admin-facing Store Orders queue handles manual
-renewal/extension, no auto-recurring billing.
+- Dashboard — stat cards, a "you have new activity" banner surfacing
+  unread mail/waiting offline messages/open tickets in one place, a
+  Recent Activity audit log for the linked account, quick links.
+- Public profile — the resident's own full group-membership list is
+  always visible to themselves regardless of each group's "show on
+  public profile" flag (which only ever gates what *other people*
+  see), plus regions-owned, both privacy-aware.
+- Friends list, split into This Grid / Hypergrid, each showing what
+  rights you've granted them.
+- A full partner proposal flow (propose/accept/decline/cancel/breakup).
+- Transaction history, classifieds/events management.
+- My Regions — estate-owner region management (OAR backup, restart,
+  full estate settings/access-list editing) for any resident who owns
+  one, not just admins, in a compact per-region table.
+- My Land — per-parcel search / Destination Guide visibility toggles.
+- Inventory backup (IAR).
+- Account changes (password/email), self-service account deletion.
+- Self-service recovery codes — 5 one-time backup codes to reset your
+  own password without needing a working email.
+- Offline messages are a real persistent inbox — visiting the page no
+  longer silently deletes them, per-message delete alongside Clear All.
+- Create a brand-new avatar (email-verified, so an unclaimed request
+  can't squat a name), import an existing avatar by proving its
+  in-world password once (never stored) — including absorbing that
+  avatar's own solo account into yours if it already has one,
+  self-service, no support ticket needed — and switch between every
+  avatar linked to the account. Backup (save) only, by design — see
+  `ROADMAP.md`.
+
+### Admin console
+
+- User management — search, create, edit; ban with optional
+  auto-expiry; soft-delete (reversible lockout — scrambles the
+  password and marks the account Deleted, recoverable by un-banning
+  plus a fresh password reset) or a separate permanent Remove (deletes
+  the account, credentials, home/last location, friendships, inventory
+  structure, appearance, and currency history outright — refuses if
+  the resident is online or owns an estate; anything they ever
+  uploaded stays in the asset store untouched either way); kick/message
+  an online resident; admin-set password reset; login-as-user for
+  support.
+- Estate management — create estates, edit settings, manage
+  managers/access/ban/group lists.
+- Grid-wide group oversight — list every group, moderate
+  visibility/enrollment flags, delete a group.
+- Abuse report review, financial/transaction reporting, grid
+  statistics.
+- Static page and news/events content management.
+- Grid settings, including an opt-in "clear all map tiles on next
+  restart" toggle for the rare case tiles have gone stale (off by
+  default, since tiles only ever refresh when a region re-uploads
+  one).
+- A web-based region console, per-region Hypergrid open/close
+  toggling, on-demand map-tile regeneration.
+- A region config file browser/editor — every region's raw `.ini`,
+  discovered automatically (no filesystem/RDP access needed), with a
+  restart button for changes that need one to take effect.
+- A Simulators page listing every discovered region process with live
+  Running/Stopped status and per-row Start, graceful Stop (with a
+  pre-flight check that refuses if the region is mid-backup, so a
+  shutdown can never land on top of one in progress), and permanent
+  Remove actions — plus Start All/Stop All for everything at once,
+  both running in the background so a full-grid bulk action can't time
+  out a reverse proxy sitting in front of the WebUI. Remove works the
+  same way for any region, self-service Store order or originally
+  static — it deletes the simulator's config folder and any
+  grid-registration rows referencing it (never the region's actual
+  content or any asset), and releases a Store order's held
+  port/grid-location for reuse if there was one. Only Robust itself
+  needs to be running for the WebUI to work — regions are separate
+  processes.
+- A settable Banker Avatar (Grid Settings) — an account fee/purchase
+  transfers actually flow through instead of an untracked void, same
+  concept as the classic MoneyServer's own BankerAvatar setting.
+
+### Store
+
+Residents spend in-world currency — ConfluenceCurrency or Gloebit,
+their choice at checkout — on an admin-managed catalog of
+prim-capacity packs and self-service region orders.
+
+- Prim packs add to whatever the region's current cap already is —
+  every region can have a different baseline — and apply instantly,
+  persisting through the target region's own remote console (no
+  restart needed).
+- Region orders auto-generate the new region's `.ini`/port/grid
+  location and launch it automatically on successful payment, no admin
+  click needed, with an admin "Start Region" button in the Store
+  Orders queue as a manual retry path for the rare case the automatic
+  launch itself fails. At checkout, region orders also let the
+  resident join one of their own existing estates instead of always
+  creating a new one.
+- Gloebit purchases run through this feature's own Robust-native
+  OAuth2 integration — independent of the region-side Gloebit module,
+  reusing the same merchant key so it's the same real account either
+  way.
+- One-time purchases; an admin-facing Store Orders queue handles
+  manual renewal/extension, no auto-recurring billing.
 
 ## Native Economy, Search & Grid Services
 
@@ -340,13 +373,27 @@ not scientifically simulated weather.
   ease via a simulated barometric trend instead of a flat random pick
   on a fixed timer.
 
-### Physics realism (ubODE)
+### Physics
 
-Buoyant floating-prim water physics, boat wave response, rubber bounce
-and material density tuning, rolling resistance, avatar/object contact
-smoothing, and friendly avatar social physics. Mesh-decode failures now
-notify the object's owner in-world instead of silently falling back to
-an invisible-wall bounding box.
+Three selectable physics engines, chosen per-region via `[Startup]
+physics` in that region's `OpenSim.ini` — a real choice, not a
+hardcoded default:
+
+- **ubODE** (default) — buoyant floating-prim water physics, boat wave
+  response, rubber bounce and material density tuning, rolling
+  resistance, avatar/object contact smoothing, and friendly avatar
+  social physics. Mesh-decode failures notify the object's owner
+  in-world instead of silently falling back to an invisible-wall
+  bounding box.
+- **BulletSim** — the other long-standing OpenSim physics engine,
+  included as-is.
+- **Jolt** (`LegionJolt`) — a third option built on the real
+  [Jolt Physics](https://github.com/jrouwe/JoltPhysics) engine (MIT,
+  used in shipped commercial titles) via the `JoltPhysicsSharp` .NET
+  binding, adapted from Legion-Grid-Code's own port. Requires
+  `meshing = Meshmerizer` (same requirement as BulletSim). The
+  `/features` page's Platform Overview lists which engines are
+  actually present on a given deployment.
 
 ### Region stability
 
