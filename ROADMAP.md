@@ -300,6 +300,87 @@ gap today. For what already exists, see `FEATURES.md`.
   upstream's and would very likely work unchanged. **Held, not
   started** - real, buildable, and worth revisiting if a resident/admin
   build pipeline for a self-compiled patch becomes worth setting up.
+- **"LegionJolt" — real Jolt Physics engine port, portability/performance
+  evaluation done (2026-09-08), held pending a priority call.**
+  Discovered while resuming the paused Legion-Grid-Code `slua-tier2-tables`
+  review: ~65 of that branch's 193 unreviewed commits (a third of it,
+  previously miscounted as SLua/Phlox work) are a genuine, substantial
+  Jolt Physics integration - M1 through M8+, its own design-decision
+  log, real production-hardening (a vendored patched `joltc` for
+  per-region native-allocator isolation, shutdown-crash fixes). Not
+  experimental scaffolding.
+
+  **Licensing: clean, both real dependencies MIT.** Jolt Physics itself
+  (`jrouwe/JoltPhysics`, 11.5k stars, used in shipped commercial titles
+  like Horizon Forbidden West) and `JoltPhysicsSharp` (the .NET
+  binding) are both MIT. Legion's own wrapper code has no repo-level
+  LICENSE file (a real, if minor, provenance gap worth knowing about),
+  but it wraps two cleanly-licensed dependencies rather than anything
+  closed-source - nothing like the Phlox saga.
+
+  **Architecture: a real, complete drop-in, not a stub.**
+  `LegionJoltScene : PhysicsScene, INonSharedRegionModule` (3,782
+  lines) genuinely implements OpenSim's own physics plugin contract -
+  `AddAvatar` (all 3 real overloads), `RemoveAvatar`/`RemovePrim`,
+  `AddPrimShape`, `RaycastWorld`, `Simulate`, terrain/water. A file
+  header comment claiming "SKELETON ONLY, ZERO physics behaviour" is
+  stale, left over from the initial scaffold commit - checked the
+  actual method bodies directly (e.g. `AddPrimShape`'s real shape-
+  classification logic, correctly distinguishing SL's real box/sphere/
+  cylinder profile+extrusion codes from OpenSim's own known
+  `CreateCylinder()` quirk) and confirmed real, substantial
+  implementations throughout, not accept-and-ignore placeholders. Zero
+  `NotImplementedException`/TODO markers remain in the current file.
+  The engine core itself is cleanly separated behind
+  `ILegionPhysicsBackend` (handles not objects, zero per-frame
+  allocation, shapes independently lifetime-managed from bodies, no SL
+  semantics below the seam) - a genuinely sound design, not just
+  functional.
+
+  **Portability: confirmed directly, not assumed - built and ran
+  natively on this Windows machine, zero extra tooling.** Extracted
+  the self-contained `Legion.Physics`/`Legion.Physics.TestHarness`
+  projects (net8.0, `JoltPhysicsSharp` NuGet package bundles a
+  pre-built native `joltc.dll` for `win-x64` - no C++ toolchain or
+  Docker/WSL2/VirtualBox needed, matching the operator's own stated
+  bar) and ran the real M1-M4.5 proof suite: **all 40 correctness/
+  determinism checks passed** - terrain heightfield extent and Y-up-
+  to-Z-up axis conversion, box/sphere/capsule/cylinder/mesh/compound
+  shape cooking, contact lifecycle (Begin/Persist/End with correct
+  UserData and impulse scaling), avatar-avatar blocking, sensor
+  overlap, bit-identical determinism across repeated runs, and several
+  named regression repros (a loaded-linkset boot stall, a terrain-
+  unbury fix) all passing clean.
+
+  **Performance: one real, measured number, not assumed - no
+  existing benchmark existed to just read (Legion's own commit history
+  only has a thread-safety stress test, not throughput numbers), so
+  built one.** A from-scratch throughput test (N dynamic boxes falling
+  onto flat terrain, real `Step()` calls timed after a warm-up) found
+  **10,000 simultaneously-active dynamic bodies step in ~2.2ms/step,
+  single-threaded** - roughly 40x headroom under a 60Hz (16.67ms)
+  budget, and far more under OpenSim's actual real-world physics rate
+  (the test harness's own code references "OpenSim's 11 fps physics",
+  ~90.8ms/step). **Caveat, stated plainly**: this is a synthetic
+  microbenchmark (plain boxes, no mesh/sculpt geometry, no scripted
+  llApplyImpulse traffic, no vehicles, no SL-glue/collision-dispatch
+  overhead on top) and there's no equivalent side-by-side number for
+  Confluence's own live ubODE engine - ubODE is deeply embedded in
+  OpenSim's scene machinery and wasn't independently extracted for a
+  true apples-to-apples run this pass. The number is real and
+  comfortably fast on its own terms; it is not a proven "faster than
+  ubODE" claim.
+
+  **Not evaluated yet, genuinely open**: real integration cost into
+  Confluence specifically (config/`[Startup] physics = Jolt` wiring,
+  vehicle physics parity - `Legion.Vehicles` exists as its own project
+  and wasn't inspected this pass, multi-region native-allocator
+  behavior beyond what the vendored `joltc` patch already addresses,
+  and real in-world testing under Casperia's actual content, not a
+  synthetic benchmark). **Held pending a priority call** - this is the
+  size of a genuine second-physics-backend project, not a small
+  cherry-pick, same category of decision as Phlox was before it got
+  shelved on its own (different) merits.
 - **wolfvoice** (`wolfsoftwaresystemsltd/wolfvoice`) — an alternative
   WebRTC voice backend for the already-merged `os-webrtc-janus` addon
   (see "WebRTC voice" below), offering per-listener spatial audio
