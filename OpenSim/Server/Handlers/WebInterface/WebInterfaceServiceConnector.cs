@@ -5906,6 +5906,46 @@ namespace OpenSim.Server.Handlers.WebInterface
                     && (m_FriendsService == null || friendsOk)
                     && (m_UserProfilesService == null || profilesOk);
 
+            // Machine-readable counterpart to the HTML page below, for grid-list/
+            // directory sites - field names match the community "OS_Simple_Stats"
+            // stats.php convention (github.com/BillBlight/OS_Simple_Stats) rather
+            // than an original schema, since the whole point is that existing
+            // scrapers built against that convention pick this up without any
+            // changes on their end. Reuses every value the health-check block
+            // above already computed live - no separate/duplicate queries.
+            if (request.QueryString.Get("format") == "json")
+            {
+                OSDMap statsMap = new OSDMap
+                {
+                    ["GridStatus"] = OSD.FromString(servicesOk ? "ONLINE" : "DEGRADED"),
+                    ["Online_Now"] = OSD.FromInteger(onlineNow),
+                    // Confluence tracks unique 30-day visitors as one combined
+                    // total (including hypergrid), not a separate local/HG split
+                    // the way OS_Simple_Stats' reference implementation does -
+                    // rather than fabricate a breakdown this codebase doesn't
+                    // have, the split fields are honestly reported as 0 and the
+                    // real combined figure goes in Total_Active_Last_30_Days.
+                    ["HG_Visitors_Last_30_Days"] = OSD.FromInteger(0),
+                    ["Local_Users_Last_30_Days"] = OSD.FromInteger(0),
+                    ["Total_Active_Last_30_Days"] = OSD.FromInteger(uniqueVisitors30d),
+                    ["Registered_Users"] = OSD.FromInteger(totalAccounts),
+                    ["Regions"] = OSD.FromInteger(totalRegions),
+                    ["Var_Regions"] = OSD.FromInteger(varRegions),
+                    ["Single_Regions"] = OSD.FromInteger(singleRegions),
+                    // Matches OS_Simple_Stats' own convention: summed sizeX*sizeY
+                    // (square meters) divided by 1000, not square kilometres.
+                    ["Total_LandSize"] = OSD.FromInteger((int)(totalAreaSqm / 1000)),
+                    ["Login_URL"] = OSD.FromString(m_publicBaseUrl),
+                    ["Website"] = OSD.FromString(m_publicBaseUrl),
+                    ["Login_Screen"] = OSD.FromString(m_publicBaseUrl + BasePath + "/welcome"),
+                    ["timestamp"] = OSD.FromDate(DateTime.UtcNow),
+                };
+
+                response.ContentType = "application/json";
+                response.RawBuffer = Encoding.UTF8.GetBytes(OSDParser.SerializeJsonString(statsMap));
+                return;
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1><i class=\"bi bi-activity\"></i> Grid Status</h1>")
               .Append("<p>Live snapshot of ").Append(Html(gridName)).Append("'s statistics and service health - ")
