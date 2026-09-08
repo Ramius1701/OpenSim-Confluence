@@ -628,6 +628,28 @@ reimplementation, but well-documented design rationale):
   advertising a capability that doesn't actually work; and generating
   map tiles live from terrain instead of on a scheduled snapshot job.
 
+**From gOSWI** (`GwynethLlewelyn/goswi` — a real, maintained, unrelated
+Go-language standalone grid-admin webapp, audited 2026-09-09 at the
+user's request for end-user/admin feature ideas, not a fork to port
+commits from). Two concrete wins already built and shipped — see
+PROJECT_LOG.md's "gOSWI feature audit: closed" entry for the full
+trail, including a real bug the JSON grid-stats work caught live
+(`OSDParser.SerializeJsonString` silently drops zero-valued integer
+fields — worth checking any other call site emitting a JSON number
+that could legitimately be zero). Two ideas remain open, not
+forgotten:
+- **A federated Libravatar server** — a resident's in-world profile
+  picture becomes their real internet-wide avatar on any
+  Libravatar-aware service, via DNS SRV records pointed at a small
+  local server. The most novel idea from this audit, but it's an
+  infrastructure decision (real DNS changes), not just code — needs a
+  deliberate go-ahead, not a default build.
+- **Web-based avatar profile editing** (About/First-Life/Skills/"Want
+  To" as an editable form, gOSWI's approach). Confluence's `/profile`
+  page is deliberately read-only by design (a comment in the handler
+  says so explicitly) — this is a candidate to *reconsider* that
+  choice, not a gap that was missed.
+
 ## Known limitations
 
 - **WebRTC voice** (`OpenSim/Addons/os-webrtc-janus`) is real, merged

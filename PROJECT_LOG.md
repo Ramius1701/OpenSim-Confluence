@@ -21826,3 +21826,118 @@ DirectDelivery (confirmed already superseded), terrain-gen (confirmed
 out of scope, external tooling), PERSIST-1.1-TX (1 significant
 data-integrity fix), and CONSOLE-GUARD-SWEEP (1 real multi-region
 bug). Nothing from the original 115-commit set remains unsampled.
+
+---
+
+## gOSWI feature audit: closed (2026-09-09)
+
+A different kind of source this time: `GwynethLlewelyn/goswi`, a real,
+maintained (16 stars, last push May 2026), unrelated-language (Go, not
+C#) standalone grid-admin webapp. No commit history to sample - user
+asked directly for "feature ideas worth stealing for Confluence and
+OpenSim-Grid-Interface... anything that can help improve the end user
+and the grid admin should always be considered." Cloned it to scratch,
+read the real route table and handler bodies (`getstats.go`,
+`profile.go`, `mapdata.go`, `offline-messages.go`, `feed-messages.go`,
+`libravatar-server.go`, `auth.go`), then cross-checked every candidate
+idea against Confluence's and OGI's *actual current code* before
+recommending anything - several turned out to already be solved here,
+in some cases more thoroughly than gOSWI's own approach.
+
+**Built, deployed, and live-verified:**
+
+1. **OS_Simple_Stats-compatible JSON grid-stats endpoint**, on both
+   sides. Both `/gridstatus` (Confluence) and `gridstatus.php` (OGI)
+   already computed every number a grid-list/directory site would
+   want, but only ever rendered full HTML - added `?format=json`
+   reusing the community `OS_Simple_Stats` field-name convention
+   (github.com/BillBlight/OS_Simple_Stats) so existing scrapers pick
+   Casperia up without any changes on their end. OGI needed a real
+   restructure first: its stats-gathering was interleaved with HTML
+   output partway through the file, and a JSON response has to set
+   its Content-Type header before anything prints - split the pure
+   stats logic out into `include/gridstatus_stats.php`, required
+   ahead of the HTML header include. Neither system splits 30-day
+   active users into local vs. hypergrid visitors the way gOSWI's
+   reference implementation does; rather than fabricate a breakdown
+   neither tracks, those two fields are honestly reported as `0` with
+   the real combined figure in `Total_Active_Last_30_Days`.
+
+   **Live-caught and fixed bug, worth remembering**:
+   `OSDParser.SerializeJsonString` (the existing JSON-serialization
+   pattern already used elsewhere in this file, for a string array)
+   silently DROPS any `OSDInteger` field whose value is `0` - three
+   fields (`Online_Now`, both visitor-split fields) vanished from the
+   live response entirely on first deploy, while every non-zero field
+   came through fine. Confirmed live, not assumed. Any of these fields
+   can legitimately read 0 (nobody online right now), so a consumer
+   parsing this endpoint needs every key present every time. Fixed by
+   switching to `System.Text.Json.JsonSerializer` directly for this
+   endpoint - no dependency on OSD's LLSD-oriented serialization
+   rules. **Worth checking any other `OSDParser.SerializeJsonString`
+   call site in this codebase for the same silent-zero-drop risk if
+   one is ever found emitting a numeric field that can legitimately be
+   zero.**
+
+2. **Avatar thumbnails + relative timestamps on Confluence's
+   `/offline-messages` page.** Confluence's page already had more
+   real capability than gOSWI's own version (delete/clear-all, a real
+   `IOfflineIMService` backend) but rendered a plain table with bare
+   UTC stamps. Added `AvatarThumbnailUrl()` - hashes the sender's
+   registered email (trimmed, lowercased, MD5, matching the
+   Gravatar/Libravatar spec exactly) against the public Libravatar
+   CDN, which falls back to Gravatar then a generic identicon entirely
+   on its own end - no local image storage or JPEG2000 conversion
+   pipeline needed, unlike gOSWI's own self-hosted approach. Added
+   `TimeAgo()` for "3 hours ago"-style relative time, exact UTC kept
+   as a `title=` tooltip. OGI has no equivalent offline-IM viewer to
+   apply this to (its `message.php` is resident-to-resident web mail,
+   a different feature) - Confluence-only.
+
+**Investigated and found to be non-issues - genuinely nothing to
+build, not just skipped:**
+
+- **JPEG2000-to-web image conversion with a Retina/@2x variant.**
+  Confluence's WebUI doesn't do its own JP2 handling at all - it links
+  to the existing `/CAPS/GetTexture` capability
+  (`GetTextureRobustHandler`), which already converts JP2->PNG/JPEG
+  server-side via the native `OpenJPEG` decoder (confirmed elsewhere
+  this session, via a real benchmark, to be the *faster* decoder for
+  this codebase's actual workload) and sets a real
+  `Cache-Control: public, max-age=86400` header - the same practical
+  benefit as gOSWI's custom disk-cache, via standard HTTP semantics
+  instead of a bespoke KV store to maintain. It also serves full
+  native resolution rather than pre-downsampling the way gOSWI's
+  ImageMagick pipeline does, which makes the whole "@2x Retina
+  variant" problem moot here - a browser rendering the full-res
+  texture at a smaller CSS size is already Retina-sharp for free.
+  Better here already, not worse.
+- **gOSWI's secure split-token password reset** (the P.I.E./Paragonie
+  selector+verifier algorithm, defends against timing attacks on
+  naive token comparison). Confluence's own `/forgot-password` flow
+  uses a different but also cryptographically sound design: a single
+  `UUID.Random()` token (122 bits of CSPRNG entropy) as the key into
+  an in-memory dictionary, an O(1) hash-bucket lookup rather than a
+  linear/byte-by-byte comparison a timing attack could exploit. Not a
+  bug, just a different valid shape - no change made.
+
+**Flagged, deliberately not built - real ideas, but each needs a
+decision this session isn't positioned to make alone:**
+
+- **A federated Libravatar server** (gOSWI's most novel idea): a
+  resident's in-world profile picture becomes their real internet-wide
+  avatar on any Libravatar-aware service, by pointing DNS SRV records
+  at a small local server. Genuinely neat, but it's an infrastructure
+  decision (DNS records), not just code - the user chose not to
+  pursue it this pass.
+- **Web-based avatar profile editing** (About/First-Life/Skills/"Want
+  To" as an editable web form). Explicitly NOT recommended: found a
+  comment in Confluence's own `/profile` handler stating this was a
+  *deliberate* choice (edit only from the viewer's own Profile panel) -
+  surfaced as something to reconsider, not treated as an oversight.
+
+Both live deploys (grid-stats JSON, offline-messages polish) confirmed
+clean post-restart via Robust.log (zero new ERROR/FATAL lines in
+either boot window). **gOSWI audit closed by explicit user
+instruction** - the Libravatar-server and profile-editor items remain
+open, available on request, not forgotten.
