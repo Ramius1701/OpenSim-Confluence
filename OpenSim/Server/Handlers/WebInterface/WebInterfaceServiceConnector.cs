@@ -3070,14 +3070,17 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             else
             {
-                sb.Append("<table><tr><th>From</th><th>Message</th><th>Received</th><th></th></tr>");
+                sb.Append("<table><tr><th></th><th>From</th><th>Message</th><th>Received</th><th></th></tr>");
                 foreach (OfflineIMEntry entry in entries.OrderBy(e => e.Message.timestamp))
                 {
                     GridInstantMessage im = entry.Message;
                     DateTime received = OpenMetaverse.Utils.UnixTimeToDateTime(im.timestamp);
-                    sb.Append("<tr><td>").Append(Html(im.fromAgentName)).Append("</td>")
+                    sb.Append("<tr><td><img src=\"").Append(AvatarThumbnailUrl(im.fromAgentID, 32))
+                      .Append("\" alt=\"\" width=\"32\" height=\"32\" style=\"border-radius:50%;vertical-align:middle;\"></td>")
+                      .Append("<td>").Append(Html(im.fromAgentName)).Append("</td>")
                       .Append("<td>").Append(Html(im.message)).Append("</td>")
-                      .Append("<td>").Append(Html(received.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC</td>")
+                      .Append("<td title=\"").Append(Html(received.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC\">")
+                      .Append(Html(TimeAgo(received))).Append("</td>")
                       .Append("<td><form method=\"post\" style=\"margin:0\">")
                       .Append("<input type=\"hidden\" name=\"action\" value=\"delete\">")
                       .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(entry.ID).Append("\">")
@@ -16191,6 +16194,51 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (string.IsNullOrEmpty(s))
                 return string.Empty;
             return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+        }
+
+        // Federated avatar via the public Libravatar CDN (falls back to
+        // Gravatar, then a generic identicon, entirely on their end) - hash
+        // the resident's registered email the same way Gravatar/Libravatar
+        // both spec it (trimmed, lowercased, MD5). No local image storage or
+        // JPEG2000 conversion involved; that's the bigger, separate
+        // self-hosted-Libravatar-server idea, not this. A resident with no
+        // email on file, or one this lookup can't resolve at all (a deleted
+        // account, an HG visitor with no local UserAccount row), gets the
+        // same generic "mystery person" default every unrecognised hash gets.
+        private string AvatarThumbnailUrl(Guid agentId, int sizePixels)
+        {
+            string email = null;
+            if (m_UserAccountService != null)
+            {
+                UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, new UUID(agentId));
+                if (account != null)
+                    email = account.Email;
+            }
+
+            string hash = !string.IsNullOrWhiteSpace(email)
+                    ? Util.Md5Hash(email.Trim().ToLowerInvariant(), Encoding.UTF8)
+                    : "00000000000000000000000000000000"; // no match -> always falls through to ?d=mp
+
+            return "https://cdn.libravatar.org/avatar/" + hash + "?s=" + sizePixels + "&d=mp";
+        }
+
+        // "3 hours ago" style relative time, falling back to a plain date
+        // once it's far enough in the past that "N days ago" stops being a
+        // more useful answer than the date itself.
+        private static string TimeAgo(DateTime utcTime)
+        {
+            TimeSpan span = DateTime.UtcNow - utcTime;
+            if (span.TotalSeconds < 0)
+                return "just now";
+            if (span.TotalSeconds < 60)
+                return "just now";
+            if (span.TotalMinutes < 60)
+                return (int)span.TotalMinutes + (span.TotalMinutes < 2 ? " minute ago" : " minutes ago");
+            if (span.TotalHours < 24)
+                return (int)span.TotalHours + (span.TotalHours < 2 ? " hour ago" : " hours ago");
+            if (span.TotalDays < 30)
+                return (int)span.TotalDays + (span.TotalDays < 2 ? " day ago" : " days ago");
+            return utcTime.ToString("yyyy-MM-dd");
         }
 
         #endregion Rendering
