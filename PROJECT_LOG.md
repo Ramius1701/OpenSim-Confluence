@@ -22133,3 +22133,74 @@ the live grid** - available as a selectable option, not switched on for
 any live Casperia region. Phlox integration (the scripting-engine half
 of this same "additional, like BulletSim" ask) not started yet - Jolt
 was tackled first as the more de-risked, already-evaluated half.
+
+---
+
+## Jolt readiness re-check: sustained-operation test, and Phlox held (2026-09-09)
+
+User asked to look at Tranquillity's actual Phlox implementation next
+(same "additional engine" framing as Jolt). Real, substantial content
+found - `#182 Add Phlox: LSL/SLua compiler, VM, and region script
+engine` alone is **175 files, ~98,000 lines**: a full ANTLR-generated
+LSL grammar/lexer/parser (`LSLParser.cs` is 4,183 lines), a complete VM
+interpreter (`Interpreter.Actions.cs` is 2,630 lines), and a
+**12,806-line** `LSLSystemAPI.cs` implementing the entire LSL/OSSL
+function library - an alternative compiler+VM+runtime, not a
+physics-backend-sized seam like LegionJolt was. It also isn't as
+cleanly isolated: it touches shared files outside its own module
+(`OpenSim.Server.RegionServer.csproj`, `AsyncCommand/*`), depends on
+Tranquillity's own bot/NPC framework as a prerequisite (Confluence has
+its own, different `BotManager` already), assumes Tranquillity's own
+`develop`-branch architecture (their scheduler was rewritten because
+Tranquillity removed `SmartThreadPool` from their tree - Confluence
+still has it), and is tied to Tranquillity's own Experience system
+(`PhloxExperienceAdapter`). Reported this honestly rather than either
+quietly declining or blindly copying something this size in one pass -
+**user held Phlox for now**, asked to verify Jolt's actual readiness
+instead.
+
+**Jolt re-verified with a real sustained-operation test, not just the
+original boot check.** The 2026-09-08 evaluation had the standalone
+Legion.Physics test harness (40/40 correctness/determinism tests); the
+2026-09-09 integration work had a ~2-second boot-to-`TriggerRegionReady`
+smoke test. Neither exercised the physics heartbeat loop over real
+wall-clock time as an integrated region module. This pass: launched a
+fresh isolated instance the same way as before, let it run **90+
+seconds past `TriggerRegionReady`** (not just through it), then
+checked process health and the log for anything new. Confirmed: the
+process stayed `Responding = True` throughout, memory stable (~148MB,
+no growth), CPU usage low and consistent with quiet idle stepping
+(~4.3s accumulated over 90+ wall-clock seconds), and **zero new log
+lines of any kind appeared after the startup sequence completed** -
+no errors, no warnings, nothing Jolt-related or otherwise. Confirmed
+stable across two regions sharing one process throughout.
+
+Two things honestly NOT verified, flagged rather than glossed over:
+- **No real physical content exercised** - no physics-enabled prims,
+  avatars, or vehicles in the test region, so the actual `Simulate()`
+  stepping under real load remains unconfirmed by this pass specifically
+  (the STANDALONE test harness's own M1-M4.5 suite already covers this
+  at the backend-library level, just not through this integrated
+  region-module path). `OpenSimStats.log` came back empty (stats-to-file
+  wasn't actually capturing data in this minimal test config), so no
+  numeric physics-FPS figure was obtained either.
+- **Graceful shutdown path not tested.** `Scene.Close()`/module
+  `Dispose()` on the shutdown path (the exact area LegionJolt's own
+  history flagged "shutdown-ordering crash fixes" for) needs a real
+  console signal (Ctrl+C equivalent) to trigger - a hidden, fully
+  backgrounded console process has no window to send `CloseMainWindow()` to,
+  confirmed by trying it (no effect after 5s). Force-terminated instead
+  (`Stop-Process -Force`) to end the test; the process died promptly
+  with no hang, which is a weaker but still real signal (no deadlock on
+  kill), not equivalent to confirming the graceful path itself.
+
+Net assessment for the user: ready for use as a selectable, stable
+option for an otherwise-empty or lightly-loaded region - boots
+correctly, self-selects correctly, runs quietly and stably over a real
+sustained window. Not yet confirmed under real in-world content
+(vehicles, physical builds, real avatar load) or through a real
+graceful-shutdown cycle - both remain open, consistent with the
+"newer/less-proven than the two established engines" framing already
+in the ini template comments. Scratch test directory hit the same
+recurring Windows file-lock quirk on cleanup as prior scratch dirs -
+harmless, left in place.
