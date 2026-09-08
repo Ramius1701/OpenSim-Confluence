@@ -22204,3 +22204,48 @@ graceful-shutdown cycle - both remain open, consistent with the
 in the ini template comments. Scratch test directory hit the same
 recurring Windows file-lock quirk on cleanup as prior scratch dirs -
 harmless, left in place.
+
+---
+
+## Fork review: every configured remote now reviewed at least once
+## (whitecore-wiki, wolf-tranquillity closed) (2026-09-09)
+
+Closed the last two genuinely-unreviewed remotes. `whitecore-wiki`
+(`WhiteCoreSim/WhiteCore-Dev.wiki`) - confirmed by reading the actual
+21 commits/11 markdown pages, not assumed from "it's a .wiki repo":
+sparse wishlist bullet points, mostly things Confluence already has
+or fall into the "risky web-triggered operational action" category
+already flagged elsewhere this session. Nothing to port.
+
+`wolf-tranquillity` (Mike Dickson's personal Tranquillity fork,
+confirmed via git ancestry to be the real merge-base source of
+Tranquillity's own `feature/robust-di` branch) - `develop` has 388
+commits genuinely unique vs the real `tranquillity/develop` (confirmed
+via `git merge-base`, not assumed - not an ancestor). The dominant
+unique content is a substantial DI (Autofac) + `AssemblyLoadContext`
+plugin-loading architectural rewrite - real, deep work, but touches
+the core bootstrap/plugin-loading mechanism every module depends on,
+same "too invasive to blind-port in one pass" call as Phlox got.
+Sampled 5 smaller, isolated "fix" commits from the same unique set and
+checked each directly against Confluence's current code - **all 5
+already fixed**: LinksetData's 4 specific sub-bugs (deep-copy on
+duplicate, empty-value-write-as-delete, cross-prim event delivery,
+write return type) all already correct in Confluence's own more mature
+629-line `LinksetData.cs`; `llGetWallclock`'s timezone config fix
+already present verbatim; the classified-listing `Category`
+varchar/int conversion fix already applied at all 3 call sites in
+`MySQLUserProfilesData.cs`. Consistent, reassuring pattern - this
+fork's small, isolated real fixes are already absorbed into Confluence
+(likely via the earlier full Tranquillity review, or shared upstream
+lineage); what remains unique is the large DI rewrite, held for the
+same reason Phlox is.
+
+**Every configured git remote on this repo has now been reviewed at
+least once.** The one concretely open item from the whole systematic
+fork review effort is `gunthar`'s unported dual-engine (ubODE +
+BulletSim) physics-tuning cluster (~50+ commits) plus its
+region-crossing attachment-hardening cluster (~15 commits) - both real,
+both confirmed absent from Confluence's current code, held pending
+explicit direction given the size. See `casperia-fork-review-status`
+memory for the full, corrected picture (including the gunthar "wrongly
+closed as a mirror" episode and its correction).
