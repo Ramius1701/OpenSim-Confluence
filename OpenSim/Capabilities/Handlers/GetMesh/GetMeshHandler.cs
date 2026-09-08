@@ -121,6 +121,15 @@ namespace OpenSim.Capabilities.Handlers
             int start, end;
             if (Util.TryParseHttpRange(range, out start, out end))
             {
+                // Suffix range (bytes=-N): "end" carries the suffix length, not
+                // an offset - resolve it against the real asset length now that
+                // we have it.
+                if (start == -1)
+                {
+                    start = Math.Max(0, mesh.Data.Length - end);
+                    end = mesh.Data.Length - 1;
+                }
+
                 // Before clamping start make sure we can satisfy it in order to avoid
                 // sending back the last byte instead of an error status
                 if (start >= mesh.Data.Length)

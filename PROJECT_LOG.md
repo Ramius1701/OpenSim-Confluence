@@ -21941,3 +21941,79 @@ clean post-restart via Robust.log (zero new ERROR/FATAL lines in
 either boot window). **gOSWI audit closed by explicit user
 instruction** - the Libravatar-server and profile-editor items remain
 open, available on request, not forgotten.
+
+---
+
+## Fork review corrections (2026-09-09): gunthar was wrongly closed as
+## "just a mirror," Aurora-Sim re-verification catches a real HTTP
+## Range-header bug across 4 asset-serving handlers
+
+Two real corrections to the fork-review effort, both prompted by
+direct user pushback rather than self-caught.
+
+**gunthar was wrongly closed.** A first pass concluded "not a fork,
+pure mirror of upstream OpenSim, nothing to review" from the repo's
+own GitHub description text plus an AGGREGATE historical commit-author
+count (dominated by 15+ years of official OpenSim core-team volume,
+statistically burying the fork owner's own recent work). The user
+caught this immediately and directly ("Gunthar is not a literal
+mirror! You have to look at the code!!!!"), then reinforced the
+broader rule ("All repos should be checked by commits and code, not by
+what the readme says!"). Checking recent commits (not aggregate stats)
+found 279 real, unique commits from GuntharDeNiro (a 5-week burst,
+May-June 2026) building a substantial personal grid ("Vanilla Sim") -
+a real fork, not a mirror. Direct code inspection then found a
+substantial chunk of it is ALREADY absorbed into Confluence
+(RegionWeb's PayPal/wallet system, `TextBuildModule.cs` AI-assisted
+building, `llDataSizeKeyValue`/Experience-Lite LSL functions, several
+already-matching bug fixes), with a real, large, later cluster still
+unported (~50+ commits of dual-engine ubODE/BulletS boat-vehicle-avatar
+physics realism tuning, ~15 commits of region-crossing attachment
+hardening) - held pending explicit direction on how to proceed, given
+its size. Full detail in `casperia-fork-review-status` memory. New
+standing-rule memory saved: `casperia-verify-forks-by-code-not-readme`
+- never conclude "mirror/empty/redundant" from a repo's own
+description or aggregate historical author stats again.
+
+**Aurora-Sim re-verification finds a real bug the first pass missed.**
+The user asked for `aurora-sim`/`phlox-core`/`homeworldz` to be
+re-checked with the same code-first rigor after the gunthar correction.
+Re-sampling Aurora-Sim's actual RECENT commits (not just a keyword grep
+across all 20,692) surfaced a 2013 fix
+(`64dd3da6ce`, author mike.dickson) for HTTP `Range` header parsing:
+"Updated Texture Fetching to handle bytes=start- and bytes=-end which
+the newer viewers will send." Checked Confluence's own current code
+directly - found the exact same gap, in not one but TWO separate
+parsers: `Util.TryParseHttpRange` (shared by `GetAssetsHandler.cs`,
+`GetMeshHandler.cs`, `GetTextureHandler.cs`) silently mishandled a
+suffix range (`bytes=-N`, "last N bytes") by defaulting the missing
+start to 0 - so a client asking for the LAST N bytes of an asset
+silently received the FIRST N+1 bytes instead, wrong data with no
+error. `GetTextureRobustHandler.cs`'s own separate, near-duplicate
+parser instead REJECTED suffix ranges outright (`BadRequest`) - and
+carried its own doc-comment TODO admitting it: "FIXME: Need to cover
+the case where only a second value is specified (e.g. -4165), probably
+by returning -1 for start" - a known, self-documented gap that was
+simply never finished.
+
+Fixed properly rather than patched locally: added a `start == -1`
+sentinel to `Util.TryParseHttpRange` (mirroring the existing `end ==
+-1` "open-ended range" convention) meaning "this was a suffix range;
+`end` holds the suffix length, resolve it against the real asset
+length." Updated all three shared callers to resolve that sentinel
+before their existing clamp logic. Consolidated
+`GetTextureRobustHandler.cs`'s separate, buggier duplicate parser to
+use the shared, now-fixed `Util.TryParseHttpRange` instead of
+maintaining a second copy of the same logic - removes the duplication
+and the FIXME in one move. Build confirmed clean. Touches
+`OpenSim.Framework.dll` and `OpenSim.Capabilities.Handlers.dll`. Not
+yet deployed.
+
+Also logged as design research in ROADMAP.md (not built, non-portable
+or too large): Aurora-Sim's `InworldRestartSerializer.cs` (2013,
+author Revolution Smythe) - a seamless session-preserving region-
+restart mechanism, architecturally too deep/divergent from Confluence's
+current networking stack to port mechanically.
+
+`phlox-core` and `homeworldz` re-verification still pending as of this
+entry - see next PROJECT_LOG entry if this continues.

@@ -160,6 +160,15 @@ namespace OpenSim.Capabilities.Handlers
             // range request
             if (Util.TryParseHttpRange(req.Headers["range"], out int start, out int end))
             {
+                // Suffix range (bytes=-N): "end" carries the suffix length, not
+                // an offset - resolve it against the real asset length now that
+                // we have it.
+                if (start == -1)
+                {
+                    start = Math.Max(0, len - end);
+                    end = len - 1;
+                }
+
                 // viewers do send broken start, then flag good assets as bad
                 if (start >= len)
                 {

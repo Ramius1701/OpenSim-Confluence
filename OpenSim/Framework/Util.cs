@@ -3260,6 +3260,18 @@ namespace OpenSim.Framework
             return sb.ToString();
         }
 
+        // start == -1 signals a suffix range (bytes=-N, RFC 2616 sec 14.35.1):
+        // "end" holds the suffix LENGTH, not an offset - resolving it into an
+        // absolute start requires the real resource length, which only the
+        // caller has. end == -1 signals an open-ended range (bytes=N-):
+        // "start" holds the starting offset, meaning "to the end of the
+        // resource." Was previously unhandled entirely - a suffix range
+        // silently fell through with start defaulted to 0, so a client
+        // asking for the LAST N bytes of an asset instead received the
+        // FIRST N+1 bytes. Ported from Aurora-Sim (confirmed the exact same
+        // gap here, including a "FIXME: probably by returning -1 for start"
+        // comment left unimplemented in GetTextureRobustHandler's own
+        // now-removed duplicate of this same parser, before porting).
         public static bool TryParseHttpRange(string header, out int start, out int end)
         {
             start = end = 0;
@@ -3273,20 +3285,32 @@ namespace OpenSim.Framework
                 if (rangeValues.Length == 2)
                 {
                     string rawStart = rangeValues[0].Trim();
-                    if (rawStart != "" && !Int32.TryParse(rawStart, out start))
-                        return false;
-
-                    if (start < 0)
-                        return false;
-
                     string rawEnd = rangeValues[1].Trim();
+
+                    if (rawStart.Length == 0)
+                    {
+                        if (rawEnd.Length == 0 || !Int32.TryParse(rawEnd, out end) || end <= 0)
+                        {
+                            start = end = 0;
+                            return false;
+                        }
+                        start = -1;
+                        return true;
+                    }
+
+                    if (!Int32.TryParse(rawStart, out start) || start < 0)
+                    {
+                        start = end = 0;
+                        return false;
+                    }
+
                     if (rawEnd.Length == 0)
                     {
                         end = -1;
                         return true;
                     }
-                    else if (Int32.TryParse(rawEnd, out end))
-                        return end > 0;
+                    if (Int32.TryParse(rawEnd, out end) && end > 0)
+                        return true;
                 }
             }
 

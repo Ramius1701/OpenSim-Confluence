@@ -627,6 +627,48 @@ reimplementation, but well-documented design rationale):
   blobs vs. viewer-facing assets vs. per-owner instances; never
   advertising a capability that doesn't actually work; and generating
   map tiles live from terrain instead of on a scheduled snapshot job.
+- **Deeper pass, 2026-09-09** (1007-commit history read for ideas, not
+  diffed for commits — still C++, still nothing portable): a real
+  architectural decision worth knowing about, "ADR 0036" — presenting
+  a rectangular varregion as a set of square "facets" for crossing/
+  presentation purposes, each with its own CAPS seed, re-announced to
+  the viewer once per facet rather than once per region. Directly
+  relevant background if Confluence's own varregion-tiling design ever
+  gets revisited (see the existing "resolve varregion tiling" note
+  under Halcyon above). Also: per-outfit live re-baking (bake what a
+  resident is actually wearing right now, not a shared cached bake
+  across every wearer of similar items) as a real, verified-live
+  refinement to appearance baking; and bounding every outbound region-
+  to-grid HTTP call so one unresponsive peer can't wedge the whole
+  region's own thread — a real operational-hardening pattern worth
+  spot-checking against Confluence's own outbound HTTP timeouts
+  somewhere down the line, not confirmed either way here. One
+  candidate directly checked and ruled out: Homeworldz's own commit
+  history shows it once had the "capability advertised but never
+  actually authorized/routed" bug for its ServerReleaseNotes-equivalent
+  capability — checked Confluence's real `ServerReleaseNotesModule.cs`
+  directly, it registers AND redirects correctly, not the same bug
+  (also already independently hardened earlier in this project's own
+  Tranquillity-review pass, for a different bug in the same module).
+
+**From Aurora-Sim** (`aurora-sim/Aurora-Sim` — dead since 2014-01-13,
+20,692-commit history, zero shared git ancestry with either Confluence
+or its own real architectural successor WhiteCore-Dev, so no diff-based
+review was possible; audited 2026-09-09 via a representative sample,
+same low-yield conclusion as `opensim-lickx`):
+- A "seamless reconnect after region restart" feature
+  (`InworldRestartSerializer.cs`, 2013, author Revolution Smythe — the
+  same person behind the already-reviewed, confirmed-redundant
+  `halcyon-revsmythe` fork): serializes which agents/circuits were
+  connected before a region restart and restores that UDP circuit/agent
+  state once the region comes back up, so residents don't get
+  disconnected or need to relog. Touches the LLUDP server, `Scene`, and
+  `SceneManager` layers deeply enough — and is old/architecturally
+  divergent enough (2013-era, pre-.NET-Core, different namespace root)
+  — that porting it would mean a ground-up reimplementation against
+  Confluence's own current networking stack, not a mechanical port.
+  Genuinely interesting if region-restart UX is ever prioritized, not
+  attempted here.
 
 **From gOSWI** (`GwynethLlewelyn/goswi` — a real, maintained, unrelated
 Go-language standalone grid-admin webapp, audited 2026-09-09 at the
