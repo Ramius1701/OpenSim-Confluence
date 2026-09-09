@@ -547,7 +547,32 @@ gap today. For what already exists, see `FEATURES.md`.
   still ship an engine slower than what's already here. SLua doesn't
   exist anywhere in the real upstream Halcyon/Phlox lineage either (a
   from-scratch language-frontend project, unrelated to any Phlox port).
-  Not revisited unless the underlying VM itself changes.
+
+  **Reopened and re-held, 2026-09-09** - the "not revisited" call above
+  turned out wrong on its own terms: several active OpenSim forks
+  (including Tranquillity, this project's closest peer) have since
+  added real Phlox integrations, correcting the "dead end" framing.
+  Re-investigated Tranquillity's actual `#182 Add Phlox: LSL/SLua
+  compiler, VM, and region script engine` PR and its `PhloxExperienceAdapter`;
+  reported honestly rather than re-closing or overselling. Held again
+  at the operator's call pending a priority decision, not rejected -
+  see `PROJECT_LOG.md`'s "Jolt readiness re-check... and Phlox held"
+  entry.
+
+  **Watch for the same class of bug LegionJolt had, if this resumes**:
+  Jolt's own integration shipped with a real, confirmed gap - its
+  async request-asset delegate was wired but never called, so any
+  prim whose mesh asset wasn't cached yet at physics-actor-creation
+  time stayed permanently stuck on a bounding-box fallback instead of
+  self-healing once the fetch completed (found and fixed 2026-09-09,
+  full detail in `PROJECT_LOG.md`). Phlox wouldn't hit that exact bug
+  (no meshing involved), but the same category of risk applies to any
+  newly-ported adapter that depends on OpenSim's async asset-fetch
+  path - here, script source/bytecode assets rather than sculpt
+  textures. Check explicitly whether Phlox's own adapter correctly
+  retries/rebuilds after an async asset fetch completes, or silently
+  accepts a failed/empty state, before calling any future Phlox
+  integration done.
 - **`osPlaySoundURL`** (play audio from an arbitrary external URL,
   ported from Legion-Grid-Code). Built, deployed, and tested live on
   2026-08-30/31 - reproducibly hung the calling script's execution
