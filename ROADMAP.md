@@ -594,8 +594,26 @@ gap today. For what already exists, see `FEATURES.md`.
   friction wiring look like the highest-value, lowest-risk starting
   points - both just need scripted values to actually reach
   `SetBodyFriction`/`SetBodyRestitution`/`SetGravityFactor`, which
-  already exist), held pending a priority call, same as the disk-cache
-  idea above.
+  already exist).
+
+  **Implemented and deployed to live, 2026-09-09 (commit `fbace2e652`).**
+  All six gaps closed - see `PROJECT_LOG.md`'s "LegionJolt brought to
+  feature parity" entry for the full implementation writeup. Two real
+  Homeworldz-sourced Jolt-API fixes landed alongside the ported ubODE
+  behaviors: a restitution-combine-rule override (Jolt defaults to
+  `max`, not an average) plus an explicit non-zero terrain restitution
+  so that fix doesn't cap every bounce at half, and
+  `EnhancedInternalEdgeRemoval` + CCD for avatar/object contact
+  quality. New `[Jolt]` ini section for real region tunables. Built
+  clean, boot-tested on an isolated scratch region (three clean boots,
+  zero exceptions), then deployed straight to live Casperia rather
+  than continuing scratch-region testing - the restitution-combine/
+  terrain-restitution pieces affect every existing physical-prim-vs-
+  terrain contact on a running Jolt region, so real content on
+  Starbase Andromeda is a better test bed than an empty standalone
+  region. All three affected DLLs `md5sum`-verified on deploy. **Not
+  yet confirmed under real content** - needs a restart + in-world
+  pass on Starbase Andromeda.
 
   **Provenance correction, same pass**: the boat wave-response code in
   both `BSDynamics.cs` (BulletSim) and `ODEDynamics.cs`/`ODEScene.cs`

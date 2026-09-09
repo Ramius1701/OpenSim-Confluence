@@ -22550,3 +22550,87 @@ caching with unit-size sharing) condensed into `ROADMAP.md`'s new
 top-level Meshmerizer entry; the complete unabridged write-up is at
 the agent's scratch output before it was cleaned up (not preserved
 long-term - ROADMAP.md is now the source of truth for this).
+
+## LegionJolt brought to feature parity with ubODE/BulletSim; deployed
+## to live (2026-09-09)
+
+Implemented and shipped all six gaps from tonight's feature-parity
+audit (commit `fbace2e652`), following the approved plan
+(`sprightly-noodling-river.md`). Full technical detail already in
+`ROADMAP.md`'s LegionJolt entry - summary here is what actually
+happened during implementation and deployment.
+
+Research first: two Explore agents mapped (1) exactly what
+`ILegionPhysicsBackend`/`JoltPhysicsBackend.cs` already exposed vs.
+what was genuinely missing per category, and (2) Homeworldz's 46
+Jolt-related commits for real, hard-won Jolt-API-level lessons (they
+use raw C++ Jolt, not JoltPhysicsSharp, so nothing to literally port,
+but real conceptual findings). Both came back with concrete,
+verifiable file:line citations - worth the research pass, since two
+of Homeworldz's specific findings (Jolt's restitution combine is
+`max`, not average; `EnhancedInternalEdgeRemoval` fixes terrain-walk
+jitter) turned into real fixes, not just background reading.
+
+Implementation, in order: general buoyancy (pure `JoltPrim.cs`
+plumbing onto the already-live `SetBodyGravityFactor`) - material/
+friction/restitution (`SetMaterial` override + the two Homeworldz-
+informed backend fixes: an `OnContactAdded`/`OnContactPersisted`
+override for the restitution-combine bug, and an explicit non-zero
+terrain restitution so that fix doesn't cap every bounce at half) -
+rolling resistance (ported ubODE's exact damping formula into the
+existing per-body step-drain loop) - contact smoothing (verified the
+ground-state OnGround/IsSupported distinction was ALREADY correct;
+added `EnhancedInternalEdgeRemoval` and CCD, both real, confirmed
+missing; added a generic `DampCharacterVelocity` backend primitive but
+deliberately did NOT bolt on speculative landing-damping business
+logic, since Jolt's kinematic `CharacterVirtual` already clamps
+vertical velocity on landing via `StepCharacter`'s own ground-hold
+logic - unlike ubODE/BulletSim's rigid-body avatars, there's no
+confirmed jitter problem here to fix) - avatar-avatar social physics
+(found the `PhysicsLayer`/`ObjectLayerPairFilterTable` mechanism is a
+complete red herring for this - no rigid Body is ever created on
+`PhysicsLayer.Avatar` - the real mechanism is
+`CharacterVsCharacterCollisionSimple`, added a scene-wide toggle for
+it) - boat wave response (ported ubODE's real two-component sine-wave
+height/normal functions bit-for-bit, including its exact wave-
+direction constants, wired through a new `IVehicleBody.GetWaterSurface`
+and new roll/pitch torque logic in `SimulateHover`).
+
+New `[Jolt]` ini section for real region tunables (avatar-avatar
+default, boat wave height/length/speed/normal-scale/drift-scale),
+mirroring ubODE's own `ConfigFloat` validated-read idiom.
+
+Verification: build succeeded clean after the full implementation.
+Set up a fresh isolated scratch region ("Smoke Test Region",
+standalone, SQLite-backed) rather than reusing the two leftover
+scratch directories from earlier tonight (both had already been
+cleaned up empty). Boot-tested clean three times across the setup
+process (initial boot, WebConsole-enabled restart, post-password-
+reset restart) - `[LEGION JOLT] enabled`, terrain cooked,
+`TriggerRegionReady`, "Startup complete," zero exceptions each time.
+
+Real mistake caught and fixed along the way: reset a login password
+in the wrong SQLite file (`UserAccounts.db`, an orphaned leftover) -
+the actual connection string standalone mode uses is `userprofiles.db`
+(traced through `Standalone.ini` -> `StandaloneCommon.ini` ->
+`config-include/storage/SQLiteStandalone.ini`), confirmed by checking
+`UserAccountServiceBase.cs`'s own `[DatabaseService]`/`[UserAccountService]`
+fallback-resolution logic rather than guessing again. Reset "Test
+User"'s password correctly on the second attempt (same MD5-hash-of-
+MD5-hash-plus-salt scheme confirmed directly from
+`AuthenticationServiceBase.cs`/`PasswordAuthenticationService.cs`).
+
+**Operator's call**: given that friction, and that the restitution-
+combine/terrain-restitution fixes have real (if well-reasoned) blast
+radius on every EXISTING physical-prim-vs-terrain contact on any
+running Jolt region (unlike buoyancy/material, which only change
+behavior for content that actually calls the relevant LSL functions),
+deployed directly to live Casperia instead of continuing the scratch-
+region path - real content on Starbase Andromeda is a better test bed
+than an empty standalone region anyway. Build clean, all three
+affected DLLs (`OpenSim.Region.PhysicsModule.LegionJolt.dll`+pdb,
+`Legion.Physics.dll`, `Legion.Vehicles.dll` - the latter two ship
+without separate pdbs in this build) copied and `md5sum`-verified.
+**Not yet restarted/tested under real content** - that's the
+operator's next step on Starbase Andromeda, same live-testing
+collaboration pattern as the mesh-retry fix earlier tonight.
