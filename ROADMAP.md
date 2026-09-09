@@ -445,8 +445,39 @@ gap today. For what already exists, see `FEATURES.md`.
   giving LegionJolt the same async-fetch-then-rebuild path BulletSim
   already has (`RequestMeshAssetRebuild` + a step-thread-deferred
   drain, mirroring the module's existing `_pendingActivation` pattern).
-  Built clean and deployed; not yet confirmed live under real content -
-  that's the next restart. Full detail in `PROJECT_LOG.md`.
+  **Confirmed working with direct evidence, not an inferred count**
+  (commit `49aedfc869` adds explicit fetch/rebuild-outcome logging,
+  after an initial attempt to verify via the `IMesher returned null`
+  count swinging across boots turned out to be an invalid proxy - that
+  line fires regardless of whether the retry later succeeds): on
+  Starbase Andromeda's real content, all 4,654 fallback prims were
+  re-fetched and re-cooked - 4,614 became real mesh shapes, 40 stayed
+  bbox (genuinely degenerate sculpt geometry, matching the separate
+  `mesher geometry unusable` count exactly - correctly not retried).
+  Zero failed fetches, zero skipped rebuilds, zero exceptions. Full
+  detail in `PROJECT_LOG.md`.
+
+  **Considered and held: a disk-persistent mesh cache, so a restart
+  doesn't re-fetch/re-cook the same content every time.** Investigated
+  porting `ubMeshmerizer`'s existing `MeshFileCache` pattern (disk-
+  backed, survives process restarts) onto the generic `Meshmerizer`
+  BulletSim/Jolt share (currently in-memory only - `static
+  Dictionary<ulong, Mesh>`, wiped every restart, which is why the
+  4,654-prim fetch/re-cook above happens on EVERY boot, not just the
+  first). Confirmed feasible: `AMeshKey` is already a shared type
+  (`SharedBase/IMesher.cs`), and ubOde's `GetMeshUniqueKey()` only
+  depends on shared types - portable as-is. But the two `Mesh` classes
+  (`Meshing/Meshmerizer/Mesh.cs` vs `ubOdeMeshing/Mesh.cs`) have
+  genuinely different internal field layouts, so `ToStream`/
+  `FromStream` would need fresh serialization code, not a copy-paste -
+  and a subtle bug there produces *silently wrong* collision geometry
+  (not a safe, visible fallback like the bug above), on a mesher
+  BulletSim's other live regions share too. **Held, not started** -
+  real, worth doing if the every-restart re-fetch cost becomes an
+  actual problem, but needs its own isolated build-and-test pass
+  (round-trip serialization correctness, a scratch region) before
+  going anywhere near live Casperia, same discipline the original
+  Jolt integration got.
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters

@@ -22360,3 +22360,62 @@ Not yet verified live under real content - that's the operator's next
 restart. `OpenSim.Region.CoreModules.dll` is shared by every region
 process, so the DynamicTextureModule fix takes effect on any region
 once it's next restarted, not just Starbase Andromeda.
+
+## Mesh-retry fix confirmed with direct evidence; Meshmerizer
+## disk-cache idea scoped and held; Phlox ROADMAP entry corrected
+## (2026-09-09)
+
+Restarted Starbase Andromeda twice more to verify the mesh-retry fix
+under real load. First restart used the same `IMesher returned null`
+count as the check - it dropped from 5,160/14,926 (the two pre-fix
+boots) to 124, read as evidence the fix worked. **That reasoning was
+wrong**: caught it live when a third restart (2.5 hours later) showed
+4,654 - nearly back to pre-fix levels, on the exact same fixed code.
+That log line fires unconditionally whenever a mesh isn't ready yet,
+regardless of whether the retry later succeeds - it was never a valid
+proxy, the earlier drop was boot-timing noise. Corrected by adding
+real instrumentation (commit `49aedfc869`): fetch requested/succeeded/
+failed, rebuild succeeded/skipped/exception, resulting shape kind.
+One more restart gave a definitive, direct answer: **all 4,654
+fallback prims** re-fetched and re-cooked successfully - 4,614 became
+real `mesh(mesher)` shapes, 40 stayed `bbox(fallback)` (matching the
+separate, pre-existing `mesher geometry unusable (verts=9, indices=3)`
+count exactly - genuinely degenerate sculpts, correctly not retried).
+Zero failed fetches, zero skipped rebuilds, zero exceptions. The fix
+is real and confirmed, not inferred.
+
+Graceful region control this session went through the same
+`/consoleweb` HTTP endpoint the WebUI's own Simulators page uses
+(`X-Console-Secret` header, POST `command=shutdown`/`backup-status`),
+found by reading `WebInterfaceServiceConnector.cs`'s `TryStopRegion`/
+`RunRegionConsoleCommand` rather than guessing at a process-kill
+approach - confirms no backup in progress first, same safety check the
+UI itself applies. Start used the same `OpenSim.exe -inifile=...
+-background=true` launch `TryStartRegionProcess` uses.
+
+Follow-on from the user's own observation ("Meshmerizer is sorta basic
+compared to ubODEMeshmerizer... combine them?"): investigated whether
+the generic `Meshmerizer` (BulletSim/Jolt) could gain `ubMeshmerizer`'s
+disk-persistent mesh cache, which would eliminate the every-restart
+4,654-prim re-fetch entirely (the generic one's cache is in-memory
+only, wiped every process restart). Confirmed real, common ground
+(`AMeshKey` is already a shared type; `GetMeshUniqueKey()` is portable
+as-is) but the two `Mesh` classes have genuinely different internal
+layouts, so serialization would need fresh code, not a copy-paste - and
+a bug there produces silently wrong collision geometry rather than a
+safe fallback, on a mesher shared with BulletSim's other live regions.
+**Operator's call: held, not implemented, no code changes** - documented
+in `ROADMAP.md`'s LegionJolt entry for later, with the specific
+feasibility/risk findings preserved so a future pass doesn't have to
+re-derive them.
+
+Also corrected a stale `ROADMAP.md` line: the Phlox entry's "not
+revisited unless the underlying VM itself changes" close from
+2026-09-05 was wrong on its own terms - this session already reopened
+and re-held Phlox (see the "Jolt readiness re-check... and Phlox held"
+entry above), not rejected it. Flagged one concrete thing to check if
+that work resumes: whether Phlox's own adapter retries on a completed
+async asset fetch (its equivalent of Jolt's sculpt-texture problem -
+script source/bytecode instead) rather than silently accepting a
+failed/empty state, per the user's own "same issues with Phlox?"
+question.
