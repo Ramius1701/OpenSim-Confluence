@@ -943,7 +943,10 @@ namespace OpenSim.Region.PhysicsModule.Meshing
 
         public IMesh CreateMesh(String primName, PrimitiveBaseShape primShape, Vector3 size, float lod, bool isPhysical, bool shouldCache, bool convex, bool forOde)
         {
-            return CreateMesh(primName, primShape, size, lod, false);
+            // isPhysical was previously hardcoded false here, silently defeating callers (e.g.
+            // BSShapes.CreatePhysicalHull) that pass true specifically to skip the small-prim
+            // bounding-box substitution in the isPhysical/shouldCache overload below.
+            return CreateMesh(primName, primShape, size, lod, isPhysical, shouldCache);
         }
 
         public IMesh CreateMesh(String primName, PrimitiveBaseShape primShape, Vector3 size, float lod, bool isPhysical)

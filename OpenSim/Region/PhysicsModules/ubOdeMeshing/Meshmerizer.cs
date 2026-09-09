@@ -898,7 +898,7 @@ namespace OpenSim.Region.PhysicsModule.ubODEMeshing
                 primMesh.revolutions = 1.0f + 0.015f * primShape.PathRevolutions;
                 primMesh.skew = 0.01f * primShape.PathSkew;
                 primMesh.twistBegin = (float)(primShape.PathTwistBegin * (floatPI * 0.02f));
-                primMesh.twistEnd = (float)(primShape.PathTwistBegin * (floatPI * 0.02f));
+                primMesh.twistEnd = (float)(primShape.PathTwist * (floatPI * 0.02f));
                 primMesh.taperX = primShape.PathTaperX * 0.01f;
                 primMesh.taperY = primShape.PathTaperY * 0.01f;
 
