@@ -23,10 +23,12 @@ gap today. For what already exists, see `FEATURES.md`.
   exactly the case the caller's own comment says it's avoiding.
   ubODE/Jolt unaffected (ubMeshmerizer's matching overload never reads
   `isPhysical` at all; Jolt calls a different overload entirely,
-  `LegionJoltScene.cs:2729`). **Low-risk one-line fix** (delegate the
-  real args instead of hardcoding `false`) - held for now, not yet
-  fixed, given how much live physics code has already changed this
-  session; a real candidate for a quick, isolated follow-up.
+  `LegionJoltScene.cs:2729`). **Fixed (commit `6532010e06`)** - the
+  8-arg overload now delegates the real `isPhysical`/`shouldCache` args
+  instead of hardcoding `false`. Built clean, deployed to live
+  (`OpenSim.Region.PhysicsModule.Meshing.dll`+pdb, copy verified via
+  `md5sum`). Takes effect on any region's next restart - not yet
+  confirmed under real content on a running region.
 
   **Live bug, ubODE, confirmed**: `ubOdeMeshing/Meshmerizer.cs:901`
   sets `primMesh.twistEnd` from `primShape.PathTwistBegin` (copy-paste
@@ -38,8 +40,10 @@ gap today. For what already exists, see `FEATURES.md`.
   through to the same final value). Effect: any twisted torus/tube/
   ring prim physicalized under ubODE gets a collision mesh whose twist
   stays constant instead of interpolating to the real end value -
-  physics shape silently diverges from the visual mesh. **Low-risk
-  one-token fix** (`PathTwistBegin` → `PathTwist`) - also held for now.
+  physics shape silently diverges from the visual mesh. **Fixed (commit
+  `6532010e06`)** - `PathTwistBegin` → `PathTwist`. Built clean,
+  deployed to live (`OpenSim.Region.PhysicsModule.ubOdeMeshing.dll`+pdb,
+  copy verified via `md5sum`). Same restart caveat as above.
 
   **Other real findings, lower priority, not yet actioned** (full
   detail and additional file:line citations in `PROJECT_LOG.md`):
