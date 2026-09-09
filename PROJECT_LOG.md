@@ -22419,3 +22419,68 @@ async asset fetch (its equivalent of Jolt's sculpt-texture problem -
 script source/bytecode instead) rather than silently accepting a
 failed/empty state, per the user's own "same issues with Phlox?"
 question.
+
+## Jolt vs ubODE/BulletSim feature-parity audit; a real FEATURES.md
+## attribution bug found and fixed along the way (2026-09-09)
+
+Ran the audit the user asked for after the disk-cache-mesher
+discussion: checked whether LegionJolt has real equivalents (not
+similar-looking code, the actual method bodies) for six categories
+FEATURES.md credits to ubODE - general prim buoyancy, boat wave
+response, material/rubber-bounce tuning, rolling resistance, avatar/
+object contact smoothing, and "friendly" avatar-avatar social
+physics - and what BulletSim itself actually has under the same
+categories, since its own FEATURES.md entry just said "included
+as-is."
+
+Two parallel research passes (one per engine, ubODE and BulletSim)
+read the real code end to end with file:line citations throughout -
+`ODEPrim.cs`/`ODEDynamics.cs`/`ODEScene.cs`/`ODECharacter.cs`/
+`ODECollision.cs` for ubODE, `BSPrim.cs`/`BSDynamics.cs`/
+`BSCharacter.cs`/`BSMaterials.cs`/`BSParam.cs`/`BSActorAvatarMove.cs`
+for BulletSim. Both are real, working, non-trivial custom physics -
+not upstream boilerplate. Confirmed against Jolt's own code directly
+(`JoltPrim.cs`/`JoltCharacter.cs`/`JoltPhysicsBackend.cs`): Jolt has
+NONE of the six built - `Buoyancy { get => 0f; set { } }` is a literal
+no-op stub (`JoltPrim.cs:492`), `SetMaterial` is never overridden (uses
+the base no-op, so llSetPhysicsMaterial has zero effect on a Jolt
+prim), no wave math anywhere, no rolling-resistance damping. The one
+genuine silver lining: Jolt already has the underlying primitives
+these would need (`SetBodyFriction`/`SetBodyRestitution`/
+`SetGravityFactor` in `JoltPhysicsBackend.cs`, already called from a
+couple of places) and a real per-body `ObjectLayer`/
+`ObjectLayerPairFilterTable` collision-response filter architecturally
+suited to an avatar-avatar phantom toggle - none of it is wired to
+scripted/material input yet, but the plumbing exists. Full
+category-by-category table with file:line citations appended to
+`ROADMAP.md`'s LegionJolt entry. Not started - held pending a priority
+call, same as the disk-cache idea.
+
+Real find along the way: chasing why the BulletSim researcher flagged
+the boat wave-response code as "non-upstream-looking," `git log -S
+"BoatWaveHeight1"` showed both `BSDynamics.cs` and `ODEDynamics.cs`/
+`ODEScene.cs` got that wave math together, in the same two commits,
+authored by `GuntharDeNiro` (`9db8b8a27c`/`1e50d92bc0`, 2026-05-24) -
+already merged into this repo. That makes `FEATURES.md`'s "BulletSim
+... included as-is" line - written earlier in this very session, when
+the Physics section got reorganized - actually wrong. Fixed. Flagged,
+but deliberately not chased further: this sits oddly against "gunthar's
+unported dual-engine physics-tuning cluster, held pending direction"
+tracked elsewhere - if the wave-response piece is already merged, the
+earlier "~50+ commits unported" count may not be accurate anymore. Left
+as a noted discrepancy in ROADMAP.md rather than reopening that whole
+investigation unprompted; it's already its own tracked, deliberately
+held item.
+
+Process note: the two research sub-passes were run as Explore
+sub-agents spawned BY a parent research agent (not directly by this
+session), which meant the completion notification for the parent
+fired while it was still waiting on its own children - a case worth
+remembering: "completed" on a task-notification doesn't always mean
+the actual deliverable exists yet. Confirmed via `git status`
+(nothing changed) before treating it as done. Once both children's
+detailed findings arrived, did the Jolt-side comparison and the
+ROADMAP.md/FEATURES.md write-up directly in this session rather than
+trying to resume the parent (no reachable `SendMessage` tool in this
+session's tool set for that specific case) - straightforward given the
+sub-agents' reports already had full file:line evidence.

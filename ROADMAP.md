@@ -478,6 +478,63 @@ gap today. For what already exists, see `FEATURES.md`.
   (round-trip serialization correctness, a scratch region) before
   going anywhere near live Casperia, same discipline the original
   Jolt integration got.
+
+  **Feature-parity audit vs ubODE/BulletSim (2026-09-09).** FEATURES.md
+  credits ubODE with "buoyant floating-prim water physics, boat wave
+  response, rubber bounce and material density tuning, rolling
+  resistance, avatar/object contact smoothing, and friendly avatar
+  social physics" - checked whether Jolt has real equivalents (not
+  just similar-sounding code) for each, and what BulletSim itself
+  actually has under the same categories (BulletSim's own FEATURES.md
+  entry just says "included as-is," which turned out incomplete - see
+  below). Read the real method bodies in all three engines' wrapper
+  code, not comments or naming.
+
+  | Category | ubODE | BulletSim | Jolt |
+  |---|---|---|---|
+  | General (non-vehicle) buoyancy | Real - gravity scaled `(1-buoyancy)` | Real - same formula, pushed once via `SetGravity` | **Absent** - `Buoyancy { get => 0f; set { } }` no-op stub |
+  | Boat wave response | Real - 2-component travelling sine wave, analytic normal+flow | Real but vehicle-scoped only, same sine-wave approach | **Absent** - vehicle hover uses a flat water plane, no wave math anywhere in Jolt/Legion.Vehicles |
+  | Material/rubber-bounce tuning | Real - material table, `sqrt(mu1*mu2)` blend, rubber-biased bounce formula | Real - full material table (Stone/Rubber/Glass/etc, ini-overridable), llSetPhysicsMaterial wired end to end | **Absent** - `SetMaterial` never overridden (uses `PhysicsActor`'s no-op base); backend has flat hardcoded friction defaults (0.6/0.5) regardless of material; llSetPhysicsMaterial has no effect |
+  | Rolling resistance | Real - global scene tunable scaled by per-prim friction, velocity-proportional drag | **Absent** - no `RollingFriction` anywhere in the wrapper or native API surface | **Absent**, same as BulletSim |
+  | Avatar/object contact smoothing | Real - EMA-filtered contact normals, landing/settle/slope damping, plus ODE contact-joint softening (soft ERP/CFM) | Real - dual-friction (standing/walking) state machine with a stationary-velocity debounce, terminal-velocity clamp, `ContactProcessingThreshold`/`CollisionMargin` | **No custom C# equivalent** - but Jolt's avatar is a native `CharacterVirtual` kinematic controller (`IsSliding` is a real native feature), architecturally different from ubODE/BulletSim's rigid-body-simulated avatars; genuinely unclear whether the same jitter problem even applies, not a confirmed like-for-like gap |
+  | "Friendly" avatar-avatar social physics | Real - per-mode (friendly/playful/romantic/no-touch) compliant contact (soft ERP/CFM, depth clamp) plus an explicit separating "social nudge" force scaled by penetration depth | Real but binary - `AvatarToAvatarCollisionsByDefault` toggles a collision-mask bit (`CollisionFilterGroups`/`BulletSimData.CollisionTypeMasks`) so avatars phase through each other entirely; no graduated push/nudge force | **Not built, but the infrastructure already exists**: `JoltPhysicsBackend.cs` has a real per-body `ObjectLayer`/`ObjectLayerPairFilterTable` collision-response filter (starts all-pairs-disabled, selectively enables per layer) - architecturally the same shape as BulletSim's mask toggle, just never wired to an avatar-vs-avatar layer |
+
+  **Portability read**: every category above that's "real" in ubODE/
+  BulletSim is, at its core, generic C# scalar/vector math (gravity
+  scaling, sine waves over `(x,y,t)`, velocity-proportional damping,
+  a material lookup table) - directly reusable against Jolt's own
+  `ApplyForce`/`SetGravityFactor`/`SetBodyFriction`/`SetBodyRestitution`
+  primitives, which already exist in `JoltPhysicsBackend.cs` and are
+  already called from a few places (vehicle friction, avatar ground
+  hold). The only genuinely engine-specific piece each time is the
+  last mile - BulletSim/ubODE's contact-joint softening (`soft_erp`/
+  `soft_cfm`, ODE/Bullet-specific constraint-solver concepts) has no
+  1:1 Jolt equivalent and would need re-expressing against Jolt's own
+  contact/material API, not a direct port. **Not started** - this is
+  a real, evidence-based backlog (general buoyancy and material/
+  friction wiring look like the highest-value, lowest-risk starting
+  points - both just need scripted values to actually reach
+  `SetBodyFriction`/`SetBodyRestitution`/`SetGravityFactor`, which
+  already exist), held pending a priority call, same as the disk-cache
+  idea above.
+
+  **Provenance correction, same pass**: the boat wave-response code in
+  both `BSDynamics.cs` (BulletSim) and `ODEDynamics.cs`/`ODEScene.cs`
+  (ubODE) is NOT stock upstream OpenSimulator - confirmed via `git log
+  -S "BoatWaveHeight1"`, both engines' wave math was added together by
+  `GuntharDeNiro` in two commits (`9db8b8a27c`/`1e50d92bc0`,
+  2026-05-24), already merged into this repo. `FEATURES.md`'s
+  "BulletSim... included as-is" line (written earlier this same
+  session) was wrong on this point - corrected. This sits oddly next
+  to the "gunthar's unported dual-engine physics-tuning cluster,
+  held pending direction" framing elsewhere in this file and in
+  `casperia-fork-review-status` memory - at least this specific
+  wave-response piece is evidently already absorbed, so that earlier
+  "~50+ commits unported" count may need re-checking against what's
+  actually still missing versus already merged. Not re-investigated
+  now - flagging the discrepancy rather than resolving it, since the
+  gunthar cluster is its own separate, already-tracked, deliberately
+  held item.
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters

@@ -385,8 +385,9 @@ hardcoded default:
   social physics. Mesh-decode failures notify the object's owner
   in-world instead of silently falling back to an invisible-wall
   bounding box.
-- **BulletSim** — the other long-standing OpenSim physics engine,
-  included as-is.
+- **BulletSim** — the other long-standing OpenSim physics engine, not
+  a stock unmodified copy: shares some of the same absorbed water/
+  wave-response tuning ubODE has above (see `PROJECT_LOG.md`).
 - **Jolt** (`LegionJolt`) — a third option built on the real
   [Jolt Physics](https://github.com/jrouwe/JoltPhysics) engine (MIT,
   used in shipped commercial titles) via the `JoltPhysicsSharp` .NET
