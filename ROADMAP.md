@@ -5,6 +5,81 @@ gap today. For what already exists, see `FEATURES.md`.
 
 ## In progress / being investigated
 
+- **Meshmerizer vs ubMeshmerizer feature-parity audit (2026-09-09).**
+  Full read of both `IMesher` implementations - generic `Meshmerizer`
+  (`Meshing/Meshmerizer/`, used by BulletSim + LegionJolt) vs
+  `ubMeshmerizer` (`ubOdeMeshing/`, ubODE only) - prompted by the
+  disk-cache-mesher idea above. Two real, currently-live bugs found,
+  plus a set of lower-priority portable improvements.
+
+  **Live bug, BulletSim, confirmed**: the 8-arg `CreateMesh` overload
+  (`Meshmerizer.cs:944-947`) hardcodes `isPhysical=false` regardless of
+  what's passed in. `BSShapes.cs:717` (`CreatePhysicalHull`) calls it
+  with `isPhysical=true` specifically ("Pass true for physicalness as
+  this prevents the creation of bounding box which is not needed"),
+  but the override discards that - so any BulletSim physical prim
+  under 0.2m/axis (`minSizeForComplexMesh`) gets a 12-triangle
+  bounding box instead of real geometry when its convex hull is built,
+  exactly the case the caller's own comment says it's avoiding.
+  ubODE/Jolt unaffected (ubMeshmerizer's matching overload never reads
+  `isPhysical` at all; Jolt calls a different overload entirely,
+  `LegionJoltScene.cs:2729`). **Low-risk one-line fix** (delegate the
+  real args instead of hardcoding `false`) - held for now, not yet
+  fixed, given how much live physics code has already changed this
+  session; a real candidate for a quick, isolated follow-up.
+
+  **Live bug, ubODE, confirmed**: `ubOdeMeshing/Meshmerizer.cs:901`
+  sets `primMesh.twistEnd` from `primShape.PathTwistBegin` (copy-paste
+  of the line above it) instead of `primShape.PathTwist`, only in the
+  circular-extrusion branch (torus/tube/ring). The linear branch three
+  lines up gets it right, and generic Meshmerizer's own circular
+  branch (`Meshmerizer.cs:865-866`) is also correct - confirmed this
+  isn't a units mismatch (traced both engines' twist unit conversions
+  through to the same final value). Effect: any twisted torus/tube/
+  ring prim physicalized under ubODE gets a collision mesh whose twist
+  stays constant instead of interpolating to the real end value -
+  physics shape silently diverges from the visual mesh. **Low-risk
+  one-token fix** (`PathTwistBegin` → `PathTwist`) - also held for now.
+
+  **Other real findings, lower priority, not yet actioned** (full
+  detail and additional file:line citations in `PROJECT_LOG.md`):
+  generic's "corrupt prim" guard logs `profileBegin>=profileEnd` but
+  doesn't clamp it (ubMeshmerizer's does, unconditionally); a GDI
+  bitmap leak in generic's `SculptMap.ScaleImage` (never disposes the
+  scaled intermediate; ubMeshmerizer does); ubMeshmerizer recognizes
+  `IsometricTriangle`/`RightTriangle` profiles as 3-sided, generic
+  only recognizes `EquilateralTriangle` (currently unreachable from
+  in-world scripting, reachable from OAR-imported data); ubMeshmerizer
+  rejects degenerate 0-vertex/0-face meshes, generic doesn't; generic
+  has no outer try/catch around its three mesh-generation calls
+  (ubMeshmerizer does); ubMeshmerizer rounds vertices to 6 decimals
+  for better welding, generic doesn't.
+
+  **Structural, high-risk, not portable without real design work**:
+  generic Meshmerizer has no local convex-hull computation at all for
+  procedural (non-mesh-asset) prims or sculpts - it only extracts
+  hull data SL already baked into a mesh asset, via methods explicitly
+  commented "temporary prototype code - please do not use," yet
+  `BSShapes.cs:722-725` uses them in production anyway. ubMeshmerizer
+  does real local convex decomposition
+  (`ConvexDecompositionDotNet`/`HullUtils`) for any prim type -
+  substantially more capable, but porting it means adopting a
+  dependency generic doesn't have and restructuring its method
+  signatures, not a drop-in. Similarly, ubMeshmerizer's refcounted
+  in-memory cache with real eviction (vs generic's monotonically-
+  growing, never-evicted static dictionary) and its unit-size mesh
+  sharing (N differently-scaled copies of one sculpt share one build)
+  both require generic's `Mesh` class to support operations its
+  current `Dictionary<Vertex,int>`-based representation isn't built
+  for - same category as the already-documented disk-cache idea
+  above, not a quick change.
+
+  **Not started** - held pending a priority call, same as the other
+  Jolt/Meshmerizer items in this file. The two live bugs are real
+  outstanding correctness issues on the actual running grid (BulletSim
+  regions right now; ubODE for any twisted torus/tube/ring) - worth a
+  decision on a fix separate from the larger architectural items.
+
 - **Native, viewer-integrated Marketplace** (`DirectDeliveryModule` +
   `/marketplace` WebUI) — a real implementation of SL's actual
   `DirectDelivery` capability, traced from Firestorm source: browse and buy
@@ -523,18 +598,22 @@ gap today. For what already exists, see `FEATURES.md`.
   (ubODE) is NOT stock upstream OpenSimulator - confirmed via `git log
   -S "BoatWaveHeight1"`, both engines' wave math was added together by
   `GuntharDeNiro` in two commits (`9db8b8a27c`/`1e50d92bc0`,
-  2026-05-24), already merged into this repo. `FEATURES.md`'s
-  "BulletSim... included as-is" line (written earlier this same
-  session) was wrong on this point - corrected. This sits oddly next
-  to the "gunthar's unported dual-engine physics-tuning cluster,
-  held pending direction" framing elsewhere in this file and in
-  `casperia-fork-review-status` memory - at least this specific
-  wave-response piece is evidently already absorbed, so that earlier
-  "~50+ commits unported" count may need re-checking against what's
-  actually still missing versus already merged. Not re-investigated
-  now - flagging the discrepancy rather than resolving it, since the
-  gunthar cluster is its own separate, already-tracked, deliberately
-  held item.
+  2026-05-24). `FEATURES.md`'s "BulletSim... included as-is" line
+  (written earlier this same session) was wrong on this point -
+  corrected. Initially looked like it contradicted the "gunthar's
+  unported dual-engine physics-tuning cluster" framing elsewhere in
+  this file - resolved, not a real discrepancy: `git merge-base
+  --is-ancestor` confirms `9db8b8a27c`/`1e50d92bc0` genuinely are
+  merged into this branch, while `032b56cada` (explicitly cited in
+  `casperia-fork-review-status` memory as part of the still-unported
+  ~50+ commit cluster) is confirmed NOT an ancestor of HEAD - still
+  sitting only on the gunthar remote. So: an earlier, smaller piece of
+  gunthar's wave-response work made it in already; the larger, later
+  cluster (buoyancy, contact damping, rolling resistance, near-rest
+  sleep, avatar-avatar soft collisions) genuinely has not - the
+  existing "held pending direction" status for that cluster stands
+  unchanged, just now with the boundary between merged and unmerged
+  actually confirmed rather than assumed.
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters

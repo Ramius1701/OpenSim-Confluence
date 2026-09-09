@@ -22463,14 +22463,18 @@ the boat wave-response code as "non-upstream-looking," `git log -S
 authored by `GuntharDeNiro` (`9db8b8a27c`/`1e50d92bc0`, 2026-05-24) -
 already merged into this repo. That makes `FEATURES.md`'s "BulletSim
 ... included as-is" line - written earlier in this very session, when
-the Physics section got reorganized - actually wrong. Fixed. Flagged,
-but deliberately not chased further: this sits oddly against "gunthar's
-unported dual-engine physics-tuning cluster, held pending direction"
-tracked elsewhere - if the wave-response piece is already merged, the
-earlier "~50+ commits unported" count may not be accurate anymore. Left
-as a noted discrepancy in ROADMAP.md rather than reopening that whole
-investigation unprompted; it's already its own tracked, deliberately
-held item.
+the Physics section got reorganized - actually wrong. Fixed. Looked
+like it contradicted "gunthar's unported dual-engine physics-tuning
+cluster, held pending direction" tracked elsewhere - resolved, not a
+real contradiction: `git merge-base --is-ancestor` confirms
+`9db8b8a27c`/`1e50d92bc0` genuinely are merged, while `032b56cada`
+(the commit `casperia-fork-review-status` memory explicitly cites as
+part of the still-unported ~50+ commit cluster) is confirmed NOT an
+ancestor of HEAD. An earlier, smaller slice of gunthar's wave-response
+work made it in already; the larger, later cluster (buoyancy, contact
+damping, rolling resistance, near-rest sleep, avatar-avatar soft
+collisions) genuinely hasn't - the held status for that cluster is
+unchanged, just now confirmed rather than assumed.
 
 Process note: the two research sub-passes were run as Explore
 sub-agents spawned BY a parent research agent (not directly by this
@@ -22484,3 +22488,65 @@ ROADMAP.md/FEATURES.md write-up directly in this session rather than
 trying to resume the parent (no reachable `SendMessage` tool in this
 session's tool set for that specific case) - straightforward given the
 sub-agents' reports already had full file:line evidence.
+
+## Meshmerizer vs ubMeshmerizer audit: two real, currently-live bugs
+## found (2026-09-09)
+
+A second, parallel audit (spawned alongside the Jolt/ubODE/BulletSim
+one, writing to a scratch file to avoid both agents racing on
+ROADMAP.md) read both `IMesher` implementations in full -
+`Meshing/Meshmerizer/{Meshmerizer,Mesh,SculptMap,SculptMesh}.cs` and
+`ubOdeMeshing/{Meshmerizer,Mesh,SculptMap,SculptMesh}.cs` - looking
+for genuine feature differences beyond the disk-cache gap already
+documented. Verified the two headline findings directly before
+trusting them (both confirmed real):
+
+**BulletSim, live**: `Meshmerizer.cs:944-947`'s 8-arg `CreateMesh`
+overload silently hardcodes `isPhysical=false`:
+```csharp
+public IMesh CreateMesh(String primName, PrimitiveBaseShape primShape, Vector3 size, float lod, bool isPhysical, bool shouldCache, bool convex, bool forOde)
+{
+    return CreateMesh(primName, primShape, size, lod, false);
+}
+```
+`BSShapes.cs:717` (`CreatePhysicalHull`) calls exactly this overload
+with `isPhysical=true` and an explicit comment explaining why ("Pass
+true for physicalness as this prevents the creation of bounding box
+which is not needed") - but the override throws that away. Generic
+Meshmerizer's actual `isPhysical` gate (`Meshmerizer.cs:986-996`)
+substitutes a 12-triangle bounding box for any prim under
+`minSizeForComplexMesh` (0.2m/axis) when `!isPhysical` - so any
+BulletSim physical prim under that size gets a bbox instead of real
+convex-hull geometry, precisely the case `CreatePhysicalHull`'s own
+comment says it's trying to prevent. ubODE is unaffected (its matching
+overload never reads `isPhysical` - no bbox-substitution feature
+exists on that side at all); LegionJolt is unaffected (calls a
+different overload, `LegionJoltScene.cs:2729`, with `isPhysical=false`
+explicitly). One-line fix (delegate the real args instead of
+hardcoding `false`), low risk, held for now.
+
+**ubODE, live**: `ubOdeMeshing/Meshmerizer.cs:901` sets
+`primMesh.twistEnd` from `primShape.PathTwistBegin` instead of
+`primShape.PathTwist` - a copy-paste of the line above it, only in the
+circular-extrusion (torus/tube/ring) branch. Confirmed not a units
+issue by tracing both engines' twist-angle conversions through to the
+same final radians value for the CORRECT case; this is purely a wrong
+field reference. Effect: any twisted torus/tube/ring prim physicalized
+under ubODE gets a collision mesh with constant twist instead of
+interpolating - the physics shape silently diverges from what the
+resident sees. One-token fix, low risk, held for now.
+
+Neither fix has been applied - flagged clearly rather than
+auto-fixed, given how much live physics code has already changed
+this session (LegionJolt's mesh-retry fix, two DrainPendingMeshRebuild
+deploys, three region restarts). Both are genuinely small and
+low-risk compared to everything else touched tonight, and worth a
+quick follow-up pass on their own.
+
+Full lower-priority findings (all with file:line citations, several
+more "low risk to port" items, two "high risk, needs real design
+work" items - local convex-hull decomposition and refcounted mesh
+caching with unit-size sharing) condensed into `ROADMAP.md`'s new
+top-level Meshmerizer entry; the complete unabridged write-up is at
+the agent's scratch output before it was cleaned up (not preserved
+long-term - ROADMAP.md is now the source of truth for this).
