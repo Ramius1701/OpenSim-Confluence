@@ -569,6 +569,15 @@ namespace Legion.Physics
         CharacterId CreateCharacter(in CharacterDesc desc);
         void RemoveCharacter(CharacterId character);
 
+        /// <summary>
+        /// Scene-wide avatar-vs-avatar collision toggle, matching BulletSim's AvatarToAvatarCollisionsByDefault
+        /// (a binary phase-through model, not ubODE's graduated social-nudge force). Sweeps every live
+        /// character and Adds/Removes it from the shared CharacterVsCharacterCollisionSimple object -
+        /// PhysicsLayer.Avatar/ObjectLayerPairFilterTable is NOT involved: no rigid Body is ever created on
+        /// that layer, so it has no bearing on avatar-vs-avatar collision at all.
+        /// </summary>
+        void SetAvatarAvatarCollisions(bool enabled);
+
         void SetCharacterTransform(CharacterId character, Vector3 position, Quaternion orientation);
         void SetCharacterShape(CharacterId character, float capsuleHalfHeight, float capsuleRadius);
 
@@ -580,6 +589,16 @@ namespace Legion.Physics
         /// lurching it back down / re-penetrating on the next step.
         /// </summary>
         void ReGroundCharacter(CharacterId character, Vector3 position);
+
+        /// <summary>
+        /// Overwrite a character's ACTUAL velocity for the current frame - unlike SetCharacterMovement's
+        /// desired horizontal intent (which StepCharacter re-derives from scratch every frame and does not
+        /// compound with landing/settle damping), this replaces what the backend already computed for this
+        /// step. A generic velocity-override primitive, not "landing damping" itself - per this interface's
+        /// own design rule (no SL semantics below the interface), the actual landing/settle/slope damping
+        /// logic lives in the caller (JoltCharacter), this just gives it somewhere to write the result.
+        /// </summary>
+        void DampCharacterVelocity(CharacterId character, Vector3 dampedVelocity);
 
         /// <summary>
         /// Desired horizontal velocity plus explicit vertical control. Called once

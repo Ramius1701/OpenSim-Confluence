@@ -75,6 +75,80 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private float[] _terrainField;   // the (N+1)-square field SetTerrain cooked (row = y * _terrainFieldM)
         private int _terrainFieldM;
 
+        // Boat wave-response tunables ([Jolt] ini section, read in AddRegion) - same key names/defaults/
+        // wave-direction constants as ubODE's own GetDynamicWaterHeight/Normal (ODEScene.cs), so a resident
+        // sees the same wave feel regardless of which engine a given region runs.
+        private bool _boatWaterDynamicsEnabled = true;
+        private float _boatWaveHeight1 = 0.09f, _boatWaveHeight2 = 0.04f;
+        private float _boatWaveLength1 = 18f, _boatWaveLength2 = 12f;
+        private float _boatWaveSpeed1 = 0.85f, _boatWaveSpeed2 = 0.55f;
+        private float _boatWaveNormalScale = 3.0f;
+        private float _boatWaveDriftScale = 0.25f;
+        private float _simulatedTime;   // running total, see Simulate()
+
+        // Two fixed, non-orthogonal wave directions - crossing at an oblique angle looks more natural
+        // than two perpendicular waves. Exact values match ubODE's own (ODEScene.cs) bit for bit.
+        private const float WaveDir1X = 0.928477f, WaveDir1Y = -0.371391f;
+        private const float WaveDir2X = 0.691905f, WaveDir2Y = 0.721989f;
+
+        // Real two-component travelling sine wave, ported from ubODE's GetDynamicWaterHeight. Falls back
+        // to the flat WaterLevel plane when boat water dynamics are disabled (config) or there's no water
+        // (WaterLevel itself is the region's still-water plane either way).
+        internal float WaveHeightAt(float x, float y)
+        {
+            if (!_boatWaterDynamicsEnabled)
+                return WaterLevel;
+            float t = _simulatedTime;
+            float dir1 = x * WaveDir1X + y * WaveDir1Y;
+            float dir2 = x * WaveDir2X + y * WaveDir2Y;
+            float k1 = 2f * MathF.PI / _boatWaveLength1;
+            float k2 = 2f * MathF.PI / _boatWaveLength2;
+            return WaterLevel
+                + _boatWaveHeight1 * MathF.Sin(dir1 * k1 + t * _boatWaveSpeed1)
+                + _boatWaveHeight2 * MathF.Sin(dir2 * k2 + t * _boatWaveSpeed2);
+        }
+
+        // Analytic surface normal (the wave function's own gradient, not a numerical sample) - ported from
+        // ubODE's GetDynamicWaterNormal. Drives a boat's roll/pitch toward the actual wave slope instead of
+        // always levelling to flat Z.
+        internal SVector3 WaveNormalAt(float x, float y)
+        {
+            if (!_boatWaterDynamicsEnabled)
+                return SVector3.UnitZ;
+            float t = _simulatedTime;
+            float k1 = 2f * MathF.PI / _boatWaveLength1;
+            float k2 = 2f * MathF.PI / _boatWaveLength2;
+            float phase1 = (x * WaveDir1X + y * WaveDir1Y) * k1 + t * _boatWaveSpeed1;
+            float phase2 = (x * WaveDir2X + y * WaveDir2Y) * k2 + t * _boatWaveSpeed2;
+            float slope1 = _boatWaveHeight1 * k1 * MathF.Cos(phase1) * _boatWaveNormalScale;
+            float slope2 = _boatWaveHeight2 * k2 * MathF.Cos(phase2) * _boatWaveNormalScale;
+            SVector3 normal = new SVector3(
+                -(slope1 * WaveDir1X + slope2 * WaveDir2X),
+                -(slope1 * WaveDir1Y + slope2 * WaveDir2Y),
+                1f);
+            return SVector3.Normalize(normal);
+        }
+
+        // Horizontal drift/current derived from the same wave phases - ported from ubODE's
+        // GetDynamicWaterFlow. Not consumed by SimulateHover in this pass (roll/pitch is the requested
+        // feature); exposed for a future ComputeLinearBoatWaveDrift-equivalent if wanted.
+        internal SVector3 WaveFlowAt(float x, float y)
+        {
+            if (!_boatWaterDynamicsEnabled)
+                return SVector3.Zero;
+            float t = _simulatedTime;
+            float k1 = 2f * MathF.PI / _boatWaveLength1;
+            float k2 = 2f * MathF.PI / _boatWaveLength2;
+            float phase1 = (x * WaveDir1X + y * WaveDir1Y) * k1 + t * _boatWaveSpeed1;
+            float phase2 = (x * WaveDir2X + y * WaveDir2Y) * k2 + t * _boatWaveSpeed2;
+            float flow1 = _boatWaveHeight1 * _boatWaveSpeed1 * (0.5f + 0.5f * MathF.Sin(phase1));
+            float flow2 = _boatWaveHeight2 * _boatWaveSpeed2 * (0.5f + 0.5f * MathF.Sin(phase2));
+            return new SVector3(
+                -(WaveDir1X * flow1 + WaveDir2X * flow2) * _boatWaveDriftScale,
+                -(WaveDir1Y * flow1 + WaveDir2Y * flow2) * _boatWaveDriftScale,
+                0f);
+        }
+
         // Bilinear terrain height at region XY, from the same samples the collision heightfield was
         // cooked from (1 m spacing, origin at the region corner). Clamps outside the field.
         internal float TerrainHeightAt(float x, float y)
@@ -293,6 +367,28 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             _backend = new LegionJoltBackend();
             _backend.Initialize(settings);
             DefaultGravity = settings.Gravity;   // the vehicle controller applies this manually
+
+            // [Jolt] region tunables - no dedicated section existed before the feature-parity pass; only
+            // real region-facing knobs go here (matches ubODE's own ConfigBool/ConfigFloat convention).
+            // Everything else added alongside it (buoyancy, material, rolling resistance, restitution
+            // combine) is either self-contained plumbing or a fixed constant, not something with a real
+            // per-region tuning need yet.
+            IConfig joltConfig = m_Config?.Configs["Jolt"];
+            bool avatarAvatarCollisions = joltConfig?.GetBoolean("AvatarAvatarCollisions", true) ?? true;
+            _backend.SetAvatarAvatarCollisions(avatarAvatarCollisions);
+
+            // Same keys/defaults/ranges as ubODE's own [ODEPhysicsSettings] boat_wave_* - a resident sees
+            // the same wave feel switching between engines, and an operator who already tuned one engine's
+            // waves can reuse the same numbers for the other.
+            _boatWaterDynamicsEnabled = joltConfig?.GetBoolean("boat_water_dynamics_enabled", true) ?? true;
+            _boatWaveHeight1 = ConfigFloat(joltConfig, "boat_wave_height_1", _boatWaveHeight1, 0f, 2f);
+            _boatWaveHeight2 = ConfigFloat(joltConfig, "boat_wave_height_2", _boatWaveHeight2, 0f, 2f);
+            _boatWaveLength1 = ConfigFloat(joltConfig, "boat_wave_length_1", _boatWaveLength1, 2f, 256f);
+            _boatWaveLength2 = ConfigFloat(joltConfig, "boat_wave_length_2", _boatWaveLength2, 2f, 256f);
+            _boatWaveSpeed1 = ConfigFloat(joltConfig, "boat_wave_speed_1", _boatWaveSpeed1, 0f, 10f);
+            _boatWaveSpeed2 = ConfigFloat(joltConfig, "boat_wave_speed_2", _boatWaveSpeed2, 0f, 10f);
+            _boatWaveNormalScale = ConfigFloat(joltConfig, "boat_wave_normal_scale", _boatWaveNormalScale, 0f, 20f);
+            _boatWaveDriftScale = ConfigFloat(joltConfig, "boat_wave_drift_scale", _boatWaveDriftScale, 0f, 10f);
 
             EngineType = Name;                              // osGetPhysicsEngineType
             EngineName = $"{_backend.Name} {_backend.Version}"; // osGetPhysicsEngineName
@@ -2527,6 +2623,18 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             return (int)System.Math.Min(scaled, int.MaxValue);
         }
 
+        // Same validated-read idiom as ubODE's own ConfigFloat (ODEScene.cs) - a bad/NaN/out-of-range ini
+        // value falls back to the caller's own default rather than propagating into the sim.
+        private static float ConfigFloat(IConfig config, string key, float fallback, float min, float max)
+        {
+            if (config == null)
+                return fallback;
+            float value = config.GetFloat(key, fallback);
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                return fallback;
+            return Math.Clamp(value, min, max);
+        }
+
         // ---------------------------------------------------------------------
         // PhysicsScene - M6.1 stubs (accept-and-ignore so a populated region still boots)
         // ---------------------------------------------------------------------
@@ -3504,6 +3612,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (_backend == null)
                 return 1f;
 
+            // Real elapsed-simulation-time accumulator (mirrors ubODE's own SimulatedTime += ODE_STEPSIZE)
+            // - the wave functions' time input. Deliberately a running total, not derived from _stepCount *
+            // LastTimeStep after the fact, so it can't drift if a frame's dt varies.
+            _simulatedTime += timeStep;
+
             // M7 Task 2: (re)build changed linkset compounds ONCE per frame, here on the step thread before
             // the step. link()/unlink() only mark the root dirty (they no longer rebuild inline); this
             // coalesces a whole linkset's worth of child-links into a single rebuild - the boot-load of a
@@ -3614,6 +3727,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 lock (_prims)
                     _prims.TryGetValue(bs.UserData, out p);
                 p?.ApplyStepState(in bs);
+                p?.ApplyRollingResistance(bs.LinearVelocity, bs.AngularVelocity);
                 if (_drops.Count > 0)
                     UpdateDropTelemetry(in bs);
             }

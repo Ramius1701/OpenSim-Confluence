@@ -71,5 +71,13 @@ namespace Legion.Vehicles
 
         /// <summary>Water height at the given position's XY.</summary>
         float GetWaterLevel(Vector3 pos);
+
+        /// <summary>
+        /// Water surface height AND its local normal at the given position's XY - a real wave surface,
+        /// not always flat +Z. Lets a boat's hover respond to the actual wave slope (roll/pitch) instead
+        /// of always levelling to world-up. Height matches GetWaterLevel for the same position; this is
+        /// the richer query when the caller also wants orientation, not just height.
+        /// </summary>
+        void GetWaterSurface(Vector3 pos, out float height, out Vector3 normal);
     }
 }

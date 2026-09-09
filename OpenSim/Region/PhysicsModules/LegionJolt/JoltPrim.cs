@@ -45,6 +45,23 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private const float DensityScaleFactor = 0.01f;
         private float _simDensity;
 
+        // llSetBuoyancy: 0 = normal gravity, 1 = weightless, negative = extra-heavy. Applied as a per-body
+        // gravity-factor scalar (BulletSim's exact ComputeGravity formula, `1 - buoyancy`, via Jolt's own
+        // native per-body gravity multiplier instead of a computed force vector). A vehicle owns gravity
+        // while active (ApplyVehicleBodyParams zeroes it for the Halcyon controller's manual buoyancy) -
+        // _buoyancy is still tracked so RestoreVehicleBodyParams and a fresh body creation both know the
+        // real value to restore to instead of a hardcoded 1f.
+        private float _buoyancy;
+
+        // llSetPhysicsMaterial: -1 = never set (BodyDesc.Default's own friction/restitution apply, same as
+        // before this feature existed). Friction/restitution values match BulletSim's own BSMaterials.cs
+        // table so the two engines agree on what "rubber" or "stone" feels like. Same vehicle-ownership
+        // caveat as buoyancy - ApplyVehicleBodyParams forces friction/restitution to 0 while a vehicle is
+        // active; RestoreVehicleBodyParams reads these back instead of BodyDesc.Default on deactivation.
+        private int _material = -1;
+        private float _matFriction;
+        private float _matRestitution;
+
         private ShapeId _shape = ShapeId.Invalid;   // one handle-ref held for the prim's life
         private BodyId _body = BodyId.Invalid;
         // Assert-buoyancy-on-restart (Balpien): re-assert the vehicle's body params (gravity-cancellation,
@@ -194,6 +211,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             desc.AngularVelocity = ToS(_rotationalVelocity);
             desc.UserData = LocalID;                   // echoed back in every RayHit/contact/update - no lookup
             desc.WantsContactEvents = _subscribedMs > 0;   // keep the Persist gate across a body recreate (weld/reshape)
+            if (_material >= 0) { desc.Friction = _matFriction; desc.Restitution = _matRestitution; }
+            desc.GravityFactor = 1f - _buoyancy;
             if (_isPhysical)
             {
                 desc.Layer = PhysicsLayer.Dynamic;
@@ -201,6 +220,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 desc.Mass = 0f;                        // <=0 -> backend computes Volume*Density
                 if (_simDensity > 0f)                  // honour the SOP density (BulletSim mass parity, M6.8)
                     desc.Density = _simDensity * DensityScaleFactor;
+                // Without CCD a fast/heavy falling body can tunnel or "squash" into terrain for a frame
+                // (discrete collision resolves the penetration a step late, visibly swallowing bounce
+                // energy on hard impacts) - an independent Jolt-based project (Homeworldz) hit and fixed
+                // this exact case the same way.
+                desc.UseCcd = true;
                 // STRUCTURAL PORT of BulletSim's taint-deferred creation: create the body INERT (asleep), never
                 // active-on-insert. BulletSim never lets a body be stepped by the engine until ALL taints
                 // (create + MakeDynamic + SetVehicle/SetPhysicalGravity) have drained (ProcessTaints runs
@@ -277,6 +301,42 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             _velocity = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
             _rotationalVelocity = new Vector3(s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z);
             RequestPhysicsterseUpdate();
+        }
+
+        // ubODE's PhysicalPrimRollingResistance* defaults (ODEScene.cs), ported as fixed constants for
+        // now - no [Jolt] ini section exists yet to make these region-tunable (see the LegionJolt
+        // feature-parity plan's config-wiring note); revisit if real per-region tuning is ever requested.
+        private const float RollingResistance = 0.18f;
+        private const float RollingResistanceSpeed = 1.25f;
+        private const float RollingResistanceAngularSpeed = 2.0f;
+        private const float NearTerrainBand = 0.25f;   // how close to the ground counts as "resting", not "falling"
+
+        // ubODE's exact damping shape (ODEPrim.cs ApplyPhysicalPrimRestingDamping): a velocity-proportional
+        // force/torque, NOT literal Coulomb rolling friction - scaled by the prim's own material friction so
+        // a rubber ball still rolls further than a stone one. Only engages near the ground and below a speed
+        // threshold (so it never fights a genuinely moving/falling/thrown object, only a settling one). Called
+        // once per step from LegionJoltScene's body-drain loop, right after ApplyStepState reads this frame's
+        // real velocity - the force/torque accumulates for the NEXT step, same as ubODE's own Move()-then-
+        // dBodyAddForce ordering.
+        internal void ApplyRollingResistance(SVector3 linVel, SVector3 angVel)
+        {
+            if (!_isPhysical || _vehicle != null || !_body.IsValid)
+                return;
+            float terrainZ = _module.TerrainHeightAt(_position.X, _position.Y);
+            if (_position.Z - _size.Z * 0.5f > terrainZ + NearTerrainBand)
+                return;   // airborne or well above ground - not "resting", leave it alone
+
+            float mu = Math.Clamp(_material >= 0 ? _matFriction : BodyDesc.Default.Friction, 0.15f, 1.5f);
+            float rollingScale = mu * RollingResistance;
+
+            SVector3 horizontal = new SVector3(linVel.X, linVel.Y, 0f);
+            float speed = horizontal.Length();
+            if (speed > 0f && speed < RollingResistanceSpeed)
+                _backend.ApplyForce(_body, -horizontal * rollingScale);
+
+            float angSpeed = angVel.Length();
+            if (angSpeed > 0f && angSpeed < RollingResistanceAngularSpeed)
+                _backend.ApplyTorque(_body, -angVel * rollingScale);
         }
 
         // Re-cook the shape (resize / shape swap) keeping the same body. Release order mirrors the
@@ -489,7 +549,49 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         public override Vector3 Acceleration { get => Vector3.Zero; set { } }
         public override float CollisionScore { get; set; }
         public override bool Kinematic { get => false; set { } }
-        public override float Buoyancy { get => 0f; set { } }
+        public override float Buoyancy
+        {
+            get => _buoyancy;
+            set
+            {
+                _buoyancy = value;
+                // A vehicle owns gravity while active (ApplyVehicleBodyParams zeroes it); RestoreVehicleBodyParams
+                // reads _buoyancy back once it deactivates. Pushing it here too would just get overwritten by
+                // the vehicle's own per-frame assertion, so skip it while active rather than fight that path.
+                if (_body.IsValid && !(_vehicle != null && _vehicle.IsActive))
+                    _backend.SetBodyGravityFactor(_body, 1f - value);
+            }
+        }
+        // llSetPhysicsMaterial. Values match BulletSim's own BSMaterials.cs table (Stone/Metal/Glass/Wood/
+        // Flesh/Plastic/Rubber/Light, PRIM_MATERIAL_* order) so a resident sees consistent behavior switching
+        // between engines. Density intentionally NOT touched here - Density is already its own independent
+        // SOP-driven property/setter (see below); BulletSim's own table folds a density baseline into each
+        // material too, but leaving Jolt's density solely SOP-driven avoids a second, competing source of
+        // truth for mass.
+        public override void SetMaterial(int material)
+        {
+            _material = material;
+            (_matFriction, _matRestitution) = material switch
+            {
+                0 => (0.8f, 0.4f),   // Stone
+                1 => (0.3f, 0.4f),   // Metal
+                2 => (0.2f, 0.7f),   // Glass
+                3 => (0.6f, 0.5f),   // Wood
+                4 => (0.9f, 0.3f),   // Flesh
+                5 => (0.4f, 0.7f),   // Plastic
+                6 => (0.9f, 0.9f),   // Rubber
+                _ => (BodyDesc.Default.Friction, BodyDesc.Default.Restitution),   // Light / unknown
+            };
+            // Same vehicle-ownership caveat as Buoyancy above - a live vehicle's own per-frame assertion
+            // would just overwrite this; RestoreVehicleBodyParams picks up _matFriction/_matRestitution once
+            // it deactivates instead.
+            if (_body.IsValid && !(_vehicle != null && _vehicle.IsActive))
+            {
+                _backend.SetBodyFriction(_body, _matFriction);
+                _backend.SetBodyRestitution(_body, _matRestitution);
+            }
+        }
+
         public override bool Flying { get => false; set { } }
         public override bool SetAlwaysRun { get => false; set { } }
         public override bool ThrottleUpdates { get => false; set { } }
@@ -756,10 +858,13 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (!_body.IsValid)
                 return;
             BodyDesc d = BodyDesc.Default;
-            _backend.SetBodyFriction(_body, d.Friction);
-            _backend.SetBodyRestitution(_body, d.Restitution);
+            // Restore the PRIM's own material/buoyancy, not BodyDesc.Default's bare defaults - a vehicle
+            // that was also given llSetPhysicsMaterial/llSetBuoyancy before or during its active stretch
+            // should keep that once it deactivates, not silently reset.
+            _backend.SetBodyFriction(_body, _material >= 0 ? _matFriction : d.Friction);
+            _backend.SetBodyRestitution(_body, _material >= 0 ? _matRestitution : d.Restitution);
             _backend.SetBodyDamping(_body, d.LinearDamping, d.AngularDamping);
-            _backend.SetBodyGravityFactor(_body, 1f);
+            _backend.SetBodyGravityFactor(_body, 1f - _buoyancy);
             _backend.SetBodyAllowSleeping(_body, true);
         }
 

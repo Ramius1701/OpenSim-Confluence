@@ -117,7 +117,14 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         public float GetTerrainHeight(Vector3 pos) => _module.TerrainHeightAt(pos.X, pos.Y);
 
-        public float GetWaterLevel(Vector3 pos) => _module.WaterLevel;
+        public float GetWaterLevel(Vector3 pos) => _module.WaveHeightAt(pos.X, pos.Y);
+
+        public void GetWaterSurface(Vector3 pos, out float height, out Vector3 normal)
+        {
+            height = _module.WaveHeightAt(pos.X, pos.Y);
+            SVector3 n = _module.WaveNormalAt(pos.X, pos.Y);
+            normal = new Vector3(n.X, n.Y, n.Z);
+        }
 
         private static SVector3 ToS(Vector3 v) => new SVector3(v.X, v.Y, v.Z);
     }

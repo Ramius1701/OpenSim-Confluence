@@ -997,6 +997,21 @@ namespace Legion.Vehicles
             // Apply as a velocity change in world Z
             Vector3 hoverForce = new Vector3(0f, 0f, dampedVel);
             ApplyLinearVelocityChange(hoverForce);
+
+            // Roll/pitch toward the actual wave surface, water-hovering boats only - ubODE/BulletSim's
+            // boat wave response does the same (a real, non-flat water surface), Jolt previously had
+            // none. Modest, not a full snap: a torque-velocity-change proportional to how far the boat's
+            // current "up" is from the wave normal, so it settles into the slope over a few frames rather
+            // than jerking to match it every frame.
+            if ((_props.Flags & LegionVehicleFlags.HoverWaterOnly) != 0)
+            {
+                _body.GetWaterSurface(pos, out _, out Vector3 waveNormal);
+                Vector3 currentUp = new Vector3(0f, 0f, 1f) * _rotation;
+                Vector3 rollCorrection = Vector3.Cross(currentUp, waveNormal);
+                const float WaveRollStrength = 1.5f;   // fixed for now - see config-wiring note above
+                if (rollCorrection.LengthSquared() > 1e-6f)
+                    AddTorqueVelocityChange(rollCorrection * WaveRollStrength);
+            }
         }
 
         #endregion

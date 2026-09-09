@@ -191,8 +191,12 @@ namespace Legion.Physics.Jolt
 
         // Shared avatar-vs-avatar collision. Every character is registered here so their capsules
         // collide (push/block) - Jolt's default matches SL's [BulletSim]AvatarToAvatarCollisionsByDefault
-        // = true. Making it a config knob is M6 (see notes). Disposed after the characters.
+        // = true. Disposed after the characters.
         private CharacterVsCharacterCollisionSimple? _charVsChar;
+        // Scene-wide default a NEWLY-created character registers with, kept in sync by
+        // SetAvatarAvatarCollisions so a login/teleport-in after the toggle flips doesn't wrongly default
+        // back to true.
+        private bool _avatarAvatarCollisionsDefault = true;
 
         // Jolt's CapsuleShape axis is Y; a Z-up avatar capsule must stand along world Z. Rotate +90 deg
         // about X (Y -> Z), the same Z-up trick the heightfield wrapper uses. Shared, immutable.
@@ -544,6 +548,7 @@ namespace Legion.Physics.Jolt
             PhysicsSystem system, in Body body1, in Body body2,
             in ContactManifold manifold, ref ContactSettings settings)
         {
+            OverrideRestitutionCombine(in body1, in body2, ref settings);
             PushContact(in body1, in body2, in manifold, in settings, ContactPhase.Begin);
         }
 
@@ -551,7 +556,21 @@ namespace Legion.Physics.Jolt
             PhysicsSystem system, in Body body1, in Body body2,
             in ContactManifold manifold, ref ContactSettings settings)
         {
+            OverrideRestitutionCombine(in body1, in body2, ref settings);
             PushContact(in body1, in body2, in manifold, in settings, ContactPhase.Persist);
+        }
+
+        // Jolt's own default restitution combine is max(a,b), not an average - confirmed via
+        // JoltPhysicsSharp 2.19.1 exposing no PhysicsSystem-level combine-function override, only the
+        // per-contact ref ContactSettings these two callbacks already receive. A moderately bouncy prim
+        // (0.5) would otherwise rebound at FULL elasticity off dead (0.0-restitution) terrain, since
+        // max(0.5, 0.0) = 0.5 instead of a real blend - the same bug an independent Jolt-based project
+        // (Homeworldz) found and fixed the same way. CombinedFriction is left alone: Jolt's own default
+        // there is already a geometric mean (sqrt(f1*f2)), matching ubODE/BulletSim's own friction
+        // blending, so nothing to override.
+        private static void OverrideRestitutionCombine(in Body body1, in Body body2, ref ContactSettings settings)
+        {
+            settings.CombinedRestitution = 0.5f * (body1.Restitution + body2.Restitution);
         }
 
         private void HandleContactRemoved(PhysicsSystem system, ref SubShapeIDPair pair)
@@ -1484,6 +1503,11 @@ namespace Legion.Physics.Jolt
                 var character = new CharacterVirtual(settings, desc.Position, desc.Orientation, desc.UserData, system);
                 character.MaxSlopeAngle = desc.MaxSlopeAngle;
                 character.UserData = desc.UserData;
+                // A capsule walking across a heightfield's internal triangle edges (whose normals aren't
+                // the true surface normal) otherwise picks up a direction-dependent residual - visible as
+                // riding a few cm above the ground, worse downhill than uphill. An independent Jolt-based
+                // project (Homeworldz) found this exact one-line fix for the same terrain-walk jitter.
+                character.EnhancedInternalEdgeRemoval = true;
 
                 var rec = new JoltCharacterRecord
                 {
@@ -1547,9 +1571,11 @@ namespace Legion.Physics.Jolt
                 character.OnContactRemoved += (CharacterVirtual cv, in BodyID b2, SubShapeID ss)
                     => PushCharacterBodyContact(rec, b2.ID, ss.Value, default, default, ContactPhase.End);
 
-                // Avatar-avatar: register in the shared collision so capsules push/block, and report
-                // the contact. otherCharacter.UserData gives the other avatar's id directly.
-                if (_charVsChar != null)
+                // Avatar-avatar: register in the shared collision (unless the scene-wide toggle currently
+                // has it off) so capsules push/block, and report the contact. otherCharacter.UserData
+                // gives the other avatar's id directly.
+                rec.AvatarCollisionsEnabled = _avatarAvatarCollisionsDefault;
+                if (_charVsChar != null && rec.AvatarCollisionsEnabled)
                 {
                     _charVsChar.Add(character);
                     character.SetCharacterVsCharacterCollision(_charVsChar);
@@ -1689,6 +1715,46 @@ namespace Legion.Physics.Jolt
                 {
                     rec.Character.Position = position;
                     rec.Character.LinearVelocity = Vector3.Zero;
+                }
+            }
+        }
+
+        public void DampCharacterVelocity(CharacterId character, Vector3 dampedVelocity)
+        {
+            // Same gate StepCharacter runs under, so this can't race the per-step CharacterVirtual update -
+            // same atomicity reasoning as ReGroundCharacter above, just for velocity alone (no position
+            // change, so no un-bury/re-penetration concern here).
+            lock (_characterGate)
+            {
+                if (_characters.TryGet(character.Value, out JoltCharacterRecord rec) && rec.Character != null)
+                    rec.Character.LinearVelocity = dampedVelocity;
+            }
+        }
+
+        public void SetAvatarAvatarCollisions(bool enabled)
+        {
+            // No _simLock needed - Add/Remove on the shared CharacterVsCharacterCollisionSimple object
+            // doesn't touch the broadphase, same reasoning as SetCharacterTransform/SetCharacterMovement's
+            // characterGate-only locking just below.
+            lock (_characterGate)
+            {
+                _avatarAvatarCollisionsDefault = enabled;
+                if (_charVsChar == null)
+                    return;
+                foreach (JoltCharacterRecord rec in _characterList)
+                {
+                    if (rec.Character == null || rec.AvatarCollisionsEnabled == enabled)
+                        continue;
+                    if (enabled)
+                    {
+                        _charVsChar.Add(rec.Character);
+                        rec.Character.SetCharacterVsCharacterCollision(_charVsChar);
+                    }
+                    else
+                    {
+                        _charVsChar.Remove(rec.Character);
+                    }
+                    rec.AvatarCollisionsEnabled = enabled;
                 }
             }
         }
@@ -1899,6 +1965,11 @@ namespace Legion.Physics.Jolt
             try
             {
                 bcs.Friction = 0.6f;
+                // Explicit, not Jolt's bare 0.0 default - matters now that OverrideRestitutionCombine
+                // averages instead of taking the max: an unset (0.0) terrain restitution would otherwise
+                // cap EVERY ground bounce at half the object's own bounciness (a real bug Homeworldz's own
+                // Jolt-based project hit and fixed the same way).
+                bcs.Restitution = 0.4f;
                 BodyID joltId = _bodyInterface.CreateAndAddBody(bcs, Activation.DontActivate);
 
                 var rec = new JoltBodyRecord
@@ -2542,6 +2613,10 @@ namespace Legion.Physics.Jolt
         public bool WantsContactEvents;        // gates Persist forwarding for this avatar's contacts
         public uint MarkerBodyId;              // Jolt BodyID.ID of the query-visible marker (0 = none)
         public JoltBodyRecord? MarkerRecord;   // the marker's body record (in _bodies + _joltToRecord)
+        // Mirrors whether this character is currently Added to _charVsChar (true at creation, matching
+        // Jolt's default / SL's own default hard-collide behavior) - tracked so SetAvatarAvatarCollisions
+        // can toggle without double-Add/double-Remove.
+        public bool AvatarCollisionsEnabled = true;
 
         // Tuning knobs captured from CharacterDesc.
         public float CapsuleHalfHeight;
