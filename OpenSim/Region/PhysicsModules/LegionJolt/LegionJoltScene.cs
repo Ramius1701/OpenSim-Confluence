@@ -224,7 +224,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
             if (textureId == UUID.Zero)
                 return;
-            m_log.Debug($"{LogHeader} async fetch requested for prim {prim.LocalID}, texture {textureId}.");
+            // No per-request/per-success log line here on purpose - on a region with thousands of prims
+            // needing a fetch at once, that was ~3 log lines per prim (verified live: 4,654 prims ->
+            // ~14,000 lines on a single boot, on top of the pre-existing "IMesher returned null" line for
+            // the same event). DrainPendingMeshRebuild reports one aggregate summary per drain instead.
+            // The two failure cases below stay logged individually - rare, and worth seeing per-instance.
             RequestAssetMethod(textureId, delegate (AssetBase asset)
             {
                 if (asset == null)
@@ -237,7 +241,6 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                     m_log.Debug($"{LogHeader} async fetch for prim {prim.LocalID} returned mismatched asset {asset.ID} (wanted {textureId}) - staying bounding-box.");
                     return;
                 }
-                m_log.Debug($"{LogHeader} async fetch for prim {prim.LocalID} succeeded ({asset.Data?.Length ?? 0} bytes); queuing re-cook.");
                 prim.ApplyFetchedSculptData(asset.Data);
                 RegisterPendingMeshRebuild(prim);
             });
@@ -3562,6 +3565,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // sculpt/mesh asset arrived. Runs on the step thread for the same reason activation does. Guarded
         // against the prim having been removed from the scene (or its LocalID reused by a different prim)
         // while the fetch was still in flight - _prims is the live-scene source of truth, not this list.
+        // Reports ONE aggregate summary per drain instead of a line per prim - verified live that logging
+        // every single re-cook individually produced ~14,000 lines on one boot of a 1,946-object region.
+        // Exceptions stay logged individually (rare; a summary can't usefully carry a stack trace).
         private void DrainPendingMeshRebuild()
         {
             JoltPrim[] pend;
@@ -3572,21 +3578,33 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 _pendingMeshRebuild.CopyTo(pend);
                 _pendingMeshRebuild.Clear();
             }
+            int skipped = 0, exceptions = 0;
+            Dictionary<string, int> byShapeKind = new Dictionary<string, int>();
             foreach (JoltPrim p in pend)
             {
                 lock (_prims)
                     if (!_prims.TryGetValue(p.LocalID, out JoltPrim current) || !ReferenceEquals(current, p))
                     {
-                        m_log.Debug($"{LogHeader} mesh-asset rebuild for prim {p.LocalID} skipped - no longer in the scene.");
+                        skipped++;
                         continue;
                     }
                 try
                 {
                     p.RebuildAfterAssetFetch();
-                    m_log.Info($"{LogHeader} prim {p.LocalID} re-cooked after async asset fetch -> shape '{p.ShapeKind}'.");
+                    byShapeKind.TryGetValue(p.ShapeKind, out int n);
+                    byShapeKind[p.ShapeKind] = n + 1;
                 }
-                catch (Exception e) { m_log.Error($"{LogHeader} mesh-asset rebuild EXCEPTION for prim {p.LocalID}: {e}"); }
+                catch (Exception e)
+                {
+                    exceptions++;
+                    m_log.Error($"{LogHeader} mesh-asset rebuild EXCEPTION for prim {p.LocalID}: {e}");
+                }
             }
+            List<string> kindCounts = new List<string>();
+            foreach (KeyValuePair<string, int> kv in byShapeKind)
+                kindCounts.Add($"{kv.Value} {kv.Key}");
+            string byKind = string.Join(", ", kindCounts);
+            m_log.Info($"{LogHeader} mesh-asset drain: {pend.Length} re-cooked ({byKind}), {skipped} skipped (no longer in scene), {exceptions} exceptions.");
         }
 
         private void DrainDirtyLinksets()
