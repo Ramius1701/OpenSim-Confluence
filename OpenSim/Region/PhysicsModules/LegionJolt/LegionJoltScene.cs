@@ -143,12 +143,27 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // _meshAssetRequestedFor guard means this fires at most once per prim per distinct texture ID.
         internal void RequestMeshAssetRebuild(JoltPrim prim, UUID textureId)
         {
-            if (RequestAssetMethod == null || textureId == UUID.Zero)
+            if (RequestAssetMethod == null)
+            {
+                m_log.Warn($"{LogHeader} RequestMeshAssetRebuild: no RequestAssetMethod wired - prim {prim.LocalID} stays bounding-box.");
                 return;
+            }
+            if (textureId == UUID.Zero)
+                return;
+            m_log.Debug($"{LogHeader} async fetch requested for prim {prim.LocalID}, texture {textureId}.");
             RequestAssetMethod(textureId, delegate (AssetBase asset)
             {
-                if (asset == null || asset.ID != textureId.ToString())
+                if (asset == null)
+                {
+                    m_log.Debug($"{LogHeader} async fetch for prim {prim.LocalID}, texture {textureId} came back null (missing/failed asset) - staying bounding-box.");
                     return;
+                }
+                if (asset.ID != textureId.ToString())
+                {
+                    m_log.Debug($"{LogHeader} async fetch for prim {prim.LocalID} returned mismatched asset {asset.ID} (wanted {textureId}) - staying bounding-box.");
+                    return;
+                }
+                m_log.Debug($"{LogHeader} async fetch for prim {prim.LocalID} succeeded ({asset.Data?.Length ?? 0} bytes); queuing re-cook.");
                 prim.ApplyFetchedSculptData(asset.Data);
                 RegisterPendingMeshRebuild(prim);
             });
@@ -3453,8 +3468,15 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             {
                 lock (_prims)
                     if (!_prims.TryGetValue(p.LocalID, out JoltPrim current) || !ReferenceEquals(current, p))
+                    {
+                        m_log.Debug($"{LogHeader} mesh-asset rebuild for prim {p.LocalID} skipped - no longer in the scene.");
                         continue;
-                try { p.RebuildAfterAssetFetch(); }
+                    }
+                try
+                {
+                    p.RebuildAfterAssetFetch();
+                    m_log.Info($"{LogHeader} prim {p.LocalID} re-cooked after async asset fetch -> shape '{p.ShapeKind}'.");
+                }
                 catch (Exception e) { m_log.Error($"{LogHeader} mesh-asset rebuild EXCEPTION for prim {p.LocalID}: {e}"); }
             }
         }
