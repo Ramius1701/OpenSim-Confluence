@@ -24,11 +24,11 @@ using Legion.Physics;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 
-namespace OpenSim.Region.PhysicsModules.LegionJolt
+namespace OpenSim.Region.PhysicsModules.JoltPhysics
 {
     internal sealed class JoltCharacter : PhysicsActor
     {
-        private readonly LegionJoltScene _module;
+        private readonly JoltPhysicsScene _module;
         private readonly ILegionPhysicsBackend _backend;
 
         private Vector3 _position;
@@ -76,7 +76,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         internal float StandHalf => _capsuleHalfHeight + _capsuleRadius;
         internal float FeetOffset => _feetOffset;
 
-        internal JoltCharacter(LegionJoltScene module, ILegionPhysicsBackend backend, uint localid, string name,
+        internal JoltCharacter(JoltPhysicsScene module, ILegionPhysicsBackend backend, uint localid, string name,
                                Vector3 position, Vector3 size, float feetOffset, bool isFlying)
         {
             _module = module;
@@ -155,8 +155,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (_jumpLatched && (_velocity.Z > 0.5f || !s.IsSupported))
             {
                 _jumpLatched = false;
-                if (LegionJoltScene.CharJumpTrace)
-                    LegionJoltScene.m_log.Debug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} TAKEOFF vZ={_velocity.Z:0.000} supported={s.IsSupported} -> latch cleared");
+                if (JoltPhysicsScene.CharJumpTrace)
+                    JoltPhysicsScene.m_log.Debug($"{JoltPhysicsScene.LogHeader} [charjump] id={LocalID} TAKEOFF vZ={_velocity.Z:0.000} supported={s.IsSupported} -> latch cleared");
             }
 
             RequestPhysicsterseUpdate();
@@ -172,8 +172,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // Send the current latch state. StepCharacter jumps from solid ground when it sees jump=true and
             // clears its own request every step; the drain releases our latch on takeoff.
             _backend.SetCharacterMovement(_character, ToS(_targetVelocity), _jumpLatched, _flying);
-            if (_jumpLatched && LegionJoltScene.CharJumpTrace)
-                LegionJoltScene.m_log.Debug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} sent jump=true to backend (target={_targetVelocity} flying={_flying})");
+            if (_jumpLatched && JoltPhysicsScene.CharJumpTrace)
+                JoltPhysicsScene.m_log.Debug($"{JoltPhysicsScene.LogHeader} [charjump] id={LocalID} sent jump=true to backend (target={_targetVelocity} flying={_flying})");
         }
 
         internal void Destroy()
@@ -207,7 +207,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // terrain raise that left this avatar below the new surface lifts it back onto the ground without
         // carrying the accumulated fall speed into the next step. Routed through the gated backend
         // (ReGroundCharacter) so it can't race the per-step CharacterVirtual update. Called only from
-        // LegionJoltScene's post-SetTerrain re-ground pass. The next drain reads the new position back.
+        // JoltPhysicsScene's post-SetTerrain re-ground pass. The next drain reads the new position back.
         internal void ReGround(Vector3 pos)
         {
             _position = pos;
@@ -249,8 +249,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         public override void AvatarJump(float forceZ)
         {
             _jumpLatched = true;   // held until takeoff (see ApplyCharacterState); jump height is the JumpSpeed knob
-            if (LegionJoltScene.CharJumpTrace)
-                LegionJoltScene.m_log.Debug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} AvatarJump(forceZ={forceZ:0.00}) fired -> latch set (supported={_isSupported} flying={_flying})");
+            if (JoltPhysicsScene.CharJumpTrace)
+                JoltPhysicsScene.m_log.Debug($"{JoltPhysicsScene.LogHeader} [charjump] id={LocalID} AvatarJump(forceZ={forceZ:0.00}) fired -> latch set (supported={_isSupported} flying={_flying})");
             PushMovement();
         }
 

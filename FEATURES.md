@@ -388,7 +388,8 @@ hardcoded default:
 - **BulletSim** — the other long-standing OpenSim physics engine, not
   a stock unmodified copy: shares some of the same absorbed water/
   wave-response tuning ubODE has above (see `PROJECT_LOG.md`).
-- **Jolt** (`LegionJolt`) — a third option built on the real
+- **Jolt** (module `JoltPhysics`, renamed from `LegionJolt` 2026-09-10)
+  — a third option built on the real
   [Jolt Physics](https://github.com/jrouwe/JoltPhysics) engine (MIT,
   used in shipped commercial titles) via the `JoltPhysicsSharp` .NET
   binding, adapted from Legion-Grid-Code's own port. Requires

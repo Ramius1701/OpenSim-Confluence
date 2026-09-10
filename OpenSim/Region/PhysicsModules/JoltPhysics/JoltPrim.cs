@@ -20,11 +20,11 @@ using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 using LVehicle = Legion.Vehicles.Vehicle;   // Legion.Vehicles' copy of the LSL wire codes (SharedBase also has a Vehicle enum)
 
-namespace OpenSim.Region.PhysicsModules.LegionJolt
+namespace OpenSim.Region.PhysicsModules.JoltPhysics
 {
     internal sealed class JoltPrim : PhysicsActor
     {
-        private readonly LegionJoltScene _module;
+        private readonly JoltPhysicsScene _module;
         private readonly ILegionPhysicsBackend _backend;
 
         private PrimitiveBaseShape _pbs;
@@ -79,7 +79,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private SQuaternion _axisCorrection = SQuaternion.Identity;
         private string _shapeKind = "?";
 
-        // The sculpt/mesh texture ID we've already asked LegionJoltScene to fetch (UUID.Zero = none
+        // The sculpt/mesh texture ID we've already asked JoltPhysicsScene to fetch (UUID.Zero = none
         // outstanding). Guards RequestMeshAssetRebuild against firing more than once for the same
         // texture - a fetch that fails just leaves this set, so CookShape won't loop retrying it; a
         // later edit to a genuinely different sculpt texture clears the match and allows a fresh fetch.
@@ -126,7 +126,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             return new Quaternion(prim.X, prim.Y, prim.Z, prim.W);
         }
 
-        internal JoltPrim(LegionJoltScene module, ILegionPhysicsBackend backend, uint localid, string name,
+        internal JoltPrim(JoltPhysicsScene module, ILegionPhysicsBackend backend, uint localid, string name,
                           PrimitiveBaseShape pbs, Vector3 position, Vector3 size, Quaternion rotation, bool isPhysical)
         {
             _module = module;
@@ -152,10 +152,10 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             CreateBodyInternal();
         }
 
-        // Thin wrapper around LegionJoltScene.CookPrimShape shared by Build/Rebuild/RecreateBody: cooks
+        // Thin wrapper around JoltPhysicsScene.CookPrimShape shared by Build/Rebuild/RecreateBody: cooks
         // the shape as normal, and if the mesher came back empty specifically because a sculpt/mesh
         // texture hasn't been fetched yet, kicks off exactly one async re-fetch+rebuild for it (see
-        // LegionJoltScene.RequestMeshAssetRebuild) so the bounding-box fallback below self-heals instead
+        // JoltPhysicsScene.RequestMeshAssetRebuild) so the bounding-box fallback below self-heals instead
         // of staying wrong until some unrelated edit happens to re-cook this prim.
         private ShapeId CookShape()
         {
@@ -168,7 +168,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             return shape;
         }
 
-        // Called (off the step thread) by LegionJoltScene.RequestMeshAssetRebuild's async asset callback
+        // Called (off the step thread) by JoltPhysicsScene.RequestMeshAssetRebuild's async asset callback
         // once the sculpt/mesh texture this prim was waiting on has arrived. Only touches a plain field -
         // safe from an arbitrary callback thread. The actual native shape/body rebuild is deferred to the
         // step thread via RegisterPendingMeshRebuild/DrainPendingMeshRebuild.
@@ -177,7 +177,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (_pbs != null) _pbs.SculptData = data;
         }
 
-        // Drives the real re-cook from LegionJoltScene.DrainPendingMeshRebuild, on the step thread, once
+        // Drives the real re-cook from JoltPhysicsScene.DrainPendingMeshRebuild, on the step thread, once
         // ApplyFetchedSculptData has populated the real geometry.
         internal void RebuildAfterAssetFetch() => Rebuild();
 
@@ -253,8 +253,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 // vehicle) is applied, so it never free-falls before its buoyancy is asserted.
                 _module.RegisterPendingActivation(this);
                 if (_backend.TryGetBodyState(_body, out BodyState st))
-                    LegionJoltScene.m_log.Debug(
-                        $"{LegionJoltScene.LogHeader} physical body id={LocalID} created (deferred activation): active={((st.Flags & BodyStateFlags.Active) != 0)} posZ={st.Position.Z:0.00} shape={_shapeKind}");
+                    JoltPhysicsScene.m_log.Debug(
+                        $"{JoltPhysicsScene.LogHeader} physical body id={LocalID} created (deferred activation): active={((st.Flags & BodyStateFlags.Active) != 0)} posZ={st.Position.Z:0.00} shape={_shapeKind}");
 
                 // A recreate (reposition/reshape/weld/physical-toggle) makes a FRESH body with default
                 // params; an active vehicle must re-assert its no-friction/no-damping/manual-gravity/
@@ -263,7 +263,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
         }
 
-        // Called by LegionJoltScene at the top of Simulate (step thread) to activate a physical body that was
+        // Called by JoltPhysicsScene at the top of Simulate (step thread) to activate a physical body that was
         // created inert (deferred activation - the BulletSim configure-before-step barrier). By now every
         // load-time property is applied and the vehicle drive is about to run this frame, so waking the body
         // here means it enters the engine step already configured (gravity cancelled for a vehicle) - it never
@@ -292,7 +292,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (!(float.IsFinite(newPos.X) && float.IsFinite(newPos.Y) && float.IsFinite(newPos.Z))
                 || MathF.Abs(newPos.X) > 1e5f || MathF.Abs(newPos.Y) > 1e5f || MathF.Abs(newPos.Z) > 1e5f)
             {
-                LegionJoltScene.m_log.Warn($"{LegionJoltScene.LogHeader} [physglitch] body {LocalID} implausible pos {newPos} vel {s.LinearVelocity} - update dropped (no crossing)");
+                JoltPhysicsScene.m_log.Warn($"{JoltPhysicsScene.LogHeader} [physglitch] body {LocalID} implausible pos {newPos} vel {s.LinearVelocity} - update dropped (no crossing)");
                 return;
             }
             _position = newPos;
@@ -304,7 +304,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         }
 
         // ubODE's PhysicalPrimRollingResistance* defaults (ODEScene.cs), ported as fixed constants for
-        // now - no [Jolt] ini section exists yet to make these region-tunable (see the LegionJolt
+        // now - the [Jolt] ini section only covers avatar-avatar/wave tunables so far (see the
         // feature-parity plan's config-wiring note); revisit if real per-region tuning is ever requested.
         private const float RollingResistance = 0.18f;
         private const float RollingResistanceSpeed = 1.25f;
@@ -315,7 +315,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // force/torque, NOT literal Coulomb rolling friction - scaled by the prim's own material friction so
         // a rubber ball still rolls further than a stone one. Only engages near the ground and below a speed
         // threshold (so it never fights a genuinely moving/falling/thrown object, only a settling one). Called
-        // once per step from LegionJoltScene's body-drain loop, right after ApplyStepState reads this frame's
+        // once per step from JoltPhysicsScene's body-drain loop, right after ApplyStepState reads this frame's
         // real velocity - the force/torque accumulates for the NEXT step, same as ubODE's own Move()-then-
         // dBodyAddForce ordering.
         internal void ApplyRollingResistance(SVector3 linVel, SVector3 angVel)
@@ -351,7 +351,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 _backend.ReleaseShape(old);
         }
 
-        // Called by LegionJoltScene.RemovePrim. RemoveBody drops the body's native shape ref; releasing
+        // Called by JoltPhysicsScene.RemovePrim. RemoveBody drops the body's native shape ref; releasing
         // our handle-ref then frees the shape - no leak, no premature free.
         internal void Destroy()
         {
@@ -698,7 +698,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             catch (Exception e)
             {
                 // Never let a linkset rebuild propagate into the heartbeat and wedge the region.
-                LegionJoltScene.m_log.Error($"{LegionJoltScene.LogHeader} linkset rebuild EXCEPTION for root {LocalID}: {e}");
+                JoltPhysicsScene.m_log.Error($"{JoltPhysicsScene.LogHeader} linkset rebuild EXCEPTION for root {LocalID}: {e}");
             }
             finally { _rebuilding = false; }
         }
@@ -805,7 +805,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
         }
 
-        // Per-frame drive, called by LegionJoltScene.Simulate BEFORE the physics step (the Jolt
+        // Per-frame drive, called by JoltPhysicsScene.Simulate BEFORE the physics step (the Jolt
         // equivalent of BulletSim's BeforeStep event): snapshot the live body, run the Halcyon math,
         // which pushes velocity changes/forces/torques back through the backend for this step.
         internal void StepVehicle(float timeStep)

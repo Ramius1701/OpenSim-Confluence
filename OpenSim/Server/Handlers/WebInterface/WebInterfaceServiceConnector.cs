@@ -16209,7 +16209,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 engines.Add("ubODE (default)");
             if (File.Exists(Path.Combine(baseDir, "OpenSim.Region.PhysicsModule.BulletS.dll")))
                 engines.Add("BulletSim");
-            if (File.Exists(Path.Combine(baseDir, "OpenSim.Region.PhysicsModule.LegionJolt.dll")))
+            if (File.Exists(Path.Combine(baseDir, "OpenSim.Region.PhysicsModule.JoltPhysics.dll")))
                 engines.Add("Jolt");
             return engines.Count > 0 ? string.Join(", ", engines) : "ubODE (default)";
         }

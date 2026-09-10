@@ -1,10 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Legion Grid Jolt physics region module (M6.1 skeleton). Mirrors the BulletSim module: SDK-style,
-    net8.0, EnableDefaultItems OFF (explicit Compile includes), outputs to the shared ..\..\..\..\bin\
-    so Mono.Addins can discover it. Self-selects on [Startup] physics = Jolt. Do NOT run runprebuild
-    against this tree - the csproj is hand-maintained (Legion convention).
+    Jolt physics region module (M6.1 skeleton), renamed from "LegionJolt" 2026-09-10 - the wrapper/
+    adapter code here is Confluence's own; only the vendored Legion.Physics/Legion.Vehicles backend
+    libraries it depends on (ported from Legion-Grid-Code as-is) keep their original names. Mirrors
+    the BulletSim module: SDK-style, net8.0, EnableDefaultItems OFF (explicit Compile includes),
+    outputs to the shared ..\..\..\..\bin\ so Mono.Addins can discover it. Self-selects on
+    [Startup] physics = Jolt. Do NOT run runprebuild against this tree - the csproj is hand-maintained
+    (Legion convention).
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -12,7 +15,7 @@
     <OutputType>Library</OutputType>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <ImplicitUsings>disable</ImplicitUsings>
-    <AssemblyName>OpenSim.Region.PhysicsModule.LegionJolt</AssemblyName>
+    <AssemblyName>OpenSim.Region.PhysicsModule.JoltPhysics</AssemblyName>
     <Deterministic>true</Deterministic>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -113,7 +116,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="LegionJoltScene.cs" />
+    <Compile Include="JoltPhysicsScene.cs" />
     <Compile Include="JoltPrim.cs" />
     <Compile Include="JoltVehicleBody.cs" />
     <Compile Include="JoltCharacter.cs" />

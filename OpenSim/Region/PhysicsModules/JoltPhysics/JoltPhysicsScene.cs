@@ -30,19 +30,19 @@ using OpenMetaverse;
 using Mono.Addins;
 
 using Legion.Physics;
-using LegionJoltBackend = Legion.Physics.Jolt.JoltPhysicsBackend;
+using JoltPhysicsBackend = Legion.Physics.Jolt.JoltPhysicsBackend;
 // The backend speaks System.Numerics.Vector3; OpenSim speaks OpenMetaverse.Vector3 (the unqualified
 // Vector3 here). Alias the numerics one so backend calls are unambiguous.
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 
-namespace OpenSim.Region.PhysicsModules.LegionJolt
+namespace OpenSim.Region.PhysicsModules.JoltPhysics
 {
-    [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "LegionJoltPhysicsScene")]
-    public sealed class LegionJoltScene : PhysicsScene, INonSharedRegionModule
+    [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "JoltPhysicsScene")]
+    public sealed class JoltPhysicsScene : PhysicsScene, INonSharedRegionModule
     {
         internal static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
-        internal const string LogHeader = "[LEGION JOLT]";
+        internal const string LogHeader = "[JOLT PHYSICS]";
 
         // Gate for JoltCharacter's [charjump] path trace; toggled by `jolt charframe` and kept in sync with
         // the [charframe] window by Simulate. Static so the per-avatar actor can read it without a back-ref.
@@ -367,7 +367,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // Step, before Update), so dropped prims rest WITHOUT disturbing the avatar's known-good 1-step path.
             settings.CollisionSteps = 6;
 
-            _backend = new LegionJoltBackend();
+            _backend = new JoltPhysicsBackend();
             _backend.Initialize(settings);
             DefaultGravity = settings.Gravity;   // the vehicle controller applies this manually
 

@@ -7,7 +7,7 @@ gap today. For what already exists, see `FEATURES.md`.
 
 - **Meshmerizer vs ubMeshmerizer feature-parity audit (2026-09-09).**
   Full read of both `IMesher` implementations - generic `Meshmerizer`
-  (`Meshing/Meshmerizer/`, used by BulletSim + LegionJolt) vs
+  (`Meshing/Meshmerizer/`, used by BulletSim + JoltPhysics) vs
   `ubMeshmerizer` (`ubOdeMeshing/`, ubODE only) - prompted by the
   disk-cache-mesher idea above. Two real, currently-live bugs found,
   plus a set of lower-priority portable improvements.
@@ -23,7 +23,7 @@ gap today. For what already exists, see `FEATURES.md`.
   exactly the case the caller's own comment says it's avoiding.
   ubODE/Jolt unaffected (ubMeshmerizer's matching overload never reads
   `isPhysical` at all; Jolt calls a different overload entirely,
-  `LegionJoltScene.cs:2729`). **Fixed (commit `6532010e06`)** - the
+  `JoltPhysicsScene.cs:2729`). **Fixed (commit `6532010e06`)** - the
   8-arg overload now delegates the real `isPhysical`/`shouldCache` args
   instead of hardcoding `false`. Built clean, deployed to live
   (`OpenSim.Region.PhysicsModule.Meshing.dll`+pdb, copy verified via
@@ -394,8 +394,9 @@ gap today. For what already exists, see `FEATURES.md`.
   upstream's and would very likely work unchanged. **Held, not
   started** - real, buildable, and worth revisiting if a resident/admin
   build pipeline for a self-compiled patch becomes worth setting up.
-- **"LegionJolt" — real Jolt Physics engine port, portability/performance
-  evaluation done (2026-09-08), held pending a priority call.**
+- **"JoltPhysics" (module `LegionJolt` until renamed 2026-09-10) — real
+  Jolt Physics engine port, portability/performance evaluation done
+  (2026-09-08), held pending a priority call.**
   Discovered while resuming the paused Legion-Grid-Code `slua-tier2-tables`
   review: ~65 of that branch's 193 unreviewed commits (a third of it,
   previously miscounted as SLua/Phlox work) are a genuine, substantial
@@ -413,7 +414,7 @@ gap today. For what already exists, see `FEATURES.md`.
   closed-source - nothing like the Phlox saga.
 
   **Architecture: a real, complete drop-in, not a stub.**
-  `LegionJoltScene : PhysicsScene, INonSharedRegionModule` (3,782
+  `JoltPhysicsScene : PhysicsScene, INonSharedRegionModule` (3,782
   lines) genuinely implements OpenSim's own physics plugin contract -
   `AddAvatar` (all 3 real overloads), `RemoveAvatar`/`RemovePrim`,
   `AddPrimShape`, `RaycastWorld`, `Simulate`, terrain/water. A file
@@ -470,7 +471,8 @@ gap today. For what already exists, see `FEATURES.md`.
   pluggable operator choice, not a replacement for either existing
   engine and not required to have full day-one parity. Legion's own
   repo already laid this out as a self-contained, drop-in module
-  (`OpenSim/Region/PhysicsModules/LegionJolt/` +
+  (`OpenSim/Region/PhysicsModules/JoltPhysics/` (renamed from
+  `LegionJolt` 2026-09-10) +
   `OpenSim/Addons/LegionPhysics/{Legion.Physics,Legion.Vehicles}/`,
   matching Confluence's own `PhysicsModules/BulletS`/`ubOde` sibling
   convention exactly, self-selecting on `[Startup] physics = Jolt`
@@ -518,10 +520,10 @@ gap today. For what already exists, see `FEATURES.md`.
   **First real-content start found and fixed a genuine gap**: 5,160
   prims fell back to a bounding-box collision shape during region load
   (sculpt/mesh asset not fetched yet when the shape was cooked), and -
-  unlike BulletSim - LegionJolt never retried once the asset actually
+  unlike BulletSim - Jolt never retried once the asset actually
   arrived, so the wrong shape stuck permanently. Confirmed real via a
   restart (same warning fired again, ruling out stale state). Fixed by
-  giving LegionJolt the same async-fetch-then-rebuild path BulletSim
+  giving it the same async-fetch-then-rebuild path BulletSim
   already has (`RequestMeshAssetRebuild` + a step-thread-deferred
   drain, mirroring the module's existing `_pendingActivation` pattern).
   **Confirmed working with direct evidence, not an inferred count**
@@ -748,7 +750,7 @@ gap today. For what already exists, see `FEATURES.md`.
   see `PROJECT_LOG.md`'s "Jolt readiness re-check... and Phlox held"
   entry.
 
-  **Watch for the same class of bug LegionJolt had, if this resumes**:
+  **Watch for the same class of bug Jolt had, if this resumes**:
   Jolt's own integration shipped with a real, confirmed gap - its
   async request-asset delegate was wired but never called, so any
   prim whose mesh asset wasn't cached yet at physics-actor-creation

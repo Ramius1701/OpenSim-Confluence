@@ -3,8 +3,8 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Mono.Addins;
 
-[assembly: AssemblyTitle("OpenSim.Region.PhysicsModule.LegionJolt")]
-[assembly: AssemblyDescription("Legion Grid Jolt physics region module")]
+[assembly: AssemblyTitle("OpenSim.Region.PhysicsModule.JoltPhysics")]
+[assembly: AssemblyDescription("Jolt physics region module")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Legion Grid")]
 [assembly: AssemblyProduct("OpenSim")]
@@ -17,7 +17,7 @@ using Mono.Addins;
 [assembly: AssemblyVersion(OpenSim.VersionInfo.AssemblyVersionNumber)]
 
 // Mono.Addins discovery: this assembly IS an addin, dependent on the region framework. The
-// [Extension] attribute on LegionJoltScene registers it as a RegionModule; it self-selects on
+// [Extension] attribute on JoltPhysicsScene registers it as a RegionModule; it self-selects on
 // [Startup] physics = Jolt.
-[assembly: Addin("OpenSim.Region.PhysicsModule.LegionJolt", OpenSim.VersionInfo.AssemblyVersionNumber)]
+[assembly: Addin("OpenSim.Region.PhysicsModule.JoltPhysics", OpenSim.VersionInfo.AssemblyVersionNumber)]
 [assembly: AddinDependency("OpenSim.Region.Framework", OpenSim.VersionInfo.AssemblyVersionNumber)]

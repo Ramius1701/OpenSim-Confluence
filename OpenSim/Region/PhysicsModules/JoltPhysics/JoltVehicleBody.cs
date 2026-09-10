@@ -15,11 +15,11 @@ using Legion.Physics;
 using Legion.Vehicles;
 using SVector3 = System.Numerics.Vector3;
 
-namespace OpenSim.Region.PhysicsModules.LegionJolt
+namespace OpenSim.Region.PhysicsModules.JoltPhysics
 {
     internal sealed class JoltVehicleBody : IVehicleBody
     {
-        private readonly LegionJoltScene _module;
+        private readonly JoltPhysicsScene _module;
         private readonly ILegionPhysicsBackend _backend;
         private readonly JoltPrim _prim;
 
@@ -29,7 +29,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private Vector3 _linVel;
         private Vector3 _angVel;
 
-        internal JoltVehicleBody(LegionJoltScene module, ILegionPhysicsBackend backend, JoltPrim prim)
+        internal JoltVehicleBody(JoltPhysicsScene module, ILegionPhysicsBackend backend, JoltPrim prim)
         {
             _module = module;
             _backend = backend;
