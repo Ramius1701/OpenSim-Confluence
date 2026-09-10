@@ -14,18 +14,18 @@ using System;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenMetaverse;
-using Legion.Physics;
-using Legion.Vehicles;
+using JoltPhysics.Core;
+using JoltPhysics.Vehicles;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
-using LVehicle = Legion.Vehicles.Vehicle;   // Legion.Vehicles' copy of the LSL wire codes (SharedBase also has a Vehicle enum)
+using LVehicle = JoltPhysics.Vehicles.Vehicle;   // JoltPhysics.Vehicles' copy of the LSL wire codes (SharedBase also has a Vehicle enum)
 
 namespace OpenSim.Region.PhysicsModules.JoltPhysics
 {
     internal sealed class JoltPrim : PhysicsActor
     {
         private readonly JoltPhysicsScene _module;
-        private readonly ILegionPhysicsBackend _backend;
+        private readonly IJoltPhysicsBackend _backend;
 
         private PrimitiveBaseShape _pbs;
         private Vector3 _position;
@@ -115,7 +115,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
         // Vehicles (M8): the backend-agnostic Halcyon controller + its Jolt seam. Created lazily on
         // the first Vehicle* call; ACTIVE (stepped per-frame, body params applied) only while the
         // controller's type != NONE and the prim is physical. Setting TYPE_NONE destroys it (spec).
-        private LegionVehicleController _vehicle;
+        private JoltVehicleController _vehicle;
         private JoltVehicleBody _vehicleBody;
 
         // Body orientation -> PRIM orientation (undo the cylinder axis-correction; identity for
@@ -126,7 +126,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
             return new Quaternion(prim.X, prim.Y, prim.Z, prim.W);
         }
 
-        internal JoltPrim(JoltPhysicsScene module, ILegionPhysicsBackend backend, uint localid, string name,
+        internal JoltPrim(JoltPhysicsScene module, IJoltPhysicsBackend backend, uint localid, string name,
                           PrimitiveBaseShape pbs, Vector3 position, Vector3 size, Quaternion rotation, bool isPhysical)
         {
             _module = module;
@@ -801,7 +801,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
             if (_vehicle == null)
             {
                 _vehicleBody = new JoltVehicleBody(_module, _backend, this);
-                _vehicle = new LegionVehicleController(_vehicleBody);
+                _vehicle = new JoltVehicleController(_vehicleBody);
             }
         }
 

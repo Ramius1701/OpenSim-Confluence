@@ -1,5 +1,5 @@
 /*
- * Legion Grid — Vehicle Dynamics Port from InWorldz Halcyon
+ * JoltPhysics.Vehicles — Vehicle Dynamics Port from InWorldz Halcyon
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
  * Adapted for BulletSim physics engine, April 2026.
  *
@@ -46,20 +46,20 @@
 using System;
 using OpenMetaverse;
 
-namespace Legion.Vehicles
+namespace JoltPhysics.Vehicles
 {
     /// <summary>
     /// Halcyon-derived vehicle dynamics engine, backend-agnostic.
     /// The host owns one instance per vehicle body and calls Step(dt) every frame BEFORE the
     /// physics step while the vehicle is active and physical.
     /// </summary>
-    public sealed class LegionVehicleController
+    public sealed class JoltVehicleController
     {
         // The neutral physics seam this controller reads/writes through
         private readonly IVehicleBody _body;
 
         // Vehicle properties and runtime state
-        private LegionVehicleProperties _props;
+        private JoltVehicleProperties _props;
 
         // Cached mass
         private float m_vehicleMass;
@@ -95,11 +95,11 @@ namespace Legion.Vehicles
         // =====================================================================
         // Constructor
         // =====================================================================
-        public LegionVehicleController(IVehicleBody body)
+        public JoltVehicleController(IVehicleBody body)
         {
             _body = body;
-            _props = new LegionVehicleProperties();
-            SetVehicleDefaults(LegionVehicleType.None);
+            _props = new JoltVehicleProperties();
+            SetVehicleDefaults(JoltVehicleType.None);
         }
 
         // =====================================================================
@@ -108,12 +108,12 @@ namespace Legion.Vehicles
         // =====================================================================
         public bool IsActive
         {
-            get { return (_props.Type != LegionVehicleType.None); }
+            get { return (_props.Type != JoltVehicleType.None); }
         }
 
         public bool IsGroundVehicle
         {
-            get { return (_props.Type == LegionVehicleType.Car || _props.Type == LegionVehicleType.Sled); }
+            get { return (_props.Type == JoltVehicleType.Car || _props.Type == JoltVehicleType.Sled); }
         }
 
         /// <summary>Read a current float vehicle param (preset default + any llSetVehicleFloatParam override).
@@ -131,16 +131,16 @@ namespace Legion.Vehicles
         // =================================================================
         public void ProcessTypeChange(Vehicle pType)
         {
-            LegionVehicleType newType;
+            JoltVehicleType newType;
             switch (pType)
             {
-                case Vehicle.TYPE_NONE:     newType = LegionVehicleType.None; break;
-                case Vehicle.TYPE_SLED:     newType = LegionVehicleType.Sled; break;
-                case Vehicle.TYPE_CAR:      newType = LegionVehicleType.Car; break;
-                case Vehicle.TYPE_BOAT:     newType = LegionVehicleType.Boat; break;
-                case Vehicle.TYPE_AIRPLANE: newType = LegionVehicleType.Airplane; break;
-                case Vehicle.TYPE_BALLOON:  newType = LegionVehicleType.Balloon; break;
-                default:                    newType = LegionVehicleType.None; break;
+                case Vehicle.TYPE_NONE:     newType = JoltVehicleType.None; break;
+                case Vehicle.TYPE_SLED:     newType = JoltVehicleType.Sled; break;
+                case Vehicle.TYPE_CAR:      newType = JoltVehicleType.Car; break;
+                case Vehicle.TYPE_BOAT:     newType = JoltVehicleType.Boat; break;
+                case Vehicle.TYPE_AIRPLANE: newType = JoltVehicleType.Airplane; break;
+                case Vehicle.TYPE_BALLOON:  newType = JoltVehicleType.Balloon; break;
+                default:                    newType = JoltVehicleType.None; break;
             }
 
             _props.Type = newType;
@@ -163,15 +163,15 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.ANGULAR_DEFLECTION_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale] = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale] = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     break;
                 case Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE:
                     // Scalar set → apply to all 3 axes
-                    pValue = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.ANGULAR_MOTOR_TIMESCALE:
-                    pValue = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.AngularMotorTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.BANKING_EFFICIENCY:
@@ -181,7 +181,7 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.BankingMix] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.BANKING_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.BankingTimescale] = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    _props.ParamsFloat[VehFloatParam.BankingTimescale] = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     break;
                 case Vehicle.BUOYANCY:
                     _props.ParamsFloat[VehFloatParam.Buoyancy] = ClampF(pValue, -1f, 1f);
@@ -190,53 +190,53 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.HoverEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.HOVER_HEIGHT:
-                    _props.ParamsFloat[VehFloatParam.HoverHeight] = ClampF(pValue, LegionVehicleLimits.MinRegionHeight, LegionVehicleLimits.MaxRegionHeight);
+                    _props.ParamsFloat[VehFloatParam.HoverHeight] = ClampF(pValue, JoltVehicleLimits.MinRegionHeight, JoltVehicleLimits.MaxRegionHeight);
                     break;
                 case Vehicle.HOVER_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.HoverTimescale] = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxHoverTimescale);
+                    _props.ParamsFloat[VehFloatParam.HoverTimescale] = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxHoverTimescale);
                     break;
                 case Vehicle.LINEAR_DEFLECTION_EFFICIENCY:
                     _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.LINEAR_DEFLECTION_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale] = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale] = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     break;
                 case Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE:
-                    pValue = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_TIMESCALE:
-                    pValue = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.LinearMotorTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.VERTICAL_ATTRACTION_EFFICIENCY:
                     _props.ParamsFloat[VehFloatParam.VerticalAttractionEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.VERTICAL_ATTRACTION_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale] = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxAttractTimescale);
+                    _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale] = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxAttractTimescale);
                     break;
 
                 // These are vector properties but LSL allows setting them as a single float
                 case Vehicle.ANGULAR_FRICTION_TIMESCALE:
-                    pValue = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
-                    pValue = ClampF(pValue, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
+                    pValue = ClampF(pValue, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = new Vector3(pValue, pValue, pValue);
                     MoveAngular(_props.ParamsVec[VehVectorParam.AngularMotorDirection]);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
-                    pValue = ClampF(pValue, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_DIRECTION:
-                    pValue = ClampF(pValue, -LegionVehicleLimits.MaxLinearVelocity, LegionVehicleLimits.MaxLinearVelocity);
+                    pValue = ClampF(pValue, -JoltVehicleLimits.MaxLinearVelocity, JoltVehicleLimits.MaxLinearVelocity);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection] = new Vector3(pValue, pValue, pValue);
                     MoveLinear(_props.ParamsVec[VehVectorParam.LinearMotorDirection]);
                     break;
                 case Vehicle.LINEAR_MOTOR_OFFSET:
-                    pValue = ClampF(pValue, -LegionVehicleLimits.MaxLinearOffset, LegionVehicleLimits.MaxLinearOffset);
+                    pValue = ClampF(pValue, -JoltVehicleLimits.MaxLinearOffset, JoltVehicleLimits.MaxLinearOffset);
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset] = new Vector3(pValue, pValue, pValue);
                     break;
             }
@@ -250,35 +250,35 @@ namespace Legion.Vehicles
             switch (pParam)
             {
                 case Vehicle.ANGULAR_FRICTION_TIMESCALE:
-                    pValue.X = ClampF(pValue.X, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
-                    pValue.Y = ClampF(pValue.Y, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
-                    pValue.Z = ClampF(pValue.Z, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue.X = ClampF(pValue.X, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
+                    pValue.Y = ClampF(pValue.Y, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
+                    pValue.Z = ClampF(pValue.Z, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale] = pValue;
                     break;
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
-                    pValue.X = ClampF(pValue.X, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
-                    pValue.Y = ClampF(pValue.Y, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
-                    pValue.Z = ClampF(pValue.Z, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
+                    pValue.X = ClampF(pValue.X, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
+                    pValue.Y = ClampF(pValue.Y, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
+                    pValue.Z = ClampF(pValue.Z, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = pValue;
                     MoveAngular(pValue);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
-                    pValue.X = ClampF(pValue.X, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
-                    pValue.Y = ClampF(pValue.Y, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
-                    pValue.Z = ClampF(pValue.Z, LegionVehicleLimits.MinPhysicsTimestep, LegionVehicleLimits.MaxTimescale);
+                    pValue.X = ClampF(pValue.X, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
+                    pValue.Y = ClampF(pValue.Y, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
+                    pValue.Z = ClampF(pValue.Z, JoltVehicleLimits.MinPhysicsTimestep, JoltVehicleLimits.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale] = pValue;
                     break;
                 case Vehicle.LINEAR_MOTOR_DIRECTION:
-                    pValue.X = ClampF(pValue.X, -LegionVehicleLimits.MaxLinearVelocity, LegionVehicleLimits.MaxLinearVelocity);
-                    pValue.Y = ClampF(pValue.Y, -LegionVehicleLimits.MaxLinearVelocity, LegionVehicleLimits.MaxLinearVelocity);
-                    pValue.Z = ClampF(pValue.Z, -LegionVehicleLimits.MaxLinearVelocity, LegionVehicleLimits.MaxLinearVelocity);
+                    pValue.X = ClampF(pValue.X, -JoltVehicleLimits.MaxLinearVelocity, JoltVehicleLimits.MaxLinearVelocity);
+                    pValue.Y = ClampF(pValue.Y, -JoltVehicleLimits.MaxLinearVelocity, JoltVehicleLimits.MaxLinearVelocity);
+                    pValue.Z = ClampF(pValue.Z, -JoltVehicleLimits.MaxLinearVelocity, JoltVehicleLimits.MaxLinearVelocity);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection] = pValue;
                     MoveLinear(pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_OFFSET:
-                    pValue.X = ClampF(pValue.X, -LegionVehicleLimits.MaxLinearOffset, LegionVehicleLimits.MaxLinearOffset);
-                    pValue.Y = ClampF(pValue.Y, -LegionVehicleLimits.MaxLinearOffset, LegionVehicleLimits.MaxLinearOffset);
-                    pValue.Z = ClampF(pValue.Z, -LegionVehicleLimits.MaxLinearOffset, LegionVehicleLimits.MaxLinearOffset);
+                    pValue.X = ClampF(pValue.X, -JoltVehicleLimits.MaxLinearOffset, JoltVehicleLimits.MaxLinearOffset);
+                    pValue.Y = ClampF(pValue.Y, -JoltVehicleLimits.MaxLinearOffset, JoltVehicleLimits.MaxLinearOffset);
+                    pValue.Z = ClampF(pValue.Z, -JoltVehicleLimits.MaxLinearOffset, JoltVehicleLimits.MaxLinearOffset);
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset] = pValue;
                     break;
                 case Vehicle.BLOCK_EXIT:
@@ -311,7 +311,7 @@ namespace Legion.Vehicles
         {
             // Map OpenSim VehicleFlag bits to our internal flags.
             // Standard flags share the same bit positions (1-32768).
-            LegionVehicleFlags flags = (LegionVehicleFlags)pParam;
+            JoltVehicleFlags flags = (JoltVehicleFlags)pParam;
 
             if (remove)
                 _props.Flags &= ~flags;
@@ -371,7 +371,7 @@ namespace Legion.Vehicles
 
             // -------------------------------------------------------
             // Spike detection and mitigation
-            if (LegionVehicleLimits.DoSpikeDetection)
+            if (JoltVehicleLimits.DoSpikeDetection)
             {
                 MitigateVelocitySpiking(actualStep);
             }
@@ -379,7 +379,7 @@ namespace Legion.Vehicles
             // -------------------------------------------------------
             // Ground penetration fix
             float groundHeight = _body.GetTerrainHeight(_body.Position);
-            if (_body.Position.Z - groundHeight < LegionVehicleLimits.MaxGroundPenetration)
+            if (_body.Position.Z - groundHeight < JoltVehicleLimits.MaxGroundPenetration)
             {
                 Vector3 zforce = Vector3.Zero;
                 zforce.Z = 1.0f + Math.Abs(_localLinearVel.Z * 3.0f);
@@ -389,20 +389,20 @@ namespace Legion.Vehicles
             // -------------------------------------------------------
             // Deflection + sled run in the reference order Angular -> Linear -> Sled, BEFORE hover.
             // Angular deflection — swings the nose toward the velocity direction (weathervane).
-            if (LegionVehicleLimits.DoAngularDeflection)
+            if (JoltVehicleLimits.DoAngularDeflection)
             {
                 SimulateAngularDeflection(timeStep);
             }
 
             // Linear deflection — changing velocity toward the forward axis (the "tracking" bite).
-            if (LegionVehicleLimits.DoLinearDeflection)
+            if (JoltVehicleLimits.DoLinearDeflection)
             {
                 SimulateLinearDeflection(timeStep);
             }
 
             // Sled movement — gravity-assisted slope force, gated on Type == Sled (NEVER a boat). Wired
             // for A/B parity completeness; inert for every non-sled vehicle.
-            if (_props.Type == LegionVehicleType.Sled)
+            if (_props.Type == JoltVehicleType.Sled)
             {
                 SimulateSledMovement(timeStep);
             }
@@ -414,7 +414,7 @@ namespace Legion.Vehicles
             // -------------------------------------------------------
             // Vertical attractor and banking
             Vector3 attractionForces = Vector3.Zero;
-            if (LegionVehicleLimits.DoVerticalAttractor)
+            if (JoltVehicleLimits.DoVerticalAttractor)
             {
                 float angle;
                 bool inverted;
@@ -427,21 +427,21 @@ namespace Legion.Vehicles
 
             // -------------------------------------------------------
             // Motors — linear + angular + banking
-            if (LegionVehicleLimits.DoMotors)
+            if (JoltVehicleLimits.DoMotors)
             {
                 SimulateMotors(timeStep, m_frameNum, attractionForces);
             }
 
             // -------------------------------------------------------
             // Angular friction
-            if (LegionVehicleLimits.DoAngularFriction)
+            if (JoltVehicleLimits.DoAngularFriction)
             {
                 SimulateAngularFriction(timeStep);
             }
 
             // -------------------------------------------------------
             // Linear friction
-            if (LegionVehicleLimits.DoLinearFriction)
+            if (JoltVehicleLimits.DoLinearFriction)
             {
                 SimulateLinearFriction(timeStep);
             }
@@ -469,12 +469,12 @@ namespace Legion.Vehicles
         /// </summary>
         private void MoveLinear(Vector3 direction)
         {
-            if (_props.Type == LegionVehicleType.None) return;
+            if (_props.Type == JoltVehicleType.None) return;
 
             _props.Dynamics.LastAccessTOD = DateTime.Now;
 
             // Scale the target if the motor has been decaying.
-            if (_props.Dynamics.LinearDecayIndex > LegionVehicleLimits.ThresholdLinearMotorEngaged)
+            if (_props.Dynamics.LinearDecayIndex > JoltVehicleLimits.ThresholdLinearMotorEngaged)
             {
                 Vector3 timescale = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
                 _props.Dynamics.LinearTargetVelocity.X *= MovementExpDecay(_props.Dynamics.LinearDecayIndex, timescale.X);
@@ -490,7 +490,7 @@ namespace Legion.Vehicles
             Vector3 mts = _props.GetVec(VehVectorParam.LinearMotorTimescale);
             if (Vector3.Mag(mts) < 0.9f)
                 moahfubar = 1.0f - Vector3.Mag(mts);
-            _props.Dynamics.LinearDecayIndex = LegionVehicleLimits.MinPhysicsTimestep * (1.0f - moahfubar) - LegionVehicleLimits.ThresholdDelayFubar * moahfubar;
+            _props.Dynamics.LinearDecayIndex = JoltVehicleLimits.MinPhysicsTimestep * (1.0f - moahfubar) - JoltVehicleLimits.ThresholdDelayFubar * moahfubar;
 
             _props.Dynamics.TargetLinearDelta = direction - _props.Dynamics.LinearDirection;
             _props.Dynamics.LinearDirection = direction;
@@ -503,12 +503,12 @@ namespace Legion.Vehicles
         /// </summary>
         private void MoveAngular(Vector3 direction)
         {
-            if (_props.Type == LegionVehicleType.None) return;
+            if (_props.Type == JoltVehicleType.None) return;
 
             _props.Dynamics.LastAccessTOD = DateTime.Now;
 
             // Scale the target if the motor has been decaying.
-            if (_props.Dynamics.AngularDecayIndex > LegionVehicleLimits.ThresholdAngularMotorEngaged)
+            if (_props.Dynamics.AngularDecayIndex > JoltVehicleLimits.ThresholdAngularMotorEngaged)
             {
                 Vector3 timescale = _props.GetVec(VehVectorParam.AngularMotorDecayTimescale);
                 _props.Dynamics.AngularTargetVelocity.X *= MovementExpDecay(_props.Dynamics.AngularDecayIndex, timescale.X);
@@ -523,7 +523,7 @@ namespace Legion.Vehicles
             Vector3 mts = _props.GetVec(VehVectorParam.AngularMotorTimescale);
             if (Vector3.Mag(mts) < 0.9f)
                 moahfubar = 1.0f - Vector3.Mag(mts);
-            _props.Dynamics.AngularDecayIndex = LegionVehicleLimits.MinPhysicsTimestep * (1.0f - moahfubar) - LegionVehicleLimits.ThresholdDelayFubar * moahfubar;
+            _props.Dynamics.AngularDecayIndex = JoltVehicleLimits.MinPhysicsTimestep * (1.0f - moahfubar) - JoltVehicleLimits.ThresholdDelayFubar * moahfubar;
 
             // SL angular deflection rate limiter (old havok1 bug, institutionalized)
             float ts = _props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
@@ -575,8 +575,8 @@ namespace Legion.Vehicles
             _props.Dynamics.VerticalForceAdjust = 1.0f;
 
             // Motors off
-            _props.Dynamics.LinearDecayIndex = LegionVehicleLimits.MaxDecayTimescale * 10.0f;
-            _props.Dynamics.AngularDecayIndex = LegionVehicleLimits.MaxDecayTimescale * 10.0f;
+            _props.Dynamics.LinearDecayIndex = JoltVehicleLimits.MaxDecayTimescale * 10.0f;
+            _props.Dynamics.AngularDecayIndex = JoltVehicleLimits.MaxDecayTimescale * 10.0f;
             _props.Dynamics.LinearTargetVelocity = Vector3.Zero;
             _props.Dynamics.AngularTargetVelocity = Vector3.Zero;
 
@@ -618,15 +618,15 @@ namespace Legion.Vehicles
                 _linearMotorStallChecked = true;
 
                 // If either motor is starting fresh, assume not stalled
-                if (_props.Dynamics.LinearDecayIndex > LegionVehicleLimits.ThresholdLinearMotorEngaged &&
-                    _props.Dynamics.AngularDecayIndex > LegionVehicleLimits.ThresholdAngularMotorEngaged)
+                if (_props.Dynamics.LinearDecayIndex > JoltVehicleLimits.ThresholdLinearMotorEngaged &&
+                    _props.Dynamics.AngularDecayIndex > JoltVehicleLimits.ThresholdAngularMotorEngaged)
                 {
                     float stposdelta = Vector3.Mag(_props.Dynamics.ShortTermPositionDelta);
                     float stspeed = stposdelta / timeStep;
 
                     if (stspeed < currspeed * 0.5f)
                     {
-                        if (currspeed >= LegionVehicleLimits.ThresholdLinearMotorUnstuck)
+                        if (currspeed >= JoltVehicleLimits.ThresholdLinearMotorUnstuck)
                         {
                             _linearMotorStalled = true;
                         }
@@ -689,13 +689,13 @@ namespace Legion.Vehicles
         private void TorqueFini()
         {
             // Clean up near-zero values
-            if (Math.Abs(_accumTorqueVelChange.X) < LegionVehicleLimits.MinPhysicsForce) _accumTorqueVelChange.X = 0f;
-            if (Math.Abs(_accumTorqueVelChange.Y) < LegionVehicleLimits.MinPhysicsForce) _accumTorqueVelChange.Y = 0f;
-            if (Math.Abs(_accumTorqueVelChange.Z) < LegionVehicleLimits.MinPhysicsForce) _accumTorqueVelChange.Z = 0f;
+            if (Math.Abs(_accumTorqueVelChange.X) < JoltVehicleLimits.MinPhysicsForce) _accumTorqueVelChange.X = 0f;
+            if (Math.Abs(_accumTorqueVelChange.Y) < JoltVehicleLimits.MinPhysicsForce) _accumTorqueVelChange.Y = 0f;
+            if (Math.Abs(_accumTorqueVelChange.Z) < JoltVehicleLimits.MinPhysicsForce) _accumTorqueVelChange.Z = 0f;
 
-            if (Math.Abs(_accumTorqueImpulse.X) < LegionVehicleLimits.MinPhysicsForce) _accumTorqueImpulse.X = 0f;
-            if (Math.Abs(_accumTorqueImpulse.Y) < LegionVehicleLimits.MinPhysicsForce) _accumTorqueImpulse.Y = 0f;
-            if (Math.Abs(_accumTorqueImpulse.Z) < LegionVehicleLimits.MinPhysicsForce) _accumTorqueImpulse.Z = 0f;
+            if (Math.Abs(_accumTorqueImpulse.X) < JoltVehicleLimits.MinPhysicsForce) _accumTorqueImpulse.X = 0f;
+            if (Math.Abs(_accumTorqueImpulse.Y) < JoltVehicleLimits.MinPhysicsForce) _accumTorqueImpulse.Y = 0f;
+            if (Math.Abs(_accumTorqueImpulse.Z) < JoltVehicleLimits.MinPhysicsForce) _accumTorqueImpulse.Z = 0f;
 
             // Apply velocity change torques (direct angular velocity modification)
             if (_accumTorqueVelChange != Vector3.Zero)
@@ -782,18 +782,18 @@ namespace Legion.Vehicles
         /// </summary>
         private void SimulateAngularDeflection(float timeStep)
         {
-            if (Math.Abs(_worldLinearVel.X) >= LegionVehicleLimits.ThresholdDeflectionSpeed ||
-                Math.Abs(_worldLinearVel.Y) >= LegionVehicleLimits.ThresholdDeflectionSpeed ||
-                Math.Abs(_worldLinearVel.Z) >= LegionVehicleLimits.ThresholdDeflectionSpeed)
+            if (Math.Abs(_worldLinearVel.X) >= JoltVehicleLimits.ThresholdDeflectionSpeed ||
+                Math.Abs(_worldLinearVel.Y) >= JoltVehicleLimits.ThresholdDeflectionSpeed ||
+                Math.Abs(_worldLinearVel.Z) >= JoltVehicleLimits.ThresholdDeflectionSpeed)
             {
                 float timescale = Math.Max(_props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f), timeStep);
 
-                if (timescale < LegionVehicleLimits.MaxTimescale)
+                if (timescale < JoltVehicleLimits.MaxTimescale)
                 {
                     float timepct = timeStep / timescale;
                     float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
-                    float speed = Utils.Clamp(Vector3.Mag(_localLinearVel), 0, LegionVehicleLimits.MaxLegacyLinearVelocity);
-                    float speedpct = speed / LegionVehicleLimits.MaxLegacyLinearVelocity;
+                    float speed = Utils.Clamp(Vector3.Mag(_localLinearVel), 0, JoltVehicleLimits.MaxLegacyLinearVelocity);
+                    float speedpct = speed / JoltVehicleLimits.MaxLegacyLinearVelocity;
 
                     // Compute the rotation between the x axis pointing vector and the linear direction
                     Vector3 ahead = new Vector3(1, 0, 0) * _rotation;
@@ -812,7 +812,7 @@ namespace Legion.Vehicles
 
                     // Compute damping
                     Vector3 remvel = Vector3.Zero;
-                    if (angle < LegionVehicleLimits.ThresholdDeflectionAngle)
+                    if (angle < JoltVehicleLimits.ThresholdDeflectionAngle)
                     {
                         remvel = _worldAngularVel * timepct * efficiency * (float)(Math.Log(1.0 + Math.PI - angle) / Math.Log(1.0 + Math.PI));
                     }
@@ -824,9 +824,9 @@ namespace Legion.Vehicles
                         vtwix = Vector3.Zero;
                     }
 
-                    if (Math.Abs(vtwix.X) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV ||
-                        Math.Abs(vtwix.Y) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV ||
-                        Math.Abs(vtwix.Z) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV)
+                    if (Math.Abs(vtwix.X) >= JoltVehicleLimits.ThresholdAngularMotorDeltaV ||
+                        Math.Abs(vtwix.Y) >= JoltVehicleLimits.ThresholdAngularMotorDeltaV ||
+                        Math.Abs(vtwix.Z) >= JoltVehicleLimits.ThresholdAngularMotorDeltaV)
                     {
                         AddTorqueVelocityChange(vtwix);
                     }
@@ -843,13 +843,13 @@ namespace Legion.Vehicles
         /// </summary>
         private void SimulateLinearDeflection(float timeStep)
         {
-            if (Math.Abs(_worldLinearVel.X) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                Math.Abs(_worldLinearVel.Y) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                Math.Abs(_worldLinearVel.Z) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV)
+            if (Math.Abs(_worldLinearVel.X) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                Math.Abs(_worldLinearVel.Y) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                Math.Abs(_worldLinearVel.Z) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV)
             {
                 float timescale = Math.Max(_props.GetFloat(VehFloatParam.LinearDeflectionTimescale, 1000f), timeStep);
 
-                if (timescale < LegionVehicleLimits.MaxTimescale)
+                if (timescale < JoltVehicleLimits.MaxTimescale)
                 {
                     float timePct = timeStep / timescale;
                     float efficiency = _props.GetFloat(VehFloatParam.LinearDeflectionEfficiency, 0f);
@@ -860,7 +860,7 @@ namespace Legion.Vehicles
                     // when pitched up, horizontal velocity is redirected upward along
                     // the forward axis.
                     float speed = Vector3.Mag(_worldLinearVel);
-                    if (speed < LegionVehicleLimits.ThresholdDeflectionSpeed) return;
+                    if (speed < JoltVehicleLimits.ThresholdDeflectionSpeed) return;
 
                     Vector3 currentDir = Vector3.Normalize(_worldLinearVel);
                     Vector3 forwardDir = new Vector3(1, 0, 0) * _rotation;
@@ -873,14 +873,14 @@ namespace Legion.Vehicles
                     Vector3 worldvel = newDir * speed - _worldLinearVel;
 
                     // Stop any upward deflection
-                    if ((_props.Flags & LegionVehicleFlags.NoDeflectionUp) != 0)
+                    if ((_props.Flags & JoltVehicleFlags.NoDeflectionUp) != 0)
                     {
                         if (worldvel.Z > 0) worldvel.Z = 0;
                     }
 
-                    if (Math.Abs(worldvel.X) > LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(worldvel.Y) > LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(worldvel.Z) > LegionVehicleLimits.ThresholdLinearMotorDeltaV)
+                    if (Math.Abs(worldvel.X) > JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(worldvel.Y) > JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(worldvel.Z) > JoltVehicleLimits.ThresholdLinearMotorDeltaV)
                     {
                         ApplyLinearVelocityChange(worldvel);
                     }
@@ -904,7 +904,7 @@ namespace Legion.Vehicles
             probe *= _rotation;
 
             // If the nose (z-axis) points downward, add some force along the X-axis
-            if (Math.Abs(probe.Z) > LegionVehicleLimits.ThresholdDeflectionAngle)
+            if (Math.Abs(probe.Z) > JoltVehicleLimits.ThresholdDeflectionAngle)
             {
                 force = new Vector3(-_body.Gravity.Z * 3.0f, 0f, 0f);   // seam: BSParam.Gravity -> _body.Gravity.Z
 
@@ -917,9 +917,9 @@ namespace Legion.Vehicles
                     // Modulate the force based on the amount of declination
                     force = force * timeStep * (float)Math.Sqrt(Math.Abs(probe.Z));
 
-                    if (Math.Abs(force.X) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(force.Y) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(force.Z) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV)
+                    if (Math.Abs(force.X) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(force.Y) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(force.Z) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV)
                     {
                         force *= _rotation;
                         force *= m_vehicleMass;
@@ -944,7 +944,7 @@ namespace Legion.Vehicles
             float hoverTimescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
 
             // If timescale is effectively disabled, skip
-            if (hoverTimescale >= LegionVehicleLimits.MaxHoverTimescale)
+            if (hoverTimescale >= JoltVehicleLimits.MaxHoverTimescale)
                 return;
 
             Vector3 pos = _body.Position;
@@ -952,15 +952,15 @@ namespace Legion.Vehicles
             float targetBase;
 
             // Determine the base height based on hover flags
-            if ((_props.Flags & LegionVehicleFlags.HoverWaterOnly) != 0)
+            if ((_props.Flags & JoltVehicleFlags.HoverWaterOnly) != 0)
             {
                 targetBase = _body.GetWaterLevel(pos);
             }
-            else if ((_props.Flags & LegionVehicleFlags.HoverTerrainOnly) != 0)
+            else if ((_props.Flags & JoltVehicleFlags.HoverTerrainOnly) != 0)
             {
                 targetBase = _body.GetTerrainHeight(pos);
             }
-            else if ((_props.Flags & LegionVehicleFlags.HoverGlobalHeight) != 0)
+            else if ((_props.Flags & JoltVehicleFlags.HoverGlobalHeight) != 0)
             {
                 targetBase = 0f; // Global = absolute height, hover height is the target
             }
@@ -973,7 +973,7 @@ namespace Legion.Vehicles
             float targetZ = targetBase + hoverHeight;
 
             // HoverUpOnly — only push up, never pull down
-            if ((_props.Flags & LegionVehicleFlags.HoverUpOnly) != 0)
+            if ((_props.Flags & JoltVehicleFlags.HoverUpOnly) != 0)
             {
                 if (currentZ >= targetZ)
                     return;
@@ -1003,7 +1003,7 @@ namespace Legion.Vehicles
             // none. Modest, not a full snap: a torque-velocity-change proportional to how far the boat's
             // current "up" is from the wave normal, so it settles into the slope over a few frames rather
             // than jerking to match it every frame.
-            if ((_props.Flags & LegionVehicleFlags.HoverWaterOnly) != 0)
+            if ((_props.Flags & JoltVehicleFlags.HoverWaterOnly) != 0)
             {
                 _body.GetWaterSurface(pos, out _, out Vector3 waveNormal);
                 Vector3 currentUp = new Vector3(0f, 0f, 1f) * _rotation;
@@ -1030,7 +1030,7 @@ namespace Legion.Vehicles
             angle = 0.0f;
             attractionForces = Vector3.Zero;
 
-            if (timescale < LegionVehicleLimits.MaxAttractTimescale)
+            if (timescale < JoltVehicleLimits.MaxAttractTimescale)
             {
                 // Compute the X and Y axis deflection from vertical
                 Vector3 xrot = new Vector3(1, 0, 0) * _rotation;
@@ -1041,7 +1041,7 @@ namespace Legion.Vehicles
                 angle = Math.Abs(QuatToAngle(Quaternion.CreateFromEulers(xyrot)));
 
                 // Airplanes can fly inverted
-                if (_props.Type == LegionVehicleType.Airplane)
+                if (_props.Type == JoltVehicleType.Airplane)
                 {
                     if (angle > Math.PI / 2)
                     {
@@ -1054,13 +1054,13 @@ namespace Legion.Vehicles
 
                 // Go dormant if in the sweet spot or if no angular changes are happening.
                 // Do not go dormant if the vehicle is overturned.
-                if (Math.Abs(_props.Dynamics.LastVerticalAngle - angle) >= LegionVehicleLimits.ThresholdAttractorAngle)
+                if (Math.Abs(_props.Dynamics.LastVerticalAngle - angle) >= JoltVehicleLimits.ThresholdAttractorAngle)
                 {
                     _props.Dynamics.LastVerticalFrameNumber = frameNum;
                 }
 
-                if (angle >= LegionVehicleLimits.ThresholdOverturnAngle ||
-                    (frameNum - _props.Dynamics.LastVerticalFrameNumber) < (LegionVehicleLimits.MaxAttractDormancy / timeStep))
+                if (angle >= JoltVehicleLimits.ThresholdOverturnAngle ||
+                    (frameNum - _props.Dynamics.LastVerticalFrameNumber) < (JoltVehicleLimits.MaxAttractDormancy / timeStep))
                 {
                     // Compute restoration force in local coordinates
                     Vector3 vtwix = new Vector3(-yrot.Z, xrot.Z, 0);
@@ -1069,22 +1069,22 @@ namespace Legion.Vehicles
                     vtwix = vtwix * (float)Math.PI * (float)Math.Pow(Math.E, efficiency * 3.0);
 
                     // Non-airplane vehicles have very strong restorative forces
-                    if (_props.Type != LegionVehicleType.Airplane)
+                    if (_props.Type != JoltVehicleType.Airplane)
                         vtwix *= (1.0f + (float)Math.Pow(1.0 + apct, 4.0));
 
                     // Zero out y-axis rotation if the limit roll only flag is set
-                    if ((_props.Flags & LegionVehicleFlags.LimitRollOnly) != 0)
+                    if ((_props.Flags & JoltVehicleFlags.LimitRollOnly) != 0)
                     {
-                        if (_props.Type == LegionVehicleType.Airplane || _props.Type == LegionVehicleType.Balloon)
+                        if (_props.Type == JoltVehicleType.Airplane || _props.Type == JoltVehicleType.Balloon)
                             vtwix.Y = 0.0f;
                         else
                             vtwix.Y *= 0.1f;
                     }
 
                     // If overturned and no progress toward vertical, keep increasing force
-                    if (_props.Type != LegionVehicleType.Airplane)
+                    if (_props.Type != JoltVehicleType.Airplane)
                     {
-                        if (angle >= LegionVehicleLimits.ThresholdOverturnAngle && angle >= _props.Dynamics.LastVerticalAngle)
+                        if (angle >= JoltVehicleLimits.ThresholdOverturnAngle && angle >= _props.Dynamics.LastVerticalAngle)
                         {
                             _props.Dynamics.VerticalForceAdjust *= 1.3f;
                             vtwix *= _props.Dynamics.VerticalForceAdjust;
@@ -1143,20 +1143,20 @@ namespace Legion.Vehicles
         {
             float timescale = Math.Max(_props.GetFloat(VehFloatParam.BankingTimescale, 1000f), timeStep);
 
-            if (timescale < LegionVehicleLimits.MaxAttractTimescale)
+            if (timescale < JoltVehicleLimits.MaxAttractTimescale)
             {
                 float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
                 float bmodifier = _props.GetFloat(VehFloatParam.InvertedBankingModifier, 1f);
 
-                if (LegionVehicleLimits.DoBanking && timescale < LegionVehicleLimits.MaxTimescale)
+                if (JoltVehicleLimits.DoBanking && timescale < JoltVehicleLimits.MaxTimescale)
                 {
                     float bankingmix = _props.GetFloat(VehFloatParam.BankingMix, 0.5f);
                     float xspeed = 0.0f;
 
                     // Legacy support: use velocity as an on/off switch, proportional and capped
-                    if (Math.Abs(_localLinearVel.X) > LegionVehicleLimits.ThresholdAngularMotorDeltaV)
-                        xspeed = Utils.Clamp(Math.Abs(_localLinearVel.X), 0, LegionVehicleLimits.MaxLegacyLinearVelocity);
-                    float xspeedpct = xspeed / LegionVehicleLimits.MaxLegacyLinearVelocity;
+                    if (Math.Abs(_localLinearVel.X) > JoltVehicleLimits.ThresholdAngularMotorDeltaV)
+                        xspeed = Utils.Clamp(Math.Abs(_localLinearVel.X), 0, JoltVehicleLimits.MaxLegacyLinearVelocity);
+                    float xspeedpct = xspeed / JoltVehicleLimits.MaxLegacyLinearVelocity;
 
                     // Compute percentage of roll
                     Vector3 erot = new Vector3(0f, 1f, 0f);
@@ -1173,7 +1173,7 @@ namespace Legion.Vehicles
                         efficiency = efficiency * bmodifier;
 
                     // Apply torque only when above threshold
-                    if (Math.Abs(xangle) > LegionVehicleLimits.ThresholdBankAngle)
+                    if (Math.Abs(xangle) > JoltVehicleLimits.ThresholdBankAngle)
                     {
                         _props.Dynamics.BankingDirection = -xangle * attitude * efficiency * (1.0f - bankingmix) * (float)Math.PI; // static
                         _props.Dynamics.BankingDirection += -xangle * attitude * efficiency * bankingmix * xspeedpct * (float)Math.PI; // dynamic
@@ -1249,17 +1249,17 @@ namespace Legion.Vehicles
                 newvel.Z = (adjvel.Z + adjvel.Z * rfactor.Z);
 
                 // Crossover flip
-                if (rfactor.X == LegionVehicleLimits.ThresholdInverseCrossover) rfactor.X = -rfactor.X;
-                if (rfactor.Y == LegionVehicleLimits.ThresholdInverseCrossover) rfactor.Y = -rfactor.Y;
-                if (rfactor.Z == LegionVehicleLimits.ThresholdInverseCrossover) rfactor.Z = -rfactor.Z;
+                if (rfactor.X == JoltVehicleLimits.ThresholdInverseCrossover) rfactor.X = -rfactor.X;
+                if (rfactor.Y == JoltVehicleLimits.ThresholdInverseCrossover) rfactor.Y = -rfactor.Y;
+                if (rfactor.Z == JoltVehicleLimits.ThresholdInverseCrossover) rfactor.Z = -rfactor.Z;
 
                 // Avoid zero velocity stiction when increasing
-                if (rfactor.X > 0 && _props.Dynamics.LinearDirection.X != 0 && Math.Abs(newvel.X) < LegionVehicleLimits.ThresholdLinearMotorDeltaV)
-                    newvel.X = dirsign.X * LegionVehicleLimits.ThresholdLinearMotorDeltaV * 8;
-                if (rfactor.Y > 0 && _props.Dynamics.LinearDirection.Y != 0 && Math.Abs(newvel.Y) < LegionVehicleLimits.ThresholdLinearMotorDeltaV)
-                    newvel.Y = dirsign.Y * LegionVehicleLimits.ThresholdLinearMotorDeltaV * 8;
-                if (rfactor.Z > 0 && _props.Dynamics.LinearDirection.Z != 0 && Math.Abs(newvel.Z) < LegionVehicleLimits.ThresholdLinearMotorDeltaV)
-                    newvel.Z = dirsign.Z * LegionVehicleLimits.ThresholdLinearMotorDeltaV * 8;
+                if (rfactor.X > 0 && _props.Dynamics.LinearDirection.X != 0 && Math.Abs(newvel.X) < JoltVehicleLimits.ThresholdLinearMotorDeltaV)
+                    newvel.X = dirsign.X * JoltVehicleLimits.ThresholdLinearMotorDeltaV * 8;
+                if (rfactor.Y > 0 && _props.Dynamics.LinearDirection.Y != 0 && Math.Abs(newvel.Y) < JoltVehicleLimits.ThresholdLinearMotorDeltaV)
+                    newvel.Y = dirsign.Y * JoltVehicleLimits.ThresholdLinearMotorDeltaV * 8;
+                if (rfactor.Z > 0 && _props.Dynamics.LinearDirection.Z != 0 && Math.Abs(newvel.Z) < JoltVehicleLimits.ThresholdLinearMotorDeltaV)
+                    newvel.Z = dirsign.Z * JoltVehicleLimits.ThresholdLinearMotorDeltaV * 8;
 
                 // Compute new target velocities
                 if (_props.Dynamics.LinearDirection.X * newvel.X < 0 || rfactor.X < 0)
@@ -1278,9 +1278,9 @@ namespace Legion.Vehicles
                     _props.Dynamics.LinearTargetVelocity.Z = Utils.Clamp(newvel.Z, -Math.Abs(_props.Dynamics.LinearDirection.Z), Math.Abs(_props.Dynamics.LinearDirection.Z));
 
                 // Limit max velocities
-                newvel.X = Utils.Clamp(newvel.X, -LegionVehicleLimits.MaxLinearVelocity, LegionVehicleLimits.MaxLinearVelocity);
-                newvel.Y = Utils.Clamp(newvel.Y, -LegionVehicleLimits.MaxLinearVelocity, LegionVehicleLimits.MaxLinearVelocity);
-                newvel.Z = Utils.Clamp(newvel.Z, -LegionVehicleLimits.MaxLinearVelocity, LegionVehicleLimits.MaxLinearVelocity);
+                newvel.X = Utils.Clamp(newvel.X, -JoltVehicleLimits.MaxLinearVelocity, JoltVehicleLimits.MaxLinearVelocity);
+                newvel.Y = Utils.Clamp(newvel.Y, -JoltVehicleLimits.MaxLinearVelocity, JoltVehicleLimits.MaxLinearVelocity);
+                newvel.Z = Utils.Clamp(newvel.Z, -JoltVehicleLimits.MaxLinearVelocity, JoltVehicleLimits.MaxLinearVelocity);
 
                 // Release motors when delta and direction are both zero
                 if (_props.Dynamics.LinearTargetVelocity.X == 0 && _props.Dynamics.LinearDirection.X == 0) newvel.X = lastvel.X;
@@ -1296,7 +1296,7 @@ namespace Legion.Vehicles
                 if (Vector3.Mag(dfactor) != 0 && IsLinearMotorStalled())
                 {
                     dfactor = Vector3.Zero;
-                    _props.Dynamics.LinearDecayIndex = LegionVehicleLimits.MaxDecayTimescale * 100.0f;
+                    _props.Dynamics.LinearDecayIndex = JoltVehicleLimits.MaxDecayTimescale * 100.0f;
                     _props.Dynamics.LinearTargetVelocity = Vector3.Zero;
                 }
 
@@ -1308,21 +1308,21 @@ namespace Legion.Vehicles
                 // Switch back to world coords
                 worldvel = newvel * _rotation;
 
-                if (Math.Abs(worldvel.X) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                    Math.Abs(worldvel.Y) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
-                    Math.Abs(worldvel.Z) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV)
+                if (Math.Abs(worldvel.X) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                    Math.Abs(worldvel.Y) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV ||
+                    Math.Abs(worldvel.Z) >= JoltVehicleLimits.ThresholdLinearMotorDeltaV)
                 {
                     // Convert to deltaV
                     worldvel -= _worldLinearVel;
 
                     // Limit motor up
-                    if ((_props.Flags & LegionVehicleFlags.LimitMotorUp) != 0)
+                    if ((_props.Flags & JoltVehicleFlags.LimitMotorUp) != 0)
                     {
                         if (worldvel.Z > 0) worldvel.Z = 0;
                     }
 
                     // Limit motor down
-                    if ((_props.Flags & LegionVehicleFlags.LimitMotorDown) != 0)
+                    if ((_props.Flags & JoltVehicleFlags.LimitMotorDown) != 0)
                     {
                         if (worldvel.Z < 0) worldvel.Z = 0;
                     }
@@ -1335,9 +1335,9 @@ namespace Legion.Vehicles
                     }
 
                     // Hover moderation: if hover present, accelerate motor decay
-                    if (Math.Abs(worldvel.Z) > LegionVehicleLimits.ThresholdLinearMotorDeltaV &&
-                        (_props.Flags & (LegionVehicleFlags.HoverGlobalHeight | LegionVehicleFlags.HoverTerrainOnly | LegionVehicleFlags.HoverWaterOnly)) != 0 &&
-                        hoverts < LegionVehicleLimits.MaxHoverTimescale)
+                    if (Math.Abs(worldvel.Z) > JoltVehicleLimits.ThresholdLinearMotorDeltaV &&
+                        (_props.Flags & (JoltVehicleFlags.HoverGlobalHeight | JoltVehicleFlags.HoverTerrainOnly | JoltVehicleFlags.HoverWaterOnly)) != 0 &&
+                        hoverts < JoltVehicleLimits.MaxHoverTimescale)
                     {
                         _props.Dynamics.LinearDecayIndex += 10.0f;
                     }
@@ -1369,7 +1369,7 @@ namespace Legion.Vehicles
                 Vector3 ztorque = Vector3.Zero;
 
                 // Preflight world z-rotation mode
-                if ((_props.Flags & LegionVehicleFlags.TorqueWorldZ) != 0)
+                if ((_props.Flags & JoltVehicleFlags.TorqueWorldZ) != 0)
                 {
                     lastvel = _worldAngularVel;
                     ztorque.Z = lastvel.Z;
@@ -1404,28 +1404,28 @@ namespace Legion.Vehicles
                 newvel.Z = (adjvel.Z + adjvel.Z * rfactor.Z);
 
                 // Crossover flip
-                if (rfactor.X == LegionVehicleLimits.ThresholdInverseCrossover) rfactor.X = -rfactor.X;
-                if (rfactor.Y == LegionVehicleLimits.ThresholdInverseCrossover) rfactor.Y = -rfactor.Y;
-                if (rfactor.Z == LegionVehicleLimits.ThresholdInverseCrossover) rfactor.Z = -rfactor.Z;
+                if (rfactor.X == JoltVehicleLimits.ThresholdInverseCrossover) rfactor.X = -rfactor.X;
+                if (rfactor.Y == JoltVehicleLimits.ThresholdInverseCrossover) rfactor.Y = -rfactor.Y;
+                if (rfactor.Z == JoltVehicleLimits.ThresholdInverseCrossover) rfactor.Z = -rfactor.Z;
 
                 // Avoid zero velocity stiction
-                if (rfactor.X > 0 && _props.Dynamics.AngularDirection.X != 0 && Math.Abs(newvel.X) < LegionVehicleLimits.ThresholdAngularMotorDeltaV)
-                    newvel.X = dirsign.X * LegionVehicleLimits.ThresholdAngularMotorDeltaV * 8;
-                if (rfactor.Y > 0 && _props.Dynamics.AngularDirection.Y != 0 && Math.Abs(newvel.Y) < LegionVehicleLimits.ThresholdAngularMotorDeltaV)
-                    newvel.Y = dirsign.Y * LegionVehicleLimits.ThresholdAngularMotorDeltaV * 8;
-                if (rfactor.Z > 0 && _props.Dynamics.AngularDirection.Z != 0 && Math.Abs(newvel.Z) < LegionVehicleLimits.ThresholdAngularMotorDeltaV)
-                    newvel.Z = dirsign.Z * LegionVehicleLimits.ThresholdAngularMotorDeltaV * 8;
+                if (rfactor.X > 0 && _props.Dynamics.AngularDirection.X != 0 && Math.Abs(newvel.X) < JoltVehicleLimits.ThresholdAngularMotorDeltaV)
+                    newvel.X = dirsign.X * JoltVehicleLimits.ThresholdAngularMotorDeltaV * 8;
+                if (rfactor.Y > 0 && _props.Dynamics.AngularDirection.Y != 0 && Math.Abs(newvel.Y) < JoltVehicleLimits.ThresholdAngularMotorDeltaV)
+                    newvel.Y = dirsign.Y * JoltVehicleLimits.ThresholdAngularMotorDeltaV * 8;
+                if (rfactor.Z > 0 && _props.Dynamics.AngularDirection.Z != 0 && Math.Abs(newvel.Z) < JoltVehicleLimits.ThresholdAngularMotorDeltaV)
+                    newvel.Z = dirsign.Z * JoltVehicleLimits.ThresholdAngularMotorDeltaV * 8;
 
                 // --- Vertical attractor interaction clamping ---
                 float vtimescale = Math.Max(_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f), timeStep);
                 float vefficiency = _props.GetFloat(VehFloatParam.VerticalAttractionEfficiency, 0f);
-                if (vtimescale < LegionVehicleLimits.MaxAttractTimescale)
+                if (vtimescale < JoltVehicleLimits.MaxAttractTimescale)
                 {
                     float velclamp = (float)Math.PI;
 
-                    if (_props.Type == LegionVehicleType.Car)
+                    if (_props.Type == JoltVehicleType.Car)
                         velclamp = (float)Math.PI * 1.1f;
-                    else if (_props.Type == LegionVehicleType.Boat)
+                    else if (_props.Type == JoltVehicleType.Boat)
                         velclamp = (float)Math.PI * 0.95f;
                     else
                         velclamp = (float)Math.PI * 0.8f;
@@ -1435,7 +1435,7 @@ namespace Legion.Vehicles
 
                     if (vtimescale < 1.0f)
                         vtimescale = 1.0f;
-                    float voverthrust = (float)(Math.Log(vtimescale + 0.06) / Math.Log(LegionVehicleLimits.MaxAttractTimescale));
+                    float voverthrust = (float)(Math.Log(vtimescale + 0.06) / Math.Log(JoltVehicleLimits.MaxAttractTimescale));
 
                     float vvel;
                     vvel = Utils.Clamp(newvel.X, -velclamp, velclamp);
@@ -1464,9 +1464,9 @@ namespace Legion.Vehicles
                     _props.Dynamics.AngularTargetVelocity.Z = Utils.Clamp(newvel.Z, -Math.Abs(_props.Dynamics.AngularDirection.Z), Math.Abs(_props.Dynamics.AngularDirection.Z));
 
                 // Limit max velocities
-                newvel.X = Utils.Clamp(newvel.X, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
-                newvel.Y = Utils.Clamp(newvel.Y, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
-                newvel.Z = Utils.Clamp(newvel.Z, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
+                newvel.X = Utils.Clamp(newvel.X, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
+                newvel.Y = Utils.Clamp(newvel.Y, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
+                newvel.Z = Utils.Clamp(newvel.Z, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
 
                 // Release motors when delta is zero and direction is zero
                 if (dfactor.X == 0 && _props.Dynamics.AngularDirection.X == 0) newvel.X = lastvel.X;
@@ -1483,7 +1483,7 @@ namespace Legion.Vehicles
                 if (Vector3.Mag(dfactor) != 0 && IsLinearMotorStalled())
                 {
                     dfactor = Vector3.Zero;
-                    _props.Dynamics.AngularDecayIndex = LegionVehicleLimits.MaxDecayTimescale * 100.0f;
+                    _props.Dynamics.AngularDecayIndex = JoltVehicleLimits.MaxDecayTimescale * 100.0f;
                     _props.Dynamics.AngularTargetVelocity = Vector3.Zero;
                 }
 
@@ -1493,7 +1493,7 @@ namespace Legion.Vehicles
                 newvel.Z = (newvel.Z * dfactor.Z) + lastvel.Z * (1.0f - dfactor.Z);
 
                 // Handle TorqueWorldZ split
-                if ((_props.Flags & LegionVehicleFlags.TorqueWorldZ) != 0)
+                if ((_props.Flags & JoltVehicleFlags.TorqueWorldZ) != 0)
                 {
                     ztorque.Z = newvel.Z;   // This is really world Z-forces
                     newvel.Z = ztorque.X;   // Restore original local Z-forces
@@ -1515,9 +1515,9 @@ namespace Legion.Vehicles
                 angularz = worldvel.Z;
                 worldvel.Z = 0;
 
-                if (Math.Abs(worldvel.X) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV ||
-                    Math.Abs(worldvel.Y) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV ||
-                    Math.Abs(worldvel.Z) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV)
+                if (Math.Abs(worldvel.X) >= JoltVehicleLimits.ThresholdAngularMotorDeltaV ||
+                    Math.Abs(worldvel.Y) >= JoltVehicleLimits.ThresholdAngularMotorDeltaV ||
+                    Math.Abs(worldvel.Z) >= JoltVehicleLimits.ThresholdAngularMotorDeltaV)
                 {
                     AddTorqueVelocityChange(worldvel);
                 }
@@ -1529,7 +1529,7 @@ namespace Legion.Vehicles
             float btimescale = _props.GetFloat(VehFloatParam.BankingTimescale, 1000f);
             float bnewvel = 0;
 
-            if (_props.Dynamics.BankingDirection != 0 && btimescale < LegionVehicleLimits.MaxTimescale)
+            if (_props.Dynamics.BankingDirection != 0 && btimescale < JoltVehicleLimits.MaxTimescale)
             {
                 float blastvel = _worldAngularVel.Z;
                 float badjvel;
@@ -1547,18 +1547,18 @@ namespace Legion.Vehicles
                 bnewvel = (badjvel + badjvel * bfactor);
 
                 // If angular motor is engaged, reduce max banking velocity
-                if (_props.Dynamics.AngularDecayIndex < LegionVehicleLimits.ThresholdAngularMotorEngaged)
+                if (_props.Dynamics.AngularDecayIndex < JoltVehicleLimits.ThresholdAngularMotorEngaged)
                 {
-                    if (Math.Abs(bnewvel) > LegionVehicleLimits.MaxLegacyAngularVelocity)
-                        bnewvel = LegionVehicleLimits.MaxLegacyAngularVelocity * VehicleMath.PosNeg(bnewvel);
+                    if (Math.Abs(bnewvel) > JoltVehicleLimits.MaxLegacyAngularVelocity)
+                        bnewvel = JoltVehicleLimits.MaxLegacyAngularVelocity * VehicleMath.PosNeg(bnewvel);
                 }
 
                 // Crossover flip
-                if (bfactor == LegionVehicleLimits.ThresholdInverseCrossover) bfactor = -bfactor;
+                if (bfactor == JoltVehicleLimits.ThresholdInverseCrossover) bfactor = -bfactor;
 
                 // Avoid zero velocity stiction
-                if (bfactor > 0 && Math.Abs(bnewvel) < LegionVehicleLimits.ThresholdAngularMotorDeltaV)
-                    bnewvel = dirbsign * LegionVehicleLimits.ThresholdAngularMotorDeltaV * 8;
+                if (bfactor > 0 && Math.Abs(bnewvel) < JoltVehicleLimits.ThresholdAngularMotorDeltaV)
+                    bnewvel = dirbsign * JoltVehicleLimits.ThresholdAngularMotorDeltaV * 8;
 
                 // Compute new target banking velocity
                 if (_props.Dynamics.BankingDirection * bnewvel < 0 || bfactor < 0)
@@ -1567,7 +1567,7 @@ namespace Legion.Vehicles
                     _props.Dynamics.BankingTargetVelocity = Utils.Clamp(bnewvel, -Math.Abs(_props.Dynamics.BankingDirection), Math.Abs(_props.Dynamics.BankingDirection));
 
                 // Limit max velocities
-                bnewvel = Utils.Clamp(bnewvel, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
+                bnewvel = Utils.Clamp(bnewvel, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
 
                 // If local velocity exceeds motor speed, motor is not adding power
                 if (bfactor >= 0 && (dirbsign * (blastvel - bnewvel) > 0)) bnewvel = blastvel;
@@ -1592,7 +1592,7 @@ namespace Legion.Vehicles
             worldvel = Vector3.Zero;
             worldvel.Z = bnewvel + angularz;
 
-            if (Math.Abs(worldvel.Z) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV)
+            if (Math.Abs(worldvel.Z) >= JoltVehicleLimits.ThresholdAngularMotorDeltaV)
             {
                 AddTorqueVelocityChange(worldvel);
             }
@@ -1612,9 +1612,9 @@ namespace Legion.Vehicles
             Vector3 worldvel;
             Vector3 frictionTS = _props.GetVec(VehVectorParam.AngularFrictionTimescale);
 
-            if (frictionTS.X < LegionVehicleLimits.MaxTimescale ||
-                frictionTS.Y < LegionVehicleLimits.MaxTimescale ||
-                frictionTS.Z < LegionVehicleLimits.MaxTimescale)
+            if (frictionTS.X < JoltVehicleLimits.MaxTimescale ||
+                frictionTS.Y < JoltVehicleLimits.MaxTimescale ||
+                frictionTS.Z < JoltVehicleLimits.MaxTimescale)
             {
                 frictionTS.X = Math.Max(frictionTS.X, timeStep);
                 frictionTS.Y = Math.Max(frictionTS.Y, timeStep);
@@ -1630,23 +1630,23 @@ namespace Legion.Vehicles
                 newvel.Y = -_localAngularVel.Y * frictionTS.Y;
                 newvel.Z = -_localAngularVel.Z * frictionTS.Z;
 
-                newvel.X = Utils.Clamp(newvel.X, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
-                newvel.Y = Utils.Clamp(newvel.Y, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
-                newvel.Z = Utils.Clamp(newvel.Z, -LegionVehicleLimits.MaxAngularVelocity, LegionVehicleLimits.MaxAngularVelocity);
+                newvel.X = Utils.Clamp(newvel.X, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
+                newvel.Y = Utils.Clamp(newvel.Y, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
+                newvel.Z = Utils.Clamp(newvel.Z, -JoltVehicleLimits.MaxAngularVelocity, JoltVehicleLimits.MaxAngularVelocity);
 
                 // Clean up when below minimum threshold
-                if (Math.Abs(newvel.X) < LegionVehicleLimits.MinPhysicsForce) newvel.X = VehicleMath.PosNeg(newvel.X) * LegionVehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Y) < LegionVehicleLimits.MinPhysicsForce) newvel.Y = VehicleMath.PosNeg(newvel.Y) * LegionVehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Z) < LegionVehicleLimits.MinPhysicsForce) newvel.Z = VehicleMath.PosNeg(newvel.Z) * LegionVehicleLimits.MinPhysicsForce;
+                if (Math.Abs(newvel.X) < JoltVehicleLimits.MinPhysicsForce) newvel.X = VehicleMath.PosNeg(newvel.X) * JoltVehicleLimits.MinPhysicsForce;
+                if (Math.Abs(newvel.Y) < JoltVehicleLimits.MinPhysicsForce) newvel.Y = VehicleMath.PosNeg(newvel.Y) * JoltVehicleLimits.MinPhysicsForce;
+                if (Math.Abs(newvel.Z) < JoltVehicleLimits.MinPhysicsForce) newvel.Z = VehicleMath.PosNeg(newvel.Z) * JoltVehicleLimits.MinPhysicsForce;
 
                 worldvel = newvel * _rotation;
 
                 // Apply only when above sleep threshold
-                if (Math.Abs(_localAngularVel.X) >= LegionVehicleLimits.MinPhysicsForce * 2 ||
-                    Math.Abs(_localAngularVel.Y) >= LegionVehicleLimits.MinPhysicsForce * 2 ||
-                    Math.Abs(_localAngularVel.Z) >= LegionVehicleLimits.MinPhysicsForce * 2)
+                if (Math.Abs(_localAngularVel.X) >= JoltVehicleLimits.MinPhysicsForce * 2 ||
+                    Math.Abs(_localAngularVel.Y) >= JoltVehicleLimits.MinPhysicsForce * 2 ||
+                    Math.Abs(_localAngularVel.Z) >= JoltVehicleLimits.MinPhysicsForce * 2)
                 {
-                    if (Vector3.Mag(_worldAngularVel) < LegionVehicleLimits.ThresholdAngularFrictionDeltaV)
+                    if (Vector3.Mag(_worldAngularVel) < JoltVehicleLimits.ThresholdAngularFrictionDeltaV)
                     {
                         worldvel = -_worldAngularVel;
                     }
@@ -1669,9 +1669,9 @@ namespace Legion.Vehicles
             Vector3 worldvel;
             Vector3 frictionTS = _props.GetVec(VehVectorParam.LinearFrictionTimescale);
 
-            if (frictionTS.X < LegionVehicleLimits.MaxTimescale ||
-                frictionTS.Y < LegionVehicleLimits.MaxTimescale ||
-                frictionTS.Z < LegionVehicleLimits.MaxTimescale)
+            if (frictionTS.X < JoltVehicleLimits.MaxTimescale ||
+                frictionTS.Y < JoltVehicleLimits.MaxTimescale ||
+                frictionTS.Z < JoltVehicleLimits.MaxTimescale)
             {
                 frictionTS.X = Math.Max(frictionTS.X, timeStep);
                 frictionTS.Y = Math.Max(frictionTS.Y, timeStep);
@@ -1688,9 +1688,9 @@ namespace Legion.Vehicles
                 newvel.Z = -_localLinearVel.Z * frictionTS.Z;
 
                 // Clean up when below minimum threshold
-                if (Math.Abs(newvel.X) < LegionVehicleLimits.MinPhysicsForce) newvel.X = VehicleMath.PosNeg(newvel.X) * LegionVehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Y) < LegionVehicleLimits.MinPhysicsForce) newvel.Y = VehicleMath.PosNeg(newvel.Y) * LegionVehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Z) < LegionVehicleLimits.MinPhysicsForce) newvel.Z = VehicleMath.PosNeg(newvel.Z) * LegionVehicleLimits.MinPhysicsForce;
+                if (Math.Abs(newvel.X) < JoltVehicleLimits.MinPhysicsForce) newvel.X = VehicleMath.PosNeg(newvel.X) * JoltVehicleLimits.MinPhysicsForce;
+                if (Math.Abs(newvel.Y) < JoltVehicleLimits.MinPhysicsForce) newvel.Y = VehicleMath.PosNeg(newvel.Y) * JoltVehicleLimits.MinPhysicsForce;
+                if (Math.Abs(newvel.Z) < JoltVehicleLimits.MinPhysicsForce) newvel.Z = VehicleMath.PosNeg(newvel.Z) * JoltVehicleLimits.MinPhysicsForce;
 
                 worldvel = newvel * _rotation;
 
@@ -1698,11 +1698,11 @@ namespace Legion.Vehicles
                 if (worldvel.Z > 0) worldvel.Z = 0;
 
                 // Apply only when above sleep threshold
-                if (Math.Abs(_localLinearVel.X) >= LegionVehicleLimits.MinPhysicsForce * 2 ||
-                    Math.Abs(_localLinearVel.Y) >= LegionVehicleLimits.MinPhysicsForce * 2 ||
-                    Math.Abs(_localLinearVel.Z) >= LegionVehicleLimits.MinPhysicsForce * 2)
+                if (Math.Abs(_localLinearVel.X) >= JoltVehicleLimits.MinPhysicsForce * 2 ||
+                    Math.Abs(_localLinearVel.Y) >= JoltVehicleLimits.MinPhysicsForce * 2 ||
+                    Math.Abs(_localLinearVel.Z) >= JoltVehicleLimits.MinPhysicsForce * 2)
                 {
-                    if (Vector3.Mag(_worldLinearVel) < LegionVehicleLimits.ThresholdLinearFrictionDeltaV)
+                    if (Vector3.Mag(_worldLinearVel) < JoltVehicleLimits.ThresholdLinearFrictionDeltaV)
                     {
                         worldvel = -_worldLinearVel;
                     }
@@ -1726,7 +1726,7 @@ namespace Legion.Vehicles
         {
             if (timeindex <= 0) return 1.0f;
             float factor = (float)Math.Pow(Math.E, (double)(-timeindex / timescale));
-            if (factor < LegionVehicleLimits.ThresholdStictionFactor) factor = 0.0f;
+            if (factor < JoltVehicleLimits.ThresholdStictionFactor) factor = 0.0f;
             return factor;
         }
 
@@ -1771,7 +1771,7 @@ namespace Legion.Vehicles
                     if (Math.Abs(svel) > 0.3f)
                         elog = -(float)Math.Log(1.0f + Math.Abs(svel - evel));
                     else
-                        return LegionVehicleLimits.ThresholdInverseCrossover;
+                        return JoltVehicleLimits.ThresholdInverseCrossover;
                 }
             }
 
@@ -1864,11 +1864,11 @@ namespace Legion.Vehicles
         /// Set all vehicle parameters to the defaults for the given type.
         /// Faithfully ported from Halcyon VehicleDynamics.SetVehicleDefaults().
         /// </summary>
-        private void SetVehicleDefaults(LegionVehicleType newType)
+        private void SetVehicleDefaults(JoltVehicleType newType)
         {
             switch (newType)
             {
-                case LegionVehicleType.None:
+                case JoltVehicleType.None:
                     _props.ParamsVec.Clear();
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = Vector3.Zero;
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = Vector3.Zero;
@@ -1906,10 +1906,10 @@ namespace Legion.Vehicles
                     _props.ParamsRot.Clear();
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
 
-                    _props.Flags = LegionVehicleFlags.None;
+                    _props.Flags = JoltVehicleFlags.None;
                     break;
 
-                case LegionVehicleType.Sled:
+                case JoltVehicleType.Sled:
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(1000f, 1f, 1000f);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(1000f, 1000f, 1000f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
@@ -1943,10 +1943,10 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 0f;
 
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
-                    _props.Flags = LegionVehicleFlags.NoDeflectionUp | LegionVehicleFlags.LimitRollOnly | LegionVehicleFlags.LimitMotorUp;
+                    _props.Flags = JoltVehicleFlags.NoDeflectionUp | JoltVehicleFlags.LimitRollOnly | JoltVehicleFlags.LimitMotorUp;
                     break;
 
-                case LegionVehicleType.Car:
+                case JoltVehicleType.Car:
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(100f, 0.1f, 10f);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(100f, 100f, 0.3f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
@@ -1980,12 +1980,12 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 2.5f;
 
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
-                    _props.Flags = LegionVehicleFlags.NoDeflectionUp | LegionVehicleFlags.LimitRollOnly
-                                 | LegionVehicleFlags.HoverUpOnly | LegionVehicleFlags.LimitMotorUp
-                                 | LegionVehicleFlags.TorqueWorldZ;
+                    _props.Flags = JoltVehicleFlags.NoDeflectionUp | JoltVehicleFlags.LimitRollOnly
+                                 | JoltVehicleFlags.HoverUpOnly | JoltVehicleFlags.LimitMotorUp
+                                 | JoltVehicleFlags.TorqueWorldZ;
                     break;
 
-                case LegionVehicleType.Boat:
+                case JoltVehicleType.Boat:
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(200f, 0.5f, 3f);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(10f, 1f, 0.1f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
@@ -2024,12 +2024,12 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 0f;
 
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
-                    _props.Flags = LegionVehicleFlags.NoDeflectionUp | LegionVehicleFlags.HoverWaterOnly
-                                 | LegionVehicleFlags.LimitMotorUp | LegionVehicleFlags.LimitMotorDown
-                                 | LegionVehicleFlags.TorqueWorldZ;
+                    _props.Flags = JoltVehicleFlags.NoDeflectionUp | JoltVehicleFlags.HoverWaterOnly
+                                 | JoltVehicleFlags.LimitMotorUp | JoltVehicleFlags.LimitMotorDown
+                                 | JoltVehicleFlags.TorqueWorldZ;
                     break;
 
-                case LegionVehicleType.Airplane:
+                case JoltVehicleType.Airplane:
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(200f, 10f, 5f);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(1f, 0.1f, 0.5f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
@@ -2063,10 +2063,10 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 0f;
 
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
-                    _props.Flags = LegionVehicleFlags.TorqueWorldZ | LegionVehicleFlags.LimitRollOnly;
+                    _props.Flags = JoltVehicleFlags.TorqueWorldZ | JoltVehicleFlags.LimitRollOnly;
                     break;
 
-                case LegionVehicleType.Balloon:
+                case JoltVehicleType.Balloon:
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(1f, 1f, 5f);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(2f, 0.5f, 1f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
@@ -2100,7 +2100,7 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 0f;
 
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
-                    _props.Flags = LegionVehicleFlags.None;  // Halcyon had ReactToWind only
+                    _props.Flags = JoltVehicleFlags.None;  // Halcyon had ReactToWind only
                     break;
             }
         }
@@ -2125,12 +2125,12 @@ namespace Legion.Vehicles
             {
                 switch (_props.Type)
                 {
-                    case LegionVehicleType.None:     return Vehicle.TYPE_NONE;
-                    case LegionVehicleType.Sled:     return Vehicle.TYPE_SLED;
-                    case LegionVehicleType.Car:      return Vehicle.TYPE_CAR;
-                    case LegionVehicleType.Boat:     return Vehicle.TYPE_BOAT;
-                    case LegionVehicleType.Airplane: return Vehicle.TYPE_AIRPLANE;
-                    case LegionVehicleType.Balloon:  return Vehicle.TYPE_BALLOON;
+                    case JoltVehicleType.None:     return Vehicle.TYPE_NONE;
+                    case JoltVehicleType.Sled:     return Vehicle.TYPE_SLED;
+                    case JoltVehicleType.Car:      return Vehicle.TYPE_CAR;
+                    case JoltVehicleType.Boat:     return Vehicle.TYPE_BOAT;
+                    case JoltVehicleType.Airplane: return Vehicle.TYPE_AIRPLANE;
+                    case JoltVehicleType.Balloon:  return Vehicle.TYPE_BALLOON;
                     default:                         return Vehicle.TYPE_NONE;
                 }
             }

@@ -1,7 +1,7 @@
-// Legion Grid - Jolt implementation of ILegionPhysicsBackend
+// JoltPhysics.Core - Jolt implementation of IJoltPhysicsBackend
 //
 // ============================ READ THIS FIRST ============================
-// The ILegionPhysicsBackend interface is the deliverable. THIS is the real
+// The IJoltPhysicsBackend interface is the deliverable. THIS is the real
 // backend. As of M1 Task 3 only the LIFECYCLE + LAYER/BROAD-PHASE wiring is
 // live (Initialize / Dispose / the filter tables); every other member is still
 // a NotImplementedException stub, exactly as scoped. The design sketch lives at
@@ -18,7 +18,7 @@
 //   - broad phase / object layer filtering  (BroadPhase region + Initialize)
 //   - DontActivate on insert                (CreateBody - Task 4+)
 //   - ScaledShape for prim resize           (CreateScaledShape - later)
-//   - contact ring buffer                   (LegionContactListener - later)
+//   - contact ring buffer                   (JoltContactListener - later)
 //   - CharacterVirtual stepping order       (Step - Task 4)
 // =========================================================================
 
@@ -30,9 +30,9 @@ using System.Numerics;
 using System.Threading;
 using JoltPhysicsSharp;
 
-namespace Legion.Physics.Jolt
+namespace JoltPhysics.Core.Jolt
 {
-    public sealed class JoltPhysicsBackend : ILegionPhysicsBackend
+    public sealed class JoltPhysicsBackend : IJoltPhysicsBackend
     {
         public string Name => "Jolt";
         public string Version => "5.x";
@@ -47,7 +47,7 @@ namespace Legion.Physics.Jolt
         private readonly HandleTable<JoltCharacterRecord> _characters = new HandleTable<JoltCharacterRecord>();
         private readonly HandleTable<JoltConstraintRecord> _constraints = new HandleTable<JoltConstraintRecord>();
 
-        private LegionContactListener _contactListener = null!;
+        private JoltContactListener _contactListener = null!;
 
         // Native Jolt handles. Nullable + disposed in Dispose() in strict reverse
         // order (delta #6): the PhysicsSystem retains the filter interfaces and the
@@ -437,7 +437,7 @@ namespace Legion.Physics.Jolt
             // (OnContactAdded/Persisted/Removed), NOT a SetContactListener object as the
             // sketch assumed (delta #7). Likewise the Task 4 active-body drain will subscribe
             // OnBodyActivated / OnBodyDeactivated to keep an O(active) set.
-            _contactListener = new LegionContactListener(_settings.MaxContactConstraints * 2);
+            _contactListener = new JoltContactListener(_settings.MaxContactConstraints * 2);
         }
 
         public void Dispose()
@@ -624,7 +624,7 @@ namespace Legion.Physics.Jolt
             // two bodies Jolt already handed us (NOT a lock we take) plus the manifold, and is
             // allocation-free (measured ~0 bytes/call). Sum the per-point NORMAL impulses -> newton-seconds.
             float impulse = 0f;
-            // Fully qualified: our own namespace is Legion.Physics.Jolt, which would otherwise shadow
+            // Fully qualified: our own namespace is JoltPhysics.Core.Jolt, which would otherwise shadow
             // the JoltPhysicsSharp.Jolt static helper class.
             JoltPhysicsSharp.Jolt.EstimateCollisionResponse(
                 body1, body2, manifold, out CollisionEstimationResult response,
@@ -768,7 +768,7 @@ namespace Legion.Physics.Jolt
             // Jolt HeightFieldShape is SQUARE (one sample count) and Y-UP: a sample at grid
             // (col,row) sits at scale * (col, height, row) - the height axis is Jolt's Y and the
             // grid spans X and Z. Legion's world is Z-up (gravity -Z), so we HIDE the Jolt quirk
-            // inside this method (nothing above ILegionPhysicsBackend knows Jolt exists): cook the
+            // inside this method (nothing above IJoltPhysicsBackend knows Jolt exists): cook the
             // Y-up field, then wrap it in a RotatedTranslatedShape and return the WRAPPER's handle,
             // which is already Z-up-correct and self-consistent for any caller/query. See below.
             //
@@ -2449,13 +2449,13 @@ namespace Legion.Physics.Jolt
     // Write into a preallocated ring and drain on the step thread. This is the
     // most likely place for a first integration to deadlock or tear.
     // =========================================================================
-    internal sealed class LegionContactListener
+    internal sealed class JoltContactListener
     {
         private readonly ContactReport[] _ring;
         private int _writeIndex;
         private int _dropped;
 
-        public LegionContactListener(int capacity) => _ring = new ContactReport[Math.Max(1, capacity)];
+        public JoltContactListener(int capacity) => _ring = new ContactReport[Math.Max(1, capacity)];
 
         // OnContactAdded  -> ContactPhase.Begin    -> LSL collision_start
         // OnContactPersisted -> ContactPhase.Persist -> LSL collision

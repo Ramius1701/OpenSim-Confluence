@@ -1,8 +1,8 @@
 /*
- * Legion Grid — Vehicle Dynamics Port from InWorldz Halcyon
+ * JoltPhysics.Vehicles — Vehicle Dynamics Port from InWorldz Halcyon
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
  * Adapted for BulletSim physics engine, April 2026.
- * Extracted VERBATIM into the backend-agnostic Legion.Vehicles assembly (M8) from
+ * Extracted VERBATIM into the backend-agnostic JoltPhysics.Vehicles assembly (M8) from
  * OpenSim/Region/PhysicsModules/BulletS/LegionVehicleData.cs - only the namespace
  * and visibility (internal -> public) changed.
  *
@@ -12,14 +12,14 @@
 using System;
 using OpenMetaverse;
 
-namespace Legion.Vehicles
+namespace JoltPhysics.Vehicles
 {
     /// <summary>
     /// Internal dynamics values used by the vehicle simulator.
     /// These are runtime state values that feed forward between simulation frames.
     /// Ported from Halcyon DynamicsSimulationData (protobuf removed).
     /// </summary>
-    public class LegionVehicleData
+    public class JoltVehicleData
     {
         public Vector3 LocalLinearVelocity;
         public Vector3 LocalAngularVelocity;
@@ -54,7 +54,7 @@ namespace Legion.Vehicles
         public Vector3 WindDirection;
         public Vector3 WaterDirection;
 
-        public LegionVehicleData()
+        public JoltVehicleData()
         {
             LocalLinearVelocity = Vector3.Zero;
             LocalAngularVelocity = Vector3.Zero;
@@ -71,7 +71,7 @@ namespace Legion.Vehicles
             VerticalForceAdjust = 1.0f;
             TargetAngularDelta = Vector3.Zero;
             TargetLinearDelta = Vector3.Zero;
-            Timestep = LegionVehicleLimits.MinPhysicsTimestep;
+            Timestep = JoltVehicleLimits.MinPhysicsTimestep;
             BankingDirection = 0f;
             BankingTargetVelocity = 0f;
             LastVerticalFrameNumber = 0;
@@ -98,7 +98,7 @@ namespace Legion.Vehicles
             VerticalForceAdjust = 1.0f;
             TargetAngularDelta = Vector3.Zero;
             TargetLinearDelta = Vector3.Zero;
-            Timestep = LegionVehicleLimits.MinPhysicsTimestep;
+            Timestep = JoltVehicleLimits.MinPhysicsTimestep;
             BankingDirection = 0f;
             BankingTargetVelocity = 0f;
             LastVerticalFrameNumber = 0;

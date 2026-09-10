@@ -1,8 +1,8 @@
 /*
- * Legion Grid - backend-agnostic vehicle controller (M8).
+ * JoltPhysics.Vehicles - backend-agnostic vehicle controller (M8).
  *
  * IVehicleBody is the NEUTRAL seam between the extracted Halcyon vehicle math
- * (LegionVehicleController) and whatever physics engine hosts the body. No engine
+ * (JoltVehicleController) and whatever physics engine hosts the body. No engine
  * types cross this line in either direction.
  *
  * THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
@@ -10,7 +10,7 @@
 
 using OpenMetaverse;
 
-namespace Legion.Vehicles
+namespace JoltPhysics.Vehicles
 {
     /// <summary>
     /// The minimal physics surface the vehicle controller needs, per frame:
@@ -21,7 +21,7 @@ namespace Legion.Vehicles
     ///          AddForce, AddTorque, KeepAwake
     ///
     /// SEMANTICS (these are what make the extracted math exact - see the seam table in
-    /// LegionVehicleController.cs):
+    /// JoltVehicleController.cs):
     ///  - LinearVelocity/AngularVelocity set = an instant velocity change applied NOW; a
     ///    subsequent get in the same frame MUST read back the just-written value (BulletSim's
     ///    ForceVelocity behaves this way - two velocity changes in one frame compound).

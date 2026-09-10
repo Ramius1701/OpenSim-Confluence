@@ -1,8 +1,8 @@
 /*
- * Legion Grid — Vehicle Dynamics Port from InWorldz Halcyon
+ * JoltPhysics.Vehicles — Vehicle Dynamics Port from InWorldz Halcyon
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
  * Adapted for BulletSim physics engine, April 2026.
- * Extracted VERBATIM into the backend-agnostic Legion.Vehicles assembly (M8) from
+ * Extracted VERBATIM into the backend-agnostic JoltPhysics.Vehicles assembly (M8) from
  * OpenSim/Region/PhysicsModules/BulletS/LegionVehicleProperties.cs - only the namespace
  * and visibility (internal -> public, for cross-assembly hosts) changed.
  *
@@ -13,7 +13,7 @@ using System;
 using System.Collections.Generic;
 using OpenMetaverse;
 
-namespace Legion.Vehicles
+namespace JoltPhysics.Vehicles
 {
     // =====================================================================
     // Float parameter keys — maps to Halcyon FloatParams enum.
@@ -78,7 +78,7 @@ namespace Legion.Vehicles
     // Vehicle type enum matching Halcyon types.
     // Standard LSL types map directly to Vehicle.TYPE_* values.
     // =====================================================================
-    public enum LegionVehicleType
+    public enum JoltVehicleType
     {
         None = 0,
         Sled = 1,
@@ -96,7 +96,7 @@ namespace Legion.Vehicles
     // Standard flags use the same bit values as OpenSim VehicleFlag.
     // =====================================================================
     [Flags]
-    public enum LegionVehicleFlags
+    public enum JoltVehicleFlags
     {
         None                = 0,
         NoDeflectionUp      = 1,
@@ -128,31 +128,31 @@ namespace Legion.Vehicles
     /// Properties that define a vehicle's behavior. Ported from Halcyon VehicleProperties.
     /// Uses dictionaries keyed by enum for flexibility, matching the Halcyon pattern.
     /// </summary>
-    public class LegionVehicleProperties
+    public class JoltVehicleProperties
     {
-        public LegionVehicleType Type;
-        public LegionVehicleFlags Flags;
+        public JoltVehicleType Type;
+        public JoltVehicleFlags Flags;
 
         public Dictionary<VehFloatParam, float> ParamsFloat;
         public Dictionary<VehVectorParam, Vector3> ParamsVec;
         public Dictionary<VehRotationParam, Quaternion> ParamsRot;
 
-        public LegionVehicleData Dynamics;
+        public JoltVehicleData Dynamics;
 
-        public LegionVehicleProperties()
+        public JoltVehicleProperties()
         {
-            Type = LegionVehicleType.None;
-            Flags = LegionVehicleFlags.None;
+            Type = JoltVehicleType.None;
+            Flags = JoltVehicleFlags.None;
             ParamsFloat = new Dictionary<VehFloatParam, float>();
             ParamsVec = new Dictionary<VehVectorParam, Vector3>();
             ParamsRot = new Dictionary<VehRotationParam, Quaternion>();
-            Dynamics = new LegionVehicleData();
+            Dynamics = new JoltVehicleData();
         }
 
         /// <summary>
         /// Merge incoming properties (used for region crossing state transfer).
         /// </summary>
-        public void Merge(LegionVehicleProperties other)
+        public void Merge(JoltVehicleProperties other)
         {
             Type = other.Type;
             Flags = other.Flags;

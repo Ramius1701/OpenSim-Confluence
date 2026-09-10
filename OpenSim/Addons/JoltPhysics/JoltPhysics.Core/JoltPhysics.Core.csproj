@@ -1,21 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Legion.Physics - the engine-agnostic physics backend seam (ILegionPhysicsBackend).
+    JoltPhysics.Core - the engine-agnostic physics backend seam (IJoltPhysicsBackend).
 
     MILESTONE 1: self-contained. This library links NEITHER OpenSim NOR BulletSim and is
     NOT a selectable [Startup] physics module yet. It builds to its OWN local bin\, kept
     deliberately out of the shared ..\..\..\..\bin\ so it cannot touch the running grid's
     physics selection. Output target changes only when it becomes `physics = Jolt` (M6).
 
-    Csproj is hand-maintained (Legion convention): EnableDefaultItems is OFF, every .cs
-    needs an explicit <Compile Include>. Do NOT run runprebuild against this tree.
+    Csproj is hand-maintained: EnableDefaultItems is OFF, every .cs needs an explicit
+    <Compile Include>. Do NOT run runprebuild against this tree.
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <OutputType>Library</OutputType>
-    <AssemblyName>Legion.Physics</AssemblyName>
-    <RootNamespace>Legion.Physics</RootNamespace>
+    <AssemblyName>JoltPhysics.Core</AssemblyName>
+    <RootNamespace>JoltPhysics.Core</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <EnableDefaultItems>false</EnableDefaultItems>
@@ -28,7 +28,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="ILegionPhysicsBackend.cs" />
+    <Compile Include="IJoltPhysicsBackend.cs" />
     <Compile Include="JoltPhysicsBackend.cs" />
   </ItemGroup>
 

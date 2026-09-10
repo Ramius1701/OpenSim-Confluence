@@ -1,8 +1,8 @@
 /*
- * Legion Grid — Vehicle Dynamics Port from InWorldz Halcyon
+ * JoltPhysics.Vehicles — Vehicle Dynamics Port from InWorldz Halcyon
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
  * Adapted for BulletSim physics engine, April 2026.
- * Extracted VERBATIM into the backend-agnostic Legion.Vehicles assembly (M8) from
+ * Extracted VERBATIM into the backend-agnostic JoltPhysics.Vehicles assembly (M8) from
  * OpenSim/Region/PhysicsModules/BulletS/LegionVehicleLimits.cs - only the namespace
  * and visibility (internal -> public) changed.
  *
@@ -18,14 +18,14 @@
 
 using System;
 
-namespace Legion.Vehicles
+namespace JoltPhysics.Vehicles
 {
     /// <summary>
     /// Internal limits to various vehicle parameters.
     /// Ported from Halcyon VehicleLimits. These constants were tuned for PhysX
     /// and may need adjustment for BulletSim.
     /// </summary>
-    public static class LegionVehicleLimits
+    public static class JoltVehicleLimits
     {
         // The interaction between these limits are nonintuitive. Test all cases before settling on any changes.
 

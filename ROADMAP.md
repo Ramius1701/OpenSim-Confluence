@@ -427,7 +427,7 @@ gap today. For what already exists, see `FEATURES.md`.
   implementations throughout, not accept-and-ignore placeholders. Zero
   `NotImplementedException`/TODO markers remain in the current file.
   The engine core itself is cleanly separated behind
-  `ILegionPhysicsBackend` (handles not objects, zero per-frame
+  `IJoltPhysicsBackend` (handles not objects, zero per-frame
   allocation, shapes independently lifetime-managed from bodies, no SL
   semantics below the seam) - a genuinely sound design, not just
   functional.
@@ -473,7 +473,8 @@ gap today. For what already exists, see `FEATURES.md`.
   repo already laid this out as a self-contained, drop-in module
   (`OpenSim/Region/PhysicsModules/JoltPhysics/` (renamed from
   `LegionJolt` 2026-09-10) +
-  `OpenSim/Addons/LegionPhysics/{Legion.Physics,Legion.Vehicles}/`,
+  `OpenSim/Addons/JoltPhysics/{JoltPhysics.Core,JoltPhysics.Vehicles}/`
+  (renamed from `LegionPhysics/{Legion.Physics,Legion.Vehicles}` 2026-09-10),
   matching Confluence's own `PhysicsModules/BulletS`/`ubOde` sibling
   convention exactly, self-selecting on `[Startup] physics = Jolt`
   with no other config edits needed) - pulled all 17 source files in
@@ -574,7 +575,7 @@ gap today. For what already exists, see `FEATURES.md`.
   | Category | ubODE | BulletSim | Jolt |
   |---|---|---|---|
   | General (non-vehicle) buoyancy | Real - gravity scaled `(1-buoyancy)` | Real - same formula, pushed once via `SetGravity` | **Absent** - `Buoyancy { get => 0f; set { } }` no-op stub |
-  | Boat wave response | Real - 2-component travelling sine wave, analytic normal+flow | Real but vehicle-scoped only, same sine-wave approach | **Absent** - vehicle hover uses a flat water plane, no wave math anywhere in Jolt/Legion.Vehicles |
+  | Boat wave response | Real - 2-component travelling sine wave, analytic normal+flow | Real but vehicle-scoped only, same sine-wave approach | **Absent** - vehicle hover uses a flat water plane, no wave math anywhere in Jolt/JoltPhysics.Vehicles |
   | Material/rubber-bounce tuning | Real - material table, `sqrt(mu1*mu2)` blend, rubber-biased bounce formula | Real - full material table (Stone/Rubber/Glass/etc, ini-overridable), llSetPhysicsMaterial wired end to end | **Absent** - `SetMaterial` never overridden (uses `PhysicsActor`'s no-op base); backend has flat hardcoded friction defaults (0.6/0.5) regardless of material; llSetPhysicsMaterial has no effect |
   | Rolling resistance | Real - global scene tunable scaled by per-prim friction, velocity-proportional drag | **Absent** - no `RollingFriction` anywhere in the wrapper or native API surface | **Absent**, same as BulletSim |
   | Avatar/object contact smoothing | Real - EMA-filtered contact normals, landing/settle/slope damping, plus ODE contact-joint softening (soft ERP/CFM) | Real - dual-friction (standing/walking) state machine with a stationary-velocity debounce, terminal-velocity clamp, `ContactProcessingThreshold`/`CollisionMargin` | **No custom C# equivalent** - but Jolt's avatar is a native `CharacterVirtual` kinematic controller (`IsSliding` is a real native feature), architecturally different from ubODE/BulletSim's rigid-body-simulated avatars; genuinely unclear whether the same jitter problem even applies, not a confirmed like-for-like gap |

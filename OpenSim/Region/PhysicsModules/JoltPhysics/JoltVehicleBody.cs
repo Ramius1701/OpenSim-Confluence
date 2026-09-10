@@ -1,7 +1,7 @@
-// Legion Grid - the Jolt implementation of the neutral vehicle seam (M8 Task 2).
+// JoltPhysics - the Jolt implementation of the neutral vehicle seam (M8 Task 2).
 //
-// JoltVehicleBody adapts one JoltPrim's live backend body to Legion.Vehicles.IVehicleBody so the
-// extracted Halcyon controller (LegionVehicleController) can drive it without knowing Jolt exists.
+// JoltVehicleBody adapts one JoltPrim's live backend body to JoltPhysics.Vehicles.IVehicleBody so the
+// extracted Halcyon controller (JoltVehicleController) can drive it without knowing Jolt exists.
 // The BulletSim reference reads Force* properties LIVE from the engine; here BeginFrame() snapshots
 // the body state once per frame (nothing moves between controller reads - the controller runs
 // BEFORE the step), and every velocity WRITE updates the snapshot AND pushes through, preserving
@@ -11,8 +11,8 @@
 // what BulletSim's ForceOrientation reports.
 
 using OpenMetaverse;
-using Legion.Physics;
-using Legion.Vehicles;
+using JoltPhysics.Core;
+using JoltPhysics.Vehicles;
 using SVector3 = System.Numerics.Vector3;
 
 namespace OpenSim.Region.PhysicsModules.JoltPhysics
@@ -20,7 +20,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
     internal sealed class JoltVehicleBody : IVehicleBody
     {
         private readonly JoltPhysicsScene _module;
-        private readonly ILegionPhysicsBackend _backend;
+        private readonly IJoltPhysicsBackend _backend;
         private readonly JoltPrim _prim;
 
         // Per-frame snapshot (BeginFrame); velocity writes keep it current within the frame.
@@ -29,7 +29,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
         private Vector3 _linVel;
         private Vector3 _angVel;
 
-        internal JoltVehicleBody(JoltPhysicsScene module, ILegionPhysicsBackend backend, JoltPrim prim)
+        internal JoltVehicleBody(JoltPhysicsScene module, IJoltPhysicsBackend backend, JoltPrim prim)
         {
             _module = module;
             _backend = backend;

@@ -6,9 +6,9 @@ using Mono.Addins;
 [assembly: AssemblyTitle("OpenSim.Region.PhysicsModule.JoltPhysics")]
 [assembly: AssemblyDescription("Jolt physics region module")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Legion Grid")]
+[assembly: AssemblyCompany("http://opensimulator.org")]
 [assembly: AssemblyProduct("OpenSim")]
-[assembly: AssemblyCopyright("Legion Grid developers")]
+[assembly: AssemblyCopyright("OpenSimulator developers")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 

@@ -22732,3 +22732,71 @@ and on live Casperia before/after deploying the new DLL there
 Andromeda** - watch specifically for the `[JOLT PHYSICS] enabled
 (physics = Jolt)` line (prefix changed from `[LEGION JOLT]`) and that
 Mono.Addins only shows ONE Jolt physics engine registered, not two.
+
+**2026-09-10 (later same session): the "Legion" name also renamed in
+the vendored backend libraries.** User's follow-up after the wrapper
+rename above: "the legion name should have also been renamed," pointing
+at `OpenSim/Addons/LegionPhysics/{Legion.Physics,Legion.Vehicles}/` -
+the two libraries the renamed `JoltPhysics` region module depends on,
+untouched by the earlier pass because they only reference "Legion" in
+their own names, not "LegionJolt." Confirmed via `AskUserQuestion`:
+`Legion.Physics` -> `JoltPhysics.Core`, `Legion.Vehicles` ->
+`JoltPhysics.Vehicles`, folder `OpenSim/Addons/LegionPhysics/` ->
+`OpenSim/Addons/JoltPhysics/` (distinct from the already-renamed
+`OpenSim/Region/PhysicsModules/JoltPhysics/`).
+
+Scope: both csproj files (`AssemblyName`/`RootNamespace`/`Compile`
+includes), the `ILegionPhysicsBackend` interface -> `IJoltPhysicsBackend`
+(file renamed `ILegionPhysicsBackend.cs` -> `IJoltPhysicsBackend.cs`),
+`LegionContactListener` -> `JoltContactListener`, all six vehicle-
+controller types (`LegionVehicleController`/`Properties`/`Type`/
+`Flags`/`Limits`/`Data` -> their `Jolt`-prefixed equivalents, files
+renamed to match), the `namespace Legion.Physics`/`Legion.Vehicles` ->
+`JoltPhysics.Core`/`JoltPhysics.Vehicles` throughout, and every
+consumer in the region module (`JoltPrim.cs`/`JoltPhysicsScene.cs`/
+`JoltCharacter.cs`/`JoltVehicleBody.cs`): `using` directives, the
+`ILegionPhysicsBackend` field/parameter types, and the
+`JoltPhysicsBackend` local alias's right-hand side. The region module's
+own csproj `ProjectReference`/`None Include` paths and DLL link names,
+both `.gitignore`s, and `OpenSim.sln`'s solution-folder/project entries
+all updated to match. `AssemblyCompany`/`AssemblyCopyright` on the
+region module (left as "Legion Grid" during the first rename pass,
+flagged then as in tension with a broader rename) changed to
+`http://opensimulator.org`/`OpenSimulator developers`, matching every
+sibling physics module's own AssemblyInfo.cs convention exactly - it
+was the only physics module still carrying "Legion Grid" branding.
+
+Deliberately left alone, as genuine historical/provenance text rather
+than live references: comments naming `LegionVehicleDynamics.cs` (the
+original BulletSim-side file this controller's math was extracted
+from - a file that does not exist anywhere in this repo, only in the
+Legion-Grid-Code fork it was ported from) and the equivalent
+`OpenSim/Region/PhysicsModules/BulletS/LegionVehicle{Data,Properties,
+Limits}.cs` path references in the vehicle files' own header comments.
+Confirmed via grep that BulletSim's own code has zero references to
+either vendored library - genuinely independent, as expected.
+
+Full solution build clean after the rename (0 errors, only pre-existing
+nullable/unused-field warnings unrelated to this change). Found and
+cleaned a mechanical mess, not a functional bug: `dotnet build` had
+left stale `Legion.Physics.*`/`Legion.Vehicles.*` build outputs sitting
+in the two vendored libraries' own project-local `bin/`/`obj/` folders
+from before the git mv - harmless (never copied anywhere Mono.Addins or
+the CLR would discover them, unlike the first rename's shared-`bin\`
+collision), but deleted and rebuilt clean anyway. Deployed to live
+Casperia (grid fully shut down for the file-verification pass at the
+time): `JoltPhysics.Core.dll`/`JoltPhysics.Vehicles.dll`/
+`OpenSim.Region.PhysicsModule.JoltPhysics.dll`(+pdb) copied,
+`md5sum`-verified byte-identical, orphaned `Legion.Physics.dll`/
+`Legion.Vehicles.dll` deleted from Casperia's flat install directory
+(no nested `bin\` there, unlike the local build tree). No Mono.Addins
+cache risk this time - only the region module DLL is addin-discovered,
+and its own assembly name/Addin ID didn't change in this pass, just its
+internal dependency references. `ROADMAP.md` updated for current-state
+references (the interface name, the vendored-library file paths, the
+wave-response gap-audit table entry); comments narrating the ORIGINAL
+2026-09-09 integration event by the names that were true at the time
+(e.g. the M1 `Legion.Physics.TestHarness` evaluation, the
+`Legion.Physics.dll` shared-`bin\` bug) deliberately left as accurate
+history, same two-tier convention as always. Not yet restarted/
+confirmed on Starbase Andromeda.

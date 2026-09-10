@@ -1,8 +1,8 @@
-// Legion Grid - Jolt physics as an OpenSim region module (PhysicsScene).
+// JoltPhysics - Jolt physics as an OpenSim region module (PhysicsScene).
 //
 // ============================ READ THIS FIRST ============================
 // M6.1 SKELETON ONLY. This is the seam between OpenSim's PhysicsScene contract and the
-// engine-agnostic ILegionPhysicsBackend (whose Jolt implementation we proved across M1-M4.5 in a
+// engine-agnostic IJoltPhysicsBackend (whose Jolt implementation we proved across M1-M4.5 in a
 // clean-room harness). This slice proves ONE thing: the module registers, boots under
 // `physics = Jolt`, steps an empty world, and shuts down cleanly. It has ZERO physics behaviour:
 //   - AddPrimShape / AddAvatar return PhysicsActor.Null (accept-and-ignore, so a region with
@@ -29,8 +29,8 @@ using log4net;
 using OpenMetaverse;
 using Mono.Addins;
 
-using Legion.Physics;
-using JoltPhysicsBackend = Legion.Physics.Jolt.JoltPhysicsBackend;
+using JoltPhysics.Core;
+using JoltPhysicsBackend = JoltPhysics.Core.Jolt.JoltPhysicsBackend;
 // The backend speaks System.Numerics.Vector3; OpenSim speaks OpenMetaverse.Vector3 (the unqualified
 // Vector3 here). Alias the numerics one so backend calls are unambiguous.
 using SVector3 = System.Numerics.Vector3;
@@ -52,7 +52,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
         private IConfigSource m_Config;
 
         // The engine-agnostic backend (the deliverable proven in the clean-room harness).
-        private ILegionPhysicsBackend _backend;
+        private IJoltPhysicsBackend _backend;
 
         // Held for M6.3 shape cooking; NOT used this slice.
         private IMesher m_mesher;
@@ -444,7 +444,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
             {
                 MainConsole.Instance.Commands.AddCommand("Physics", false, "jolt",
                     "jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims",
-                    "Legion Jolt proofs (M6.2 terrain / M6.3 prims): raycast the cooked collision surfaces and report hits.",
+                    "Jolt physics proofs (M6.2 terrain / M6.3 prims): raycast the cooked collision surfaces and report hits.",
                     HandleJoltConsole);
             }
         }
@@ -3139,7 +3139,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
         // vehicle surface (VehicleType / VehicleVectorParam) and reads state through the standard
         // getters (Position / Orientation / Velocity / RotationalVelocity / Mass), so the SAME code
         // runs under physics=BulletSim (-> LegionVehicleDynamics) and physics=Jolt (-> the extracted
-        // Legion.Vehicles controller). Both run the SAME Halcyon math, so the numbers should match;
+        // JoltPhysics.Vehicles controller). Both run the SAME Halcyon math, so the numbers should match;
         // any difference localizes to force APPLICATION (Bullet vs Jolt), not the math. Writes
         // parity-boat-<engine>.txt for a two-boot diff. Uses scene.PhysicsScene.SetTerrain to cook a
         // PHYSICS-ONLY water basin (this region is a plateau above the water plane) - the scene

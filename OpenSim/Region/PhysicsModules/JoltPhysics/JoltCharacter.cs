@@ -1,4 +1,4 @@
-// Legion Grid - an avatar as a Jolt CharacterVirtual (M6.5).
+// JoltPhysics - an avatar as a Jolt CharacterVirtual (M6.5).
 //
 // This is the PhysicsActor OpenSim hands back from AddAvatar. It is backed by a Jolt CharacterVirtual,
 // NOT a solver rigid body: the movement layer keeps control, so stair-stepping / slope handling /
@@ -20,7 +20,7 @@ using System;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenMetaverse;
-using Legion.Physics;
+using JoltPhysics.Core;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 
@@ -29,7 +29,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
     internal sealed class JoltCharacter : PhysicsActor
     {
         private readonly JoltPhysicsScene _module;
-        private readonly ILegionPhysicsBackend _backend;
+        private readonly IJoltPhysicsBackend _backend;
 
         private Vector3 _position;
         private Vector3 _velocity;          // last drained linear velocity (ScenePresence reads this for terse updates)
@@ -76,7 +76,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
         internal float StandHalf => _capsuleHalfHeight + _capsuleRadius;
         internal float FeetOffset => _feetOffset;
 
-        internal JoltCharacter(JoltPhysicsScene module, ILegionPhysicsBackend backend, uint localid, string name,
+        internal JoltCharacter(JoltPhysicsScene module, IJoltPhysicsBackend backend, uint localid, string name,
                                Vector3 position, Vector3 size, float feetOffset, bool isFlying)
         {
             _module = module;

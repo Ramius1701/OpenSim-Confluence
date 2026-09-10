@@ -1,5 +1,5 @@
 /*
- * Legion Grid - backend-agnostic vehicle controller (M8).
+ * JoltPhysics.Vehicles - backend-agnostic vehicle controller (M8).
  *
  * The LSL vehicle parameter wire codes, copied from OpenSim's
  * OpenSim.Region.PhysicsModules.SharedBase.VehicleConstants so this assembly does not link
@@ -8,7 +8,7 @@
  * reference (LegionVehicleDynamics.cs). Hosts cast their int params to this enum.
  */
 
-namespace Legion.Vehicles
+namespace JoltPhysics.Vehicles
 {
     public enum Vehicle : int
     {

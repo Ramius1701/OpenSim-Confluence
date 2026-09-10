@@ -2,12 +2,12 @@
 
   <!--
     Jolt physics region module (M6.1 skeleton), renamed from "LegionJolt" 2026-09-10 - the wrapper/
-    adapter code here is Confluence's own; only the vendored Legion.Physics/Legion.Vehicles backend
-    libraries it depends on (ported from Legion-Grid-Code as-is) keep their original names. Mirrors
-    the BulletSim module: SDK-style, net8.0, EnableDefaultItems OFF (explicit Compile includes),
-    outputs to the shared ..\..\..\..\bin\ so Mono.Addins can discover it. Self-selects on
-    [Startup] physics = Jolt. Do NOT run runprebuild against this tree - the csproj is hand-maintained
-    (Legion convention).
+    adapter code here is Confluence's own; the vendored JoltPhysics.Core/JoltPhysics.Vehicles backend
+    libraries it depends on (ported from Legion-Grid-Code, renamed 2026-09-10) live under
+    OpenSim/Addons/JoltPhysics/. Mirrors the BulletSim module: SDK-style, net8.0, EnableDefaultItems
+    OFF (explicit Compile includes), outputs to the shared ..\..\..\..\bin\ so Mono.Addins can
+    discover it. Self-selects on [Startup] physics = Jolt. Do NOT run runprebuild against this tree -
+    the csproj is hand-maintained.
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -67,25 +67,25 @@
     <ProjectReference Include="..\..\..\Framework\OpenSim.Framework.csproj" />
     <ProjectReference Include="..\..\Framework\OpenSim.Region.Framework.csproj" />
     <ProjectReference Include="..\SharedBase\OpenSim.Region.PhysicsModules.SharedBase.csproj" />
-    <ProjectReference Include="..\..\..\Addons\LegionPhysics\Legion.Physics\Legion.Physics.csproj" />
+    <ProjectReference Include="..\..\..\Addons\JoltPhysics\JoltPhysics.Core\JoltPhysics.Core.csproj" />
     <!-- M8: the backend-agnostic Halcyon vehicle controller (extracted from BulletSim's
          LegionVehicleDynamics; one source of truth for vehicle feel). Copies to the shared bin. -->
-    <ProjectReference Include="..\..\..\Addons\LegionPhysics\Legion.Vehicles\Legion.Vehicles.csproj" />
+    <ProjectReference Include="..\..\..\Addons\JoltPhysics\JoltPhysics.Vehicles\JoltPhysics.Vehicles.csproj" />
   </ItemGroup>
 
-  <!-- Jolt binding + native. The backend (Legion.Physics) references JoltPhysicsSharp transitively,
+  <!-- Jolt binding + native. The backend (JoltPhysics.Core) references JoltPhysicsSharp transitively,
        but a ProjectReference does NOT reliably flow the managed binding into an AnyCPU module output,
        and RID-specific natives (runtimes/<rid>/native) are never auto-copied without a RID. Because
        this module is loaded INTO OpenSim.exe (whose own deps.json won't know our transitive native),
        joltc.dll must land at the OUTPUT ROOT where the process DllImport resolver looks. So we take a
        DIRECT PackageReference (managed DLL copies) and copy the single-precision native explicitly. -->
-  <!-- The MODULE code uses only Legion.Physics types, not JoltPhysicsSharp directly - so these are
-       runtime-only: Legion.Physics.dll (via ProjectReference) P/Invokes JoltPhysicsSharp.dll which
+  <!-- The MODULE code uses only JoltPhysics.Core types, not JoltPhysicsSharp directly - so these are
+       runtime-only: JoltPhysics.Core.dll (via ProjectReference) P/Invokes JoltPhysicsSharp.dll which
        P/Invokes joltc.dll. A Library does not copy package assemblies to output, and RID natives are
        never auto-copied without a RID, so we resolve both package paths and copy EXACTLY those two
        files (nothing else) to the output root, where the OpenSim.exe process resolver finds them. -->
   <ItemGroup>
-    <!-- Kept in lockstep with Legion.Physics (2.18.6->2.19.1 for the M7 boot-hang native fix). 2.19.1 is
+    <!-- Kept in lockstep with JoltPhysics.Core (2.18.6->2.19.1 for the M7 boot-hang native fix). 2.19.1 is
          the newest net8.0-compatible JoltPhysicsSharp; it pulls native JoltPhysics.Native 1.0.4. -->
     <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" GeneratePathProperty="true" PrivateAssets="all" />
     <PackageReference Include="JoltPhysics.Native" Version="1.0.4" GeneratePathProperty="true" PrivateAssets="all" />
@@ -99,7 +99,7 @@
     <None Include="$(PkgJoltPhysics_Native)\runtimes\win-x64\native\joltc.dll" Link="joltc.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <!-- Legion.Physics.csproj/Legion.Vehicles.csproj deliberately build to their OWN local
+    <!-- JoltPhysics.Core.csproj/JoltPhysics.Vehicles.csproj deliberately build to their OWN local
          bin\ (see their own csproj comments - kept out of the shared bin so they can't touch
          a running grid's physics selection before this module existed). The comment above
          claimed the ProjectReference "copies to the shared bin" - confirmed false by an actual
@@ -107,10 +107,10 @@
          bin\ this module's own AssemblyName-hint-path Reference pattern (and Mono.Addins'
          module scan, and the CLR's own probing) all expect. Copy them explicitly, the same
          workaround already used for JoltPhysicsSharp.dll/joltc.dll above. -->
-    <None Include="..\..\..\Addons\LegionPhysics\Legion.Physics\bin\$(Configuration)\net8.0\Legion.Physics.dll" Link="Legion.Physics.dll">
+    <None Include="..\..\..\Addons\JoltPhysics\JoltPhysics.Core\bin\$(Configuration)\net8.0\JoltPhysics.Core.dll" Link="JoltPhysics.Core.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="..\..\..\Addons\LegionPhysics\Legion.Vehicles\bin\$(Configuration)\net8.0\Legion.Vehicles.dll" Link="Legion.Vehicles.dll">
+    <None Include="..\..\..\Addons\JoltPhysics\JoltPhysics.Vehicles\bin\$(Configuration)\net8.0\JoltPhysics.Vehicles.dll" Link="JoltPhysics.Vehicles.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

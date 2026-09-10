@@ -1,4 +1,4 @@
-// Legion Grid - Physics backend abstraction
+// JoltPhysics.Core - Physics backend abstraction
 //
 // This is the seam between OpenSim's PhysicsScene/PhysicsActor contract and a
 // concrete physics engine. Nothing above this interface knows what engine is
@@ -18,7 +18,7 @@
 using System;
 using System.Numerics;
 
-namespace Legion.Physics
+namespace JoltPhysics.Core
 {
     // ---------------------------------------------------------------------
     // Handles
@@ -460,7 +460,7 @@ namespace Legion.Physics
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// A physics engine, as Legion needs one.
+    /// A physics engine, as OpenSim needs one.
     ///
     /// THREADING: implementations must permit Create/Remove/Set* calls from
     /// threads other than the one calling Step, and must permit queries to run
@@ -469,7 +469,7 @@ namespace Legion.Physics
     /// A backend that cannot honour it must serialise internally rather than
     /// pushing that burden back up.
     /// </summary>
-    public interface ILegionPhysicsBackend : IDisposable
+    public interface IJoltPhysicsBackend : IDisposable
     {
         string Name { get; }
         string Version { get; }
