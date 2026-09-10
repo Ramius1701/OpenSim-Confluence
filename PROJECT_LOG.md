@@ -22634,3 +22634,45 @@ without separate pdbs in this build) copied and `md5sum`-verified.
 **Not yet restarted/tested under real content** - that's the
 operator's next step on Starbase Andromeda, same live-testing
 collaboration pattern as the mesh-retry fix earlier tonight.
+
+## Restart confirmed clean; then a real log-noise problem found and
+## fixed (2026-09-10)
+
+Operator restarted Robust + Starbase Andromeda. Log check: `[LEGION
+JOLT] enabled`, terrain cooked, backend initialised, an avatar
+(`Steven.Johnson`) spawned successfully, zero exceptions from any of
+the six new code paths - the only errors present were the same two
+pre-existing, unrelated ones seen at every boot tonight (a missing
+Welcome Center asset, one degenerate ubODE mesh).
+
+Operator then pasted a fuller log capture and correctly called it "not
+exactly a clean startup" - not a crash, but real noise: the mesh-
+retry diagnostic instrumentation added earlier tonight (`49aedfc869`)
+logged 3 lines per prim needing a fetch (requested/succeeded/re-
+cooked), on top of the pre-existing "IMesher returned null" line for
+the same event. Verified directly against the pasted 18,680-line
+capture: 4,654 x 4 = ~18,600 lines, on a single boot of a real
+1,946-object region - the entire capture was this one mechanism
+firing successfully (every line ended `mesh(mesher)`, zero failures),
+just far too verbose for routine production logging. Good news
+buried in the noise: further, larger-scale confirmation the mesh-
+retry fix works correctly on real content.
+
+Fixed (`c911898f06`): removed the per-prim "requested"/"succeeded"
+lines entirely (redundant with the pre-existing null-mesh line and
+each other), and replaced `DrainPendingMeshRebuild`'s per-prim
+`m_log.Info` with one aggregate summary per drain call (count
+re-cooked, broken down by resulting shape kind, skip/exception
+counts) - failure paths (fetch came back null/mismatched, rebuild
+exceptions) stay logged individually since they're rare and worth
+seeing per-instance. Deployed to live, `md5sum`-verified. The
+pre-existing "IMesher returned null" line itself (not something added
+tonight, part of the original LegionJolt integration) still fires
+once per prim needing a fetch - flagged to the operator as a
+separate, smaller remaining volume, not yet addressed.
+
+Also: caught and killed an abandoned background `find /` (a full-
+filesystem search for a DLL location, started then immediately
+abandoned in favor of a targeted nuget-cache lookup) that had been
+running silently for 10+ hours across a session boundary - a real
+process-hygiene miss, not a code issue.
