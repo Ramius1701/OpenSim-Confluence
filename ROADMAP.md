@@ -614,31 +614,87 @@ gap today. For what already exists, see `FEATURES.md`.
   terrain-restitution pieces affect every existing physical-prim-vs-
   terrain contact on a running Jolt region, so real content on
   Starbase Andromeda is a better test bed than an empty standalone
-  region. All three affected DLLs `md5sum`-verified on deploy. **Not
-  yet confirmed under real content** - needs a restart + in-world
-  pass on Starbase Andromeda.
+  region. All three affected DLLs `md5sum`-verified on deploy.
 
-  **Provenance correction, same pass**: the boat wave-response code in
-  both `BSDynamics.cs` (BulletSim) and `ODEDynamics.cs`/`ODEScene.cs`
+  **Restart-confirmed, 2026-09-10 17:33** (same restart that verified
+  the LegionJolt->JoltPhysics rename): clean boot, zero exceptions,
+  `TriggerRegionReady` completed, an avatar connected and spawned
+  normally through the feature-parity-updated `JoltPhysicsScene`/
+  `JoltPhysicsBackend`. Confirms the code loads and runs correctly
+  under real content - did NOT by itself confirm each behavior *feels*
+  right in-world.
+
+  **In-world behavioral verification, 2026-09-11**, via the built-in
+  `jolt` diagnostic console suite against real Starbase Andromeda
+  content (not a scratch region). `LocalConsole` crashes under any
+  redirected stdin/stdout (`IOException: The handle is invalid` in
+  `ConsolePal.set_TreatControlCAsInput`) - drove it via OpenSim's
+  RemoteConsole (`console = rest` + temporary credentials, reverted
+  immediately after) instead. Real results:
+  - `jolt avatarstatus`: `supported=Y sliding=N`, `dZ=0.021` against
+    real terrain - avatar/object contact quality (`EnhancedInternalEdgeRemoval`,
+    ground-hold) confirmed working, not just present in the diff.
+  - `jolt droptest`/`dropstatus`: a dropped box fell, bounced once
+    (vZ flipped from -15.4 to +7.2 on impact) and decayed to rest at
+    `liveZ=14.018` vs expected `14.020` - restitution-combine and
+    material tuning genuinely working. **Real finding, not a
+    blocker**: the diagnostic's own `rested`/`JustDeactivated`
+    bookkeeping stayed `N`/`0` even after the box was fully still
+    (speed=0.000, position essentially exact) for well past Jolt's
+    0.5s sleep threshold - either a timing race in the diagnostic's
+    one-shot deactivation-flag check, or the body genuinely never
+    signals deactivated on this content. Worth a real look if anyone
+    depends on deactivation events (e.g. a future "sleeping body count"
+    metric), but doesn't affect actual physical settling, which is
+    correct.
+  - `jolt vehiclestatus`: real live production content, a "Shuttle
+    Type 6 (Mesh)" TYPE_AIRPLANE, active, buoyancy=0.90 - confirms the
+    vehicle path holds up under genuine resident-built vehicles, not
+    just synthetic test rigs.
+  - `jolt terraintest`: raycast probes correctly hit real geometry at
+    interior points and correctly miss just past the 512x512 region
+    boundary - heightfield bounds are right.
+  - `jolt boattest hover`: **ALL PASS** across all three phases
+    (settle-from-above, rise-from-below, hold-at-rest) - a boat
+    consistently settles to `water+0.50` with natural 0.6-4.8 degree
+    tilt oscillation (real wave-driven roll/pitch, not a flat bob) in
+    all three approaches. This is the strongest confirmation yet that
+    the ported boat wave-response math (item 6) is functionally
+    correct, not just present.
+  - Test prims cleaned up (`jolt clearprims`) after each test; REST
+    console access reverted to `LocalConsole` immediately after this
+    pass - it was never meant to be a standing config.
+
+  All six feature-parity items are now confirmed not just present in
+  the diff, but behaviorally correct against real content.
+
+  **Provenance correction**: the boat wave-response code in both
+  `BSDynamics.cs` (BulletSim) and `ODEDynamics.cs`/`ODEScene.cs`
   (ubODE) is NOT stock upstream OpenSimulator - confirmed via `git log
   -S "BoatWaveHeight1"`, both engines' wave math was added together by
-  `GuntharDeNiro` in two commits (`9db8b8a27c`/`1e50d92bc0`,
-  2026-05-24). `FEATURES.md`'s "BulletSim... included as-is" line
-  (written earlier this same session) was wrong on this point -
-  corrected. Initially looked like it contradicted the "gunthar's
-  unported dual-engine physics-tuning cluster" framing elsewhere in
-  this file - resolved, not a real discrepancy: `git merge-base
-  --is-ancestor` confirms `9db8b8a27c`/`1e50d92bc0` genuinely are
-  merged into this branch, while `032b56cada` (explicitly cited in
-  `casperia-fork-review-status` memory as part of the still-unported
-  ~50+ commit cluster) is confirmed NOT an ancestor of HEAD - still
-  sitting only on the gunthar remote. So: an earlier, smaller piece of
-  gunthar's wave-response work made it in already; the larger, later
-  cluster (buoyancy, contact damping, rolling resistance, near-rest
-  sleep, avatar-avatar soft collisions) genuinely has not - the
-  existing "held pending direction" status for that cluster stands
-  unchanged, just now with the boundary between merged and unmerged
-  actually confirmed rather than assumed.
+  `GuntharDeNiro`. `FEATURES.md`'s "BulletSim... included as-is" line
+  was wrong on this point - corrected.
+
+  **Second correction, 2026-09-10: the "gunthar's unported dual-engine
+  physics-tuning cluster" framing that used to sit here was itself
+  wrong.** The earlier check used `git merge-base --is-ancestor
+  <hash> HEAD` on individual gunthar commit hashes and read "not an
+  ancestor" as "not ported" - but a cherry-pick produces a new commit
+  SHA even with byte-identical content, so hash-ancestry was never the
+  right test. Direct content comparison found `ODEScene.cs` byte-for-
+  byte identical (matching md5sum) to `gunthar/master`'s tip, and
+  `BSDynamics.cs`/`SOPVehicle.cs` with zero diff at all - the full
+  buoyancy/water/rubber-bounce/rolling-resistance/avatar-avatar-social-
+  physics/boat-wave cluster (40+ commits, `GuntharDeNiro` authorship
+  and original 2026-06-11 timestamps preserved under different SHAs)
+  is already live in both ubODE and BulletSim today. The two non-empty
+  file diffs found were trivial: `ODEPrim.cs` (Confluence has an extra
+  mesh-fallback diagnostic Gunthar's own copy lacks - Confluence ahead,
+  not behind) and a 3-line cosmetic field reorder in `ODEDynamics.cs`.
+  Nothing to build here. Still genuinely unverified, and NOT covered by
+  this correction: gunthar's ~15-commit attachment-transfer/region-
+  crossing-race hardening cluster and later map-tile/weather
+  refinements - a real per-commit check is still owed there.
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters
