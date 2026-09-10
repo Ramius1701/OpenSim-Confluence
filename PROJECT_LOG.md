@@ -22676,3 +22676,59 @@ filesystem search for a DLL location, started then immediately
 abandoned in favor of a targeted nuget-cache lookup) that had been
 running silently for 10+ hours across a session boundary - a real
 process-hygiene miss, not a code issue.
+
+## Prim identification added to mesh-cook failure logs; LegionJolt
+## renamed to JoltPhysics (2026-09-10)
+
+Two smaller pieces of follow-up work from the same session.
+
+**Prim identification** (commit `875bd00ab3`): the "IMesher returned
+null" and "mesher geometry unusable" lines only ever reported vertex/
+index counts, making it impossible to identify which of the ~40
+genuinely-degenerate objects were affected without hand-correlating
+timestamps. Threaded `primName`/`localId` through `CookPrimShape`/
+`CookMeshShape` (both call sites: the real per-prim path in
+`JoltPrim.CookShape`, and the synthetic console-test-prism path) so
+both log lines now name the actual prim. UUID isn't available at this
+layer - `PhysicsScene.AddPrimShape`'s own contract only ever passes a
+name + LocalID, not the real UUID, same limitation BulletSim/ubODE
+have - so this is genuinely everything accessible here, not a partial
+fix. Deployed to live, `md5sum`-verified.
+
+**LegionJolt renamed to JoltPhysics** (commit `f8a77c5793`), per the
+operator's explicit request (floated the night before, confirmed
+tonight). Scope: the region-module wrapper layer only -
+`OpenSim/Region/PhysicsModules/LegionJolt/` -> `.../JoltPhysics/`,
+`LegionJoltScene` -> `JoltPhysicsScene`, namespace
+`OpenSim.Region.PhysicsModules.LegionJolt` -> `...JoltPhysics`,
+project/assembly/DLL `OpenSim.Region.PhysicsModule.LegionJolt` ->
+`...JoltPhysics`, log prefix `[LEGION JOLT]` -> `[JOLT PHYSICS]`,
+Mono.Addins Extension/Addin IDs updated to match. Confirmed via grep
+that the vendored `Legion.Physics`/`Legion.Vehicles` backend libraries
+under `OpenSim/Addons/LegionPhysics/` never reference "LegionJolt"
+themselves - genuinely out of scope, left untouched (they're ported
+from Legion-Grid-Code as-is, distinct from this wrapper). The
+`physics = Jolt` config value is unchanged - it was already just
+"Jolt," never "LegionJolt," so no operator-facing config change.
+
+`FEATURES.md`/`ROADMAP.md` updated for the new names (including
+file:line navigation references that would otherwise silently point
+at a filename that no longer exists); `PROJECT_LOG.md`'s own historical
+entries deliberately NOT rewritten - they accurately describe what was
+true when each entry was written, matching this project's two-tier
+docs convention (this file is the historical narrative tier; ROADMAP/
+FEATURES are the "what's true now" tier).
+
+Real deploy risk caught and handled: after the rebuild, BOTH the old
+(`OpenSim.Region.PhysicsModule.LegionJolt.dll`) and new
+(`...JoltPhysics.dll`) DLLs were sitting in `bin/` - `dotnet build`
+doesn't delete superseded output files on a rename. Left in place,
+Mono.Addins could plausibly have discovered both and registered the
+physics engine twice. Deleted the orphaned old DLL+pdb and its stale
+Mono.Addins cache entry (`addin-db-004/addin-data/1/
+OpenSim.Region.PhysicsModule.LegionJolt,0.9.3.1.maddin`) both locally
+and on live Casperia before/after deploying the new DLL there
+(`md5sum`-verified). **Not yet restarted/confirmed on Starbase
+Andromeda** - watch specifically for the `[JOLT PHYSICS] enabled
+(physics = Jolt)` line (prefix changed from `[LEGION JOLT]`) and that
+Mono.Addins only shows ONE Jolt physics engine registered, not two.
