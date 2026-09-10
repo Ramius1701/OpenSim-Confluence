@@ -642,7 +642,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
                 // Decision-point check (physical -> convex hull, delta #31): cook the SAME prism physical,
                 // inline, purely to confirm routing (cook+release, no body). Real physical dynamics is M6.4.
-                ShapeId hull = CookPrimShape(GetPrismPbs(), size, true, out _, out string hullKind, out _);
+                ShapeId hull = CookPrimShape(GetPrismPbs(), size, true, out _, out string hullKind, out _, "console-test-prism");
                 MainConsole.Instance.Output($"  decision-point: physical prism cooks to '{hullKind}' (expect 'hull(mesher)' - a mesh's Volume=0 would rez a physical prim mass-0; hull avoids it).");
                 if (hull.IsValid) _backend.ReleaseShape(hull);
 
@@ -2752,7 +2752,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // twisted, sculpt/mesh, non-uniform sphere/cylinder) falls back to a bounding box for now; the
         // real IMesher path is M6.3 Task 2. `axisCorrection` (System.Numerics) is folded into the body
         // orientation by JoltPrim; `kind` is for the proof read-out.
-        internal ShapeId CookPrimShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind, out bool needsAssetFetch)
+        internal ShapeId CookPrimShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind, out bool needsAssetFetch, string primName = "?", uint localId = 0)
         {
             axisCorrection = SQuaternion.Identity;
             needsAssetFetch = false;
@@ -2796,7 +2796,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
             // else mesh). Contract (delta #31): a triangle MeshShape has Volume 0, so a PHYSICAL prim
             // MUST use the convex hull or it would rez with mass 0 at M6.4 - hence physical -> hull here.
-            ShapeId cooked = CookMeshShape(pbs, size, isPhysical, out kind, out needsAssetFetch);
+            ShapeId cooked = CookMeshShape(pbs, size, isPhysical, out kind, out needsAssetFetch, primName, localId);
             if (cooked.IsValid)
                 return cooked;
 
@@ -2812,7 +2812,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // needsAssetFetch is true only for the specific "sculpt/mesh asset not fetched yet" case - the
         // caller (JoltPrim) uses it to kick off RequestMeshAssetRebuild so the bbox fallback self-heals
         // once the asset arrives, instead of staying wrong until something else edits the prim.
-        private ShapeId CookMeshShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind, out bool needsAssetFetch)
+        private ShapeId CookMeshShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind, out bool needsAssetFetch, string primName = "?", uint localId = 0)
         {
             kind = "bbox(fallback)";
             needsAssetFetch = false;
@@ -2837,7 +2837,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             {
                 // isPhysical:false to the mesher = "do not substitute a bounding box for tiny prims" -
                 // we always want the real triangle soup (BulletSim passes false here for the same reason).
-                IMesh mesh = m_mesher.CreateMesh("legionjolt-prim", pbs, size, MeshLod, false, false, false);
+                // The mesher's own cache keys on shape/size/lod (not this name string), so passing the
+                // real prim name here is purely so mesher-side error logging can identify it too.
+                IMesh mesh = m_mesher.CreateMesh(primName, pbs, size, MeshLod, false, false, false);
                 if (mesh == null)
                 {
                     // A sculpt whose asset (texture) has not been fetched meshes to null - it needs the
@@ -2845,7 +2847,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                     // needsAssetFetch when there's an actual sculpt/mesh texture to go fetch (a plain
                     // cut/hollow prim with no sculpt entry meshing to null is a different, unrelated
                     // failure that a re-fetch can't fix).
-                    m_log.Debug($"{LogHeader} IMesher returned null (unfetched sculpt asset or empty geometry); bounding-box fallback.");
+                    m_log.Debug($"{LogHeader} IMesher returned null (unfetched sculpt asset or empty geometry); bounding-box fallback. prim='{primName}' id={localId}");
                     needsAssetFetch = pbs.SculptEntry && pbs.SculptTexture != UUID.Zero;
                     return ShapeId.Invalid;
                 }
@@ -2854,7 +2856,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 float[] verts = mesh.getVertexListAsFloat(); // fresh copy (flattened x,y,z,...)
                 if (verts == null || indices == null || verts.Length < 12 || indices.Length < 3 || (indices.Length % 3) != 0)
                 {
-                    m_log.Warn($"{LogHeader} mesher geometry unusable (verts={verts?.Length ?? 0}, indices={indices?.Length ?? 0}); bounding-box fallback.");
+                    m_log.Warn($"{LogHeader} mesher geometry unusable (verts={verts?.Length ?? 0}, indices={indices?.Length ?? 0}); bounding-box fallback. prim='{primName}' id={localId}");
                     return ShapeId.Invalid;
                 }
 

@@ -159,7 +159,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // of staying wrong until some unrelated edit happens to re-cook this prim.
         private ShapeId CookShape()
         {
-            ShapeId shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind, out bool needsAssetFetch);
+            ShapeId shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind, out bool needsAssetFetch, Name, LocalID);
             if (needsAssetFetch && _pbs.SculptTexture != _meshAssetRequestedFor)
             {
                 _meshAssetRequestedFor = _pbs.SculptTexture;
