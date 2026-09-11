@@ -2680,9 +2680,18 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
             // sample field the collision heightfield was built from, but it is a plain managed float[]
             // (bilinear interpolation, no native call), so it is safe from any thread and needs no lock.
             // Heights agree with the collision surface because both come from that one field.
+            // Floor, not override: CreateAvatar is the single path for EVERY AddAvatar call, not just
+            // fresh login/teleport spawn - it's also what runs when ScenePresence.StandUp() re-adds the
+            // physics actor after an unsit (AddToPhysicalScene -> AddAvatar), and at that point `position`
+            // is ALREADY the correct, known-good elevated stand position (computed from the sat object's
+            // own world transform, not a stale/off-region guess). Unconditionally substituting terrain
+            // height here discarded that and dropped every unsit to ground level regardless of how high
+            // the seat was. Max() keeps the real protection (a position below terrain still gets lifted
+            // to the surface) without clobbering a legitimately-elevated one (its groundZ, already above
+            // terrainZ, wins the Max and passes through unchanged).
             float terrainZ = TerrainHeightAt(position.X, position.Y);
             if (float.IsFinite(terrainZ))
-                groundZ = terrainZ;
+                groundZ = MathF.Max(groundZ, terrainZ);
             // +1 cm so StickToFloor settles from just above rather than starting in penetration (which would
             // resolve as a shove on frame 1).
             var spawn = new Vector3(position.X, position.Y, groundZ + standHalf + feetOffset + 0.01f);

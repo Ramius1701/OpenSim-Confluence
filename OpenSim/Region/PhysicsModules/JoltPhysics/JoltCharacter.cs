@@ -226,18 +226,34 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
             set => _orientation = value;
         }
 
+        // ScenePresence sends a constant-magnitude direction vector and leaves walk-vs-run scaling to the
+        // backend (SetAlwaysRun is the flag, not a pre-scaled velocity) - matches BulletSim's own contract
+        // exactly (BSCharacter.cs's TargetVelocity setter, same factors: AvatarWalkVelocityFactor=1.0,
+        // AvatarAlwaysRunFactor=1.3, BSParam.cs:625-628), only applied while not flying (flight speed is
+        // its own thing, not walk/run). Horizontal-only (X/Y), Z (jump/fall) passes through unscaled.
+        private const float AvatarWalkVelocityFactor = 1.0f;
+        private const float AvatarAlwaysRunFactor = 1.3f;
+
+        private Vector3 ApplyRunFactor(Vector3 targetVel)
+        {
+            if (_flying)
+                return targetVel;
+            float factor = _setAlwaysRun ? AvatarAlwaysRunFactor : AvatarWalkVelocityFactor;
+            return new Vector3(targetVel.X * factor, targetVel.Y * factor, targetVel.Z);
+        }
+
         // ScenePresence's Velocity setter routes here as well as TargetVelocity; both are walk/run intent.
         public override Vector3 Velocity
         {
             get => _velocity;
-            set { _targetVelocity = value; PushMovement(); }
+            set { _targetVelocity = ApplyRunFactor(value); PushMovement(); }
         }
 
         // The PRIMARY movement command ScenePresence writes each frame.
         public override Vector3 TargetVelocity
         {
             get => _targetVelocity;
-            set { _targetVelocity = value; PushMovement(); }
+            set { _targetVelocity = ApplyRunFactor(value); PushMovement(); }
         }
 
         public override bool Flying
