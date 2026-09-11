@@ -618,6 +618,15 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
                 return;
             }
 
+            if (cmd.Length >= 2 && cmd[1] == "sweepstatics")
+            {
+                if (_scene == null) { MainConsole.Instance.Output($"{LogHeader} no scene."); return; }
+                int max = 0;   // 0 = no cap, test every static prim
+                if (cmd.Length >= 3 && int.TryParse(cmd[2], out int mc)) max = Math.Max(0, mc);
+                SweepStatics(max);
+                return;
+            }
+
             if (cmd.Length >= 2 && cmd[1] == "rezmesh")
             {
                 if (_scene == null) { MainConsole.Instance.Output($"{LogHeader} no scene."); return; }
@@ -796,7 +805,7 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
                 return;
             }
 
-            MainConsole.Instance.Output("Usage: jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims");
+            MainConsole.Instance.Output("Usage: jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | sweepstatics [maxCount] | clearprims");
         }
 
         // M7 Task 1 proof: rez a root + 2 children at offsets, make the root physical, then run the OpenSim
@@ -2030,6 +2039,120 @@ namespace OpenSim.Region.PhysicsModules.JoltPhysics
             }
             MainConsole.Instance.Output($"  CURVE row exp {100f + sq75:0.000} (bbox would read 101.000); AXIS row exp 102.000 (wrong Y-axis cylinder -> 100.500);");
             MainConsole.Instance.Output($"  ROUND row exp miss (offset 0.566 > radius 0.5; a bbox fallback would instead HIT ~102.000, proving the cross-section is circular).");
+        }
+
+        // Systematic sweep against REAL, already-rezzed scene content (not synthetic test prims). For
+        // every non-physical (static) prim currently tracked in _prims, casts through the real
+        // Scene.RayCastFiltered llCastRay pipeline: one straight down through the prim's own centre
+        // (top-surface / "stairs not there" test) and four horizontal probes just outside each XY face
+        // aimed back at centre (wall-clip / "walk through walls" test). Reports MISS counts overall and
+        // broken down by JoltPrim.ShapeKind, so a correlation with mesh(mesher) vs bbox-fallback content
+        // is visible directly instead of guessed at. Axis-aligned approximation from Position/Size - a
+        // TILTED prim's true footprint isn't a world-axis box, so false MISSes on tilted content are
+        // expected and are not by themselves proof of a bug; results are bucketed UPRIGHT (local +Z
+        // within 5 deg of world up - yaw about Z still allowed, so ordinary wall/furniture placement
+        // isn't excluded) vs TILTED (same tilt test as BoatTiltYaw) so the tilt confound is visible
+        // instead of hidden in one blended number - a MISS pattern concentrated in the UPRIGHT bucket
+        // is the meaningful signal.
+        private void SweepStatics(int maxCount)
+        {
+            if (_scene == null) { MainConsole.Instance.Output($"{LogHeader} no scene."); return; }
+
+            var targets = new List<(uint id, Vector3 pos, Vector3 size, string kind, float tiltDeg)>();
+            int totalStatic = 0;
+            lock (_prims)
+            {
+                foreach (var kv in _prims)
+                {
+                    JoltPrim jp = kv.Value;
+                    if (jp.IsPhysicalBody) continue;
+                    if (!jp.BodyHandle.IsValid) continue;
+                    string kind = jp.ShapeKind;
+                    if (string.IsNullOrEmpty(kind)) continue;
+                    totalStatic++;
+                    Vector3 up = Vector3.UnitZ * jp.Orientation;
+                    float tiltDeg = (float)(Math.Acos(Math.Clamp(up.Z, -1f, 1f)) * 180.0 / Math.PI);
+                    targets.Add((kv.Key, jp.Position, jp.Size, kind, tiltDeg));
+                }
+            }
+
+            if (targets.Count == 0)
+            {
+                MainConsole.Instance.Output($"{LogHeader} sweepstatics: no static (non-physical) prims currently tracked in _prims - nothing to test.");
+                return;
+            }
+
+            if (maxCount > 0 && targets.Count > maxCount)
+                targets = targets.GetRange(0, maxCount);
+
+            const float uprightTiltDeg = 5f;
+            var filter = RayFilterFlags.land | RayFilterFlags.nonphysical;
+            int topHitUp = 0, topMissUp = 0, topHitTilt = 0, topMissTilt = 0, topWrongId = 0;
+            int sideHitUp = 0, sideMissUp = 0, sideHitTilt = 0, sideMissTilt = 0;
+            var byKindTopUpright = new Dictionary<string, (int hit, int miss)>();
+            var misses = new List<string>();
+
+            foreach (var t in targets)
+            {
+                bool upright = t.tiltDeg < uprightTiltDeg;
+
+                float halfZ = t.size.Z / 2f;
+                float topZ = t.pos.Z + halfZ + 0.25f;
+                float expectZ = t.pos.Z + halfZ;
+                ContactResult? topRes = CastOne(new Vector3(t.pos.X, t.pos.Y, topZ), new Vector3(0f, 0f, -1f), t.size.Z + 1f, filter);
+
+                bool ok = topRes.HasValue && Math.Abs(topRes.Value.Pos.Z - expectZ) < 0.35f;
+                bool wrongId = topRes.HasValue && topRes.Value.ConsumerID != t.id;
+
+                if (upright)
+                {
+                    if (!byKindTopUpright.TryGetValue(t.kind, out var cur)) cur = (0, 0);
+                    if (ok) { topHitUp++; byKindTopUpright[t.kind] = (cur.hit + 1, cur.miss); }
+                    else { topMissUp++; byKindTopUpright[t.kind] = (cur.hit, cur.miss + 1); }
+                }
+                else
+                {
+                    if (ok) topHitTilt++; else topMissTilt++;
+                }
+                if (!ok)
+                {
+                    if (wrongId) topWrongId++;
+                    misses.Add($"id={t.id} kind={t.kind} tilt={t.tiltDeg:0.0}deg pos=({t.pos.X:0.0},{t.pos.Y:0.0},{t.pos.Z:0.0}) size=({t.size.X:0.0},{t.size.Y:0.0},{t.size.Z:0.0}) exp z={expectZ:0.00} got={(topRes.HasValue ? $"z={topRes.Value.Pos.Z:0.00} id={topRes.Value.ConsumerID}" : "MISS")}");
+                }
+
+                float midZ = t.pos.Z;
+                float hx = t.size.X / 2f + 0.25f, hy = t.size.Y / 2f + 0.25f;
+                var sideProbes = new (Vector3 origin, Vector3 dir)[]
+                {
+                    (new Vector3(t.pos.X - hx, t.pos.Y, midZ), new Vector3(1f, 0f, 0f)),
+                    (new Vector3(t.pos.X + hx, t.pos.Y, midZ), new Vector3(-1f, 0f, 0f)),
+                    (new Vector3(t.pos.X, t.pos.Y - hy, midZ), new Vector3(0f, 1f, 0f)),
+                    (new Vector3(t.pos.X, t.pos.Y + hy, midZ), new Vector3(0f, -1f, 0f)),
+                };
+                bool anySideHit = false;
+                foreach (var sp in sideProbes)
+                {
+                    ContactResult? sRes = CastOne(sp.origin, sp.dir, Math.Max(hx, hy) + 1f, filter);
+                    if (sRes.HasValue && sRes.Value.ConsumerID == t.id) { anySideHit = true; break; }
+                }
+                if (upright) { if (anySideHit) sideHitUp++; else sideMissUp++; }
+                else { if (anySideHit) sideHitTilt++; else sideMissTilt++; }
+            }
+
+            int nUpright = topHitUp + topMissUp, nTilt = topHitTilt + topMissTilt;
+            MainConsole.Instance.Output($"{LogHeader} sweepstatics: tested {targets.Count} of {totalStatic} real static prim(s) via Scene.RayCastFiltered (the llCastRay pipeline). {nUpright} UPRIGHT (tilt<{uprightTiltDeg}deg), {nTilt} TILTED.");
+            MainConsole.Instance.Output($"  UPRIGHT TOP  (straight down through centre) : {topHitUp} solid, {topMissUp} MISS/gap ({topWrongId} of all top-misses hit something else first, not a plain miss)");
+            MainConsole.Instance.Output($"  UPRIGHT SIDE (4 horizontal probes/prim)     : {sideHitUp} at least one side solid, {sideMissUp} ALL 4 sides missed");
+            MainConsole.Instance.Output($"  TILTED  TOP  (approximation confound - expect some misses here regardless of bugs): {topHitTilt} solid, {topMissTilt} MISS/gap");
+            MainConsole.Instance.Output($"  TILTED  SIDE (same confound)                                                      : {sideHitTilt} solid, {sideMissTilt} ALL 4 sides missed");
+            foreach (var kv in byKindTopUpright)
+                MainConsole.Instance.Output($"    UPRIGHT top by shape '{kv.Key}': {kv.Value.hit} ok, {kv.Value.miss} miss");
+            int shown = 0;
+            foreach (var m in misses)
+            {
+                if (shown++ >= 25) { MainConsole.Instance.Output($"  ...({misses.Count - 25} more top-misses not shown)"); break; }
+                MainConsole.Instance.Output($"  MISS: {m}");
+            }
         }
 
         // Closest hit of a single downward-ish cast through the real llCastRay pipeline. null = miss.
