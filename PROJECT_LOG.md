@@ -22867,3 +22867,175 @@ RegionWeb and the native WebUI are both large, both have an "admin
 portal," and neither name alone disambiguates a feature request - grep
 `FEATURES.md` for the described capability before assuming which
 module owns it.
+
+## Real Jolt physics bugs found and fixed: run speed, unsit-to-ground (2026-09-11)
+
+User reported six real problems with Jolt on live content, sharply
+contrasted against ubODE/BulletSim: running feels like walking speed,
+unsit always drops to ground regardless of seat height, some prims/
+mesh don't cook correctly, avatars clip through mesh sometimes, stairs
+don't work, avatars walk through walls in places. Three parallel
+Explore agents investigated each against the current code and against
+BulletSim's/ubODE's working equivalents.
+
+**Run speed - confirmed, fixed.** `JoltCharacter.cs`'s `SetAlwaysRun`
+was stored but never read anywhere - `TargetVelocity`/`Velocity`
+forwarded the ScenePresence-supplied direction vector unscaled.
+Confirmed `ScenePresence.AddNewMovement` sends a constant-magnitude
+vector regardless of walk/run state by design - the walk/run split is
+a shared contract every physics backend is expected to honor via
+`SetAlwaysRun`, which BulletSim (`BSCharacter.cs`, `AvatarWalkVelocityFactor
+=1.0`/`AvatarAlwaysRunFactor=1.3`) and ubODE both implement and Jolt
+never did. Added the identical BulletSim factors to `JoltCharacter.cs`
+(horizontal-only, skipped while flying).
+
+**Unsit drops to ground - confirmed, fixed.** `JoltPhysicsScene.CreateAvatar`
+is the single, unconditional path for every `AddAvatar` call - both
+fresh login/teleport spawn AND the standup-from-sit re-creation
+(`ScenePresence.StandUp()` -> `AddToPhysicalScene()` -> `AddAvatar`).
+`StandUp()` itself was already correct, computing the real elevated
+position from the sat object's world transform. But `CreateAvatar`
+unconditionally substituted `TerrainHeightAt(x,y)` for the incoming
+position's Z on every call - written to protect a stale/off-region
+login position from spawning underground, wrongly applied to the
+already-correct standup position too. BulletSim/ubODE just use the
+incoming position directly, no terrain involvement. Fixed by making
+the terrain height a floor (`Max`) instead of a replacement - keeps
+the underground-spawn protection, stops clobbering a legitimately
+elevated stand-up.
+
+**"Mesh cooking incorrectly" - not actually a Jolt bug, corrected
+rather than silently dropped.** Traced `verts=9, indices=3` (the
+`mesher geometry unusable` warnings seen throughout this whole
+session) to its source: the shared Meshmerizer's own raw output for
+~40 genuinely degenerate sculpt assets on Andromeda, already known
+from earlier tonight's work (commit `49aedfc869`). Jolt's own array
+handling is stride-correct; the sanity check runs on the mesher's raw,
+untouched counts. BulletSim has no equivalent check at all and would
+silently ship a near-invisible sliver of real collision geometry for
+the same broken assets rather than detecting and substituting a full
+bounding box the way Jolt does. Also confirmed the bbox fallback uses
+the prim's FULL bounding box, making the ~40 affected objects MORE
+solid than their real geometry, not less - the opposite direction from
+a clipping symptom, which further rules it out as the cause of the
+wall/mesh-clipping reports.
+
+**Wall-clipping, stairs, mesh clip-through - not found in the code,
+genuinely need live testing.** Avatar-vs-static collision layers are
+correctly wired, `StepHeight` defaults to a sane 0.45m and is never
+zero/uninitialized, and `ExtendedUpdateSettings`'s unset stair-detection
+sub-fields were verified (via reflection against the actual
+JoltPhysicsSharp 2.19.1 binary) to keep good native defaults, not
+silently zeroed by the object-initializer pattern used here. Jolt's
+`CharacterVirtual` is a kinematic controller with its own per-step
+sweep-based collide-and-slide, architecturally different from
+BulletSim's rigid-body avatar (which genuinely needs explicit
+`CcdMotionThreshold`/`CcdSweptSphereRadius` to avoid tunneling) - the
+"missing CCD" framing doesn't transfer directly, so it's probably not
+the cause even though it's the intuitive first guess. Recommended next
+step: correlate the specific walls/stairs residents report walking
+through against the ~40-object bbox-fallback list before assuming a
+separate `CharacterVirtual` runtime bug - cheap and concrete, versus
+more speculative code reading.
+
+**Real deploy lesson, costly in the moment**: deployed both fixes,
+told the user to use the WebUI's graceful `region restart` to pick
+them up - it appeared not to work at all. Root cause: `region restart`
+does an IN-PROCESS scene reload (already established earlier this
+session), and .NET never reloads an already-loaded assembly into a
+running process - the deployed DLL was correct on disk the whole time,
+but the running `OpenSim.exe` process (PID unchanged since 5:43 AM
+that morning) kept executing the old code in memory regardless of how
+many graceful scene restarts ran. A genuine process exit + relaunch
+(`Stop-Process` + `Start-Process`) was needed to actually load the new
+DLL - only then did both fixes show up live. Captured in memory
+([[casperia-region-restart-does-not-reload-dlls]]) since this is a
+sharp, easy-to-repeat trap: graceful restart and code deployment are
+not the same operation, and "the fix doesn't seem to work" after a
+graceful restart should always prompt checking whether the process
+ever actually reloaded before doubting the fix itself.
+
+Both fixes committed (`b8cf1f7f96`) and live-verified working on
+Starbase Andromeda after the real restart.
+
+## Jolt systematic sweep, walking-lag diagnosis, and reversion to BulletSim on Starbase Andromeda (2026-09-11)
+
+With the run-speed and unsit-drop fixes live, the user's remaining
+complaints ("avatars clip through mesh sometimes," "stairs not
+working, can walk through walls in places") were reframed as one
+general "mesh in general" issue rather than stairs-specific, since
+static code reading (collision layers, StepHeight defaults, mesh
+cooking pipeline, `CreateMeshShape`) had come back clean on every
+hypothesis. Asked for "the systematic sweep" instead of more guessing.
+
+**New diagnostic tool**: `jolt sweepstatics [maxCount]`
+(`JoltPhysicsScene.cs`, commit `e85e8433d9`) - unlike the existing
+`rayprims`/`raymesh`/`raytest` commands (all synthetic self-tests
+against hardcoded test geometry), this walks every real, non-physical
+prim currently in the live scene and casts through the real
+`Scene.RayCastFiltered` llCastRay pipeline: one straight down through
+each prim's own centre (top-surface test) and four horizontal probes
+just outside each XY face (wall-clip test). Results are bucketed
+UPRIGHT vs TILTED (a rotated prim's true footprint isn't the
+world-axis box this sweep approximates from Position/Size, so tilted
+content produces false misses unrelated to any bug - this was found
+the hard way on the first, unbucketed run).
+
+**Live result, Starbase Andromeda**, 14,570 real static prims, 10,614
+upright: basic primitives collided essentially perfectly even upright
+(box 1/4828 miss, cylinder 0/169, sphere 0/6, the ~40 bbox-fallback
+degenerate assets 0/3229) - strong evidence Jolt's core raycast/
+collision fundamentals are sound. Real mesh-cooked content missed 33%
+(787/2382) even upright - read as a likely content-shape confound
+(cut/hollow/tapered prims legitimately not filling their nominal
+bounding box at the exact centre point, especially common on stair
+prisms) rather than a confirmed Jolt defect, since this sweep only
+tested Jolt and couldn't tell "correct for this content" apart from
+"Jolt-specific gap" without a same-content comparison against another
+engine.
+
+**The decisive clue came directly from the user**, not from more
+sweeping: "It's like the mesh isn't registered right away while
+you're walking on them, you stop and the AV adjusted." That's a
+timing/ground-detection signature, not a static collision hole -
+traced the full per-step data path end-to-end
+(`JoltPhysicsBackend.StepCharacter` -> `ExtendedUpdate` ->
+`BuildCharacterState` -> `JoltCharacter.ApplyCharacterState` ->
+`RequestPhysicsterseUpdate`) and confirmed there is NO wrapper-side
+buffering, smoothing, or throttling anywhere in OpenSim-Confluence's
+own code - every physics tick drains and pushes the freshest Jolt-
+computed state immediately. That rules out this codebase and narrows
+the cause to Jolt's own internal `CharacterVirtual` contact/ground
+detection, which has exactly two known tuning levers, both already
+documented in this file's own M6.5 history:
+`PredictiveContactDistance` (the sweep look-ahead distance, left at
+Jolt's low default of 0.1 after an earlier attempt to raise it to
+0.15 was reverted for causing slope hover/bob - see the "feet-dip
+polish" note in `JoltPhysicsBackend.cs:1489-1494`) and the upstream-
+documented `CharacterVirtual` ground-state flicker
+(jrouwe/JoltPhysics#88). A bounded re-test of the first lever was
+proposed but not yet tried live.
+
+**Decision**: rather than keep tuning blindly, the user made the call
+directly - "JoltPhysics is not turning out to be better, it seems to
+be more regressive than its current counterparts?" This is now the
+THIRD real avatar-behavior gap surfacing on Jolt in one session (after
+two already-fixed bugs), against engines (BulletSim, ubODE) with 15+
+years of SL-specific tuning behind their avatar handling. Per the
+project's own standard that recurring breakage matters more than raw
+progress count, **Starbase Andromeda's `[Startup] physics` was
+switched from `Jolt` back to `BulletSim`** (`OpenSim.ini`, real process
+restart required since `[Startup]` config is only read at process
+startup - graceful `region restart` would not have picked it up).
+Confirmed live via the boot log: `[BULLETS SCENE] Selected bullet
+engine bulletunmanaged`, clean `RegionReady`.
+
+Jolt itself is NOT abandoned - it remains a real, working integration
+with genuinely solid raycast/collision fundamentals (per the sweep
+above) and two confirmed avatar-behavior bugs already fixed
+(`b8cf1f7f96`). It stays an experimental branch, off the live grid,
+until the avatar-controller maturity gap (the `PredictiveContactDistance`/
+ground-detection tuning work) is actually worked out and re-verified
+against both a mesh-walk test AND a slope test before it goes live
+again. `sweepstatics` stays in the codebase as a reusable diagnostic
+for whenever that resumes.

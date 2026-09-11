@@ -397,7 +397,15 @@ hardcoded default:
   [Jolt Physics](https://github.com/jrouwe/JoltPhysics) engine (MIT,
   used in shipped commercial titles) via the `JoltPhysicsSharp` .NET
   binding, adapted from Legion-Grid-Code's own port. Requires
-  `meshing = Meshmerizer` (same requirement as BulletSim). The
+  `meshing = Meshmerizer` (same requirement as BulletSim). **Not
+  currently live** — pulled off Starbase Andromeda 2026-09-11 back to
+  BulletSim after real avatar-movement issues (run speed, unsit
+  position, and a walking/ground-detection lag against real mesh
+  content) kept resurfacing; see `PROJECT_LOG.md` for the fixes made
+  and the open issue that triggered the reversion. Static/raycast
+  collision fundamentals checked out solid in a live sweep, but the
+  avatar-controller layer isn't yet at BulletSim/ubODE's maturity, so
+  it stays an experimental branch until that's worked out. The
   `/features` page's Platform Overview lists which engines are
   actually present on a given deployment.
 
