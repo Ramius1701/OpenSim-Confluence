@@ -699,6 +699,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/simulators/stop-all":
                         HandleAdminSimulatorsStopAll(request, response);
                         break;
+                    case BasePath + "/admin/simulators/restart-all":
+                        HandleAdminSimulatorsRestartAll(request, response);
+                        break;
                     case BasePath + "/admin/simulators/remove":
                         HandleAdminSimulatorsRemove(request, response);
                         break;
@@ -8062,7 +8065,8 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         // One-click restart from the admin Regions table - same
         // RunRegionConsoleCommand/shared-secret mechanism as the free-form
-        // console above. Sends "region restart 30" (RestartModule.cs),
+        // console above. Sends "region restart 120" (RestartModule.cs,
+        // matching the Second Life standard courtesy window),
         // NOT the bare "restart" its own name suggests - that shorter
         // command is a real stock OpenSim.cs command but is hardcoded to
         // a no-op ("Restart command disabled, because currently it is
@@ -8094,7 +8098,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            RunRegionConsoleCommand(region, "region restart 30");
+            RunRegionConsoleCommand(region, "region restart 120");
 
             response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("Restart command sent to " + region.RegionName + "."), HttpStatusCode.Redirect);
         }
@@ -10581,7 +10585,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         // ownership is verified via GetOwnedRegionOrNull first (same
         // ownership check HandleMyRegionsOarSave/Load already use) rather
         // than exposing the free-form console box to non-admins - a
-        // resident can only ever send exactly "region restart 30" (see the
+        // resident can only ever send exactly "region restart 120" (see the
         // matching comment on HandleAdminRegionRestart above for why it's
         // not the shorter "restart"), and only to a region they actually
         // own.
@@ -10604,7 +10608,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     GridRegion region = GetOwnedRegionOrNull(session, regionID);
                     if (region != null && !string.IsNullOrEmpty(region.ServerURI))
                     {
-                        RunRegionConsoleCommand(region, "region restart 30");
+                        RunRegionConsoleCommand(region, "region restart 120");
                         message = "Restart command sent to " + region.RegionName + ".";
                     }
                 }
@@ -14164,7 +14168,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, regionId);
                     if (region != null && !string.IsNullOrEmpty(region.ServerURI))
                     {
-                        RunRegionConsoleCommand(region, "region restart 30");
+                        RunRegionConsoleCommand(region, "region restart 120");
                         message = "Restart command sent to " + region.RegionName + ".";
                     }
                 }
@@ -14266,7 +14270,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<button type=\"submit\">Start All Stopped</button></form> ");
                 sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/stop-all\" style=\"display:inline;margin:0 0 16px;\" ")
                   .Append("onsubmit=\"return confirm('Gracefully shut down every running simulator? Anyone currently in one will be disconnected.');\">");
-                sb.Append("<button type=\"submit\">Stop All Running</button></form>");
+                sb.Append("<button type=\"submit\">Stop All Running</button></form> ");
+                sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/simulators/restart-all\" style=\"display:inline;margin:0 0 16px;\" ")
+                  .Append("onsubmit=\"return confirm('Rolling-restart every running simulator? Each gets a 120-second in-world warning, staggered 30 seconds apart so the whole grid is never down at once. This will take several minutes.');\">");
+                sb.Append("<button type=\"submit\">Restart All (rolling)</button></form>");
 
                 sb.Append("<table><tr><th>Region</th><th>Status</th><th>Actions</th></tr>");
                 foreach (var s in simulators.OrderBy(s => s.RegionName, StringComparer.OrdinalIgnoreCase))
@@ -14387,6 +14394,75 @@ namespace OpenSim.Server.Handlers.WebInterface
                     worker.Start();
 
                     message = "Starting " + toStart.Count + " simulator(s) in the background - refresh this page in a bit to see status.";
+                }
+            }
+
+            response.Redirect(BasePath + "/admin/simulators?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Rolling restart - every currently-running simulator gets the same
+        // graceful "region restart 120" HandleAdminRegionRestart already
+        // sends for a single region (Second Life's own courtesy window),
+        // but staggered 30 seconds apart rather than fired simultaneously
+        // or waited-out one at a time. Simultaneous would take the whole
+        // grid dark together at the same moment - exactly what a rolling
+        // restart is supposed to avoid. Waiting for each region to fully
+        // reload before starting the next one's countdown would guarantee
+        // at most one region down at a time, but takes ~35 minutes for 15
+        // regions; staggering the START only (not waiting for completion)
+        // finishes in under 10 minutes and still keeps at most one or two
+        // regions in their actual (short, end-of-countdown) downtime
+        // window at once, since 30s << the 120s courtesy window itself.
+        private void HandleAdminSimulatorsRestartAll(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || string.IsNullOrEmpty(m_webConsoleSecret) || m_GridService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Nothing to do.";
+            if (request.HttpMethod == "POST")
+            {
+                List<(string SimulatorFolder, string RegionName, UUID RegionID)> toRestart = DiscoverSimulators()
+                        .Where(s =>
+                        {
+                            int? port = GetSimulatorPort(s.SimulatorFolder);
+                            return port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
+                        })
+                        .ToList();
+
+                if (toRestart.Count == 0)
+                {
+                    message = "Nothing to restart - no simulators are currently running.";
+                }
+                else
+                {
+                    // Same background-thread rationale as Start All/Stop
+                    // All above - this takes several minutes end to end,
+                    // well past what the shared Apache reverse proxy would
+                    // tolerate for a single blocking request.
+                    List<(string SimulatorFolder, string RegionName, UUID RegionID)> toRestartCaptured = toRestart;
+                    System.Threading.Thread worker = new System.Threading.Thread(() =>
+                    {
+                        foreach (var s in toRestartCaptured)
+                        {
+                            GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, s.RegionID);
+                            if (region != null && !string.IsNullOrEmpty(region.ServerURI))
+                                RunRegionConsoleCommand(region, "region restart 120");
+
+                            // Sleep AFTER firing, not before - the first
+                            // region's countdown starts immediately on
+                            // click rather than 30 seconds late.
+                            System.Threading.Thread.Sleep(30000);
+                        }
+                    })
+                    { IsBackground = true };
+                    worker.Start();
+
+                    message = "Rolling restart started for " + toRestart.Count
+                            + " simulator(s), 30 seconds apart - refresh this page over the next few minutes to watch status.";
                 }
             }
 

@@ -22800,3 +22800,70 @@ wave-response gap-audit table entry); comments narrating the ORIGINAL
 `Legion.Physics.dll` shared-`bin\` bug) deliberately left as accurate
 history, same two-tier convention as always. Not yet restarted/
 confirmed on Starbase Andromeda.
+
+## Graceful region restarts: found the real courtesy window, added a rolling "Restart All" (2026-09-11)
+
+A long thread about restarting Starbase Andromeda for Jolt testing led
+to a real correction: every restart this session had been an abrupt
+`shutdown` console command or a raw `Stop-Process` kill, with no
+in-world warning to residents at all - the "hard crash" exception
+being treated as the default. `OpenSim/Region/CoreModules/World/Region/RestartModule.cs`
+already implements the real Second Life-style mechanism -
+`region restart <seconds>` schedules a staged countdown, broadcasting
+`SendAlertMessage("RegionRestartSeconds", ...)` to every connected
+client (the alert ID viewers like Firestorm render as the
+screen-shake-and-landmark-prompt dialog), and only actually restarts
+once the countdown completes.
+
+Went looking for where this belonged in the Confluence Admin WebUI and
+initially investigated the wrong module entirely - `addon-modules/RegionWeb`,
+a Gunthar-derived addon, not Confluence's own native, Robust-hosted
+WebUI (`OpenSim/Server/Handlers/WebInterface/WebInterfaceServiceConnector.cs`).
+Two background research agents spent their full runs on RegionWeb
+before the mistake was caught. The real answer: the feature already
+existed, fully built and already deployed live. `HandleAdminRegionRestart`
+(and the "My Regions" self-service equivalent, and the region-config-editor's
+own restart button) already called `RunRegionConsoleCommand(region,
+"region restart 30")` - correct mechanism, wrong number. The code's own
+comment already documented rejecting the bare `"restart"` command as a
+confirmed hardcoded no-op in this codebase - the same discovery this
+session made the hard way about `region restart <seconds>` vs. an
+abrupt kill.
+
+**Two real, shipped changes**:
+1. Fixed the hardcoded `30` to `120` (Second Life's actual standard
+   courtesy window) at all three call sites - `HandleAdminRegionRestart`,
+   `HandleMyRegionsRestart`, and the region-config-editor's restart
+   action.
+2. Added **Restart All** to the Simulators admin page - a real rolling
+   restart, not a copy of Start All/Stop All's simultaneous-for-everyone
+   pattern. `HandleAdminSimulatorsRestartAll` filters `DiscoverSimulators()`
+   to currently-running regions only (mirrors `Start All`'s own filter,
+   inverted), then a background thread fires `RunRegionConsoleCommand(region,
+   "region restart 120")` for each one 30 seconds apart - every region
+   still gets the full 120-second in-world warning, but the whole grid
+   is never dark at the same moment, and the operation finishes in
+   under 10 minutes instead of the ~35 minutes a genuine one-at-a-time
+   wait would take. Same background-thread-plus-redirect pattern
+   `Start All`/`Stop All` already use, for the same documented reason
+   (a synchronous multi-minute request blows through the shared Apache
+   reverse proxy's timeout).
+
+Discovered along the way and confirmed there's no equivalent for
+Robust itself - a "restart Robust from the WebUI" button doesn't
+exist and can't be built the same way, since Robust would be
+restarting the exact process serving the request that triggered it;
+that needs a real external supervisor/watchdog process, not a small
+addition to the existing page, and wasn't built this session.
+
+Both fixes ship in one `OpenSim.Server.Handlers.dll` deploy
+(`md5sum`-verified against Casperia's copy) - Robust hasn't been
+restarted since, so the running instance still has the old `30`-second
+default and no Restart All button loaded until its own next restart,
+same caveat as any other Robust-side change this session.
+
+Real lesson captured in memory ([[casperia-regionweb-is-not-native-webui]]):
+RegionWeb and the native WebUI are both large, both have an "admin
+portal," and neither name alone disambiguates a feature request - grep
+`FEATURES.md` for the described capability before assuming which
+module owns it.

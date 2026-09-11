@@ -116,9 +116,13 @@ alongside the existing support-ticket system.
   Running/Stopped status and per-row Start, graceful Stop (with a
   pre-flight check that refuses if the region is mid-backup, so a
   shutdown can never land on top of one in progress), and permanent
-  Remove actions — plus Start All/Stop All for everything at once,
-  both running in the background so a full-grid bulk action can't time
-  out a reverse proxy sitting in front of the WebUI. Remove works the
+  Remove actions — plus Start All/Stop All for everything at once, and
+  a Restart All that's a real rolling restart: every currently-running
+  region gets the same 120-second in-world countdown warning a single
+  region's own Restart button sends, staggered 30 seconds apart so the
+  whole grid is never dark at the same moment. All three bulk actions
+  run in the background so they can't time out a reverse proxy sitting
+  in front of the WebUI. Remove works the
   same way for any region, self-service Store order or originally
   static — it deletes the simulator's config folder and any
   grid-registration rows referencing it (never the region's actual
