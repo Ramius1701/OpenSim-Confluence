@@ -5,6 +5,45 @@ gap today. For what already exists, see `FEATURES.md`.
 
 ## In progress / being investigated
 
+- **Recurring "cloud" avatar on login/teleport - root cause not yet
+  found (2026-09-13).** A resident reported getting stuck as a cloud
+  after teleporting into Starbase Andromeda, resolved by the client's
+  own Rebake Texture - and confirmed this has happened to them before,
+  more than once. Investigated two concrete server-side theories and
+  ruled both out with direct evidence rather than guessing:
+  - **Not missing/corrupted asset data.** The resident's saved bake
+    texture UUIDs (the `avatars` table's `_ap_N` rows) don't exist in
+    the local `assets` table - but neither do three other residents'
+    (checked directly), so this is uniform across every account
+    checked, not data loss. Almost certainly default/library textures
+    every viewer already has and never needs to fetch from this grid.
+  - **Not a cold asset cache from a region restart.** Suspected the
+    region restart ~10 minutes before the login (deploying the ubODE
+    fix, same day) had left Starbase Andromeda's `FlotsamAssetCache`
+    disk cache cold. Checked directly: `FlotsamCache.ini`'s
+    `CacheDirectory = ./assetcache` is a relative path, and since
+    every region process actually runs with the **grid root** as its
+    working directory (not its own `Simulators\<name>\bin\` folder -
+    confirmed from `CasperiaControl.bat`'s own `start /d "%BASE%"`
+    pattern, which this session's manual restarts replicated exactly),
+    all regions share ONE cache at `S:\Opensim\Casperia\assetcache\` -
+    142,745 files, clearly long-lived, untouched by any region-level
+    binary sync or restart. Not cold, not the cause.
+
+  **What's left, unconfirmed**: the classic client-server appearance-
+  negotiation hiccup general to OpenSim/SL - viewer and region
+  disagreeing on which baked layers are current, independent of any
+  server data problem - which Rebake Texture is the standard fix for.
+  Plausible given it's exactly what resolved this instance, but not
+  provable from server-side logs alone; the region's own log showed
+  unremarkable activity right up until it went quiet for the resident's
+  session specifically.
+
+  **To actually catch this next time**: reproduce live - when it
+  happens again, tail the affected region's log and check CAPS/circuit
+  registration state in real time, before rebaking clears the
+  evidence, rather than reconstructing after the fact from a log that
+  already looks normal by the time anyone looks at it.
 - **Meshmerizer vs ubMeshmerizer feature-parity audit (2026-09-09).**
   Full read of both `IMesher` implementations - generic `Meshmerizer`
   (`Meshing/Meshmerizer/`, used by BulletSim + JoltPhysics) vs

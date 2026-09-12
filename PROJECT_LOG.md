@@ -23363,3 +23363,49 @@ last review. Fifteen had nothing new. Five did:
   `os-webrtc-janus.ini` config file to their own distribution bundle
   for the same addon Confluence already has from the real upstream).
   Nothing to merge.
+
+## Real live incident: recurring cloud avatar, two theories ruled out (2026-09-13)
+
+While the ubODE fix's rolling restart was fresh, a resident hit a real
+live "stuck as a cloud" on teleporting into Starbase Andromeda -
+resolved by their own client-side Rebake Texture, and confirmed as a
+repeat occurrence, not a one-off. Investigated two concrete theories
+before landing on "not provably server-side":
+
+First guess was wrong and said so directly rather than let it stand:
+a texture asset referenced by one of the resident's own inventory
+items (`Mesh Palm Office Plant_Texture#2`) had genuinely empty/missing
+data in the `assets` table - real finding, but the resident correctly
+pointed out an unworn decorative prop's texture has nothing to do with
+avatar appearance. Followed up properly: checked the resident's actual
+saved bake texture UUIDs (`avatars` table `_ap_N` rows) against the
+`assets` table - none of the ~16 exist locally. Before concluding
+anything, cross-checked three *other* residents' saved bakes the same
+way - theirs are missing too, uniformly. Conclusion: these are almost
+certainly default/library textures every viewer ships with and never
+needs from this grid's own asset store - not data loss, not the cause,
+and confirmed unchanged (same UUIDs, still absent) even after the
+resident's rebake fixed their session, which is itself proof this
+wasn't blocking anything.
+
+Second theory: the region restart ~10 minutes before the login (part
+of deploying the ubODE fix, same session) left Starbase Andromeda's
+`FlotsamAssetCache` disk cache cold. Real, checkable claim - and wrong.
+`FlotsamCache.ini`'s `CacheDirectory = ./assetcache` is relative, and
+every region process actually runs with the grid root as its working
+directory, not its own `Simulators\<name>\bin\` (confirmed straight
+from `CasperiaControl.bat`'s `start /d "%BASE%"` pattern, which this
+session's manual per-region restarts replicated exactly) - so there is
+only ONE shared asset cache for the whole grid, at
+`S:\Opensim\Casperia\assetcache\`, currently 142,745 files. A region
+restart never touches it. Not cold, not the cause.
+
+Left open, logged in `ROADMAP.md`'s "In progress" section rather than
+closed with a guess: the likely remaining explanation is the well-known
+OpenSim/SL client-server appearance-negotiation hiccup Rebake Texture
+is the standard fix for, but that's not provable from server-side logs
+alone after the fact - the region's own log looked unremarkable right
+up until the resident's session went quiet. Real next step recorded:
+catch it live next time, tailing logs and checking CAPS/circuit state
+before a rebake clears the evidence, rather than reconstructing
+afterward.
