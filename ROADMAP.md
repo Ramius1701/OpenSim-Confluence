@@ -45,19 +45,31 @@ gap today. For what already exists, see `FEATURES.md`.
   deployed to live (`OpenSim.Region.PhysicsModule.ubOdeMeshing.dll`+pdb,
   copy verified via `md5sum`). Same restart caveat as above.
 
-  **Other real findings, lower priority, not yet actioned** (full
-  detail and additional file:line citations in `PROJECT_LOG.md`):
-  generic's "corrupt prim" guard logs `profileBegin>=profileEnd` but
-  doesn't clamp it (ubMeshmerizer's does, unconditionally); a GDI
-  bitmap leak in generic's `SculptMap.ScaleImage` (never disposes the
-  scaled intermediate; ubMeshmerizer does); ubMeshmerizer recognizes
-  `IsometricTriangle`/`RightTriangle` profiles as 3-sided, generic
-  only recognizes `EquilateralTriangle` (currently unreachable from
-  in-world scripting, reachable from OAR-imported data); ubMeshmerizer
-  rejects degenerate 0-vertex/0-face meshes, generic doesn't; generic
-  has no outer try/catch around its three mesh-generation calls
-  (ubMeshmerizer does); ubMeshmerizer rounds vertices to 6 decimals
-  for better welding, generic doesn't.
+  **Four more lower-priority findings, fixed (2026-09-13, commit
+  `ef7aa6e567`)**: `SculptMap`'s GDI bitmap leak (the scaled
+  intermediate is now disposed on both the normal and exception exit
+  paths); `IsometricTriangle`/`RightTriangle` profiles now recognized
+  as 3-sided alongside `EquilateralTriangle`; degenerate 0-vertex/
+  0-face mesh generation now rejected (returns null, matching what
+  callers already handle); the three mesh-generation call sites are
+  now wrapped in try/catch so a malformed asset fails that one prim
+  instead of throwing uncaught; and `PrimMesh.Scale(x,y)` now rounds
+  to 5 decimals (not 6 as originally written here - corrected while
+  porting), matching ubMeshmerizer and mattering because generic's own
+  `Mesh` welds vertices via exact-value dictionary lookup. Verified:
+  full solution builds clean, an isolated scratch region (BulletSim +
+  Meshmerizer) boots clean and reaches RegionReady. **Not yet deployed
+  to live Casperia** - affects the 3 regions currently running
+  BulletSim (Ranchero, Tangle, UFPGC) plus any future Jolt use.
+
+  **One finding from the same list turned out NOT to be a real bug,
+  on closer inspection**: the "corrupt prim guard logs but doesn't
+  clamp `profileBegin>=profileEnd`" claim - `PrimMesh`'s own
+  constructor already unconditionally clamps `profileStart`/
+  `profileEnd` (including this exact case) before anything reads them,
+  and the un-clamped local variables the guard's log-and-partial-clamp
+  operates on are never read again afterward. No functional effect
+  either way; left as-is rather than adding a cosmetic no-op fix.
 
   **Structural, high-risk, not portable without real design work**:
   generic Meshmerizer has no local convex-hull computation at all for
@@ -78,11 +90,11 @@ gap today. For what already exists, see `FEATURES.md`.
   for - same category as the already-documented disk-cache idea
   above, not a quick change.
 
-  **Not started** - held pending a priority call, same as the other
-  Jolt/Meshmerizer items in this file. The two live bugs are real
-  outstanding correctness issues on the actual running grid (BulletSim
-  regions right now; ubODE for any twisted torus/tube/ring) - worth a
-  decision on a fix separate from the larger architectural items.
+  **Structural items: not started** - held pending a priority call,
+  same as the other Jolt/Meshmerizer items in this file. Everything
+  else from this audit (the two live bugs, the four lower-priority
+  findings above) is now fixed and pushed; only the local-convex-hull/
+  cache-eviction architectural work remains genuinely open.
 
 - **Native, viewer-integrated Marketplace** (`DirectDeliveryModule` +
   `/marketplace` WebUI) — a real implementation of SL's actual
