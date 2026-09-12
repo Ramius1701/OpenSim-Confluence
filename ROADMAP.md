@@ -283,307 +283,56 @@ Web & Admin UI section rather than here.)*
   upstream's and would very likely work unchanged. **Held, not
   started** - real, buildable, and worth revisiting if a resident/admin
   build pipeline for a self-compiled patch becomes worth setting up.
-- **"JoltPhysics" (module `LegionJolt` until renamed 2026-09-10) — real
-  Jolt Physics engine port, portability/performance evaluation done
-  (2026-09-08), held pending a priority call.**
-  Discovered while resuming the paused Legion-Grid-Code `slua-tier2-tables`
-  review: ~65 of that branch's 193 unreviewed commits (a third of it,
-  previously miscounted as SLua/Phlox work) are a genuine, substantial
-  Jolt Physics integration - M1 through M8+, its own design-decision
-  log, real production-hardening (a vendored patched `joltc` for
-  per-region native-allocator isolation, shutdown-crash fixes). Not
-  experimental scaffolding.
+- **"JoltPhysics" — a real, working third physics engine option, but
+  currently off the live grid pending avatar-controller tuning
+  (status as of 2026-09-11).** Ported from Legion-Grid-Code, integrated
+  as a selectable engine alongside ubODE/BulletSim (`[Startup] physics
+  = Jolt`), and brought to full feature parity with both (buoyancy,
+  boat wave response, material/friction tuning, rolling resistance,
+  avatar/object contact smoothing, avatar-avatar social physics) -
+  genuinely sound architecture, MIT-licensed, no known correctness gaps
+  in its core raycast/collision fundamentals (confirmed via a 14,570-
+  prim live sweep on Starbase Andromeda: near-perfect on basic
+  primitives).
 
-  **Licensing: clean, both real dependencies MIT.** Jolt Physics itself
-  (`jrouwe/JoltPhysics`, 11.5k stars, used in shipped commercial titles
-  like Horizon Forbidden West) and `JoltPhysicsSharp` (the .NET
-  binding) are both MIT. Legion's own wrapper code has no repo-level
-  LICENSE file (a real, if minor, provenance gap worth knowing about),
-  but it wraps two cleanly-licensed dependencies rather than anything
-  closed-source - nothing like the Phlox saga.
+  Deployed to Starbase Andromeda as a real-content test case. Six
+  reported avatar-behavior problems surfaced there; two were confirmed
+  bugs and fixed and live-verified (running felt like walking speed -
+  missing walk/run velocity scaling; unsit always dropped to ground
+  regardless of seat height - `CreateAvatar` was unconditionally
+  substituting terrain height for a legitimately-elevated stand-up
+  position). A third, "mesh cooking incorrectly," turned out not to be
+  a Jolt bug at all - pre-existing degenerate content already tracked
+  separately. The remaining complaints (wall-clipping, stairs, general
+  mesh unreliability while walking) traced to a real timing/ground-
+  detection signature in Jolt's own native `CharacterVirtual` contact
+  system (`PredictiveContactDistance` tuning, and an upstream-known
+  ground-state flicker, jrouwe/JoltPhysics#88) - not a bug in this
+  codebase's wrapper, but not yet resolved either.
 
-  **Architecture: a real, complete drop-in, not a stub.**
-  `JoltPhysicsScene : PhysicsScene, INonSharedRegionModule` (3,782
-  lines) genuinely implements OpenSim's own physics plugin contract -
-  `AddAvatar` (all 3 real overloads), `RemoveAvatar`/`RemovePrim`,
-  `AddPrimShape`, `RaycastWorld`, `Simulate`, terrain/water. A file
-  header comment claiming "SKELETON ONLY, ZERO physics behaviour" is
-  stale, left over from the initial scaffold commit - checked the
-  actual method bodies directly (e.g. `AddPrimShape`'s real shape-
-  classification logic, correctly distinguishing SL's real box/sphere/
-  cylinder profile+extrusion codes from OpenSim's own known
-  `CreateCylinder()` quirk) and confirmed real, substantial
-  implementations throughout, not accept-and-ignore placeholders. Zero
-  `NotImplementedException`/TODO markers remain in the current file.
-  The engine core itself is cleanly separated behind
-  `IJoltPhysicsBackend` (handles not objects, zero per-frame
-  allocation, shapes independently lifetime-managed from bodies, no SL
-  semantics below the seam) - a genuinely sound design, not just
-  functional.
+  Rather than keep tuning blindly against the third real avatar-
+  behavior gap found on Jolt in one session, **the operator made the
+  call to pull it off Starbase Andromeda** rather than continuing to
+  iterate on a live, resident-facing region. Andromeda has since moved
+  on to `ubODE` (the grid default) as its settled engine. Jolt is not
+  abandoned - it stays available as a selectable engine, off the live
+  grid, until the `CharacterVirtual` ground-detection tuning is
+  actually worked out and re-verified (a mesh-walk test and a slope
+  test) before it's offered live again.
 
-  **Portability: confirmed directly, not assumed - built and ran
-  natively on this Windows machine, zero extra tooling.** Extracted
-  the self-contained `Legion.Physics`/`Legion.Physics.TestHarness`
-  projects (net8.0, `JoltPhysicsSharp` NuGet package bundles a
-  pre-built native `joltc.dll` for `win-x64` - no C++ toolchain or
-  Docker/WSL2/VirtualBox needed, matching the operator's own stated
-  bar) and ran the real M1-M4.5 proof suite: **all 40 correctness/
-  determinism checks passed** - terrain heightfield extent and Y-up-
-  to-Z-up axis conversion, box/sphere/capsule/cylinder/mesh/compound
-  shape cooking, contact lifecycle (Begin/Persist/End with correct
-  UserData and impulse scaling), avatar-avatar blocking, sensor
-  overlap, bit-identical determinism across repeated runs, and several
-  named regression repros (a loaded-linkset boot stall, a terrain-
-  unbury fix) all passing clean.
-
-  **Performance: one real, measured number, not assumed - no
-  existing benchmark existed to just read (Legion's own commit history
-  only has a thread-safety stress test, not throughput numbers), so
-  built one.** A from-scratch throughput test (N dynamic boxes falling
-  onto flat terrain, real `Step()` calls timed after a warm-up) found
-  **10,000 simultaneously-active dynamic bodies step in ~2.2ms/step,
-  single-threaded** - roughly 40x headroom under a 60Hz (16.67ms)
-  budget, and far more under OpenSim's actual real-world physics rate
-  (the test harness's own code references "OpenSim's 11 fps physics",
-  ~90.8ms/step). **Caveat, stated plainly**: this is a synthetic
-  microbenchmark (plain boxes, no mesh/sculpt geometry, no scripted
-  llApplyImpulse traffic, no vehicles, no SL-glue/collision-dispatch
-  overhead on top) and there's no equivalent side-by-side number for
-  Confluence's own live ubODE engine - ubODE is deeply embedded in
-  OpenSim's scene machinery and wasn't independently extracted for a
-  true apples-to-apples run this pass. The number is real and
-  comfortably fast on its own terms; it is not a proven "faster than
-  ubODE" claim.
-
-  **Integrated as a selectable third physics engine, 2026-09-09** - the
-  user's explicit call: add it "like BulletSim is to ubODE," a
-  pluggable operator choice, not a replacement for either existing
-  engine and not required to have full day-one parity. Legion's own
-  repo already laid this out as a self-contained, drop-in module
-  (`OpenSim/Region/PhysicsModules/JoltPhysics/` (renamed from
-  `LegionJolt` 2026-09-10) +
-  `OpenSim/Addons/JoltPhysics/{JoltPhysics.Core,JoltPhysics.Vehicles}/`
-  (renamed from `LegionPhysics/{Legion.Physics,Legion.Vehicles}` 2026-09-10),
-  matching Confluence's own `PhysicsModules/BulletS`/`ubOde` sibling
-  convention exactly, self-selecting on `[Startup] physics = Jolt`
-  with no other config edits needed) - pulled all 17 source files in
-  as-is. Two real integration gaps found and fixed, neither present in
-  Legion's own build environment apparently, both confirmed live here:
-  a latent `OpenSim.sln` MSB5004 name collision (pre-existing, just
-  surfaced by `dotnet sln add` - same documented gotcha as before, same
-  fix, cosmetic solution-folder rename) and `Legion.Physics.dll`/
-  `Legion.Vehicles.dll` not actually landing in the shared `bin\`
-  despite the module's own `ProjectReference`s and a code comment
-  claiming they would - added explicit copy items, the same workaround
-  pattern the csproj already used for the native `joltc.dll`/
-  `JoltPhysicsSharp.dll`. Deliberately did NOT bring in Legion's
-  vendored, custom-patched `joltc.dll` (their fix for multiple
-  `PhysicsSystem`s sharing one static `TempAllocator` when several
-  regions run in ONE process) - Casperia's real deployment is one
-  `OpenSim.exe` process per region, confirmed from the live process
-  list, so that specific patch doesn't apply here; using the stock
-  NuGet-provided native instead keeps the integration simpler.
-
-  **Boot-tested for real, not just built** - built the full solution
-  clean, then ran an actual isolated `OpenSim.exe` instance (scratch
-  copy, throwaway SQLite-backed region, `physics = Jolt` +
-  `meshing = Meshmerizer`) rather than trusting a successful compile
-  alone. Confirmed live in the log: Mono.Addins discovered and loaded
-  the plugin, `[LEGION JOLT] enabled (physics = Jolt)` self-selection
-  fired correctly, the native backend initialised with a real terrain
-  heightfield conversion and `MaxBodies=65536` on actual Jolt 5.x, and
-  the region reached full `TriggerRegionReady`. Ran cleanly across two
-  regions in the same test process too. Config documented in both
-  `bin/OpenSim.ini.example` and `bin/OpenSimDefaults.ini`, commented
-  out by default (matching BulletSim's own template presentation) with
-  an explicit "newer/less-proven than the two established engines"
-  note, since real in-world testing under Casperia's actual content
-  (vehicles, existing prims/scripts, real avatars) hasn't happened yet
-  - genuinely open, not a blocker to having it available as a choice.
-  **Deployed to the live grid (2026-09-09).** Module DLLs copied to
-  Casperia's shared runtime folder and confirmed showing on the live
-  `/features` Platform Overview page. Starbase Andromeda's own
-  `OpenSim.ini` has since been switched to `physics = Jolt` +
-  `meshing = Meshmerizer` at the operator's request, as the first
-  real-content test case.
-
-  **First real-content start found and fixed a genuine gap**: 5,160
-  prims fell back to a bounding-box collision shape during region load
-  (sculpt/mesh asset not fetched yet when the shape was cooked), and -
-  unlike BulletSim - Jolt never retried once the asset actually
-  arrived, so the wrong shape stuck permanently. Confirmed real via a
-  restart (same warning fired again, ruling out stale state). Fixed by
-  giving it the same async-fetch-then-rebuild path BulletSim
-  already has (`RequestMeshAssetRebuild` + a step-thread-deferred
-  drain, mirroring the module's existing `_pendingActivation` pattern).
-  **Confirmed working with direct evidence, not an inferred count**
-  (commit `49aedfc869` adds explicit fetch/rebuild-outcome logging,
-  after an initial attempt to verify via the `IMesher returned null`
-  count swinging across boots turned out to be an invalid proxy - that
-  line fires regardless of whether the retry later succeeds): on
-  Starbase Andromeda's real content, all 4,654 fallback prims were
-  re-fetched and re-cooked - 4,614 became real mesh shapes, 40 stayed
-  bbox (genuinely degenerate sculpt geometry, matching the separate
-  `mesher geometry unusable` count exactly - correctly not retried).
-  Zero failed fetches, zero skipped rebuilds, zero exceptions. Full
-  detail in `PROJECT_LOG.md`.
-
-  **Considered and held: a disk-persistent mesh cache, so a restart
-  doesn't re-fetch/re-cook the same content every time.** Investigated
-  porting `ubMeshmerizer`'s existing `MeshFileCache` pattern (disk-
-  backed, survives process restarts) onto the generic `Meshmerizer`
-  BulletSim/Jolt share (currently in-memory only - `static
-  Dictionary<ulong, Mesh>`, wiped every restart, which is why the
-  4,654-prim fetch/re-cook above happens on EVERY boot, not just the
-  first). Confirmed feasible: `AMeshKey` is already a shared type
-  (`SharedBase/IMesher.cs`), and ubOde's `GetMeshUniqueKey()` only
-  depends on shared types - portable as-is. But the two `Mesh` classes
-  (`Meshing/Meshmerizer/Mesh.cs` vs `ubOdeMeshing/Mesh.cs`) have
-  genuinely different internal field layouts, so `ToStream`/
-  `FromStream` would need fresh serialization code, not a copy-paste -
-  and a subtle bug there produces *silently wrong* collision geometry
-  (not a safe, visible fallback like the bug above), on a mesher
-  BulletSim's other live regions share too. **Held, not started** -
-  real, worth doing if the every-restart re-fetch cost becomes an
-  actual problem, but needs its own isolated build-and-test pass
-  (round-trip serialization correctness, a scratch region) before
-  going anywhere near live Casperia, same discipline the original
-  Jolt integration got.
-
-  **Feature-parity audit vs ubODE/BulletSim (2026-09-09).** FEATURES.md
-  credits ubODE with "buoyant floating-prim water physics, boat wave
-  response, rubber bounce and material density tuning, rolling
-  resistance, avatar/object contact smoothing, and friendly avatar
-  social physics" - checked whether Jolt has real equivalents (not
-  just similar-sounding code) for each, and what BulletSim itself
-  actually has under the same categories (BulletSim's own FEATURES.md
-  entry just says "included as-is," which turned out incomplete - see
-  below). Read the real method bodies in all three engines' wrapper
-  code, not comments or naming.
-
-  | Category | ubODE | BulletSim | Jolt |
-  |---|---|---|---|
-  | General (non-vehicle) buoyancy | Real - gravity scaled `(1-buoyancy)` | Real - same formula, pushed once via `SetGravity` | **Absent** - `Buoyancy { get => 0f; set { } }` no-op stub |
-  | Boat wave response | Real - 2-component travelling sine wave, analytic normal+flow | Real but vehicle-scoped only, same sine-wave approach | **Absent** - vehicle hover uses a flat water plane, no wave math anywhere in Jolt/JoltPhysics.Vehicles |
-  | Material/rubber-bounce tuning | Real - material table, `sqrt(mu1*mu2)` blend, rubber-biased bounce formula | Real - full material table (Stone/Rubber/Glass/etc, ini-overridable), llSetPhysicsMaterial wired end to end | **Absent** - `SetMaterial` never overridden (uses `PhysicsActor`'s no-op base); backend has flat hardcoded friction defaults (0.6/0.5) regardless of material; llSetPhysicsMaterial has no effect |
-  | Rolling resistance | Real - global scene tunable scaled by per-prim friction, velocity-proportional drag | **Absent** - no `RollingFriction` anywhere in the wrapper or native API surface | **Absent**, same as BulletSim |
-  | Avatar/object contact smoothing | Real - EMA-filtered contact normals, landing/settle/slope damping, plus ODE contact-joint softening (soft ERP/CFM) | Real - dual-friction (standing/walking) state machine with a stationary-velocity debounce, terminal-velocity clamp, `ContactProcessingThreshold`/`CollisionMargin` | **No custom C# equivalent** - but Jolt's avatar is a native `CharacterVirtual` kinematic controller (`IsSliding` is a real native feature), architecturally different from ubODE/BulletSim's rigid-body-simulated avatars; genuinely unclear whether the same jitter problem even applies, not a confirmed like-for-like gap |
-  | "Friendly" avatar-avatar social physics | Real - per-mode (friendly/playful/romantic/no-touch) compliant contact (soft ERP/CFM, depth clamp) plus an explicit separating "social nudge" force scaled by penetration depth | Real but binary - `AvatarToAvatarCollisionsByDefault` toggles a collision-mask bit (`CollisionFilterGroups`/`BulletSimData.CollisionTypeMasks`) so avatars phase through each other entirely; no graduated push/nudge force | **Not built, but the infrastructure already exists**: `JoltPhysicsBackend.cs` has a real per-body `ObjectLayer`/`ObjectLayerPairFilterTable` collision-response filter (starts all-pairs-disabled, selectively enables per layer) - architecturally the same shape as BulletSim's mask toggle, just never wired to an avatar-vs-avatar layer |
-
-  **Portability read**: every category above that's "real" in ubODE/
-  BulletSim is, at its core, generic C# scalar/vector math (gravity
-  scaling, sine waves over `(x,y,t)`, velocity-proportional damping,
-  a material lookup table) - directly reusable against Jolt's own
-  `ApplyForce`/`SetGravityFactor`/`SetBodyFriction`/`SetBodyRestitution`
-  primitives, which already exist in `JoltPhysicsBackend.cs` and are
-  already called from a few places (vehicle friction, avatar ground
-  hold). The only genuinely engine-specific piece each time is the
-  last mile - BulletSim/ubODE's contact-joint softening (`soft_erp`/
-  `soft_cfm`, ODE/Bullet-specific constraint-solver concepts) has no
-  1:1 Jolt equivalent and would need re-expressing against Jolt's own
-  contact/material API, not a direct port. **Not started** - this is
-  a real, evidence-based backlog (general buoyancy and material/
-  friction wiring look like the highest-value, lowest-risk starting
-  points - both just need scripted values to actually reach
-  `SetBodyFriction`/`SetBodyRestitution`/`SetGravityFactor`, which
-  already exist).
-
-  **Implemented and deployed to live, 2026-09-09 (commit `fbace2e652`).**
-  All six gaps closed - see `PROJECT_LOG.md`'s "LegionJolt brought to
-  feature parity" entry for the full implementation writeup. Two real
-  Homeworldz-sourced Jolt-API fixes landed alongside the ported ubODE
-  behaviors: a restitution-combine-rule override (Jolt defaults to
-  `max`, not an average) plus an explicit non-zero terrain restitution
-  so that fix doesn't cap every bounce at half, and
-  `EnhancedInternalEdgeRemoval` + CCD for avatar/object contact
-  quality. New `[Jolt]` ini section for real region tunables. Built
-  clean, boot-tested on an isolated scratch region (three clean boots,
-  zero exceptions), then deployed straight to live Casperia rather
-  than continuing scratch-region testing - the restitution-combine/
-  terrain-restitution pieces affect every existing physical-prim-vs-
-  terrain contact on a running Jolt region, so real content on
-  Starbase Andromeda is a better test bed than an empty standalone
-  region. All three affected DLLs `md5sum`-verified on deploy.
-
-  **Restart-confirmed, 2026-09-10 17:33** (same restart that verified
-  the LegionJolt->JoltPhysics rename): clean boot, zero exceptions,
-  `TriggerRegionReady` completed, an avatar connected and spawned
-  normally through the feature-parity-updated `JoltPhysicsScene`/
-  `JoltPhysicsBackend`. Confirms the code loads and runs correctly
-  under real content - did NOT by itself confirm each behavior *feels*
-  right in-world.
-
-  **In-world behavioral verification, 2026-09-11**, via the built-in
-  `jolt` diagnostic console suite against real Starbase Andromeda
-  content (not a scratch region). `LocalConsole` crashes under any
-  redirected stdin/stdout (`IOException: The handle is invalid` in
-  `ConsolePal.set_TreatControlCAsInput`) - drove it via OpenSim's
-  RemoteConsole (`console = rest` + temporary credentials, reverted
-  immediately after) instead. Real results:
-  - `jolt avatarstatus`: `supported=Y sliding=N`, `dZ=0.021` against
-    real terrain - avatar/object contact quality (`EnhancedInternalEdgeRemoval`,
-    ground-hold) confirmed working, not just present in the diff.
-  - `jolt droptest`/`dropstatus`: a dropped box fell, bounced once
-    (vZ flipped from -15.4 to +7.2 on impact) and decayed to rest at
-    `liveZ=14.018` vs expected `14.020` - restitution-combine and
-    material tuning genuinely working. **Real finding, not a
-    blocker**: the diagnostic's own `rested`/`JustDeactivated`
-    bookkeeping stayed `N`/`0` even after the box was fully still
-    (speed=0.000, position essentially exact) for well past Jolt's
-    0.5s sleep threshold - either a timing race in the diagnostic's
-    one-shot deactivation-flag check, or the body genuinely never
-    signals deactivated on this content. Worth a real look if anyone
-    depends on deactivation events (e.g. a future "sleeping body count"
-    metric), but doesn't affect actual physical settling, which is
-    correct.
-  - `jolt vehiclestatus`: real live production content, a "Shuttle
-    Type 6 (Mesh)" TYPE_AIRPLANE, active, buoyancy=0.90 - confirms the
-    vehicle path holds up under genuine resident-built vehicles, not
-    just synthetic test rigs.
-  - `jolt terraintest`: raycast probes correctly hit real geometry at
-    interior points and correctly miss just past the 512x512 region
-    boundary - heightfield bounds are right.
-  - `jolt boattest hover`: **ALL PASS** across all three phases
-    (settle-from-above, rise-from-below, hold-at-rest) - a boat
-    consistently settles to `water+0.50` with natural 0.6-4.8 degree
-    tilt oscillation (real wave-driven roll/pitch, not a flat bob) in
-    all three approaches. This is the strongest confirmation yet that
-    the ported boat wave-response math (item 6) is functionally
-    correct, not just present.
-  - Test prims cleaned up (`jolt clearprims`) after each test; REST
-    console access reverted to `LocalConsole` immediately after this
-    pass - it was never meant to be a standing config.
-
-  All six feature-parity items are now confirmed not just present in
-  the diff, but behaviorally correct against real content.
-
-  **Provenance correction**: the boat wave-response code in both
-  `BSDynamics.cs` (BulletSim) and `ODEDynamics.cs`/`ODEScene.cs`
-  (ubODE) is NOT stock upstream OpenSimulator - confirmed via `git log
-  -S "BoatWaveHeight1"`, both engines' wave math was added together by
-  `GuntharDeNiro`. `FEATURES.md`'s "BulletSim... included as-is" line
-  was wrong on this point - corrected.
-
-  **Second correction, 2026-09-10: the "gunthar's unported dual-engine
-  physics-tuning cluster" framing that used to sit here was itself
-  wrong.** The earlier check used `git merge-base --is-ancestor
-  <hash> HEAD` on individual gunthar commit hashes and read "not an
-  ancestor" as "not ported" - but a cherry-pick produces a new commit
-  SHA even with byte-identical content, so hash-ancestry was never the
-  right test. Direct content comparison found `ODEScene.cs` byte-for-
-  byte identical (matching md5sum) to `gunthar/master`'s tip, and
-  `BSDynamics.cs`/`SOPVehicle.cs` with zero diff at all - the full
-  buoyancy/water/rubber-bounce/rolling-resistance/avatar-avatar-social-
-  physics/boat-wave cluster (40+ commits, `GuntharDeNiro` authorship
-  and original 2026-06-11 timestamps preserved under different SHAs)
-  is already live in both ubODE and BulletSim today. The two non-empty
-  file diffs found were trivial: `ODEPrim.cs` (Confluence has an extra
-  mesh-fallback diagnostic Gunthar's own copy lacks - Confluence ahead,
-  not behind) and a 3-line cosmetic field reorder in `ODEDynamics.cs`.
-  Nothing to build here. Still genuinely unverified, and NOT covered by
-  this correction: gunthar's ~15-commit attachment-transfer/region-
-  crossing-race hardening cluster and later map-tile/weather
-  refinements - a real per-commit check is still owed there.
+  Full build/audit/deploy/bug-fix/reversion history:
+  `PROJECT_LOG.md`'s "Jolt physics integrated as a selectable third
+  engine," "Jolt vs ubODE/BulletSim feature-parity audit," "LegionJolt
+  brought to feature parity," "Real Jolt physics bugs found and fixed:
+  run speed, unsit-to-ground," and "Jolt systematic sweep, walking-lag
+  diagnosis, and reversion" entries (all 2026-09-09 through 09-11).
+- Gunthar's own ~15-commit attachment-transfer/region-crossing-race
+  hardening cluster, plus later map-tile/weather refinements, remain
+  genuinely unverified against this codebase - a real per-commit check
+  is still owed there (found while confirming, separately, that
+  gunthar's buoyancy/water/rubber-bounce/rolling-resistance/avatar-
+  avatar-social-physics/boat-wave cluster IS already live in both
+  ubODE and BulletSim, byte-identical - see `PROJECT_LOG.md`).
 - **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
   (2026-09-08).** The ~115 commits left uncharacterized after the
   Experience (23 commits) and LegionJolt (~65 commits, above) clusters
