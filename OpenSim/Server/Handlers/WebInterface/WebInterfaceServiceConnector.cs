@@ -1021,6 +1021,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/myregions/restart":
                         HandleMyRegionsRestart(request, response);
                         break;
+                    case BasePath + "/myregions/group-auto-invite":
+                        HandleMyRegionsGroupAutoInvite(request, response);
+                        break;
                     case BasePath + "/myland":
                         HandleMyLand(request, response);
                         break;
@@ -6376,6 +6379,20 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private static bool IsRegionAlive(GridRegion region, int timeoutMs)
         {
+            // Same loopback-first fix already applied to
+            // RunRegionConsoleCommand, for the same underlying reason: the
+            // public ServerURI needs router port-forwarding, which
+            // auto-allocated Store-order ports don't have, and even a
+            // forwarded port can fail this probe from the SAME machine
+            // that's hosting it if the router doesn't support NAT hairpin -
+            // a genuinely healthy, fully-registered region showed "Offline"
+            // here purely because of that, not because it was actually down
+            // (found live, 2026-09-12: several regions with substantial
+            // memory/uptime still showed Offline on this page).
+            if (region.InternalEndPoint != null && region.InternalEndPoint.Port > 0
+                    && Util.IsHostAlive("http://127.0.0.1:" + region.InternalEndPoint.Port + "/", timeoutMs))
+                return true;
+
             return Util.IsHostAlive(region.ServerURI, timeoutMs);
         }
 
@@ -8098,9 +8115,49 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            RunRegionConsoleCommand(region, "region restart 120");
+            // "region restart 120" alone only resets scene state in-process
+            // (see casperia-region-restart-does-not-reload-dlls) - it never
+            // actually exits the process, so on its own it can never pick up
+            // deployed code. RealRestartRegion follows the same 120s warning
+            // residents already know with a genuine stop+start, which now
+            // also refreshes this region's own private bin\ copy
+            // (TryStartRegionProcess -> SyncRegionBinaries). Runs on a
+            // background thread since the full sequence takes ~2 minutes -
+            // far past what a blocking HTTP response should wait on.
+            string simFolder = DiscoverSimulators().FirstOrDefault(s => s.RegionID == regionID).SimulatorFolder;
+            if (string.IsNullOrEmpty(simFolder))
+            {
+                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(region.RegionName + " isn't currently discoverable as a simulator folder, so it can't be fully restarted from here."), HttpStatusCode.Redirect);
+                return;
+            }
 
-            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("Restart command sent to " + region.RegionName + "."), HttpStatusCode.Redirect);
+            System.Threading.Thread t = new System.Threading.Thread(() => RealRestartRegion(simFolder, regionID, region.RegionName))
+            { IsBackground = true };
+            t.Start();
+
+            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(region.RegionName + ": 120-second warning sent, then a real restart to pick up any deployed code."), HttpStatusCode.Redirect);
+        }
+
+        // Shared by the single-region Restart button (HandleAdminRegionRestart)
+        // and the rolling Restart All (HandleAdminSimulatorsRestartAll) -
+        // one implementation of "warn, wait, then actually cycle the
+        // process" so the two callers can't drift. The 120s console warning
+        // is the same one residents already see today; TryStopRegion keeps
+        // its own backup-in-progress safety check, and TryStartRegionProcess
+        // is what refreshes this region's private bin\ from the grid root
+        // before relaunching - see SyncRegionBinaries.
+        private void RealRestartRegion(string simulatorFolder, UUID regionId, string regionName)
+        {
+            GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+                return;
+
+            RunRegionConsoleCommand(region, "region restart 120");
+            System.Threading.Thread.Sleep(125000);
+
+            TryStopRegion(regionId, regionName, out _);
+            System.Threading.Thread.Sleep(5000);
+            TryStartRegionProcess(simulatorFolder, out _, out _);
         }
 
         // Same RunRegionConsoleCommand/shared-secret mechanism as Restart
@@ -9819,12 +9876,23 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             else
             {
-                List<int> estateIDs = session.IsAdmin ? m_EstateDataService.GetEstatesAll() : m_EstateDataService.GetEstatesByOwner(session.PrincipalID);
+                // /myestates is reached from the personal "Land & Estate"
+                // nav, not the admin panel - it has to mean "my own
+                // estates," full stop, even when the logged-in user also
+                // happens to be a grid admin. Found live: an admin who owns
+                // some estates AND is an estate owner elsewhere got the
+                // grid's entire estate list on their own "My Estate" page,
+                // exactly as confusing as it sounds - the admin-sees-all
+                // behavior only belongs on /admin/estates, which is a
+                // different, explicitly admin-labeled entry point sharing
+                // this same handler.
+                bool isPersonalView = (request.RawUrl ?? string.Empty).StartsWith(BasePath + "/myestates", StringComparison.OrdinalIgnoreCase);
+                List<int> estateIDs = (session.IsAdmin && !isPersonalView) ? m_EstateDataService.GetEstatesAll() : m_EstateDataService.GetEstatesByOwner(session.PrincipalID);
 
                 StringBuilder rows = new StringBuilder();
                 if (estateIDs.Count == 0)
                 {
-                    rows.Append("<p>").Append(session.IsAdmin ? "No estates exist on this grid yet." : "You don't own any estates on this grid.").Append("</p>");
+                    rows.Append("<p>").Append((session.IsAdmin && !isPersonalView) ? "No estates exist on this grid yet." : "You don't own any estates on this grid.").Append("</p>");
                 }
                 else
                 {
@@ -9833,7 +9901,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // Teleport directly as columns, at-a-glance without
                     // opening each estate - real gap, this table only had
                     // Estate/Owner/Regions.
-                    rows.Append("<table><tr><th>Estate</th>").Append(session.IsAdmin ? "<th>Owner</th>" : "")
+                    bool showOwnerColumn = session.IsAdmin && !isPersonalView;
+                    rows.Append("<table><tr><th>Estate</th>").Append(showOwnerColumn ? "<th>Owner</th>" : "")
                             .Append("<th>Public</th><th>Voice</th><th>Tax Free</th><th>Direct TP</th><th>Regions</th></tr>");
                     foreach (int existingEstateID in estateIDs)
                     {
@@ -9843,9 +9912,9 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                         int regionCount = m_EstateDataService.GetRegions(existingEstateID).Count;
 
-                        rows.Append("<tr><td><a href=\"").Append(BasePath).Append("/admin/estates?id=").Append(existingEstateID).Append("\">")
+                        rows.Append("<tr><td><a href=\"").Append(BasePath).Append(isPersonalView ? "/myestates?id=" : "/admin/estates?id=").Append(existingEstateID).Append("\">")
                                 .Append(Html(estate.EstateName)).Append("</a></td>");
-                        if (session.IsAdmin)
+                        if (showOwnerColumn)
                         {
                             UserAccount owner = m_UserAccountService?.GetUserAccount(UUID.Zero, estate.EstateOwner);
                             string ownerName = owner != null ? owner.Name : estate.EstateOwner.ToString();
@@ -9860,11 +9929,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     rows.Append("</table>");
                 }
 
+                bool showAdminTools = session.IsAdmin && !isPersonalView;
                 body = "<h1>Estate Management</h1>"
-                        + "<p><a href=\"" + BasePath + (session.IsAdmin ? "/admin" : "/dashboard") + "\">Back to " + (session.IsAdmin ? "admin" : "dashboard") + "</a></p>"
+                        + "<p><a href=\"" + BasePath + (showAdminTools ? "/admin" : "/dashboard") + "\">Back to " + (showAdminTools ? "admin" : "dashboard") + "</a></p>"
                         + message
                         + rows.ToString()
-                        + (session.IsAdmin
+                        + (showAdminTools
                             ? "<h2>Create Estate</h2>"
                             + "<form method=\"post\" action=\"" + BasePath + "/admin/estates/create\">"
                             + "<label>Estate name: <input type=\"text\" name=\"estate_name\" required></label>"
@@ -10455,7 +10525,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     .Append("a public-facing reverse proxy has real, environment-dependent failure modes (body size limits, read timeouts) ")
                     .Append("that a self-service page can't fix on its own. Restore an OAR from the region's own console instead.</p>");
 
-                rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Actions</th></tr>");
+                rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Actions</th><th>Group Auto-Invite</th></tr>");
                 foreach (GridRegion region in ownedRegions)
                 {
                     rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
@@ -10469,6 +10539,17 @@ namespace OpenSim.Server.Handlers.WebInterface
                             .Append(Html(region.RegionName).Replace("'", "\\'")).Append("? Everyone in the region will be disconnected.');\">");
                     rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                     rows.Append("<button type=\"submit\">Restart</button></form>");
+                    rows.Append("</td>");
+                    rows.Append("<td>");
+                    rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/group-auto-invite\" style=\"display:inline-flex;gap:4px;align-items:center;\">");
+                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                    rows.Append("<input type=\"hidden\" name=\"action\" value=\"enable\">");
+                    rows.Append("<input type=\"text\" name=\"group_id\" placeholder=\"group uuid\" style=\"width:110px;\">");
+                    rows.Append("<button type=\"submit\">Enable</button></form>");
+                    rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/group-auto-invite\" style=\"display:inline\">");
+                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                    rows.Append("<input type=\"hidden\" name=\"action\" value=\"disable\">");
+                    rows.Append("<button type=\"submit\">Disable</button></form>");
                     rows.Append("</td></tr>");
                 }
                 rows.Append("</table>");
@@ -10616,6 +10697,59 @@ namespace OpenSim.Server.Handlers.WebInterface
             else if (string.IsNullOrEmpty(m_webConsoleSecret))
             {
                 message = "Web console is not configured on this grid - region restart is unavailable.";
+            }
+
+            response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Self-service Group Auto-Invite - same RunRegionConsoleCommand
+        // mechanism and GetOwnedRegionOrNull ownership check as
+        // HandleMyRegionsRestart above, mirroring the admin-only
+        // HandleAdminRegionGroupAutoInvite (enable/disable + a target group
+        // UUID). This one only ever toggles a region the caller actually
+        // owns - added per the user's own point that an estate owner should
+        // be able to manage this for their own region without needing full
+        // grid-admin access.
+        private void HandleMyRegionsGroupAutoInvite(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Region not found or not owned by you.";
+
+            if (request.HttpMethod == "POST" && !string.IsNullOrEmpty(m_webConsoleSecret))
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                if (UUID.TryParse(FormValue(form, "region_id"), out UUID regionID))
+                {
+                    GridRegion region = GetOwnedRegionOrNull(session, regionID);
+                    if (region != null && !string.IsNullOrEmpty(region.ServerURI))
+                    {
+                        string action = FormValue(form, "action");
+                        if (action == "disable")
+                        {
+                            RunRegionConsoleCommand(region, "group-auto-invite disable");
+                            message = "Group Auto-Invite disabled in " + region.RegionName + ".";
+                        }
+                        else if (action == "enable" && UUID.TryParse(FormValue(form, "group_id"), out UUID groupID) && !groupID.IsZero())
+                        {
+                            RunRegionConsoleCommand(region, "group-auto-invite enable " + groupID);
+                            message = "Group Auto-Invite enabled in " + region.RegionName + " with target group " + groupID + ".";
+                        }
+                        else
+                        {
+                            message = "Enter a valid group UUID to enable Group Auto-Invite.";
+                        }
+                    }
+                }
+            }
+            else if (string.IsNullOrEmpty(m_webConsoleSecret))
+            {
+                message = "Web console is not configured on this grid - Group Auto-Invite is unavailable.";
             }
 
             response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
@@ -13875,11 +14009,23 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             exitCode = 0;
 
-            string exePath = Path.Combine(m_regionOrderGridRoot, "OpenSim.exe");
             string relativeIniArg = Path.Combine("Simulators", simulatorFolderName, "OpenSim.ini");
             string simFolder = Path.Combine(m_regionOrderGridRoot, "Simulators", simulatorFolderName);
+            string binFolder = Path.Combine(simFolder, "bin");
             string logFilePath = Path.Combine(simFolder, "start.log");
             logPath = logFilePath;
+
+            // Every region used to launch the one shared OpenSim.exe/DLL set
+            // directly from m_regionOrderGridRoot, which meant ALL running
+            // regions had to exit to release file locks before any code
+            // deploy - a real, repeated production pain point. Each region
+            // now runs its own private copy under Simulators/<name>/bin,
+            // refreshed from the grid root right before every start, so a
+            // freshly-ordered or restarted region always launches on the
+            // latest deployed code while every other already-running region
+            // keeps its own DLLs open, untouched.
+            SyncRegionBinaries(binFolder);
+            string exePath = Path.Combine(binFolder, "OpenSim.exe");
 
             ProcessStartInfo psi = new ProcessStartInfo
             {
@@ -13928,6 +14074,49 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             return true;
+        }
+
+        // Copies the current top-level OpenSim.exe/DLL/PDB set (and the
+        // native lib64 physics libraries) into a region's own private bin
+        // folder, creating it on first call. Per-file try/catch: a locked
+        // file (e.g. this same region's own previous process exiting a
+        // moment ago) just keeps its last-good copy for this run rather
+        // than aborting the whole start attempt over one file.
+        private void SyncRegionBinaries(string binFolder)
+        {
+            Directory.CreateDirectory(binFolder);
+            Directory.CreateDirectory(Path.Combine(binFolder, "lib64"));
+
+            // Includes System.Drawing.Common.dll.win/.linux - Application.cs's
+            // own startup code (line ~97) copies whichever platform sidecar
+            // matches the OS into the real System.Drawing.Common.dll at
+            // every launch; missing them crashes the region immediately
+            // with a FileNotFoundException (found live, 2026-09-12).
+            string[] patterns = { "*.dll", "*.exe", "*.pdb", "*.config", "*.json", "*.dll.win", "*.dll.linux" };
+            foreach (string pattern in patterns)
+            {
+                foreach (string src in Directory.GetFiles(m_regionOrderGridRoot, pattern))
+                {
+                    try
+                    {
+                        File.Copy(src, Path.Combine(binFolder, Path.GetFileName(src)), true);
+                    }
+                    catch { }
+                }
+            }
+
+            string lib64Src = Path.Combine(m_regionOrderGridRoot, "lib64");
+            if (Directory.Exists(lib64Src))
+            {
+                foreach (string src in Directory.GetFiles(lib64Src, "*.dll"))
+                {
+                    try
+                    {
+                        File.Copy(src, Path.Combine(binFolder, "lib64", Path.GetFileName(src)), true);
+                    }
+                    catch { }
+                }
+            }
         }
 
         #endregion Store
@@ -14275,14 +14464,53 @@ namespace OpenSim.Server.Handlers.WebInterface
                   .Append("onsubmit=\"return confirm('Rolling-restart every running simulator? Each gets a 120-second in-world warning, staggered 30 seconds apart so the whole grid is never down at once. This will take several minutes.');\">");
                 sb.Append("<button type=\"submit\">Restart All (rolling)</button></form>");
 
+                // Util.IsHostAlive blocks synchronously for up to its own
+                // timeout on a dead port - a plain foreach here meant this
+                // page's load time scaled directly with how many
+                // simulators were stopped (observed live: ~15s for 15
+                // stopped regions, ~1000ms each, one after another).
+                // Checking all of them in parallel instead means the page
+                // load takes as long as the SLOWEST single check, not the
+                // sum of all of them.
+                // ProcessAlive (raw TCP probe) decides the Start/Stop button
+                // choice - unchanged, since that's a launch-eligibility
+                // question, and treating a still-starting region as
+                // "Stopped" here would let Start fire a second process on
+                // top of the one already coming up. Ready (the region's own
+                // LoginsEnabled, via the new ready-status console command)
+                // is a separate, purely-cosmetic signal for what the status
+                // pill actually says - a bare open port means the HTTP
+                // listener is up, well before RegionReadyModule finishes
+                // loading objects/scripts, so "Running" was showing long
+                // before there was any region prompt/"LOGINS ENABLED" line
+                // for an admin to see (found live, 2026-09-12).
+                ConcurrentDictionary<string, (bool ProcessAlive, bool Ready)> statusByFolder = new ConcurrentDictionary<string, (bool, bool)>();
+                Parallel.ForEach(simulators, s =>
+                {
+                    int? port = GetSimulatorPort(s.SimulatorFolder);
+                    bool processAlive = port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
+                    bool ready = false;
+                    if (processAlive)
+                    {
+                        GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, s.RegionID);
+                        if (region != null && !string.IsNullOrEmpty(region.ServerURI))
+                        {
+                            string result = RunRegionConsoleCommand(region, "ready-status " + s.RegionID);
+                            ready = result.Contains("LOGINS_ENABLED: True");
+                        }
+                    }
+                    statusByFolder[s.SimulatorFolder] = (processAlive, ready);
+                });
+
                 sb.Append("<table><tr><th>Region</th><th>Status</th><th>Actions</th></tr>");
                 foreach (var s in simulators.OrderBy(s => s.RegionName, StringComparer.OrdinalIgnoreCase))
                 {
-                    int? port = GetSimulatorPort(s.SimulatorFolder);
-                    bool running = port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
+                    statusByFolder.TryGetValue(s.SimulatorFolder, out var st);
+                    bool running = st.ProcessAlive;
 
                     sb.Append("<tr><td>").Append(Html(s.RegionName)).Append("</td>");
-                    sb.Append("<td><span class=\"pill ").Append(running ? "pill-yes\">Running" : "pill-no\">Stopped").Append("</span></td>");
+                    string pill = !st.ProcessAlive ? "pill-no\">Stopped" : (st.Ready ? "pill-yes\">Running" : "pill-warn\">Starting...");
+                    sb.Append("<td><span class=\"pill ").Append(pill).Append("</span></td>");
                     sb.Append("<td>");
                     if (!running)
                     {
@@ -14360,7 +14588,15 @@ namespace OpenSim.Server.Handlers.WebInterface
             string message = "Nothing to do.";
             if (request.HttpMethod == "POST")
             {
+                // Checked in parallel, not a sequential .Where - each
+                // Util.IsHostAlive blocks for up to 1000ms on a dead port,
+                // and this filter runs BEFORE the background worker below
+                // even starts, so a sequential scan across many stopped
+                // regions could itself approach the same Apache proxy
+                // timeout the background-worker comment below already
+                // warns about, just one step earlier.
                 List<(string SimulatorFolder, string RegionName, UUID RegionID)> toStart = DiscoverSimulators()
+                        .AsParallel()
                         .Where(s =>
                         {
                             int? port = GetSimulatorPort(s.SimulatorFolder);
@@ -14384,16 +14620,37 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // status table on this page already reflects each
                     // simulator's real state live on every load, so there's
                     // nothing lost by not blocking here for a final count.
+                    // Staggered, not fired all at once - found live
+                    // (2026-09-12) that launching every stopped region back
+                    // to back let their own heavy per-region init (script
+                    // compilation, physics actor loading, DB queries) all
+                    // land at the same time, and that CPU/disk/DB
+                    // contention - not anything about the launch mechanism
+                    // itself - is what made RegionReady take noticeably
+                    // longer than a single region starting on its own.
+                    // 5s, not Restart All's 30s below - Start All is a cold
+                    // boot with nobody connected yet, so there's no in-world
+                    // warning countdown to pace against, just enough of a
+                    // gap to avoid the pile-up. User's own math: 30s x 15
+                    // regions already meant 7.5 minutes of pure stagger
+                    // before the last one even started, and that only gets
+                    // worse as more regions are added - CasperiaControl.bat
+                    // launches with no stagger at all and worked fine at a
+                    // human's own clicking pace, so 5s comfortably covers
+                    // the actual contention risk without exaggerating it.
                     List<(string SimulatorFolder, string RegionName, UUID RegionID)> toStartCaptured = toStart;
                     System.Threading.Thread worker = new System.Threading.Thread(() =>
                     {
                         foreach (var s in toStartCaptured)
+                        {
                             TryStartRegionProcess(s.SimulatorFolder, out _, out _);
+                            System.Threading.Thread.Sleep(5000);
+                        }
                     })
                     { IsBackground = true };
                     worker.Start();
 
-                    message = "Starting " + toStart.Count + " simulator(s) in the background - refresh this page in a bit to see status.";
+                    message = "Starting " + toStart.Count + " simulator(s), 5 seconds apart so they don't all compete for CPU/disk/DB at once - refresh this page over the next couple minutes to see status.";
                 }
             }
 
@@ -14426,6 +14683,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (request.HttpMethod == "POST")
             {
                 List<(string SimulatorFolder, string RegionName, UUID RegionID)> toRestart = DiscoverSimulators()
+                        .AsParallel()
                         .Where(s =>
                         {
                             int? port = GetSimulatorPort(s.SimulatorFolder);
@@ -14448,9 +14706,19 @@ namespace OpenSim.Server.Handlers.WebInterface
                     {
                         foreach (var s in toRestartCaptured)
                         {
-                            GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, s.RegionID);
-                            if (region != null && !string.IsNullOrEmpty(region.ServerURI))
-                                RunRegionConsoleCommand(region, "region restart 120");
+                            // Each region's own full warn->wait->stop->start
+                            // sequence (RealRestartRegion) runs on its own
+                            // thread so this outer loop doesn't block for
+                            // ~2 minutes per region before staggering the
+                            // next one - the 30s gap is between each
+                            // region's warning STARTING, matching the
+                            // original rolling-restart design, not between
+                            // full completions.
+                            var captured = s;
+                            System.Threading.Thread regionThread = new System.Threading.Thread(
+                                () => RealRestartRegion(captured.SimulatorFolder, captured.RegionID, captured.RegionName))
+                            { IsBackground = true };
+                            regionThread.Start();
 
                             // Sleep AFTER firing, not before - the first
                             // region's countdown starts immediately on
@@ -14462,7 +14730,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     worker.Start();
 
                     message = "Rolling restart started for " + toRestart.Count
-                            + " simulator(s), 30 seconds apart - refresh this page over the next few minutes to watch status.";
+                            + " simulator(s), 30 seconds apart - each gets the 120s in-world warning, then a real stop+start to pick up any deployed code. Refresh this page over the next several minutes to watch status.";
                 }
             }
 
@@ -14653,6 +14921,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (request.HttpMethod == "POST")
             {
                 List<(string SimulatorFolder, string RegionName, UUID RegionID)> toStop = DiscoverSimulators()
+                        .AsParallel()
                         .Where(s =>
                         {
                             int? port = GetSimulatorPort(s.SimulatorFolder);

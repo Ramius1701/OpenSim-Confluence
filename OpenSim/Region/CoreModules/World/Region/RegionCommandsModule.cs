@@ -140,6 +140,18 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
                 + "Output is a single parseable line: \"BACKUP_IN_PROGRESS: True\" or \"...: False\".",
                 HandleBackupStatus);
 
+            m_console.Commands.AddCommand(
+                "Regions", false, "ready-status",
+                "ready-status <region-id>",
+                "Reports whether this region has actually finished starting up (LoginsEnabled).",
+                "Queried by the WebUI's admin Simulators page instead of a bare TCP port probe -\n"
+                + "found live: a region's HTTP listener opens well before RegionReadyModule finishes\n"
+                + "loading objects/compiling scripts, so a port-only check showed \"Running\" long\n"
+                + "before the region prompt/\"LOGINS ENABLED\" line actually appeared, which is what\n"
+                + "an admin means by a region being up.\n"
+                + "Output is a single parseable line: \"LOGINS_ENABLED: True\" or \"...: False\".",
+                HandleReadyStatus);
+
             m_console.Commands.AddCommand("Regions", false, "show neighbours",
                 "show neighbours",
                 "Shows the local region neighbours", HandleShowNeighboursCommand);
@@ -389,6 +401,26 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
                 return;
 
             MainConsole.Instance.Output("BACKUP_IN_PROGRESS: {0}", m_scene.IsBackingUp);
+        }
+
+        private void HandleReadyStatus(string module, string[] args)
+        {
+            if (args.Length != 2)
+            {
+                MainConsole.Instance.Output("Usage: ready-status <region-id>");
+                return;
+            }
+
+            if (!UUID.TryParse(args[1], out UUID regionID))
+            {
+                MainConsole.Instance.Output("Usage: ready-status <region-id>");
+                return;
+            }
+
+            if (regionID != m_scene.RegionInfo.RegionID)
+                return;
+
+            MainConsole.Instance.Output("LOGINS_ENABLED: {0}", m_scene.LoginsEnabled);
         }
 
         private void HandleShowScene(string module, string[] cmd)
