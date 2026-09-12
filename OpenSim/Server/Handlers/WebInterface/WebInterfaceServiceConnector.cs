@@ -14125,10 +14125,27 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // start. The other three substitutions happen to start with
                 // a quote character so they were never ambiguous, but ${1}
                 // everywhere is the actually-correct, non-fragile form.
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*logfile\s*=\s*).*$", "${1}\"" + logBase + ".log\"");
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*StatsLogFile\s*=\s*).*$", "${1}\"" + logBase + "Stats.log\"");
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*regionload_regionsdir\s*=\s*).*$", "${1}\"" + regionsDir + "\"");
-                templateText = Regex.Replace(templateText, @"(?m)^(\s*http_listener_port\s*=\s*).*$", "${1}" + port.Value);
+                // ^\s*;?\s*(key\s*=\s*) - not ^(\s*key\s*=\s*) - the old
+                // pattern only ever matched an ALREADY-UNCOMMENTED line.
+                // Casperia's own real OpenSim.ini has all four of these
+                // active (it has to, to run at all), so this worked every
+                // time it was tested against Casperia's own template - but
+                // the shipped bin/OpenSim.ini.example ships every one of
+                // these four keys commented out by default. Found live by
+                // an actual fresh-clone test, 2026-09-13: the regex silently
+                // matched nothing, http_listener_port was never rewritten,
+                // and the region bound the code's own built-in fallback
+                // port (9000) instead of its real allocated port from the
+                // Store's pool - silent, not a crash, and every subsequent
+                // region created the same way would try to bind the same
+                // wrong port. The leading ";?\s*" now matches an optional
+                // comment marker too, and since it sits OUTSIDE capture
+                // group 1, the replacement naturally uncomments the line as
+                // a side effect of rewriting it.
+                templateText = Regex.Replace(templateText, @"(?m)^\s*;?\s*(logfile\s*=\s*).*$", "${1}\"" + logBase + ".log\"");
+                templateText = Regex.Replace(templateText, @"(?m)^\s*;?\s*(StatsLogFile\s*=\s*).*$", "${1}\"" + logBase + "Stats.log\"");
+                templateText = Regex.Replace(templateText, @"(?m)^\s*;?\s*(regionload_regionsdir\s*=\s*).*$", "${1}\"" + regionsDir + "\"");
+                templateText = Regex.Replace(templateText, @"(?m)^\s*;?\s*(http_listener_port\s*=\s*).*$", "${1}" + port.Value);
 
                 // Without this, a brand-new region has no estate at all,
                 // and stock OpenSim's own startup code

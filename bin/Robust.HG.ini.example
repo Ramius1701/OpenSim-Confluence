@@ -239,14 +239,23 @@
     ;; runs the UserAgentsService, possibly this server.
     ;; For example http://myworld.com:8002
     ;; This is a default that can be overwritten in some sections.
-    ; HomeURI = "${Const|BaseURL}:${Const|PublicPort}"
+    ;; Left commented out in most other sections that reference the same
+    ;; ${Const|BaseURL}:${Const|PublicPort} value (HGInventoryService,
+    ;; HGAssetService, Groups, etc.) - they fall back to reading it from
+    ;; here when unset, so THIS pair is the one that actually has to be
+    ;; active. Confirmed by a real fresh-clone test, 2026-09-13: leaving
+    ;; both commented breaks Robust outright ("GatekeeperURI is a invalid
+    ;; host" / "[HGAssetService] No HomeURI specified"), even though this
+    ;; is Robust.HG.ini - the Hypergrid-enabled config - where Hypergrid
+    ;; obviously needs to actually be configured.
+    HomeURI = "${Const|BaseURL}:${Const|PublicPort}"
 
     ;# {GatekeeperURI} {Hypergrid} {The URL of the gatekeeper of this grid} {}
     ;; This is the address of the external robust server
     ;; that runs the Gatekeeper service, possibly this server.
     ;; For example http://myworld.com:8002
     ;; This is a default that can be overwritten in some sections.
-    ; GatekeeperURI = "${Const|BaseURL}:${Const|PublicPort}"
+    GatekeeperURI = "${Const|BaseURL}:${Const|PublicPort}"
 
     ;# {GatekeeperURIAlias} {Hypergrid} {alternative hostnames (FQDN), or IPs of the gatekeeper of this grid and port (default 80 or 443 if alias starts with https://)} {}
     ;; comma separated list,
@@ -952,6 +961,21 @@
     ;; Separate secret gating report *retrieval* (getreports/getreport, an
     ;; admin-tool concern) from whatever auth gates report submission above.
     ; AdminSecret = ""
+
+;; Both sections below were missing from this example entirely until a
+;; real fresh-clone test caught it, 2026-09-13 - UserAliasServiceConnector
+;; is referenced above under [ServiceListeners] as something to load, but
+;; with no matching [UserAliasService] section Robust fails outright
+;; ("No section UserAliasService in config file"). RegionHGService is a
+;; real, working service (per-region Hypergrid open/close toggle) that
+;; was simply never added to this template either.
+[RegionHGService]
+    ;; StorageProvider/ConnectionString inherit from [DatabaseService] above.
+    LocalServiceModule = "OpenSim.Services.RegionHGService.dll:RegionHGService"
+
+[UserAliasService]
+    ;; StorageProvider/ConnectionString inherit from [DatabaseService] above.
+    LocalServiceModule = "OpenSim.Services.UserAccountService.dll:UserAliasService"
 
 [ExperienceService]
     LocalServiceModule = "OpenSim.Services.ExperienceService.dll:ExperienceService"
