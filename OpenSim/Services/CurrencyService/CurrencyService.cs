@@ -35,6 +35,20 @@ namespace OpenSim.Services.CurrencyService
         private readonly int m_weeklyCapHundredths;
         private readonly int m_monthlyCapHundredths;
 
+        // Two more real MoneyServer/DTLNSLMoneyModule settings
+        // (MoneyServer.ini's DefaultBalance/CurrencyMaximum) that never got
+        // an equivalent when Batch 12 made ConfluenceCurrencyModule the
+        // active EconomyModule - found live, 2026-09-12, the same way the
+        // purchase-cap gap above was found. MaxBalance clamps (never
+        // rejects) per the legacy ini's own documented behavior for every
+        // non-purchase balance-update path; 0 disables it, same convention.
+        // DefaultRegistrationBalance is read by the WebUI's registration
+        // handler, not applied here - this service has no "new account"
+        // event of its own to hook.
+        private readonly int m_maxBalance;
+        private readonly int m_defaultRegistrationBalance;
+        private readonly bool m_enableAmountZero;
+
         // DTLNSLMoneyModule/MoneyServer had a real "Banker" concept
         // (MoneyServer.ini's BankerAvatar + AddBankerMoneyHandler) that the
         // native ledger never got an equivalent for: every "system"
@@ -71,6 +85,9 @@ namespace OpenSim.Services.CurrencyService
             m_dailyCapHundredths = (currencyConfig?.GetInt("DailyPurchaseCapUSD", 500) ?? 500) * 100;
             m_weeklyCapHundredths = (currencyConfig?.GetInt("WeeklyPurchaseCapUSD", 2000) ?? 2000) * 100;
             m_monthlyCapHundredths = (currencyConfig?.GetInt("MonthlyPurchaseCapUSD", 5000) ?? 5000) * 100;
+            m_maxBalance = currencyConfig?.GetInt("MaxBalance", 20000) ?? 20000;
+            m_defaultRegistrationBalance = currencyConfig?.GetInt("DefaultBalance", 1000) ?? 1000;
+            m_enableAmountZero = currencyConfig?.GetBoolean("EnableAmountZero", false) ?? false;
 
             IConfig gridSettingsConfig = config.Configs["GridSettingsService"];
             string gridSettingsDll = gridSettingsConfig?.GetString("LocalServiceModule", string.Empty);
@@ -113,8 +130,16 @@ namespace OpenSim.Services.CurrencyService
             return m_Database.GetBalance(agentID);
         }
 
+        public int GetDefaultRegistrationBalance()
+        {
+            return m_defaultRegistrationBalance;
+        }
+
         public int SetBalance(UUID agentID, int amount, string description)
         {
+            if (m_maxBalance > 0 && amount > m_maxBalance)
+                amount = m_maxBalance;
+
             int previous = m_Database.GetBalance(agentID);
             m_Database.SetBalance(agentID, amount);
 
@@ -153,6 +178,8 @@ namespace OpenSim.Services.CurrencyService
         public bool Transfer(UUID toID, UUID fromID, int amount, string description, int transactionType, UUID transactionID)
         {
             if (amount < 0)
+                return false;
+            if (amount == 0 && !m_enableAmountZero)
                 return false;
 
             UUID bankerID = GetBankerAvatarID();
@@ -206,7 +233,16 @@ namespace OpenSim.Services.CurrencyService
                 }
 
                 if (toID != UUID.Zero)
+                {
                     toBalance = m_Database.GetBalance(toID) + amount;
+                    // Clamp, don't reject - matches MoneyServer.ini's own
+                    // documented "historic clamp behavior" for every
+                    // balance-update path other than a real-money viewer
+                    // purchase (which has its own separate reject-on-cap
+                    // handling elsewhere, not this general ledger method).
+                    if (m_maxBalance > 0 && toBalance.Value > m_maxBalance)
+                        toBalance = m_maxBalance;
+                }
             }
 
             CurrencyTransfer transfer = new CurrencyTransfer

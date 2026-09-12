@@ -34,8 +34,8 @@ namespace OpenSim.Data.SQLite
         }
 
         private const string CatalogColumns =
-                "ID, ItemType, Name, Description, PrimAmount, RegionSizeX, RegionSizeY, " +
-                "PriceConfluence, PriceGloebits, DurationDays, IsActive, SortOrder, Created, Updated";
+                "ID, ItemType, Name, Description, PrimAmount, MaxAgentsAmount, RegionSizeX, RegionSizeY, RegionType, " +
+                "PriceConfluence, PriceGloebits, DurationDays, IsActive, SortOrder, Created, Updated, RecurringBilling";
 
         public StoreCatalogItem GetCatalogItem(UUID id)
         {
@@ -104,16 +104,18 @@ namespace OpenSim.Data.SQLite
             {
                 using (SQLiteCommand cmd = new SQLiteCommand(
                         "INSERT OR REPLACE INTO store_catalog_items (" + CatalogColumns + ") " +
-                        "VALUES (:id, :itemtype, :name, :description, :primamount, :regionsizex, :regionsizey, " +
-                        ":priceconfluence, :pricegloebits, :durationdays, :isactive, :sortorder, :created, :updated)", m_conn))
+                        "VALUES (:id, :itemtype, :name, :description, :primamount, :maxagentsamount, :regionsizex, :regionsizey, :regiontype, " +
+                        ":priceconfluence, :pricegloebits, :durationdays, :isactive, :sortorder, :created, :updated, :recurringbilling)", m_conn))
                 {
                     cmd.Parameters.Add(new SQLiteParameter(":id", item.ID.ToString()));
                     cmd.Parameters.Add(new SQLiteParameter(":itemtype", item.ItemType));
                     cmd.Parameters.Add(new SQLiteParameter(":name", item.Name));
                     cmd.Parameters.Add(new SQLiteParameter(":description", item.Description));
                     cmd.Parameters.Add(new SQLiteParameter(":primamount", item.PrimAmount));
+                    cmd.Parameters.Add(new SQLiteParameter(":maxagentsamount", item.MaxAgentsAmount));
                     cmd.Parameters.Add(new SQLiteParameter(":regionsizex", item.RegionSizeX));
                     cmd.Parameters.Add(new SQLiteParameter(":regionsizey", item.RegionSizeY));
+                    cmd.Parameters.Add(new SQLiteParameter(":regiontype", item.RegionType));
                     cmd.Parameters.Add(new SQLiteParameter(":priceconfluence", item.PriceConfluence));
                     cmd.Parameters.Add(new SQLiteParameter(":pricegloebits", item.PriceGloebits));
                     cmd.Parameters.Add(new SQLiteParameter(":durationdays", item.DurationDays));
@@ -121,6 +123,7 @@ namespace OpenSim.Data.SQLite
                     cmd.Parameters.Add(new SQLiteParameter(":sortorder", item.SortOrder));
                     cmd.Parameters.Add(new SQLiteParameter(":created", Utils.DateTimeToUnixTime(item.Created)));
                     cmd.Parameters.Add(new SQLiteParameter(":updated", Utils.DateTimeToUnixTime(item.Updated)));
+                    cmd.Parameters.Add(new SQLiteParameter(":recurringbilling", item.RecurringBilling));
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -136,15 +139,18 @@ namespace OpenSim.Data.SQLite
                 Name = reader.GetString(2),
                 Description = reader.GetString(3),
                 PrimAmount = Convert.ToInt32(reader.GetValue(4)),
-                RegionSizeX = Convert.ToInt32(reader.GetValue(5)),
-                RegionSizeY = Convert.ToInt32(reader.GetValue(6)),
-                PriceConfluence = Convert.ToInt32(reader.GetValue(7)),
-                PriceGloebits = Convert.ToInt32(reader.GetValue(8)),
-                DurationDays = Convert.ToInt32(reader.GetValue(9)),
-                IsActive = Convert.ToBoolean(reader.GetValue(10)),
-                SortOrder = Convert.ToInt32(reader.GetValue(11)),
-                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(12))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(13)))
+                MaxAgentsAmount = Convert.ToInt32(reader.GetValue(5)),
+                RegionSizeX = Convert.ToInt32(reader.GetValue(6)),
+                RegionSizeY = Convert.ToInt32(reader.GetValue(7)),
+                RegionType = Convert.ToString(reader.GetValue(8)),
+                PriceConfluence = Convert.ToInt32(reader.GetValue(9)),
+                PriceGloebits = Convert.ToInt32(reader.GetValue(10)),
+                DurationDays = Convert.ToInt32(reader.GetValue(11)),
+                IsActive = Convert.ToBoolean(reader.GetValue(12)),
+                SortOrder = Convert.ToInt32(reader.GetValue(13)),
+                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(14))),
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(15))),
+                RecurringBilling = Convert.ToBoolean(reader.GetValue(16))
             };
         }
 
@@ -152,7 +158,8 @@ namespace OpenSim.Data.SQLite
                 "ID, CatalogItemID, OrderType, ResidentAvatarID, ResidentName, CurrencyUsed, AmountCharged, " +
                 "PaymentTransactionID, Status, TargetRegionID, RequestedRegionName, AllocatedLocationX, " +
                 "AllocatedLocationY, AllocatedPort, SimulatorFolderName, RequestedEstateID, RequestedEstateName, " +
-                "RequestedLocationX, RequestedLocationY, StartedAt, ExpiresAt, Notes, Created, Updated";
+                "RequestedLocationX, RequestedLocationY, StartedAt, ExpiresAt, Notes, Created, Updated, " +
+                "IsRecurring, NextBillingDate, GraceUntil";
 
         public StoreOrder GetOrder(UUID id)
         {
@@ -227,7 +234,7 @@ namespace OpenSim.Data.SQLite
                         ":amountcharged, :paymenttransactionid, :status, :targetregionid, :requestedregionname, " +
                         ":allocatedlocationx, :allocatedlocationy, :allocatedport, :simulatorfoldername, " +
                         ":requestedestateid, :requestedestatename, :requestedlocationx, :requestedlocationy, :startedat, " +
-                        ":expiresat, :notes, :created, :updated)", m_conn))
+                        ":expiresat, :notes, :created, :updated, :isrecurring, :nextbillingdate, :graceuntil)", m_conn))
                 {
                     cmd.Parameters.Add(new SQLiteParameter(":id", order.ID.ToString()));
                     cmd.Parameters.Add(new SQLiteParameter(":catalogitemid", order.CatalogItemID.ToString()));
@@ -262,6 +269,11 @@ namespace OpenSim.Data.SQLite
                     cmd.Parameters.Add(new SQLiteParameter(":notes", (object)order.Notes ?? DBNull.Value));
                     cmd.Parameters.Add(new SQLiteParameter(":created", Utils.DateTimeToUnixTime(order.Created)));
                     cmd.Parameters.Add(new SQLiteParameter(":updated", Utils.DateTimeToUnixTime(order.Updated)));
+                    cmd.Parameters.Add(new SQLiteParameter(":isrecurring", order.IsRecurring));
+                    cmd.Parameters.Add(new SQLiteParameter(":nextbillingdate",
+                            order.NextBillingDate.HasValue ? (object)Utils.DateTimeToUnixTime(order.NextBillingDate.Value) : DBNull.Value));
+                    cmd.Parameters.Add(new SQLiteParameter(":graceuntil",
+                            order.GraceUntil.HasValue ? (object)Utils.DateTimeToUnixTime(order.GraceUntil.Value) : DBNull.Value));
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -295,7 +307,10 @@ namespace OpenSim.Data.SQLite
                 ExpiresAt = reader.IsDBNull(20) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(20))),
                 Notes = reader.IsDBNull(21) ? null : reader.GetString(21),
                 Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(22))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(23)))
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(23))),
+                IsRecurring = Convert.ToBoolean(reader.GetValue(24)),
+                NextBillingDate = reader.IsDBNull(25) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(25))),
+                GraceUntil = reader.IsDBNull(26) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(26)))
             };
         }
 
@@ -357,7 +372,7 @@ namespace OpenSim.Data.SQLite
 
         private const string GloebitTxnColumns =
                 "ID, StoreOrderID, AvatarPrincipalID, Amount, Stage, Enacted, Consumed, Cancelled, " +
-                "ResponseReason, Created, Updated";
+                "ResponseReason, Created, Updated, IsRenewal";
 
         public StoreGloebitTransaction GetGloebitTransaction(UUID id)
         {
@@ -386,7 +401,7 @@ namespace OpenSim.Data.SQLite
                 using (SQLiteCommand cmd = new SQLiteCommand(
                         "INSERT OR REPLACE INTO store_gloebit_transactions (" + GloebitTxnColumns + ") " +
                         "VALUES (:id, :storeorderid, :avatarid, :amount, :stage, :enacted, :consumed, :cancelled, " +
-                        ":responsereason, :created, :updated)", m_conn))
+                        ":responsereason, :created, :updated, :isrenewal)", m_conn))
                 {
                     cmd.Parameters.Add(new SQLiteParameter(":id", txn.ID.ToString()));
                     cmd.Parameters.Add(new SQLiteParameter(":storeorderid", txn.StoreOrderID.ToString()));
@@ -399,6 +414,7 @@ namespace OpenSim.Data.SQLite
                     cmd.Parameters.Add(new SQLiteParameter(":responsereason", (object)txn.ResponseReason ?? DBNull.Value));
                     cmd.Parameters.Add(new SQLiteParameter(":created", Utils.DateTimeToUnixTime(txn.Created)));
                     cmd.Parameters.Add(new SQLiteParameter(":updated", Utils.DateTimeToUnixTime(txn.Updated)));
+                    cmd.Parameters.Add(new SQLiteParameter(":isrenewal", txn.IsRenewal));
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -419,7 +435,8 @@ namespace OpenSim.Data.SQLite
                 Cancelled = Convert.ToBoolean(reader.GetValue(7)),
                 ResponseReason = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(9))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(10)))
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(10))),
+                IsRenewal = Convert.ToBoolean(reader.GetValue(11))
             };
         }
     }

@@ -1904,6 +1904,10 @@
       <Reference name="OpenSim.Data.MySQL"/>
       <Reference name="Ionic.Zip"/>
       <Reference name="MySql.Data"/>
+      <!-- Just for IGroupsServicesConnector, used by ConfluenceCurrencyModule's
+           CurrencyGroupOnly check - confirmed non-circular, OpenSim.Addons.Groups
+           references OpenSim.Region.Framework, not this project. -->
+      <Reference name="OpenSim.Addons.Groups"/>
 
       <!-- For scripting in funny languages by default -->
       <Reference name="XMLRPC"/>

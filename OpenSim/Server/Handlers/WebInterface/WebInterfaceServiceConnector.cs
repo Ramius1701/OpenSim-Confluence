@@ -9,6 +9,7 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Timers;
 using MailKit.Net.Smtp;
 using MimeKit;
 using Nini.Config;
@@ -175,6 +176,16 @@ namespace OpenSim.Server.Handlers.WebInterface
         // OpenMetaverse.MoneyTransactionType values used elsewhere in this
         // codebase top out well under 100, so this is picked clear of both.
         private const int STORE_PURCHASE_TRANSACTION_TYPE = 5001;
+        // Recurring-billing timer for Store orders with RecurringBilling set
+        // (Full Region/Event/Prim Packs/Max Agents Pack, per the admin's own
+        // per-item checkbox - Homestead/Openspace are never offered it,
+        // staying one-time-purchase-only). Same System.Timers.Timer shape as
+        // CurrencyServerConnector's Stipend timer (Currency/CurrencyServerConnector.cs)
+        // - config-driven interval, single-flight Elapsed handler.
+        private readonly Timer m_recurringBillingTimer = new Timer();
+        // How long a PastDue order gets before being suspended (region
+        // stopped, or a Prim/Max Agents Pack's capacity clawed back).
+        private int m_recurringGraceDays = 5;
         private string m_webConsoleSecret = string.Empty;
 
         private string m_gridName = "OpenSim Grid";
@@ -378,6 +389,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                 m_regionOrderTemplateIniPath = storeConfig.GetString("RegionOrderTemplateIniPath", string.Empty);
                 m_regionOrderGridRoot = storeConfig.GetString("RegionOrderGridRoot", string.Empty);
                 m_regionOrderExternalHostName = storeConfig.GetString("RegionOrderExternalHostName", string.Empty);
+                m_recurringGraceDays = Math.Max(1, storeConfig.GetInt("RecurringBillingGraceDays", 5));
+            }
+
+            if (m_StoreService != null)
+            {
+                m_recurringBillingTimer.Interval = Math.Max(60,
+                        storeConfig?.GetInt("RecurringBillingCheckIntervalSeconds", 3600) ?? 3600) * 1000;
+                m_recurringBillingTimer.Elapsed += RecurringBillingTimerElapsed;
+                m_recurringBillingTimer.Enabled = true;
             }
 
             // Native DirectDelivery marketplace - listing metadata/stock
@@ -674,6 +694,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/admin/store/orders/start":
                         HandleAdminStoreOrdersStart(request, response);
+                        break;
+                    case BasePath + "/admin/store/create-region":
+                        HandleAdminStoreCreateRegion(request, response);
                         break;
                     case BasePath + "/admin/regions/ini":
                         HandleAdminRegionIniList(request, response);
@@ -11456,6 +11479,20 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             m_AuthenticationService.SetPassword(account.PrincipalID, password);
 
+            // MoneyServer.ini's DefaultBalance equivalent - a real gap found
+            // live, 2026-09-12: the legacy module granted new accounts a
+            // starting balance, ConfluenceCurrency never got an equivalent
+            // when it replaced it. 0 (GetDefaultRegistrationBalance's own
+            // config default is 1000, but an admin can turn this off by
+            // setting DefaultBalance = 0) means skip the grant entirely.
+            if (m_CurrencyService != null)
+            {
+                int startingBalance = m_CurrencyService.GetDefaultRegistrationBalance();
+                if (startingBalance > 0)
+                    m_CurrencyService.Transfer(account.PrincipalID, UUID.Zero, startingBalance,
+                            "Welcome to " + GetSetting("GridName", m_gridName) + "!", 0, UUID.Random());
+            }
+
             if (m_GridUserService != null)
             {
                 // Honor the resident's actual selection if it's one of the
@@ -12139,6 +12176,43 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder sb = new StringBuilder();
+            sb.Append("<style>" +
+                ".store-section{margin:0 0 36px;}" +
+                ".store-section-title{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:700;" +
+                "color:var(--text);margin:0 0 4px;}" +
+                ".store-section-title .bi{color:var(--accent-bright);font-size:1.35rem;}" +
+                ".store-section-sub{color:var(--muted);font-size:13px;margin:0 0 18px;}" +
+                ".store-type-group{margin:0 0 24px;}" +
+                ".store-type-group:last-child{margin-bottom:0;}" +
+                ".store-type-group h3{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;" +
+                "color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;" +
+                "padding-bottom:8px;border-bottom:1px solid var(--border);}" +
+                ".store-type-group h3 .bi{color:var(--accent-bright);font-size:1.05rem;}" +
+                ".store-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}" +
+                ".store-card{display:flex;flex-direction:column;background:var(--input-bg);border:1px solid var(--border);" +
+                "border-radius:12px;padding:18px;transition:border-color .15s ease,transform .15s ease;}" +
+                ".store-card:hover{border-color:var(--accent);transform:translateY(-2px);}" +
+                ".store-card-top{display:flex;align-items:flex-start;gap:12px;margin:0 0 12px;}" +
+                ".store-icon-badge{flex:0 0 auto;width:44px;height:44px;border-radius:10px;background:var(--accent-tint);" +
+                "display:flex;align-items:center;justify-content:center;}" +
+                ".store-icon-badge .bi{color:var(--accent-bright);font-size:1.3rem;}" +
+                ".store-card-title{flex:1;min-width:0;}" +
+                ".store-card-title h4{margin:0;font-size:15px;font-weight:700;color:var(--text);}" +
+                ".store-price-block{flex:0 0 auto;text-align:right;}" +
+                ".store-price{font-size:19px;font-weight:800;color:var(--text);line-height:1.15;white-space:nowrap;}" +
+                ".store-price-sub{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;}" +
+                ".store-specs-line{font-size:12.5px;font-weight:600;color:var(--text);margin:0 0 8px;}" +
+                ".store-specs-line .sep{color:var(--muted);font-weight:400;margin:0 5px;}" +
+                ".store-card .store-desc{color:var(--muted);font-size:12px;margin:0 0 12px;line-height:1.45;flex:1;}" +
+                ".store-card form{margin-top:auto;}" +
+                ".store-card select,.store-card input[type=text],.store-card input[type=number]{width:100%;margin:0 0 8px;}" +
+                ".store-buy-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}" +
+                ".store-buy-row button{flex:1 1 auto;font-size:12px;padding:10px 8px;margin-top:0;}" +
+                ".store-buy-row button.store-buy-secondary{background:transparent;color:var(--accent-bright);" +
+                "border-color:var(--border);}" +
+                ".store-buy-row button.store-buy-secondary:hover{background:var(--accent-tint);border-color:var(--accent);}" +
+                ".store-empty-note{color:var(--muted);font-size:12.5px;font-style:italic;margin:0 0 10px;}" +
+                "</style>");
             sb.Append("<h1><i class=\"bi bi-shop\"></i> Store</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a> | <a href=\"")
               .Append(BasePath).Append("/store/my-purchases\">My Purchases</a></p>");
@@ -12156,52 +12230,131 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             else
             {
-                foreach (StoreCatalogItem item in items)
+                // Icon per region type, and per non-region item type - purely
+                // cosmetic grouping so the store reads as a real storefront
+                // (sectioned, gridded, icon-led) instead of one long stacked
+                // list of .content-card boxes, which is how every item used
+                // to render regardless of type or count.
+                string RegionTypeIcon(string regionType)
                 {
-                    sb.Append("<div class=\"content-card\">");
-                    sb.Append("<h2>").Append(Html(item.Name)).Append("</h2>");
-                    if (!string.IsNullOrEmpty(item.Description))
-                        sb.Append("<p>").Append(Html(item.Description)).Append("</p>");
+                    switch (regionType)
+                    {
+                        case "Openspace": return "bi-tree";
+                        case "Homestead": return "bi-house-door";
+                        case "Full Region": return "bi-globe-americas";
+                        case "Event": return "bi-calendar-event";
+                        default: return "bi-map";
+                    }
+                }
 
+                void RenderCard(StoreCatalogItem item)
+                {
+                    string icon = item.ItemType == "PrimPack" ? "bi-box-seam"
+                            : item.ItemType == "MaxAgentsPack" ? "bi-people-fill"
+                            : RegionTypeIcon(item.RegionType);
+
+                    sb.Append("<div class=\"store-card\">");
+
+                    // Header row: icon badge, title, and price all on one
+                    // line - price shown prominently up front (not buried in
+                    // the buy button) matching a real storefront layout.
+                    // PriceConfluence/PriceGloebits are always kept equal by
+                    // the admin save handler (one price, same number in both
+                    // currencies - see HandleAdminStoreSave), so almost
+                    // every item collapses to a single number with a
+                    // "C$ / G$" sub-label rather than two separate prices.
+                    sb.Append("<div class=\"store-card-top\">");
+                    sb.Append("<div class=\"store-icon-badge\"><i class=\"bi ").Append(icon).Append("\"></i></div>");
+                    sb.Append("<div class=\"store-card-title\"><h4>").Append(Html(item.Name)).Append("</h4></div>");
+                    if (item.PriceConfluence > 0 || item.PriceGloebits > 0)
+                    {
+                        sb.Append("<div class=\"store-price-block\">");
+                        if (item.PriceConfluence > 0 && item.PriceGloebits > 0 && item.PriceConfluence == item.PriceGloebits)
+                        {
+                            sb.Append("<div class=\"store-price\">").Append(item.PriceConfluence.ToString("N0")).Append("</div>");
+                            sb.Append("<div class=\"store-price-sub\">").Append(m_currencySymbol).Append(" / G$</div>");
+                        }
+                        else if (item.PriceConfluence > 0 && item.PriceGloebits > 0)
+                        {
+                            sb.Append("<div class=\"store-price\">").Append(item.PriceConfluence.ToString("N0")).Append("</div>");
+                            sb.Append("<div class=\"store-price-sub\">").Append(m_currencySymbol).Append(" (G$ ")
+                              .Append(item.PriceGloebits.ToString("N0")).Append(")</div>");
+                        }
+                        else if (item.PriceConfluence > 0)
+                        {
+                            sb.Append("<div class=\"store-price\">").Append(item.PriceConfluence.ToString("N0")).Append("</div>");
+                            sb.Append("<div class=\"store-price-sub\">").Append(m_currencySymbol).Append("</div>");
+                        }
+                        else
+                        {
+                            sb.Append("<div class=\"store-price\">").Append(item.PriceGloebits.ToString("N0")).Append("</div>");
+                            sb.Append("<div class=\"store-price-sub\">G$</div>");
+                        }
+                        sb.Append("</div>");
+                    }
+                    sb.Append("</div>");
+
+                    // Compact single-line specs, middot-separated, matching
+                    // a real storefront's scannable card format instead of
+                    // one spec per line.
                     if (item.ItemType == "PrimPack")
                     {
-                        sb.Append("<p>Adds <strong>+").Append(item.PrimAmount.ToString("N0"))
-                          .Append("</strong> prims to the chosen region's current capacity.</p>");
+                        sb.Append("<p class=\"store-specs-line\">+").Append(item.PrimAmount.ToString("N0")).Append(" prims</p>");
+                    }
+                    else if (item.ItemType == "MaxAgentsPack")
+                    {
+                        sb.Append("<p class=\"store-specs-line\">+").Append(item.MaxAgentsAmount).Append(" max agents</p>");
                     }
                     else if (item.ItemType == "RegionOrder")
                     {
-                        sb.Append("<p>").Append(item.RegionSizeX > 0 ? item.RegionSizeX.ToString() : "256").Append("&times;")
-                          .Append(item.RegionSizeY > 0 ? item.RegionSizeY.ToString() : "256")
-                          .Append(" region, ").Append((item.PrimAmount > 0 ? item.PrimAmount : 15000).ToString("N0")).Append(" prims.</p>");
+                        sb.Append("<p class=\"store-specs-line\">")
+                          .Append(item.RegionSizeX > 0 ? item.RegionSizeX.ToString() : "256").Append("&times;")
+                          .Append(item.RegionSizeY > 0 ? item.RegionSizeY.ToString() : "256").Append("m")
+                          .Append("<span class=\"sep\">&middot;</span>")
+                          .Append((item.PrimAmount > 0 ? item.PrimAmount : 15000).ToString("N0")).Append(" prims");
+                        if (item.MaxAgentsAmount > 0)
+                            sb.Append("<span class=\"sep\">&middot;</span>").Append(item.MaxAgentsAmount).Append(" agents");
+                        sb.Append("</p>");
                     }
 
+                    if (!string.IsNullOrEmpty(item.Description))
+                        sb.Append("<p class=\"store-desc\">").Append(Html(item.Description)).Append("</p>");
+                    if (item.ItemType == "PrimPack")
+                        sb.Append("<p class=\"store-desc\" style=\"margin-top:-8px;\">Not available for Openspace.</p>");
+                    else if (item.ItemType == "MaxAgentsPack")
+                        sb.Append("<p class=\"store-desc\" style=\"margin-top:-8px;\">Full Region only.</p>");
+
                     if (item.DurationDays > 0)
-                        sb.Append("<p>Lasts ").Append(item.DurationDays).Append(" days.</p>");
+                        sb.Append("<p class=\"store-desc\">")
+                          .Append(item.RecurringBilling
+                                  ? "Auto-renews every " + item.DurationDays + " days - billed automatically from your chosen currency."
+                                  : "Lasts " + item.DurationDays + " days.")
+                          .Append("</p>");
 
                     if (session != null)
                     {
-                        bool canBuy = item.ItemType != "PrimPack" || ownedRegions.Count > 0;
+                        bool canBuy = (item.ItemType != "PrimPack" && item.ItemType != "MaxAgentsPack") || ownedRegions.Count > 0;
 
                         sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/store/buy\">");
                         sb.Append("<input type=\"hidden\" name=\"catalog_item_id\" value=\"").Append(item.ID).Append("\">");
 
-                        if (item.ItemType == "PrimPack")
+                        if (item.ItemType == "PrimPack" || item.ItemType == "MaxAgentsPack")
                         {
                             if (ownedRegions.Count == 0)
                             {
-                                sb.Append("<p><em>You don't own a region to apply this to.</em></p>");
+                                sb.Append("<p class=\"store-empty-note\">You don't own a region to apply this to.</p>");
                             }
                             else
                             {
-                                sb.Append("<p><select name=\"region_id\">");
+                                sb.Append("<select name=\"region_id\">");
                                 foreach (GridRegion r in ownedRegions)
                                     sb.Append("<option value=\"").Append(r.RegionID).Append("\">").Append(Html(r.RegionName)).Append("</option>");
-                                sb.Append("</select></p>");
+                                sb.Append("</select>");
                             }
                         }
                         else if (item.ItemType == "RegionOrder")
                         {
-                            sb.Append("<p><input type=\"text\" name=\"region_name\" placeholder=\"Region name\" maxlength=\"63\" required></p>");
+                            sb.Append("<input type=\"text\" name=\"region_name\" placeholder=\"Region name\" maxlength=\"63\" required>");
 
                             // Estate choice: join one of the resident's own
                             // existing estates (re-verified server-side at
@@ -12210,13 +12363,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                             // create a new one. "new" is deliberately the
                             // default option so a resident who ignores this
                             // entirely still gets today's existing behavior.
-                            sb.Append("<p><label>Estate: <select name=\"estate_choice\" onchange=\"this.form.querySelector('[name=estate_name]').style.display = this.value === 'new' ? '' : 'none';\">");
+                            sb.Append("<label style=\"font-size:12px;color:var(--muted);\">Estate</label>");
+                            sb.Append("<select name=\"estate_choice\" onchange=\"this.form.querySelector('[name=estate_name]').style.display = this.value === 'new' ? '' : 'none';\">");
                             sb.Append("<option value=\"new\">Create a new estate</option>");
                             foreach (EstateSettings estate in ownedEstates)
                                 sb.Append("<option value=\"").Append(estate.EstateID).Append("\">Join \"").Append(Html(estate.EstateName)).Append("\"</option>");
-                            sb.Append("</select></label></p>");
-                            sb.Append("<p><input type=\"text\" name=\"estate_name\" placeholder=\"New estate name (default: ")
-                              .Append(Html(session.Name)).Append("'s Estate)\" maxlength=\"63\"></p>");
+                            sb.Append("</select>");
+                            sb.Append("<input type=\"text\" name=\"estate_name\" placeholder=\"New estate name (default: ")
+                              .Append(Html(session.Name)).Append("'s Estate)\" maxlength=\"63\">");
 
                             // Grid location: optional, blank on both means
                             // "pick any free spot in the configured block"
@@ -12226,30 +12380,93 @@ namespace OpenSim.Server.Handlers.WebInterface
                             // BuildStoreOrder, not by disabling one field
                             // client-side, since that's easy to bypass and
                             // this isn't a trust boundary either way.
-                            sb.Append("<p><label>Grid location (optional - leave blank to auto-pick; valid range ")
+                            sb.Append("<label style=\"font-size:12px;color:var(--muted);\">Grid location (optional, ")
                               .Append(m_regionOrderGridXStart).Append("-").Append(m_regionOrderGridXEnd).Append(" x ")
-                              .Append(m_regionOrderGridYStart).Append("-").Append(m_regionOrderGridYEnd).Append("): ")
-                              .Append("<input type=\"number\" name=\"location_x\" placeholder=\"X\" style=\"width:5em\" min=\"")
-                              .Append(m_regionOrderGridXStart).Append("\" max=\"").Append(m_regionOrderGridXEnd).Append("\"> ")
-                              .Append("<input type=\"number\" name=\"location_y\" placeholder=\"Y\" style=\"width:5em\" min=\"")
-                              .Append(m_regionOrderGridYStart).Append("\" max=\"").Append(m_regionOrderGridYEnd).Append("\"></label></p>");
+                              .Append(m_regionOrderGridYStart).Append("-").Append(m_regionOrderGridYEnd).Append(")</label>");
+                            sb.Append("<div style=\"display:flex;gap:6px;margin:0 0 8px;\">");
+                            sb.Append("<input type=\"number\" name=\"location_x\" placeholder=\"X\" style=\"margin:0;\" min=\"")
+                              .Append(m_regionOrderGridXStart).Append("\" max=\"").Append(m_regionOrderGridXEnd).Append("\">");
+                            sb.Append("<input type=\"number\" name=\"location_y\" placeholder=\"Y\" style=\"margin:0;\" min=\"")
+                              .Append(m_regionOrderGridYStart).Append("\" max=\"").Append(m_regionOrderGridYEnd).Append("\">");
+                            sb.Append("</div>");
                         }
 
                         if (canBuy)
                         {
+                            // Price is already shown in the card header, so
+                            // these just name the payment method - Confluence
+                            // (the grid's native currency) gets the bold
+                            // primary button, Gloebit a lighter secondary
+                            // one, matching a real storefront's primary/
+                            // secondary action weighting.
+                            sb.Append("<div class=\"store-buy-row\">");
                             if (item.PriceConfluence > 0)
-                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Confluence\">Buy for ").Append(m_currencySymbol).Append(" ")
-                                  .Append(item.PriceConfluence.ToString("N0")).Append("</button> ");
+                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Confluence\"><i class=\"bi bi-lightning-charge-fill\"></i> Buy with ")
+                                  .Append(m_currencySymbol).Append("</button>");
                             if (item.PriceGloebits > 0)
-                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Gloebit\"")
+                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Gloebit\" class=\"store-buy-secondary\"")
                                   .Append(m_gloebitEnabled ? string.Empty : " disabled title=\"Gloebit purchases are not available on this grid\"")
-                                  .Append(">Buy for G$ ").Append(item.PriceGloebits.ToString("N0")).Append("</button>");
+                                  .Append(">Buy with G$</button>");
+                            sb.Append("</div>");
                         }
 
                         sb.Append("</form>");
                     }
 
                     sb.Append("</div>");
+                }
+
+                List<StoreCatalogItem> regionOrders = items.Where(i => i.ItemType == "RegionOrder").ToList();
+                List<StoreCatalogItem> primPacks = items.Where(i => i.ItemType == "PrimPack").ToList();
+                List<StoreCatalogItem> agentPacks = items.Where(i => i.ItemType == "MaxAgentsPack").ToList();
+
+                if (regionOrders.Count > 0)
+                {
+                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-map\"></i> Regions</div>");
+                    sb.Append("<p class=\"store-section-sub\">Buy your own region, sized and provisioned automatically on checkout.</p>");
+                    // Homestead and Openspace are both single-size entry
+                    // tiers (no VarRegion variants) - grouped under one
+                    // shared heading so their two cards sit side by side
+                    // instead of each getting its own heading over a lone
+                    // card. Full Region/Event each have 4 real size
+                    // variants and stay in their own group. GroupBy
+                    // preserves first-seen order, and items already arrive
+                    // SortOrder-ascending (catalog is seeded Openspace ->
+                    // Homestead -> Full Region -> Event), so this still
+                    // reads entry-to-premium with no extra sort needed.
+                    string GroupKeyFor(string regionType) =>
+                            (regionType == "Homestead" || regionType == "Openspace") ? "Homestead & Openspace" : regionType;
+
+                    foreach (var typeGroup in regionOrders.GroupBy(i => GroupKeyFor(string.IsNullOrEmpty(i.RegionType) ? "Region" : i.RegionType)))
+                    {
+                        string icon = typeGroup.Key == "Homestead & Openspace" ? "bi-houses" : RegionTypeIcon(typeGroup.Key);
+                        sb.Append("<div class=\"store-type-group\"><h3><i class=\"bi ").Append(icon)
+                          .Append("\"></i> ").Append(Html(typeGroup.Key)).Append("</h3><div class=\"store-grid\">");
+                        foreach (StoreCatalogItem item in typeGroup)
+                            RenderCard(item);
+                        sb.Append("</div></div>");
+                    }
+                    sb.Append("</div>");
+                }
+
+                if (primPacks.Count > 0)
+                {
+                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-box-seam\"></i> Prim Packs</div>");
+                    sb.Append("<p class=\"store-section-sub\">Boost prim capacity on a region you already own.</p>");
+                    sb.Append("<div class=\"store-grid\">");
+                    foreach (StoreCatalogItem item in primPacks)
+                        RenderCard(item);
+                    sb.Append("</div></div>");
+                }
+
+                if (agentPacks.Count > 0)
+                {
+                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-people-fill\"></i> Capacity Upgrades</div>");
+                    sb.Append("<p class=\"store-section-sub\">Raise the max-agents limit on a Full Region you already own.</p>");
+                    sb.Append("<div class=\"store-grid\">");
+                    foreach (StoreCatalogItem item in agentPacks)
+                        RenderCard(item);
+                    sb.Append("</div></div>");
                 }
             }
 
@@ -12355,6 +12572,40 @@ namespace OpenSim.Server.Handlers.WebInterface
         // PrimPack re-verifies ownership via GetOwnedRegionOrNull (same
         // discipline as My Regions), RegionOrder re-checks the name isn't
         // already taken by a real region or another pending order.
+        // Region-type ceilings (PrimPack/MaxAgentsPack caps) were originally
+        // fixed flat numbers (15000/50000/80) designed back when every
+        // sellable region was a single 256x256 sim. Once VarRegion sizes
+        // (1x1/2x2/3x3/4x4) became sellable for every type, a flat ceiling
+        // stopped making sense - a 4x4 Homestead's own starting prim
+        // capacity can already exceed a flat 15000 ceiling before any pack
+        // is even bought. Scale the ceiling by the TARGET region's actual
+        // footprint instead, using the same +40%-per-size-step ratio the
+        // Full Region catalog prices already use (25000/35000/45000/55000,
+        // i.e. base*(1+0.4*(cellsPerSide-1))) - cap is always exactly double
+        // the scaled starting capacity, matching the fixed 2x ratio already
+        // established for every type at 1x1 (Homestead 7500->15000, Full
+        // Region/Event 25000->50000).
+        private static int ScaledPrimCeiling(string regionType, int regionSizeX)
+        {
+            int cellsPerSide = Math.Max(1, regionSizeX / 256);
+            int baseStart = regionType == "Homestead" ? 7500 : 25000;
+            int scaledStart = (int)(baseStart * (1.0 + 0.4 * (cellsPerSide - 1)));
+            return scaledStart * 2;
+        }
+
+        // Full Region is the only type whose agent capacity is designed to
+        // scale with size at all - Homestead/Openspace/Event stay flat
+        // regardless of footprint per the original design ("strictly 175"
+        // for Event, "no upgrades" for Homestead/Openspace). Same +40%-per-
+        // size-step/2x-cap-ratio formula as prims, applied to the 40->80
+        // baseline.
+        private static int ScaledAgentCeiling(int regionSizeX)
+        {
+            int cellsPerSide = Math.Max(1, regionSizeX / 256);
+            int scaledStart = (int)(40 * (1.0 + 0.4 * (cellsPerSide - 1)));
+            return scaledStart * 2;
+        }
+
         private StoreOrder BuildStoreOrder(WebSession session, StoreCatalogItem item, string currency, Dictionary<string, string> form, out string error)
         {
             error = null;
@@ -12372,6 +12623,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 Updated = DateTime.UtcNow
             };
 
+            // Denormalized from the catalog item at purchase time (see
+            // StoreOrder.IsRecurring's own comment) - the initial purchase
+            // already pays for the first DurationDays period, so the first
+            // renewal isn't due until a full period from now.
+            if (item.RecurringBilling && item.DurationDays > 0)
+            {
+                order.IsRecurring = true;
+                order.NextBillingDate = DateTime.UtcNow.AddDays(item.DurationDays);
+            }
+
             if (item.ItemType == "PrimPack")
             {
                 if (!UUID.TryParse(FormValue(form, "region_id"), out UUID regionId))
@@ -12380,10 +12641,75 @@ namespace OpenSim.Server.Handlers.WebInterface
                     return null;
                 }
 
-                if (GetOwnedRegionOrNull(session, regionId) == null)
+                GridRegion targetPrimRegion = GetOwnedRegionOrNull(session, regionId);
+                if (targetPrimRegion == null)
                 {
                     error = "You don't own that region.";
                     return null;
+                }
+
+                // Openspace is fixed capacity, never upgradeable. Every
+                // other type can take prim packs, but each has its own
+                // ceiling - Homestead's is deliberately low (7,500 base ->
+                // 15,000 cap at 1x1) so it stays a real step below Full
+                // Region/Event's much higher ceiling (25,000 base -> 50,000
+                // cap at 1x1, double the baseline, same ratio the Max Agents
+                // ceiling uses, 40 -> 80). Both ceilings scale up with the
+                // region's own VarRegion footprint - see ScaledPrimCeiling.
+                if (TryGetRegionCapacityInfo(regionId, out string regionType, out int currentPrims, out _))
+                {
+                    if (regionType == "Openspace")
+                    {
+                        error = "Prim packs can't be applied to an Openspace region - its capacity is fixed.";
+                        return null;
+                    }
+
+                    int primCeiling = ScaledPrimCeiling(regionType, targetPrimRegion.RegionSizeX);
+                    if (currentPrims + item.PrimAmount > primCeiling)
+                    {
+                        error = "That would put this region over its " + primCeiling.ToString("N0") + " prim ceiling (currently " + currentPrims.ToString("N0") + ").";
+                        return null;
+                    }
+                }
+
+                order.TargetRegionID = regionId;
+            }
+            else if (item.ItemType == "MaxAgentsPack")
+            {
+                if (!UUID.TryParse(FormValue(form, "region_id"), out UUID regionId))
+                {
+                    error = "Choose a region.";
+                    return null;
+                }
+
+                GridRegion targetAgentRegion = GetOwnedRegionOrNull(session, regionId);
+                if (targetAgentRegion == null)
+                {
+                    error = "You don't own that region.";
+                    return null;
+                }
+
+                // Only Full Region can take a Max Agents pack - Homestead/
+                // Openspace are fixed capacity, and Event Region ships with
+                // a fixed 175-avatar capacity baked in already, not
+                // something a pack adds on top of. The ceiling itself scales
+                // with the region's own VarRegion footprint - see
+                // ScaledAgentCeiling.
+                if (TryGetRegionCapacityInfo(regionId, out string regionType, out _, out int currentAgents))
+                {
+                    if (regionType != "Full Region")
+                    {
+                        error = "Max Agents packs can only be applied to a Full Region - "
+                                + (string.IsNullOrEmpty(regionType) ? "this region's" : regionType + " regions have") + " capacity is fixed.";
+                        return null;
+                    }
+
+                    int agentCeiling = ScaledAgentCeiling(targetAgentRegion.RegionSizeX);
+                    if (currentAgents + item.MaxAgentsAmount > agentCeiling)
+                    {
+                        error = "That would put this region over the " + agentCeiling + " max-agents ceiling (currently " + currentAgents + ").";
+                        return null;
+                    }
                 }
 
                 order.TargetRegionID = regionId;
@@ -12475,9 +12801,17 @@ namespace OpenSim.Server.Handlers.WebInterface
                         return null;
                     }
 
-                    if (ComputeUsedRegionOrderLocations().Contains((requestedX, requestedY)))
+                    HashSet<(int, int)> usedLocations = ComputeUsedRegionOrderLocations();
+                    (int cellsX, int cellsY) = GetFootprintCells(item.RegionSizeX, item.RegionSizeY);
+                    bool overlaps = requestedX + cellsX - 1 > m_regionOrderGridXEnd || requestedY + cellsY - 1 > m_regionOrderGridYEnd;
+                    for (int dx = 0; !overlaps && dx < cellsX; dx++)
+                        for (int dy = 0; !overlaps && dy < cellsY; dy++)
+                            if (usedLocations.Contains((requestedX + dx, requestedY + dy)))
+                                overlaps = true;
+
+                    if (overlaps)
                     {
-                        error = "That grid location is already taken or pending.";
+                        error = "That grid location is already taken, pending, or doesn't have room for this region's full footprint.";
                         return null;
                     }
 
@@ -12571,6 +12905,256 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_StoreService.StoreOrder(order);
             return "Payment submitted to Gloebit - awaiting confirmation. Check My Purchases shortly.";
         }
+
+        #region Recurring billing
+
+        // Mirrors CurrencyServerConnector's own StipendTimerElapsed shape -
+        // disable while running so a slow pass (many due orders, a Gloebit
+        // round-trip) can't overlap itself, re-enable after.
+        private void RecurringBillingTimerElapsed(object sender, ElapsedEventArgs e)
+        {
+            m_recurringBillingTimer.Enabled = false;
+            try
+            {
+                ProcessRecurringBilling();
+            }
+            catch (Exception ex)
+            {
+                m_log.Error("[WEB INTERFACE]: Recurring billing pass failed", ex);
+            }
+            finally
+            {
+                m_recurringBillingTimer.Enabled = true;
+            }
+        }
+
+        private void ProcessRecurringBilling()
+        {
+            if (m_StoreService == null)
+                return;
+
+            DateTime now = DateTime.UtcNow;
+
+            // GetAllOrders() + in-memory filter, same modest-scale posture
+            // as every other admin-queue read in this file (BuildStoreOrder's
+            // region-name uniqueness check, the footprint map, etc.) - Store
+            // order volume doesn't call for a dedicated due-orders query.
+            List<StoreOrder> dueOrders = m_StoreService.GetAllOrders()
+                    .Where(o => o.IsRecurring && o.NextBillingDate.HasValue && o.NextBillingDate.Value <= now
+                            && (o.Status == "Active" || o.Status == "PastDue" || o.Status == "Suspended"))
+                    .ToList();
+
+            foreach (StoreOrder order in dueOrders)
+            {
+                StoreCatalogItem item = m_StoreService.GetCatalogItem(order.CatalogItemID);
+                if (item == null)
+                    continue;
+
+                try
+                {
+                    AttemptRecurringCharge(order, item);
+                }
+                catch (Exception ex)
+                {
+                    m_log.Error("[WEB INTERFACE]: Recurring charge attempt failed for order " + order.ID, ex);
+                }
+            }
+        }
+
+        // Confluence charges resolve synchronously (same Transfer() call
+        // ChargeConfluenceCurrency uses for a first purchase); Gloebit only
+        // ever submits here - the real success/failure resolves later via
+        // HandleGloebitCallback's IsRenewal branch, same async shape as a
+        // first Gloebit purchase.
+        private void AttemptRecurringCharge(StoreOrder order, StoreCatalogItem item)
+        {
+            if (order.CurrencyUsed == "Confluence")
+            {
+                if (m_CurrencyService == null || m_CurrencyService.GetBalance(order.ResidentAvatarID) < order.AmountCharged)
+                {
+                    ApplyRenewalFailure(order, item, "Insufficient balance");
+                    return;
+                }
+
+                bool ok = m_CurrencyService.Transfer(UUID.Zero, order.ResidentAvatarID, order.AmountCharged,
+                        "Store renewal: " + item.Name, STORE_PURCHASE_TRANSACTION_TYPE, UUID.Random());
+
+                if (ok)
+                    ApplyRenewalSuccess(order, item);
+                else
+                    ApplyRenewalFailure(order, item, "Transfer failed");
+
+                return;
+            }
+
+            // Gloebit
+            StoreGloebitAuth auth = m_StoreService.GetGloebitAuth(order.ResidentAvatarID);
+            if (auth == null || !auth.Authorized || string.IsNullOrEmpty(auth.AccessToken))
+            {
+                // No interactive OAuth round-trip is possible from a
+                // background job (m_pendingGloebitOrders is a per-session,
+                // per-click mechanism) - a lapsed/revoked Gloebit
+                // authorization just counts as a failed attempt, same as
+                // any other declined charge.
+                ApplyRenewalFailure(order, item, "Gloebit authorization missing or revoked - resident must re-authorize");
+                return;
+            }
+
+            StoreGloebitTransaction txn = new StoreGloebitTransaction
+            {
+                ID = UUID.Random(),
+                StoreOrderID = order.ID,
+                AvatarPrincipalID = order.ResidentAvatarID,
+                Amount = order.AmountCharged,
+                Stage = "Submitted",
+                IsRenewal = true,
+                Created = DateTime.UtcNow,
+                Updated = DateTime.UtcNow
+            };
+            m_StoreService.StoreGloebitTransaction(txn);
+
+            bool submitted = m_GloebitClient.Transact(txn.ID, order.ResidentAvatarID, auth.AccessToken, auth.GloebitID,
+                    order.AmountCharged, "Store renewal: " + item.Name, order.ResidentName, out string error);
+
+            if (!submitted)
+            {
+                txn.Stage = "Failed";
+                txn.ResponseReason = error;
+                txn.Updated = DateTime.UtcNow;
+                m_StoreService.StoreGloebitTransaction(txn);
+                ApplyRenewalFailure(order, item, "Gloebit submit failed: " + error);
+            }
+            // else: leave order as-is (still Active/PastDue/Suspended) -
+            // HandleGloebitCallback's consume/cancel branches for
+            // txn.IsRenewal resolve the actual outcome.
+        }
+
+        // Shared by the Confluence synchronous path above and
+        // HandleGloebitCallback's IsRenewal-consume branch.
+        private void ApplyRenewalSuccess(StoreOrder order, StoreCatalogItem item)
+        {
+            bool wasSuspended = order.Status == "Suspended";
+
+            order.Status = "Active";
+            order.NextBillingDate = (order.NextBillingDate ?? DateTime.UtcNow).AddDays(Math.Max(1, item.DurationDays));
+            order.GraceUntil = null;
+            order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                    + "Recurring charge succeeded " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC. Next billing "
+                    + order.NextBillingDate.Value.ToString("yyyy-MM-dd") + ".";
+            order.Updated = DateTime.UtcNow;
+            m_StoreService.StoreOrder(order);
+
+            if (wasSuspended)
+                ReinstateOrder(order, item);
+        }
+
+        // Shared by the Confluence synchronous path above and
+        // HandleGloebitCallback's IsRenewal-cancel branch.
+        private void ApplyRenewalFailure(StoreOrder order, StoreCatalogItem item, string reason)
+        {
+            order.Updated = DateTime.UtcNow;
+            order.Notes = (string.IsNullOrEmpty(order.Notes) ? string.Empty : order.Notes + "\n")
+                    + "Recurring charge failed " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC: " + reason + ".";
+
+            if (!order.GraceUntil.HasValue)
+            {
+                // First failure this cycle - start the grace window, don't
+                // suspend yet.
+                order.Status = "PastDue";
+                order.GraceUntil = DateTime.UtcNow.AddDays(m_recurringGraceDays);
+                order.Notes += " Grace period until " + order.GraceUntil.Value.ToString("yyyy-MM-dd") + ".";
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            if (DateTime.UtcNow <= order.GraceUntil.Value)
+            {
+                // Still within an already-running grace window - record the
+                // attempt, don't push GraceUntil back out.
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            // Grace expired and still failing - suspend for real.
+            order.Status = "Suspended";
+            m_StoreService.StoreOrder(order);
+            SuspendOrder(order, item);
+        }
+
+        // Withdraws whatever this order actually granted - stops the region
+        // process for a RegionOrder (graceful, same TryStopRegion path the
+        // admin's own Simulators Stop button uses - never deletes anything,
+        // the region's data/config stay put, exactly like a resident simply
+        // not logging in), or claws back the specific prim/agent amount this
+        // order added for a PrimPack/MaxAgentsPack (via the absolute-set
+        // console commands, never a flat delta, so it can't be thrown off by
+        // other packs stacked on the same region).
+        private void SuspendOrder(StoreOrder order, StoreCatalogItem item)
+        {
+            if (item.ItemType == "RegionOrder")
+            {
+                UUID? regionId = ResolveOrderRegionId(order);
+                if (regionId.HasValue)
+                    TryStopRegion(regionId.Value, order.RequestedRegionName ?? "region", out _);
+                return;
+            }
+
+            if (!order.TargetRegionID.HasValue)
+                return;
+
+            GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, order.TargetRegionID.Value);
+            if (region == null)
+                return;
+
+            if (item.ItemType == "PrimPack" && TryGetRegionCapacityInfo(order.TargetRegionID.Value, out _, out int currentPrims, out _))
+            {
+                int reduced = Math.Max(0, currentPrims - item.PrimAmount);
+                RunRegionConsoleCommand(region, "set-prim-limit " + order.TargetRegionID.Value + " " + reduced);
+            }
+            else if (item.ItemType == "MaxAgentsPack" && TryGetRegionCapacityInfo(order.TargetRegionID.Value, out _, out _, out int currentAgents))
+            {
+                int reduced = Math.Max(0, currentAgents - item.MaxAgentsAmount);
+                RunRegionConsoleCommand(region, "set-agent-limit " + order.TargetRegionID.Value + " " + reduced);
+            }
+        }
+
+        // Restores whatever SuspendOrder withdrew, called the moment a
+        // Suspended order's next renewal charge actually succeeds.
+        private void ReinstateOrder(StoreOrder order, StoreCatalogItem item)
+        {
+            if (item.ItemType == "RegionOrder")
+            {
+                TryStartRegionProcess(order, out _, out _);
+                return;
+            }
+
+            if (!order.TargetRegionID.HasValue)
+                return;
+
+            GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, order.TargetRegionID.Value);
+            if (region == null)
+                return;
+
+            if (item.ItemType == "PrimPack")
+                RunRegionConsoleCommand(region, "add-prim-limit " + order.TargetRegionID.Value + " " + item.PrimAmount);
+            else if (item.ItemType == "MaxAgentsPack")
+                RunRegionConsoleCommand(region, "add-agent-limit " + order.TargetRegionID.Value + " " + item.MaxAgentsAmount);
+        }
+
+        // A RegionOrder's own region isn't tracked by ID up front the way
+        // TargetRegionID tracks a PrimPack/MaxAgentsPack's target - it's
+        // looked up by the name the resident chose at checkout, same as
+        // TryStartRegionProcess's own region-discovery path.
+        private UUID? ResolveOrderRegionId(StoreOrder order)
+        {
+            if (string.IsNullOrEmpty(order.RequestedRegionName) || m_GridService == null)
+                return null;
+
+            List<GridRegion> matches = m_GridService.GetRegionsByName(UUID.Zero, order.RequestedRegionName, 1);
+            return matches.Count > 0 ? matches[0].RegionID : (UUID?)null;
+        }
+
+        #endregion Recurring billing
 
         // Public browse - only ever shows IsListed listings, matching
         // real SL: browsing/checkout live entirely on the marketplace
@@ -13249,7 +13833,20 @@ namespace OpenSim.Server.Handlers.WebInterface
                         m_StoreService.StoreGloebitTransaction(txn);
 
                         StoreOrder order = m_StoreService.GetOrder(txn.StoreOrderID);
-                        if (order != null && order.Status == "PendingPayment")
+                        // Renewal charges never sit at PendingPayment (see
+                        // AttemptRecurringCharge - the order stays
+                        // Active/PastDue/Suspended the whole round-trip), so
+                        // this branch and the PendingPayment one below are
+                        // mutually exclusive by construction, not just by
+                        // txn.IsRenewal - never double-fires ProcessPaidOrder
+                        // for a renewal.
+                        if (order != null && txn.IsRenewal)
+                        {
+                            StoreCatalogItem renewalItem = m_StoreService.GetCatalogItem(order.CatalogItemID);
+                            if (renewalItem != null)
+                                ApplyRenewalSuccess(order, renewalItem);
+                        }
+                        else if (order != null && order.Status == "PendingPayment")
                         {
                             order.Status = "Paid";
                             order.Updated = DateTime.UtcNow;
@@ -13272,7 +13869,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                         m_StoreService.StoreGloebitTransaction(txn);
 
                         StoreOrder order = m_StoreService.GetOrder(txn.StoreOrderID);
-                        if (order != null && order.Status == "PendingPayment")
+                        if (order != null && txn.IsRenewal)
+                        {
+                            StoreCatalogItem renewalItem = m_StoreService.GetCatalogItem(order.CatalogItemID);
+                            if (renewalItem != null)
+                                ApplyRenewalFailure(order, renewalItem, "Gloebit declined the renewal charge");
+                        }
+                        else if (order != null && order.Status == "PendingPayment")
                         {
                             order.Status = "PaymentFailed";
                             order.Updated = DateTime.UtcNow;
@@ -13366,6 +13969,8 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (item.ItemType == "PrimPack")
                 FulfillPrimPack(order, item);
+            else if (item.ItemType == "MaxAgentsPack")
+                FulfillMaxAgentsPack(order, item);
             else if (item.ItemType == "RegionOrder")
                 FulfillRegionOrder(order, item);
         }
@@ -13408,6 +14013,43 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_StoreService.StoreOrder(order);
         }
 
+        // Mirrors FulfillPrimPack exactly - same additive-on-top design,
+        // backed by add-agent-limit (RegionCommandsModule.cs) instead of
+        // add-prim-limit. Region-type eligibility (Full Region only) and
+        // the 80-agent ceiling were already re-checked in BuildStoreOrder
+        // before payment was even taken; this doesn't re-check them, same
+        // as FulfillPrimPack doesn't re-check the 50,000 prim ceiling here.
+        private void FulfillMaxAgentsPack(StoreOrder order, StoreCatalogItem item)
+        {
+            GridRegion region = order.TargetRegionID.HasValue && m_GridService != null
+                    ? m_GridService.GetRegionByUUID(UUID.Zero, order.TargetRegionID.Value)
+                    : null;
+
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+            {
+                order.Notes = "Fulfillment failed: target region is not reachable. An admin can retry from the Store Orders queue.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            if (item.MaxAgentsAmount <= 0)
+            {
+                order.Notes = "Fulfillment failed: this catalog item has no max agents amount configured.";
+                order.Updated = DateTime.UtcNow;
+                m_StoreService.StoreOrder(order);
+                return;
+            }
+
+            string output = RunRegionConsoleCommand(region, "add-agent-limit " + region.RegionID + " " + item.MaxAgentsAmount);
+
+            order.Status = "Fulfilled";
+            order.ExpiresAt = item.DurationDays > 0 ? DateTime.UtcNow.AddDays(item.DurationDays) : (DateTime?)null;
+            order.Notes = output;
+            order.Updated = DateTime.UtcNow;
+            m_StoreService.StoreOrder(order);
+        }
+
         // Auto-generates the new region's .ini/port/location and launches
         // it automatically (see TryStartRegionProcess) - Start Region in
         // the admin queue is a manual retry path only, for when this
@@ -13431,7 +14073,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            (int X, int Y)? location = AllocateRegionOrderLocation(order.RequestedLocationX, order.RequestedLocationY);
+            (int X, int Y)? location = AllocateRegionOrderLocation(order.RequestedLocationX, order.RequestedLocationY, item.RegionSizeX, item.RegionSizeY);
             if (location == null)
             {
                 order.Notes = order.RequestedLocationX.HasValue
@@ -13534,6 +14176,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     regionIni.Append("SizeY = ").Append(item.RegionSizeY).Append("\r\n");
                 if (item.PrimAmount > 0)
                     regionIni.Append("MaxPrims = ").Append(item.PrimAmount).Append("\r\n");
+                if (item.MaxAgentsAmount > 0)
+                    regionIni.Append("MaxAgents = ").Append(item.MaxAgentsAmount).Append("\r\n");
                 // The resident's checkout choice to join one of their own
                 // existing estates. TargetEstate is a per-REGION setting
                 // (RegionInfo.GetSetting reads it from this file's own
@@ -13545,6 +14189,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // since the estate they're joining already has one.
                 if (order.RequestedEstateID.HasValue)
                     regionIni.Append("TargetEstate = ").Append(order.RequestedEstateID.Value).Append("\r\n");
+                // Real, existing OpenSim field (RegionInfo.cs), free-form
+                // and shown on the map - not something this feature
+                // invents. Whatever the purchased catalog item's RegionType
+                // was (Full Region/Homestead/Openspace/Event, never
+                // Mainland - that's grid-owned-infrastructure-only, kept
+                // out of the Store catalog on purpose) rides straight
+                // through onto the region this order creates.
+                if (!string.IsNullOrEmpty(item.RegionType))
+                    regionIni.Append("RegionType = \"").Append(item.RegionType).Append("\"\r\n");
                 File.WriteAllText(Path.Combine(regionsDir, "Regions.ini"), regionIni.ToString());
 
                 order.AllocatedPort = port.Value;
@@ -13627,13 +14280,39 @@ namespace OpenSim.Server.Handlers.WebInterface
         // Scoped to the configured coordinate block only - that block is
         // dedicated to region orders, so there's no need to scan the whole
         // grid the way the port allocator above does.
+        // A region's real footprint in grid-coordinate cells (each cell is
+        // one standard 256x256m slot) - a VarRegion's own coordinate is
+        // just its origin corner, but the simulator actually spans this
+        // many cells in each direction from there. Minimum 1x1 regardless
+        // of a stray 0/negative size value.
+        private static (int CellsX, int CellsY) GetFootprintCells(int sizeXMeters, int sizeYMeters)
+        {
+            int cellsX = Math.Max(1, (int)Math.Ceiling((sizeXMeters > 0 ? sizeXMeters : 256) / 256.0));
+            int cellsY = Math.Max(1, (int)Math.Ceiling((sizeYMeters > 0 ? sizeYMeters : 256) / 256.0));
+            return (cellsX, cellsY);
+        }
+
         // Shared by AllocateRegionOrderLocation and BuildStoreOrder's own
         // best-effort checkout-time check - one source of truth for what
         // counts as "taken" (a real registered region, or another order
-        // still holding its allocated spot).
+        // still holding its allocated spot). Marks every cell a region's
+        // real footprint covers, not just its origin - found live
+        // (2026-09-12) that a VarRegion (2x2/3x3/4x4 catalog tiers) only
+        // had its single origin cell reserved, leaving the other cells its
+        // simulator actually occupies free for another order to be placed
+        // directly on top of - a real overlapping-region collision risk on
+        // the live map, not just a bookkeeping nicety.
         private HashSet<(int, int)> ComputeUsedRegionOrderLocations()
         {
             HashSet<(int, int)> usedLocations = new HashSet<(int, int)>();
+
+            void MarkFootprint(int originX, int originY, int sizeXMeters, int sizeYMeters)
+            {
+                (int cellsX, int cellsY) = GetFootprintCells(sizeXMeters, sizeYMeters);
+                for (int dx = 0; dx < cellsX; dx++)
+                    for (int dy = 0; dy < cellsY; dy++)
+                        usedLocations.Add((originX + dx, originY + dy));
+            }
 
             if (m_GridService != null)
             {
@@ -13641,7 +14320,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         (int)Util.RegionToWorldLoc((uint)m_regionOrderGridXStart), (int)Util.RegionToWorldLoc((uint)m_regionOrderGridXEnd),
                         (int)Util.RegionToWorldLoc((uint)m_regionOrderGridYStart), (int)Util.RegionToWorldLoc((uint)m_regionOrderGridYEnd));
                 foreach (GridRegion r in regionsInBlock)
-                    usedLocations.Add((r.RegionCoordX, r.RegionCoordY));
+                    MarkFootprint(r.RegionCoordX, r.RegionCoordY, r.RegionSizeX, r.RegionSizeY);
             }
 
             if (m_StoreService != null)
@@ -13649,7 +14328,11 @@ namespace OpenSim.Server.Handlers.WebInterface
                 foreach (StoreOrder o in m_StoreService.GetAllOrders())
                 {
                     if (o.AllocatedLocationX.HasValue && o.AllocatedLocationY.HasValue && (o.Status == "AwaitingStart" || o.Status == "Active"))
-                        usedLocations.Add((o.AllocatedLocationX.Value, o.AllocatedLocationY.Value));
+                    {
+                        StoreCatalogItem orderItem = m_StoreService.GetCatalogItem(o.CatalogItemID);
+                        MarkFootprint(o.AllocatedLocationX.Value, o.AllocatedLocationY.Value,
+                                orderItem?.RegionSizeX ?? 256, orderItem?.RegionSizeY ?? 256);
+                    }
                 }
             }
 
@@ -13665,9 +14348,31 @@ namespace OpenSim.Server.Handlers.WebInterface
         // that's no longer valid returns null - the caller fails the order
         // outright rather than silently placing it somewhere the resident
         // didn't ask for.
-        private (int X, int Y)? AllocateRegionOrderLocation(int? requestedX, int? requestedY)
+        //
+        // sizeXMeters/sizeYMeters is the region being placed's OWN real
+        // size (from its catalog item) - every cell its footprint would
+        // cover has to be free, not just its origin corner, and the far
+        // edge has to stay inside the configured grid block too (see
+        // GetFootprintCells/ComputeUsedRegionOrderLocations for why this
+        // matters - a VarRegion placed without this check could overlap an
+        // existing region on the live map).
+        private (int X, int Y)? AllocateRegionOrderLocation(int? requestedX, int? requestedY, int sizeXMeters, int sizeYMeters)
         {
             HashSet<(int, int)> usedLocations = ComputeUsedRegionOrderLocations();
+            (int cellsX, int cellsY) = GetFootprintCells(sizeXMeters, sizeYMeters);
+
+            bool FootprintFree(int originX, int originY)
+            {
+                if (originX + cellsX - 1 > m_regionOrderGridXEnd || originY + cellsY - 1 > m_regionOrderGridYEnd)
+                    return false;
+
+                for (int dx = 0; dx < cellsX; dx++)
+                    for (int dy = 0; dy < cellsY; dy++)
+                        if (usedLocations.Contains((originX + dx, originY + dy)))
+                            return false;
+
+                return true;
+            }
 
             if (requestedX.HasValue && requestedY.HasValue)
             {
@@ -13675,14 +14380,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                         || requestedY.Value < m_regionOrderGridYStart || requestedY.Value > m_regionOrderGridYEnd)
                     return null;
 
-                return usedLocations.Contains((requestedX.Value, requestedY.Value)) ? null : (requestedX.Value, requestedY.Value);
+                return FootprintFree(requestedX.Value, requestedY.Value) ? (requestedX.Value, requestedY.Value) : null;
             }
 
             for (int y = m_regionOrderGridYStart; y <= m_regionOrderGridYEnd; y++)
             {
                 for (int x = m_regionOrderGridXStart; x <= m_regionOrderGridXEnd; x++)
                 {
-                    if (!usedLocations.Contains((x, y)))
+                    if (FootprintFree(x, y))
                         return (x, y);
                 }
             }
@@ -13735,7 +14440,8 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1>Store Catalog</h1><p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a> | <a href=\"")
-              .Append(BasePath).Append("/admin/store/orders\">Store Orders</a></p>");
+              .Append(BasePath).Append("/admin/store/orders\">Store Orders</a> | <a href=\"")
+              .Append(BasePath).Append("/admin/store/create-region\">Create Region</a></p>");
 
             string queryMessage = request.QueryString.Get("message");
             if (!string.IsNullOrEmpty(queryMessage))
@@ -13743,7 +14449,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (items.Count > 0)
             {
-                sb.Append("<table><tr><th>Name</th><th>Type</th><th>Prims</th><th>Region Size</th><th>").Append(m_currencySymbol).Append("</th><th>G$</th><th>Days</th><th>Active</th><th></th></tr>");
+                sb.Append("<table><tr><th>Name</th><th>Type</th><th>Prims</th><th>Region Size</th><th>").Append(m_currencySymbol).Append("</th><th>G$</th><th>Days</th><th>Recurring</th><th>Active</th><th></th></tr>");
                 foreach (StoreCatalogItem item in items)
                 {
                     sb.Append("<tr><td>").Append(Html(item.Name)).Append("</td>");
@@ -13753,6 +14459,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     sb.Append("<td>").Append(item.PriceConfluence.ToString("N0")).Append("</td>");
                     sb.Append("<td>").Append(item.PriceGloebits.ToString("N0")).Append("</td>");
                     sb.Append("<td>").Append(item.DurationDays).Append("</td>");
+                    sb.Append("<td>").Append(Pill(item.RecurringBilling)).Append("</td>");
                     sb.Append("<td>").Append(Pill(item.IsActive)).Append("</td>");
                     sb.Append("<td><a href=\"").Append(BasePath).Append("/admin/store?edit=").Append(item.ID).Append("\">Edit</a></td></tr>");
                 }
@@ -13770,13 +14477,28 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<p>Description <textarea name=\"description\">").Append(editItem != null ? Html(editItem.Description) : string.Empty).Append("</textarea></p>");
             sb.Append("<p>Type <select name=\"item_type\">");
             sb.Append("<option value=\"PrimPack\"").Append(editItem == null || editItem.ItemType == "PrimPack" ? " selected" : string.Empty).Append(">Prim Pack</option>");
+            sb.Append("<option value=\"MaxAgentsPack\"").Append(editItem != null && editItem.ItemType == "MaxAgentsPack" ? " selected" : string.Empty).Append(">Max Agents Pack</option>");
             sb.Append("<option value=\"RegionOrder\"").Append(editItem != null && editItem.ItemType == "RegionOrder" ? " selected" : string.Empty).Append(">Region Order</option>");
             sb.Append("</select></p>");
             sb.Append("<p>Prim capacity (PrimPack: prims added on top of the region's current cap, whatever that already is. RegionOrder: starting capacity, 0 = default 15000) <input type=\"number\" name=\"prim_amount\" value=\"")
               .Append(editItem != null ? editItem.PrimAmount : 0).Append("\"></p>");
+            sb.Append("<p>Max agents capacity (MaxAgentsPack: agents added on top of the region's current limit. RegionOrder: starting limit, 0 = default 100. Only meaningful for Full Region - Homestead/Openspace/Event are fixed) <input type=\"number\" name=\"max_agents_amount\" value=\"")
+              .Append(editItem != null ? editItem.MaxAgentsAmount : 0).Append("\"></p>");
             sb.Append("<p>Region size X / Y in meters (RegionOrder only, 0 = default 256) <input type=\"number\" name=\"region_size_x\" value=\"")
               .Append(editItem != null ? editItem.RegionSizeX : 0).Append("\"> <input type=\"number\" name=\"region_size_y\" value=\"")
               .Append(editItem != null ? editItem.RegionSizeY : 0).Append("\"></p>");
+            // Deliberately just these 4 - each is meant to be its own
+            // separate catalog listing (own price/size/prims already work
+            // this way), not a buyer-facing selector. "Mainland" is NOT
+            // offered here on purpose - it's reserved for grid-owned
+            // infrastructure regions (Welcome Center, Sandbox already carry
+            // it), set directly via the region .ini editor, never
+            // purchasable.
+            sb.Append("<p>Region type (RegionOrder only - written into the new region's own .ini) <select name=\"region_type\">");
+            sb.Append("<option value=\"\"").Append(editItem == null || string.IsNullOrEmpty(editItem.RegionType) ? " selected" : string.Empty).Append(">(none)</option>");
+            foreach (string t in new[] { "Full Region", "Homestead", "Openspace", "Event" })
+                sb.Append("<option value=\"").Append(t).Append("\"").Append(editItem != null && editItem.RegionType == t ? " selected" : string.Empty).Append(">").Append(t).Append("</option>");
+            sb.Append("</select></p>");
             {
                 // One price, same number in both currencies whenever both
                 // are offered - residents shouldn't be able to see one
@@ -13795,6 +14517,16 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             sb.Append("<p>Duration days (0 = never expires) <input type=\"number\" name=\"duration_days\" value=\"")
               .Append(editItem != null ? editItem.DurationDays : 0).Append("\"></p>");
+            // Auto-charge every Duration Days period instead of requiring an
+            // admin's manual Renew click - only meaningful with a real
+            // Duration Days > 0 (enforced, not just suggested, in
+            // HandleAdminStoreSave below). On missed payment: a grace
+            // period, then the order is suspended (region stopped, or a
+            // Prim/Max Agents Pack's capacity clawed back) until payment
+            // resumes.
+            sb.Append("<p><label><input type=\"checkbox\" name=\"recurring_billing\" value=\"true\"")
+              .Append(editItem != null && editItem.RecurringBilling ? " checked" : string.Empty)
+              .Append("> Recurring billing (auto-charge every Duration Days period; requires Duration Days &gt; 0)</label></p>");
             sb.Append("<p>Sort order <input type=\"number\" name=\"sort_order\" value=\"").Append(editItem != null ? editItem.SortOrder : 0).Append("\"></p>");
             sb.Append("<p><label><input type=\"checkbox\" name=\"is_active\" value=\"true\"").Append(editItem == null || editItem.IsActive ? " checked" : string.Empty).Append("> Active</label></p>");
             sb.Append("<p><button type=\"submit\">Save</button>");
@@ -13825,13 +14557,26 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 item.Name = FormValue(form, "name") ?? string.Empty;
                 item.Description = FormValue(form, "description") ?? string.Empty;
-                item.ItemType = FormValue(form, "item_type") == "RegionOrder" ? "RegionOrder" : "PrimPack";
+                string submittedItemType = FormValue(form, "item_type");
+                item.ItemType = submittedItemType == "RegionOrder" ? "RegionOrder"
+                        : submittedItemType == "MaxAgentsPack" ? "MaxAgentsPack"
+                        : "PrimPack";
                 int.TryParse(FormValue(form, "prim_amount"), out int primAmount);
                 item.PrimAmount = Math.Max(0, primAmount);
+                int.TryParse(FormValue(form, "max_agents_amount"), out int maxAgentsAmount);
+                item.MaxAgentsAmount = Math.Max(0, maxAgentsAmount);
                 int.TryParse(FormValue(form, "region_size_x"), out int sizeX);
                 int.TryParse(FormValue(form, "region_size_y"), out int sizeY);
                 item.RegionSizeX = Math.Max(0, sizeX);
                 item.RegionSizeY = Math.Max(0, sizeY);
+                // Whitelisted, not trusted raw - this ends up written into
+                // a real region's .ini file (FulfillRegionOrder), and
+                // "Mainland" is deliberately not a valid submission here
+                // even though it's a legitimate value elsewhere (grid-owned
+                // regions only, set via the .ini editor, never purchasable).
+                string submittedRegionType = FormValue(form, "region_type") ?? string.Empty;
+                string[] allowedRegionTypes = { "Full Region", "Homestead", "Openspace", "Event" };
+                item.RegionType = Array.IndexOf(allowedRegionTypes, submittedRegionType) >= 0 ? submittedRegionType : string.Empty;
                 // Same exchange rate for both currencies, deliberately -
                 // one price field, applied identically to whichever
                 // currencies are offered, so residents never see one
@@ -13843,6 +14588,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                 item.PriceGloebits = FormValue(form, "offer_gloebit") == "true" ? price : 0;
                 int.TryParse(FormValue(form, "duration_days"), out int durationDays);
                 item.DurationDays = Math.Max(0, durationDays);
+                // Only meaningful with a real billing period - silently
+                // ignore a checked box if Duration Days is 0 rather than
+                // creating a "recurring" item that can never actually bill,
+                // since RecurringBillingTimerElapsed only ever considers
+                // orders with a real NextBillingDate.
+                item.RecurringBilling = FormValue(form, "recurring_billing") == "true" && item.DurationDays > 0;
                 int.TryParse(FormValue(form, "sort_order"), out int sortOrder);
                 item.SortOrder = sortOrder;
                 item.IsActive = FormValue(form, "is_active") == "true";
@@ -13852,6 +14603,167 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             response.Redirect(BasePath + "/admin/store", HttpStatusCode.Redirect);
+        }
+
+        // Admin-only region provisioning, entirely outside the Store's
+        // payment/catalog machinery - "any simulator, no purchase" per the
+        // user's own request. Reuses FulfillRegionOrder verbatim rather than
+        // duplicating its ini-generation/port-allocation/launch logic: this
+        // builds a real StoreOrder + a transient (never publicly listed)
+        // StoreCatalogItem and hands both to the exact same fulfillment
+        // path a real purchase uses, so there is only ever one region-
+        // provisioning implementation to keep correct. The transient item
+        // IS persisted (IsActive = false, so GetActiveCatalogItems/the
+        // public /store page never see it) rather than kept purely in
+        // memory - every other piece of this feature (admin Store Orders
+        // queue, renewal, capacity lookups) already assumes
+        // GetCatalogItem(order.CatalogItemID) returns a real row, and this
+        // keeps that assumption true with zero special-casing elsewhere.
+        // Unlike the buyer-facing form (HandleAdminStoreSave), Mainland IS
+        // a valid RegionType choice here - this is exactly the admin-only
+        // path Mainland was always meant to be created through.
+        private void HandleAdminStoreCreateRegion(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_StoreService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = null;
+
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+
+                string ownerInput = (FormValue(form, "owner_name") ?? string.Empty).Trim();
+                string[] ownerParts = ownerInput.Split(new[] { ' ' }, 2, StringSplitOptions.RemoveEmptyEntries);
+                UserAccount owner = ownerParts.Length == 2 && m_UserAccountService != null
+                        ? m_UserAccountService.GetUserAccount(UUID.Zero, ownerParts[0], ownerParts[1])
+                        : null;
+
+                string regionName = (FormValue(form, "region_name") ?? string.Empty).Trim();
+
+                string submittedRegionType = FormValue(form, "region_type") ?? string.Empty;
+                string[] allowedRegionTypes = { "Full Region", "Homestead", "Openspace", "Event", "Mainland" };
+
+                int.TryParse(FormValue(form, "region_size_x"), out int sizeX);
+                int.TryParse(FormValue(form, "region_size_y"), out int sizeY);
+                int.TryParse(FormValue(form, "prim_amount"), out int primAmount);
+                int.TryParse(FormValue(form, "max_agents_amount"), out int maxAgentsAmount);
+                int.TryParse(FormValue(form, "location_x"), out int locationX);
+                int.TryParse(FormValue(form, "location_y"), out int locationY);
+                bool hasLocation = !string.IsNullOrEmpty(FormValue(form, "location_x")) && !string.IsNullOrEmpty(FormValue(form, "location_y"));
+                string estateName = (FormValue(form, "estate_name") ?? string.Empty).Trim();
+
+                if (owner == null)
+                {
+                    message = "No resident found with that name - enter \"First Last\" exactly as it appears in User Management.";
+                }
+                else if (string.IsNullOrEmpty(regionName) || regionName.Length > 63)
+                {
+                    message = "Enter a valid region name.";
+                }
+                else if (m_GridService != null && m_GridService.GetRegionsByName(UUID.Zero, regionName, 1).Count > 0)
+                {
+                    message = "That region name is already taken.";
+                }
+                else if (m_StoreService.GetAllOrders().Any(o => o.OrderType == "RegionOrder"
+                        && !string.IsNullOrEmpty(o.RequestedRegionName)
+                        && string.Equals(o.RequestedRegionName, regionName, StringComparison.OrdinalIgnoreCase)
+                        && o.Status != "Cancelled" && o.Status != "PaymentFailed"))
+                {
+                    message = "That region name is already taken or pending.";
+                }
+                else if (Array.IndexOf(allowedRegionTypes, submittedRegionType) < 0)
+                {
+                    message = "Choose a region type.";
+                }
+                else
+                {
+                    StoreCatalogItem item = new StoreCatalogItem
+                    {
+                        ID = UUID.Random(),
+                        ItemType = "RegionOrder",
+                        Name = "Admin-created: " + regionName,
+                        Description = "Created directly by admin " + session.Name + " on " + DateTime.UtcNow.ToString("yyyy-MM-dd") + ", bypassing the Store.",
+                        RegionSizeX = Math.Max(0, sizeX),
+                        RegionSizeY = Math.Max(0, sizeY),
+                        RegionType = submittedRegionType,
+                        PrimAmount = Math.Max(0, primAmount),
+                        MaxAgentsAmount = Math.Max(0, maxAgentsAmount),
+                        PriceConfluence = 0,
+                        PriceGloebits = 0,
+                        DurationDays = 0,
+                        RecurringBilling = false,
+                        IsActive = false,
+                        SortOrder = 0,
+                        Created = DateTime.UtcNow,
+                        Updated = DateTime.UtcNow
+                    };
+                    m_StoreService.StoreCatalogItem(item);
+
+                    StoreOrder order = new StoreOrder
+                    {
+                        ID = UUID.Random(),
+                        CatalogItemID = item.ID,
+                        OrderType = "RegionOrder",
+                        ResidentAvatarID = owner.PrincipalID,
+                        ResidentName = owner.FirstName + " " + owner.LastName,
+                        // Distinct from "Confluence"/"Gloebit" - flags this
+                        // order as a free admin grant everywhere CurrencyUsed
+                        // is displayed (Store Orders queue, My Purchases).
+                        CurrencyUsed = "AdminGrant",
+                        AmountCharged = 0,
+                        Status = "PendingPayment",
+                        RequestedRegionName = regionName,
+                        RequestedEstateName = string.IsNullOrEmpty(estateName) ? null : estateName,
+                        RequestedLocationX = hasLocation ? (int?)locationX : null,
+                        RequestedLocationY = hasLocation ? (int?)locationY : null,
+                        Created = DateTime.UtcNow,
+                        Updated = DateTime.UtcNow
+                    };
+                    m_StoreService.StoreOrder(order);
+
+                    FulfillRegionOrder(order, item);
+
+                    message = order.Status == "Active"
+                            ? "Region \"" + regionName + "\" created and started for " + order.ResidentName + "."
+                            : "Region \"" + regionName + "\" provisioned for " + order.ResidentName + ", but automatic start failed - "
+                                    + "check the Store Orders queue to retry.";
+                }
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1>Create Region</h1><p><a href=\"").Append(BasePath).Append("/admin/store\">Back to Store Catalog</a> | <a href=\"")
+              .Append(BasePath).Append("/admin/store/orders\">Store Orders</a></p>");
+            sb.Append("<p>Provisions a region directly - any type, any size, any capacity - for a resident, with no charge and no Store catalog listing involved. Uses the exact same provisioning path a real purchase does.</p>");
+
+            if (!string.IsNullOrEmpty(message))
+                sb.Append("<p>").Append(Html(message)).Append("</p>");
+
+            sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/store/create-region\">");
+            sb.Append("<p>Owner (exact resident name, \"First Last\") <input type=\"text\" name=\"owner_name\" required></p>");
+            sb.Append("<p>Region name <input type=\"text\" name=\"region_name\" maxlength=\"63\" required></p>");
+            sb.Append("<p>Region type <select name=\"region_type\">");
+            foreach (string t in new[] { "Full Region", "Homestead", "Openspace", "Event", "Mainland" })
+                sb.Append("<option value=\"").Append(t).Append("\">").Append(t).Append("</option>");
+            sb.Append("</select></p>");
+            sb.Append("<p>Region size X / Y in meters (0 = default 256) <input type=\"number\" name=\"region_size_x\" value=\"0\"> ")
+              .Append("<input type=\"number\" name=\"region_size_y\" value=\"0\"></p>");
+            sb.Append("<p>Prim capacity (0 = default 15000) <input type=\"number\" name=\"prim_amount\" value=\"0\"></p>");
+            sb.Append("<p>Max agents (0 = default 100) <input type=\"number\" name=\"max_agents_amount\" value=\"0\"></p>");
+            sb.Append("<p>Estate name (blank = \"&lt;Owner&gt;'s Estate\") <input type=\"text\" name=\"estate_name\"></p>");
+            sb.Append("<p>Grid location (optional - leave blank to auto-pick; valid range ")
+              .Append(m_regionOrderGridXStart).Append("-").Append(m_regionOrderGridXEnd).Append(" x ")
+              .Append(m_regionOrderGridYStart).Append("-").Append(m_regionOrderGridYEnd).Append("): ")
+              .Append("<input type=\"number\" name=\"location_x\" placeholder=\"X\" style=\"width:5em\"> ")
+              .Append("<input type=\"number\" name=\"location_y\" placeholder=\"Y\" style=\"width:5em\"></p>");
+            sb.Append("<p><button type=\"submit\">Create Region</button></p>");
+            sb.Append("</form>");
+
+            WritePage(request, response, PageTitle("Create Region"), sb.ToString());
         }
 
         // Distinguishes "genuinely down" from "the process is running but
@@ -14240,6 +15152,44 @@ namespace OpenSim.Server.Handlers.WebInterface
         // there's no live-apply mechanism for arbitrary ini keys the way
         // the Store's own add-prim-limit/set-prim-limit console commands
         // have for prim capacity specifically.
+        // Reads a region's own current RegionType/MaxPrims/MaxAgents
+        // straight from its .ini file - the same source of truth
+        // add-prim-limit/add-agent-limit write back to synchronously
+        // (SaveRegionToFile), so this reflects the region's real current
+        // capacity, not just what it started with. Backs the Store's
+        // PrimPack/MaxAgentsPack purchase restrictions (region-type
+        // eligibility + ceiling checks) - both need to know what a region
+        // actually has right now before allowing (or blocking) another
+        // pack purchase.
+        private bool TryGetRegionCapacityInfo(UUID regionID, out string regionType, out int maxPrims, out int maxAgents)
+        {
+            regionType = string.Empty;
+            maxPrims = 0;
+            maxAgents = 0;
+
+            var match = DiscoverRegionIniFiles().FirstOrDefault(r => r.RegionID == regionID);
+            if (match.FilePath == null)
+                return false;
+
+            try
+            {
+                IConfigSource source = new IniConfigSource(match.FilePath);
+                IConfig config = source.Configs[match.RegionName];
+                if (config == null)
+                    return false;
+
+                regionType = config.GetString("RegionType", string.Empty);
+                maxPrims = config.GetInt("MaxPrims", 15000);
+                maxAgents = config.GetInt("MaxAgents", 100);
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_log.Warn("[WEB INTERFACE]: Could not read capacity info from " + match.FilePath, e);
+                return false;
+            }
+        }
+
         private List<(string RegionName, UUID RegionID, string FilePath)> DiscoverRegionIniFiles()
         {
             List<(string, UUID, string)> results = new List<(string, UUID, string)>();

@@ -89,3 +89,34 @@ ALTER TABLE store_orders ADD COLUMN RequestedLocationX int;
 ALTER TABLE store_orders ADD COLUMN RequestedLocationY int;
 
 COMMIT;
+
+:VERSION 4
+
+BEGIN TRANSACTION;
+
+ALTER TABLE store_catalog_items ADD COLUMN RegionType varchar(20) NOT NULL DEFAULT '';
+
+COMMIT;
+
+:VERSION 5
+
+BEGIN TRANSACTION;
+
+ALTER TABLE store_catalog_items ADD COLUMN MaxAgentsAmount int NOT NULL DEFAULT 0;
+
+COMMIT;
+
+:VERSION 6
+
+BEGIN TRANSACTION;
+
+ALTER TABLE store_catalog_items ADD COLUMN RecurringBilling boolean NOT NULL DEFAULT 0;
+
+ALTER TABLE store_orders ADD COLUMN IsRecurring boolean NOT NULL DEFAULT 0;
+ALTER TABLE store_orders ADD COLUMN NextBillingDate int NULL;
+ALTER TABLE store_orders ADD COLUMN GraceUntil int NULL;
+CREATE INDEX IF NOT EXISTS store_orders_recurring_billing ON store_orders (IsRecurring, NextBillingDate);
+
+ALTER TABLE store_gloebit_transactions ADD COLUMN IsRenewal boolean NOT NULL DEFAULT 0;
+
+COMMIT;

@@ -32,8 +32,8 @@ namespace OpenSim.Data.MySQL
         }
 
         private const string CatalogColumns =
-                "ID, ItemType, Name, Description, PrimAmount, RegionSizeX, RegionSizeY, " +
-                "PriceConfluence, PriceGloebits, DurationDays, IsActive, SortOrder, Created, Updated";
+                "ID, ItemType, Name, Description, PrimAmount, MaxAgentsAmount, RegionSizeX, RegionSizeY, RegionType, " +
+                "PriceConfluence, PriceGloebits, DurationDays, IsActive, SortOrder, Created, Updated, RecurringBilling";
 
         public StoreCatalogItem GetCatalogItem(UUID id)
         {
@@ -111,16 +111,18 @@ namespace OpenSim.Data.MySQL
 
                 using (MySqlCommand cmd = new MySqlCommand(
                         "REPLACE INTO store_catalog_items (" + CatalogColumns + ") " +
-                        "VALUES (?ID, ?ItemType, ?Name, ?Description, ?PrimAmount, ?RegionSizeX, ?RegionSizeY, " +
-                        "?PriceConfluence, ?PriceGloebits, ?DurationDays, ?IsActive, ?SortOrder, ?Created, ?Updated)", dbcon))
+                        "VALUES (?ID, ?ItemType, ?Name, ?Description, ?PrimAmount, ?MaxAgentsAmount, ?RegionSizeX, ?RegionSizeY, ?RegionType, " +
+                        "?PriceConfluence, ?PriceGloebits, ?DurationDays, ?IsActive, ?SortOrder, ?Created, ?Updated, ?RecurringBilling)", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", item.ID.ToString());
                     cmd.Parameters.AddWithValue("?ItemType", item.ItemType);
                     cmd.Parameters.AddWithValue("?Name", item.Name);
                     cmd.Parameters.AddWithValue("?Description", item.Description);
                     cmd.Parameters.AddWithValue("?PrimAmount", item.PrimAmount);
+                    cmd.Parameters.AddWithValue("?MaxAgentsAmount", item.MaxAgentsAmount);
                     cmd.Parameters.AddWithValue("?RegionSizeX", item.RegionSizeX);
                     cmd.Parameters.AddWithValue("?RegionSizeY", item.RegionSizeY);
+                    cmd.Parameters.AddWithValue("?RegionType", item.RegionType);
                     cmd.Parameters.AddWithValue("?PriceConfluence", item.PriceConfluence);
                     cmd.Parameters.AddWithValue("?PriceGloebits", item.PriceGloebits);
                     cmd.Parameters.AddWithValue("?DurationDays", item.DurationDays);
@@ -128,6 +130,7 @@ namespace OpenSim.Data.MySQL
                     cmd.Parameters.AddWithValue("?SortOrder", item.SortOrder);
                     cmd.Parameters.AddWithValue("?Created", Utils.DateTimeToUnixTime(item.Created));
                     cmd.Parameters.AddWithValue("?Updated", Utils.DateTimeToUnixTime(item.Updated));
+                    cmd.Parameters.AddWithValue("?RecurringBilling", item.RecurringBilling);
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -143,15 +146,18 @@ namespace OpenSim.Data.MySQL
                 Name = reader.GetString(2),
                 Description = reader.GetString(3),
                 PrimAmount = Convert.ToInt32(reader.GetValue(4)),
-                RegionSizeX = Convert.ToInt32(reader.GetValue(5)),
-                RegionSizeY = Convert.ToInt32(reader.GetValue(6)),
-                PriceConfluence = Convert.ToInt32(reader.GetValue(7)),
-                PriceGloebits = Convert.ToInt32(reader.GetValue(8)),
-                DurationDays = Convert.ToInt32(reader.GetValue(9)),
-                IsActive = Convert.ToBoolean(reader.GetValue(10)),
-                SortOrder = Convert.ToInt32(reader.GetValue(11)),
-                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(12))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(13)))
+                MaxAgentsAmount = Convert.ToInt32(reader.GetValue(5)),
+                RegionSizeX = Convert.ToInt32(reader.GetValue(6)),
+                RegionSizeY = Convert.ToInt32(reader.GetValue(7)),
+                RegionType = Convert.ToString(reader.GetValue(8)),
+                PriceConfluence = Convert.ToInt32(reader.GetValue(9)),
+                PriceGloebits = Convert.ToInt32(reader.GetValue(10)),
+                DurationDays = Convert.ToInt32(reader.GetValue(11)),
+                IsActive = Convert.ToBoolean(reader.GetValue(12)),
+                SortOrder = Convert.ToInt32(reader.GetValue(13)),
+                Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(14))),
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(15))),
+                RecurringBilling = Convert.ToBoolean(reader.GetValue(16))
             };
         }
 
@@ -159,7 +165,8 @@ namespace OpenSim.Data.MySQL
                 "ID, CatalogItemID, OrderType, ResidentAvatarID, ResidentName, CurrencyUsed, AmountCharged, " +
                 "PaymentTransactionID, Status, TargetRegionID, RequestedRegionName, AllocatedLocationX, " +
                 "AllocatedLocationY, AllocatedPort, SimulatorFolderName, RequestedEstateID, RequestedEstateName, " +
-                "RequestedLocationX, RequestedLocationY, StartedAt, ExpiresAt, Notes, Created, Updated";
+                "RequestedLocationX, RequestedLocationY, StartedAt, ExpiresAt, Notes, Created, Updated, " +
+                "IsRecurring, NextBillingDate, GraceUntil";
 
         public StoreOrder GetOrder(UUID id)
         {
@@ -242,7 +249,7 @@ namespace OpenSim.Data.MySQL
                         "?AmountCharged, ?PaymentTransactionID, ?Status, ?TargetRegionID, ?RequestedRegionName, " +
                         "?AllocatedLocationX, ?AllocatedLocationY, ?AllocatedPort, ?SimulatorFolderName, " +
                         "?RequestedEstateID, ?RequestedEstateName, ?RequestedLocationX, ?RequestedLocationY, ?StartedAt, " +
-                        "?ExpiresAt, ?Notes, ?Created, ?Updated)", dbcon))
+                        "?ExpiresAt, ?Notes, ?Created, ?Updated, ?IsRecurring, ?NextBillingDate, ?GraceUntil)", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", order.ID.ToString());
                     cmd.Parameters.AddWithValue("?CatalogItemID", order.CatalogItemID.ToString());
@@ -277,6 +284,11 @@ namespace OpenSim.Data.MySQL
                     cmd.Parameters.AddWithValue("?Notes", (object)order.Notes ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("?Created", Utils.DateTimeToUnixTime(order.Created));
                     cmd.Parameters.AddWithValue("?Updated", Utils.DateTimeToUnixTime(order.Updated));
+                    cmd.Parameters.AddWithValue("?IsRecurring", order.IsRecurring);
+                    cmd.Parameters.AddWithValue("?NextBillingDate",
+                            order.NextBillingDate.HasValue ? (object)Utils.DateTimeToUnixTime(order.NextBillingDate.Value) : DBNull.Value);
+                    cmd.Parameters.AddWithValue("?GraceUntil",
+                            order.GraceUntil.HasValue ? (object)Utils.DateTimeToUnixTime(order.GraceUntil.Value) : DBNull.Value);
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -310,7 +322,10 @@ namespace OpenSim.Data.MySQL
                 ExpiresAt = reader.IsDBNull(20) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(20))),
                 Notes = reader.IsDBNull(21) ? null : reader.GetString(21),
                 Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(22))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(23)))
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(23))),
+                IsRecurring = Convert.ToBoolean(reader.GetValue(24)),
+                NextBillingDate = reader.IsDBNull(25) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(25))),
+                GraceUntil = reader.IsDBNull(26) ? (DateTime?)null : Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(26)))
             };
         }
 
@@ -376,7 +391,7 @@ namespace OpenSim.Data.MySQL
 
         private const string GloebitTxnColumns =
                 "ID, StoreOrderID, AvatarPrincipalID, Amount, Stage, Enacted, Consumed, Cancelled, " +
-                "ResponseReason, Created, Updated";
+                "ResponseReason, Created, Updated, IsRenewal";
 
         public StoreGloebitTransaction GetGloebitTransaction(UUID id)
         {
@@ -409,7 +424,7 @@ namespace OpenSim.Data.MySQL
                 using (MySqlCommand cmd = new MySqlCommand(
                         "REPLACE INTO store_gloebit_transactions (" + GloebitTxnColumns + ") " +
                         "VALUES (?ID, ?StoreOrderID, ?AvatarPrincipalID, ?Amount, ?Stage, ?Enacted, ?Consumed, " +
-                        "?Cancelled, ?ResponseReason, ?Created, ?Updated)", dbcon))
+                        "?Cancelled, ?ResponseReason, ?Created, ?Updated, ?IsRenewal)", dbcon))
                 {
                     cmd.Parameters.AddWithValue("?ID", txn.ID.ToString());
                     cmd.Parameters.AddWithValue("?StoreOrderID", txn.StoreOrderID.ToString());
@@ -422,6 +437,7 @@ namespace OpenSim.Data.MySQL
                     cmd.Parameters.AddWithValue("?ResponseReason", (object)txn.ResponseReason ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("?Created", Utils.DateTimeToUnixTime(txn.Created));
                     cmd.Parameters.AddWithValue("?Updated", Utils.DateTimeToUnixTime(txn.Updated));
+                    cmd.Parameters.AddWithValue("?IsRenewal", txn.IsRenewal);
 
                     return cmd.ExecuteNonQuery() > 0;
                 }
@@ -442,7 +458,8 @@ namespace OpenSim.Data.MySQL
                 Cancelled = Convert.ToBoolean(reader.GetValue(7)),
                 ResponseReason = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Created = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(9))),
-                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(10)))
+                Updated = Utils.UnixTimeToDateTime(Convert.ToUInt32(reader.GetValue(10))),
+                IsRenewal = Convert.ToBoolean(reader.GetValue(11))
             };
         }
     }

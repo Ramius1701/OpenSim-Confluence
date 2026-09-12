@@ -141,6 +141,29 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
                 HandleBackupStatus);
 
             m_console.Commands.AddCommand(
+                "Regions", false, "add-agent-limit",
+                "add-agent-limit <region-id> <delta-agents>",
+                "Add to the maximum avatar capacity for the region with the given RegionID.",
+                "Same additive-over-current-value design as add-prim-limit - backs Store's Max\n"
+                + "Agents packs. Raises both the ini-level capacity ceiling (MaxAgents, persisted\n"
+                + "to the region's own .ini file) and the live active limit together, so a pack\n"
+                + "always genuinely adds N more avatar slots rather than raising a ceiling that\n"
+                + "the active limit is still capped below.",
+                HandleAddAgentLimit);
+
+            m_console.Commands.AddCommand(
+                "Regions", false, "set-agent-limit",
+                "set-agent-limit <region-id> <max-agents>",
+                "Set the maximum avatar capacity for the region with the given RegionID.",
+                "Absolute-set counterpart to add-agent-limit, mirroring set-prim-limit's own\n"
+                + "relationship to add-prim-limit - backs Store's recurring-billing clawback (a\n"
+                + "lapsed Max Agents Pack subscription needs to set an exact reduced ceiling, not\n"
+                + "add a negative delta, which add-agent-limit's natural-number parsing rejects\n"
+                + "anyway). Sets both the ini-level ceiling and the live active limit together,\n"
+                + "same as add-agent-limit.",
+                HandleSetAgentLimit);
+
+            m_console.Commands.AddCommand(
                 "Regions", false, "ready-status",
                 "ready-status <region-id>",
                 "Reports whether this region has actually finished starting up (LoginsEnabled).",
@@ -381,6 +404,79 @@ namespace OpenSim.Region.CoreModules.World.Objects.Commands
             ri.SaveRegionToFile(ri.RegionFile, ri.RegionFile);
 
             MainConsole.Instance.Output("prim-limit increased by {0} to {1} in {2}", delta, newValue, m_scene.Name);
+        }
+
+        private void HandleAddAgentLimit(string module, string[] args)
+        {
+            if (args.Length != 3)
+            {
+                MainConsole.Instance.Output("Usage: add-agent-limit <region-id> <delta-agents>");
+                return;
+            }
+
+            if (!UUID.TryParse(args[1], out UUID regionID))
+            {
+                MainConsole.Instance.Output("Usage: add-agent-limit <region-id> <delta-agents>");
+                return;
+            }
+
+            string rawValue = args[2];
+
+            if (regionID != m_scene.RegionInfo.RegionID)
+                return;
+
+            int delta;
+
+            if (!ConsoleUtil.TryParseConsoleNaturalInt(MainConsole.Instance, rawValue, out delta))
+                return;
+
+            RegionInfo ri = m_scene.RegionInfo;
+            RegionSettings rs = ri.RegionSettings;
+
+            int newValue = ri.AgentCapacity + delta;
+            ri.AgentCapacity = newValue;
+            ri.SaveRegionToFile(ri.RegionFile, ri.RegionFile);
+
+            rs.AgentLimit = newValue;
+            rs.Save();
+
+            MainConsole.Instance.Output("agent-limit increased by {0} to {1} in {2}", delta, newValue, m_scene.Name);
+        }
+
+        private void HandleSetAgentLimit(string module, string[] args)
+        {
+            if (args.Length != 3)
+            {
+                MainConsole.Instance.Output("Usage: set-agent-limit <region-id> <max-agents>");
+                return;
+            }
+
+            if (!UUID.TryParse(args[1], out UUID regionID))
+            {
+                MainConsole.Instance.Output("Usage: set-agent-limit <region-id> <max-agents>");
+                return;
+            }
+
+            string rawValue = args[2];
+
+            if (regionID != m_scene.RegionInfo.RegionID)
+                return;
+
+            int newValue;
+
+            if (!ConsoleUtil.TryParseConsoleNaturalInt(MainConsole.Instance, rawValue, out newValue))
+                return;
+
+            RegionInfo ri = m_scene.RegionInfo;
+            RegionSettings rs = ri.RegionSettings;
+
+            ri.AgentCapacity = newValue;
+            ri.SaveRegionToFile(ri.RegionFile, ri.RegionFile);
+
+            rs.AgentLimit = newValue;
+            rs.Save();
+
+            MainConsole.Instance.Output("agent-limit set to {0} in {1}", newValue, m_scene.Name);
         }
 
         private void HandleBackupStatus(string module, string[] args)

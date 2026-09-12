@@ -31,8 +31,8 @@ namespace OpenSim.Data.PGSQL
         }
 
         private const string CatalogColumns =
-                "\"ID\", \"ItemType\", \"Name\", \"Description\", \"PrimAmount\", \"RegionSizeX\", \"RegionSizeY\", " +
-                "\"PriceConfluence\", \"PriceGloebits\", \"DurationDays\", \"IsActive\", \"SortOrder\", \"Created\", \"Updated\"";
+                "\"ID\", \"ItemType\", \"Name\", \"Description\", \"PrimAmount\", \"MaxAgentsAmount\", \"RegionSizeX\", \"RegionSizeY\", \"RegionType\", " +
+                "\"PriceConfluence\", \"PriceGloebits\", \"DurationDays\", \"IsActive\", \"SortOrder\", \"Created\", \"Updated\", \"RecurringBilling\"";
 
         public StoreCatalogItem GetCatalogItem(UUID id)
         {
@@ -99,22 +99,25 @@ namespace OpenSim.Data.PGSQL
             using (NpgsqlConnection conn = new NpgsqlConnection(m_connectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand(
                     "INSERT INTO store_catalog_items (" + CatalogColumns + ") " +
-                    "VALUES (:id, :itemtype, :name, :description, :primamount, :regionsizex, :regionsizey, " +
-                    ":priceconfluence, :pricegloebits, :durationdays, :isactive, :sortorder, :created, :updated) " +
+                    "VALUES (:id, :itemtype, :name, :description, :primamount, :maxagentsamount, :regionsizex, :regionsizey, :regiontype, " +
+                    ":priceconfluence, :pricegloebits, :durationdays, :isactive, :sortorder, :created, :updated, :recurringbilling) " +
                     "ON CONFLICT (\"ID\") DO UPDATE SET " +
                     "\"ItemType\" = :itemtype, \"Name\" = :name, \"Description\" = :description, " +
-                    "\"PrimAmount\" = :primamount, \"RegionSizeX\" = :regionsizex, \"RegionSizeY\" = :regionsizey, " +
+                    "\"PrimAmount\" = :primamount, \"MaxAgentsAmount\" = :maxagentsamount, \"RegionSizeX\" = :regionsizex, \"RegionSizeY\" = :regionsizey, " +
+                    "\"RegionType\" = :regiontype, " +
                     "\"PriceConfluence\" = :priceconfluence, \"PriceGloebits\" = :pricegloebits, " +
                     "\"DurationDays\" = :durationdays, \"IsActive\" = :isactive, \"SortOrder\" = :sortorder, " +
-                    "\"Updated\" = :updated", conn))
+                    "\"Updated\" = :updated, \"RecurringBilling\" = :recurringbilling", conn))
             {
                 cmd.Parameters.AddWithValue(":id", item.ID.ToString());
                 cmd.Parameters.AddWithValue(":itemtype", item.ItemType);
                 cmd.Parameters.AddWithValue(":name", item.Name);
                 cmd.Parameters.AddWithValue(":description", item.Description);
                 cmd.Parameters.AddWithValue(":primamount", item.PrimAmount);
+                cmd.Parameters.AddWithValue(":maxagentsamount", item.MaxAgentsAmount);
                 cmd.Parameters.AddWithValue(":regionsizex", item.RegionSizeX);
                 cmd.Parameters.AddWithValue(":regionsizey", item.RegionSizeY);
+                cmd.Parameters.AddWithValue(":regiontype", item.RegionType);
                 cmd.Parameters.AddWithValue(":priceconfluence", item.PriceConfluence);
                 cmd.Parameters.AddWithValue(":pricegloebits", item.PriceGloebits);
                 cmd.Parameters.AddWithValue(":durationdays", item.DurationDays);
@@ -122,6 +125,7 @@ namespace OpenSim.Data.PGSQL
                 cmd.Parameters.AddWithValue(":sortorder", item.SortOrder);
                 cmd.Parameters.AddWithValue(":created", (int)Utils.DateTimeToUnixTime(item.Created));
                 cmd.Parameters.AddWithValue(":updated", (int)Utils.DateTimeToUnixTime(item.Updated));
+                cmd.Parameters.AddWithValue(":recurringbilling", item.RecurringBilling);
                 conn.Open();
 
                 return cmd.ExecuteNonQuery() > 0;
@@ -137,15 +141,18 @@ namespace OpenSim.Data.PGSQL
                 Name = reader.GetString(2),
                 Description = reader.GetString(3),
                 PrimAmount = reader.GetInt32(4),
-                RegionSizeX = reader.GetInt32(5),
-                RegionSizeY = reader.GetInt32(6),
-                PriceConfluence = reader.GetInt32(7),
-                PriceGloebits = reader.GetInt32(8),
-                DurationDays = reader.GetInt32(9),
-                IsActive = reader.GetBoolean(10),
-                SortOrder = reader.GetInt32(11),
-                Created = Utils.UnixTimeToDateTime((uint)reader.GetInt32(12)),
-                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(13))
+                MaxAgentsAmount = reader.GetInt32(5),
+                RegionSizeX = reader.GetInt32(6),
+                RegionSizeY = reader.GetInt32(7),
+                RegionType = reader.GetString(8),
+                PriceConfluence = reader.GetInt32(9),
+                PriceGloebits = reader.GetInt32(10),
+                DurationDays = reader.GetInt32(11),
+                IsActive = reader.GetBoolean(12),
+                SortOrder = reader.GetInt32(13),
+                Created = Utils.UnixTimeToDateTime((uint)reader.GetInt32(14)),
+                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(15)),
+                RecurringBilling = reader.GetBoolean(16)
             };
         }
 
@@ -154,7 +161,8 @@ namespace OpenSim.Data.PGSQL
                 "\"AmountCharged\", \"PaymentTransactionID\", \"Status\", \"TargetRegionID\", \"RequestedRegionName\", " +
                 "\"AllocatedLocationX\", \"AllocatedLocationY\", \"AllocatedPort\", \"SimulatorFolderName\", " +
                 "\"RequestedEstateID\", \"RequestedEstateName\", \"RequestedLocationX\", \"RequestedLocationY\", " +
-                "\"StartedAt\", \"ExpiresAt\", \"Notes\", \"Created\", \"Updated\"";
+                "\"StartedAt\", \"ExpiresAt\", \"Notes\", \"Created\", \"Updated\", " +
+                "\"IsRecurring\", \"NextBillingDate\", \"GraceUntil\"";
 
         public StoreOrder GetOrder(UUID id)
         {
@@ -226,7 +234,7 @@ namespace OpenSim.Data.PGSQL
                     ":amountcharged, :paymenttransactionid, :status, :targetregionid, :requestedregionname, " +
                     ":allocatedlocationx, :allocatedlocationy, :allocatedport, :simulatorfoldername, " +
                     ":requestedestateid, :requestedestatename, :requestedlocationx, :requestedlocationy, :startedat, " +
-                    ":expiresat, :notes, :created, :updated) " +
+                    ":expiresat, :notes, :created, :updated, :isrecurring, :nextbillingdate, :graceuntil) " +
                     "ON CONFLICT (\"ID\") DO UPDATE SET " +
                     "\"CatalogItemID\" = :catalogitemid, \"OrderType\" = :ordertype, " +
                     "\"ResidentAvatarID\" = :residentavatarid, \"ResidentName\" = :residentname, " +
@@ -238,7 +246,8 @@ namespace OpenSim.Data.PGSQL
                     "\"RequestedEstateID\" = :requestedestateid, \"RequestedEstateName\" = :requestedestatename, " +
                     "\"RequestedLocationX\" = :requestedlocationx, \"RequestedLocationY\" = :requestedlocationy, " +
                     "\"StartedAt\" = :startedat, \"ExpiresAt\" = :expiresat, \"Notes\" = :notes, " +
-                    "\"Updated\" = :updated", conn))
+                    "\"Updated\" = :updated, \"IsRecurring\" = :isrecurring, \"NextBillingDate\" = :nextbillingdate, " +
+                    "\"GraceUntil\" = :graceuntil", conn))
             {
                 cmd.Parameters.AddWithValue(":id", order.ID.ToString());
                 cmd.Parameters.AddWithValue(":catalogitemid", order.CatalogItemID.ToString());
@@ -273,6 +282,11 @@ namespace OpenSim.Data.PGSQL
                 cmd.Parameters.AddWithValue(":notes", (object)order.Notes ?? DBNull.Value);
                 cmd.Parameters.AddWithValue(":created", (int)Utils.DateTimeToUnixTime(order.Created));
                 cmd.Parameters.AddWithValue(":updated", (int)Utils.DateTimeToUnixTime(order.Updated));
+                cmd.Parameters.AddWithValue(":isrecurring", order.IsRecurring);
+                cmd.Parameters.AddWithValue(":nextbillingdate",
+                        order.NextBillingDate.HasValue ? (object)(int)Utils.DateTimeToUnixTime(order.NextBillingDate.Value) : DBNull.Value);
+                cmd.Parameters.AddWithValue(":graceuntil",
+                        order.GraceUntil.HasValue ? (object)(int)Utils.DateTimeToUnixTime(order.GraceUntil.Value) : DBNull.Value);
                 conn.Open();
 
                 return cmd.ExecuteNonQuery() > 0;
@@ -306,7 +320,10 @@ namespace OpenSim.Data.PGSQL
                 ExpiresAt = reader.IsDBNull(20) ? (DateTime?)null : Utils.UnixTimeToDateTime((uint)reader.GetInt32(20)),
                 Notes = reader.IsDBNull(21) ? null : reader.GetString(21),
                 Created = Utils.UnixTimeToDateTime((uint)reader.GetInt32(22)),
-                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(23))
+                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(23)),
+                IsRecurring = reader.GetBoolean(24),
+                NextBillingDate = reader.IsDBNull(25) ? (DateTime?)null : Utils.UnixTimeToDateTime((uint)reader.GetInt32(25)),
+                GraceUntil = reader.IsDBNull(26) ? (DateTime?)null : Utils.UnixTimeToDateTime((uint)reader.GetInt32(26))
             };
         }
 
@@ -369,7 +386,7 @@ namespace OpenSim.Data.PGSQL
 
         private const string GloebitTxnColumns =
                 "\"ID\", \"StoreOrderID\", \"AvatarPrincipalID\", \"Amount\", \"Stage\", \"Enacted\", \"Consumed\", " +
-                "\"Cancelled\", \"ResponseReason\", \"Created\", \"Updated\"";
+                "\"Cancelled\", \"ResponseReason\", \"Created\", \"Updated\", \"IsRenewal\"";
 
         public StoreGloebitTransaction GetGloebitTransaction(UUID id)
         {
@@ -396,10 +413,10 @@ namespace OpenSim.Data.PGSQL
             using (NpgsqlCommand cmd = new NpgsqlCommand(
                     "INSERT INTO store_gloebit_transactions (" + GloebitTxnColumns + ") " +
                     "VALUES (:id, :storeorderid, :avatarid, :amount, :stage, :enacted, :consumed, :cancelled, " +
-                    ":responsereason, :created, :updated) " +
+                    ":responsereason, :created, :updated, :isrenewal) " +
                     "ON CONFLICT (\"ID\") DO UPDATE SET " +
                     "\"Stage\" = :stage, \"Enacted\" = :enacted, \"Consumed\" = :consumed, \"Cancelled\" = :cancelled, " +
-                    "\"ResponseReason\" = :responsereason, \"Updated\" = :updated", conn))
+                    "\"ResponseReason\" = :responsereason, \"Updated\" = :updated, \"IsRenewal\" = :isrenewal", conn))
             {
                 cmd.Parameters.AddWithValue(":id", txn.ID.ToString());
                 cmd.Parameters.AddWithValue(":storeorderid", txn.StoreOrderID.ToString());
@@ -412,6 +429,7 @@ namespace OpenSim.Data.PGSQL
                 cmd.Parameters.AddWithValue(":responsereason", (object)txn.ResponseReason ?? DBNull.Value);
                 cmd.Parameters.AddWithValue(":created", (int)Utils.DateTimeToUnixTime(txn.Created));
                 cmd.Parameters.AddWithValue(":updated", (int)Utils.DateTimeToUnixTime(txn.Updated));
+                cmd.Parameters.AddWithValue(":isrenewal", txn.IsRenewal);
                 conn.Open();
 
                 return cmd.ExecuteNonQuery() > 0;
@@ -432,7 +450,8 @@ namespace OpenSim.Data.PGSQL
                 Cancelled = reader.GetBoolean(7),
                 ResponseReason = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Created = Utils.UnixTimeToDateTime((uint)reader.GetInt32(9)),
-                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(10))
+                Updated = Utils.UnixTimeToDateTime((uint)reader.GetInt32(10)),
+                IsRenewal = reader.GetBoolean(11)
             };
         }
     }

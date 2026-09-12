@@ -76,11 +76,28 @@ namespace OpenSim.Region.CoreModules.World.Currency
 
         private IConfigSource m_config;
         private ICurrencyService m_currency;
+        private OpenSim.Groups.IGroupsServicesConnector m_groupsServices;
         private List<Scene> m_Scenes = new List<Scene>();
 
         private int m_uploadCharge = 0;
         private int m_groupCreationCharge = 0;
         private int m_currencyRate = 10; // in-world units per real-currency unit, matches MoneyServer's CalculateCurrency
+
+        // Three more real MoneyServer.ini settings (CurrencyOnOff/
+        // CurrencyGroupOnly+CurrencyGroupID/UserMailLock) that gated this
+        // exact buyCurrency flow in the legacy module and never got an
+        // equivalent here - found live, 2026-09-12, same audit pass as
+        // CurrencyService's MaxBalance/DefaultBalance. Defaults deliberately
+        // diverge from the legacy example ini where matching it would
+        // silently break an already-working live purchase flow:
+        // CurrencyOnOff defaults to true (enabled) here, not the legacy
+        // example's "off", since native currency purchases already work
+        // live today and a config-read default shouldn't be the thing that
+        // turns that off.
+        private bool m_currencyOnOff = true;
+        private bool m_currencyGroupOnly = false;
+        private UUID m_currencyGroupID = UUID.Zero;
+        private bool m_userMailLock = false;
 
         public event ObjectPaid OnObjectPaid;
 
@@ -108,6 +125,12 @@ namespace OpenSim.Region.CoreModules.World.Currency
             m_uploadCharge = economyConfig.GetInt("PriceUpload", 0);
             m_groupCreationCharge = economyConfig.GetInt("PriceGroupCreate", 0);
             m_currencyRate = economyConfig.GetInt("CurrencyRate", 10);
+
+            IConfig currencyServiceConfig = config.Configs["CurrencyService"];
+            m_currencyOnOff = currencyServiceConfig?.GetBoolean("CurrencyOnOff", true) ?? true;
+            m_currencyGroupOnly = currencyServiceConfig?.GetBoolean("CurrencyGroupOnly", false) ?? false;
+            UUID.TryParse(currencyServiceConfig?.GetString("CurrencyGroupID", UUID.Zero.ToString()), out m_currencyGroupID);
+            m_userMailLock = currencyServiceConfig?.GetBoolean("UserMailLock", false) ?? false;
         }
 
         public void PostInitialise() { }
@@ -143,6 +166,12 @@ namespace OpenSim.Region.CoreModules.World.Currency
                 m_isSelectedEconomyModule = false;
                 return;
             }
+
+            // Only actually needed when CurrencyGroupOnly is turned on - a
+            // grid not using that restriction shouldn't fail to start over
+            // a missing Groups module it was never going to call anyway.
+            if (m_currencyGroupOnly && m_groupsServices == null)
+                m_groupsServices = scene.RequestModuleInterface<OpenSim.Groups.IGroupsServicesConnector>();
 
             lock (m_Scenes)
                 m_Scenes.Add(scene);
@@ -591,6 +620,24 @@ namespace OpenSim.Region.CoreModules.World.Currency
             return response;
         }
 
+        // Backs UserMailLock - any scene's UserAccountService works, they're
+        // all the same grid-wide service, same reasoning as every other
+        // "just use m_Scenes[0]" lookup that doesn't need scene-specific
+        // state.
+        private string GetAgentEmail(UUID agentId)
+        {
+            lock (m_Scenes)
+            {
+                foreach (Scene scene in m_Scenes)
+                {
+                    UserAccount account = scene.UserAccountService?.GetUserAccount(UUID.Zero, agentId);
+                    if (account != null)
+                        return account.Email;
+                }
+            }
+            return null;
+        }
+
         // Failure path must set errorMessage/errorURI, not just success=false -
         // confirmed against the real viewer source (LLCurrencyUIManager::Impl::
         // finishCurrencyBuy, llcurrencyuimanager.cpp): on failure it reads
@@ -609,13 +656,26 @@ namespace OpenSim.Region.CoreModules.World.Currency
             int amount = 0;
             string errorMessage = "Unable to process this purchase.";
 
-            if (!requestData.ContainsKey("agentId") || !UUID.TryParse(requestData["agentId"].ToString(), out agentId))
+            if (!m_currencyOnOff)
+            {
+                errorMessage = "Currency purchases are not available on this grid.";
+            }
+            else if (!requestData.ContainsKey("agentId") || !UUID.TryParse(requestData["agentId"].ToString(), out agentId))
             {
                 errorMessage = "Invalid parameters passed to the purchase.";
             }
             else if (!requestData.ContainsKey("currencyBuy"))
             {
                 errorMessage = "Invalid parameters passed to the purchase.";
+            }
+            else if (m_userMailLock && string.IsNullOrEmpty(GetAgentEmail(agentId)))
+            {
+                errorMessage = "A verified email address is required before you can purchase currency. Set one from My Profile.";
+            }
+            else if (m_currencyGroupOnly && !m_currencyGroupID.IsZero()
+                    && (m_groupsServices == null || m_groupsServices.GetAgentGroupMembership(agentId.ToString(), agentId.ToString(), m_currencyGroupID) == null))
+            {
+                errorMessage = "Currency purchases are restricted to members of a specific group on this grid.";
             }
             else
             {

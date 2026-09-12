@@ -11,9 +11,9 @@ namespace OpenSim.Framework
     {
         public UUID ID = UUID.Zero;
 
-        // "PrimPack" | "RegionOrder" - plain string, same rationale as
-        // SupportTicket.Status: a future item type can be added without a
-        // schema change.
+        // "PrimPack" | "RegionOrder" | "MaxAgentsPack" - plain string, same
+        // rationale as SupportTicket.Status: a future item type can be
+        // added without a schema change.
         public string ItemType = string.Empty;
 
         public string Name = string.Empty;
@@ -22,9 +22,25 @@ namespace OpenSim.Framework
         // PrimPack only, 0 otherwise.
         public int PrimAmount = 0;
 
+        // MaxAgentsPack only, 0 otherwise - same additive-on-top-of-current
+        // design as PrimAmount, backed by the region-side add-agent-limit
+        // console command (RegionCommandsModule.cs).
+        public int MaxAgentsAmount = 0;
+
         // RegionOrder only, 0 otherwise.
         public int RegionSizeX = 0;
         public int RegionSizeY = 0;
+
+        // RegionOrder only, empty otherwise. One of "Full Region" |
+        // "Homestead" | "Openspace" | "Event" - each performance tier is
+        // its own separate catalog item/product (own price, size, prim
+        // amount already work this way) rather than a buyer-facing
+        // selector, so this is just carried along with whichever listing
+        // was bought. Written into the new region's own Regions.ini as
+        // RegionType - a real, existing OpenSim field (RegionInfo.cs),
+        // free-form and shown on the map, not something this feature
+        // invents.
+        public string RegionType = string.Empty;
 
         // 0 = not offered in this currency.
         public int PriceConfluence = 0;
@@ -32,6 +48,13 @@ namespace OpenSim.Framework
 
         // 0 = never expires.
         public int DurationDays = 0;
+
+        // Auto-renew this item every DurationDays instead of requiring an
+        // admin's manual Renew click - only meaningful when DurationDays > 0
+        // (checked/enforced at save time, not just here). Copied onto
+        // StoreOrder.IsRecurring at purchase time (see that field's comment
+        // for why) rather than read live from here on every billing pass.
+        public bool RecurringBilling = false;
 
         public bool IsActive = true;
         public int SortOrder = 0;
@@ -109,6 +132,27 @@ namespace OpenSim.Framework
         // purchase time).
         public DateTime? ExpiresAt = null;
 
+        // Denormalized copy of StoreCatalogItem.RecurringBilling at purchase
+        // time (same rationale as OrderType/ResidentName above - a later
+        // catalog edit can't retroactively flip an existing order's billing
+        // behavior). false unless the item had RecurringBilling set AND a
+        // real DurationDays > 0 when this order was placed.
+        public bool IsRecurring = false;
+
+        // The next auto-charge attempt's due date - set at purchase time to
+        // Created + DurationDays (the initial purchase already paid for the
+        // first period), advanced by DurationDays again on each successful
+        // renewal charge. Null when IsRecurring is false.
+        public DateTime? NextBillingDate = null;
+
+        // Set the moment a renewal charge first fails (order.Status becomes
+        // "PastDue"); if a later renewal attempt still hasn't succeeded by
+        // the time GraceUntil passes, the order is suspended (order.Status
+        // becomes "Suspended" and the region/capacity is actually withdrawn
+        // - see SuspendOrder). Cleared back to null the moment any renewal
+        // attempt succeeds. Null means "not currently behind."
+        public DateTime? GraceUntil = null;
+
         // Admin free text - renewal/extension history. Null until an admin
         // first writes to it.
         public string Notes = null;
@@ -153,6 +197,13 @@ namespace OpenSim.Framework
         public bool Enacted = false;
         public bool Consumed = false;
         public bool Cancelled = false;
+
+        // True for a recurring-billing renewal charge, false for the
+        // original purchase - the enact/consume/cancel callback switch
+        // (WebInterfaceServiceConnector.HandleGloebitCallback) branches on
+        // this instead of on order.Status == "PendingPayment", since a
+        // renewal's order is already Active/PastDue, never PendingPayment.
+        public bool IsRenewal = false;
 
         // Set when Gloebit's webhook reports a non-success reason. Null
         // otherwise.

@@ -17,6 +17,12 @@ namespace OpenSim.Services.Interfaces
     {
         int GetBalance(UUID agentID);
 
+        // MoneyServer.ini's DefaultBalance equivalent - the WebUI's own
+        // registration handler reads this and grants it via Transfer once
+        // the new account exists, rather than this service reaching into
+        // account creation itself (no such event to hook here).
+        int GetDefaultRegistrationBalance();
+
         // Direct administrative set (console "money set"), not a transfer - no
         // counterparty, no transaction record beyond the adjustment itself.
         int SetBalance(UUID agentID, int amount, string description);

@@ -140,10 +140,20 @@ Residents spend in-world currency — ConfluenceCurrency or Gloebit,
 their choice at checkout — on an admin-managed catalog of
 prim-capacity packs and self-service region orders.
 
-- Prim packs add to whatever the region's current cap already is —
-  every region can have a different baseline — and apply instantly,
-  persisting through the target region's own remote console (no
-  restart needed).
+- Region orders are sold across four SL-style types — Full Region,
+  Homestead, Openspace, Event. Full Region and Event come in four
+  VarRegion footprints (1x1/2x2/3x3/4x4) with prim/agent capacity that
+  scales with size; Homestead and Openspace are single-size, fixed-
+  capacity entry tiers. Only Full Region can grow further after
+  purchase via packs. Mainland is reserved for grid-owned
+  infrastructure (Welcome Center, Sandbox) and isn't sold through the
+  Store's buyer-facing catalog.
+- Prim packs (3 flat tiers) add to whatever the region's current cap
+  already is — every region can have a different baseline — and apply
+  instantly, persisting through the target region's own remote console
+  (no restart needed). Max Agents packs work the same way but only for
+  Full Region; Homestead/Openspace/Event capacity is fixed and can't
+  be expanded.
 - Region orders auto-generate the new region's `.ini`/port/grid
   location and launch it automatically on successful payment, no admin
   click needed, with an admin "Start Region" button in the Store
@@ -155,8 +165,18 @@ prim-capacity packs and self-service region orders.
   OAuth2 integration — independent of the region-side Gloebit module,
   reusing the same merchant key so it's the same real account either
   way.
-- One-time purchases; an admin-facing Store Orders queue handles
-  manual renewal/extension, no auto-recurring billing.
+- Homestead/Openspace are one-time purchases; Full Region, Event, Prim
+  Packs, and Max Agents Packs auto-renew every 30 days, charged
+  automatically from the resident's chosen currency. A missed charge
+  gets a grace period, then real suspension — the region is stopped
+  (never deleted) or the specific pack's capacity is clawed back —
+  reinstated automatically the moment billing catches up. Admins can
+  still manually extend/renew from the Store Orders queue regardless.
+- Admins can provision any region — any type including Mainland, any
+  size, any capacity — for any resident with no purchase at all, via
+  a dedicated Create Region tool that bypasses the Store's catalog and
+  payment steps entirely while reusing the exact same provisioning
+  path a real purchase uses.
 
 ## Native Economy, Search & Grid Services
 

@@ -1040,6 +1040,14 @@
     StorageProvider = "OpenSim.Data.MySQL.dll:MySqlCurrencyData"
     ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
+    ;; Must match every region's own [CurrencyService] MaxBalance/
+    ;; DefaultBalance (OpenSim.ini.example) - each side runs its own
+    ;; CurrencyService instance. Robust's own copy backs the registration
+    ;; grant (HandleRegister) and Store checkout; the region-side copy backs
+    ;; in-world Transfer()/SetBalance() and the Buy Currency flow.
+    MaxBalance = 20000
+    DefaultBalance = 1000
+
 ;; Native DirectDelivery marketplace (viewer-integrated - see FEATURES.md).
 ;; Listing metadata/stock only; actual inventory snapshot/delivery is
 ;; DirectDeliveryModule's job region-side (OpenSim.ini's own

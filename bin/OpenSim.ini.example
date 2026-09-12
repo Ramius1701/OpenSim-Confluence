@@ -1179,6 +1179,35 @@
     ;; MySQL rather than through ROBUST, so it needs its own connection.
     ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
+    ;; Highest balance an account can ever hold - clamps rather than rejects
+    ;; in Transfer()/SetBalance(). Must match Robust.HG.ini's own
+    ;; [CurrencyService] MaxBalance - each region runs its own CurrencyService
+    ;; instance. Size this above your priciest Store catalog item's price.
+    MaxBalance = 20000
+
+    ;; Starting balance granted to a new account on registration (Robust-side
+    ;; WebInterfaceServiceConnector.HandleRegister). 0 disables the grant.
+    DefaultBalance = 1000
+
+    ;; Whether a Transfer of amount 0 is allowed. Default false, matching
+    ;; the legacy DTLNSLMoneyModule/MoneyServer.ini's own EnableAmountZero.
+    ; EnableAmountZero = false
+
+    ;; Gates the legacy viewer-native "Buy Currency" XML-RPC flow
+    ;; (ConfluenceCurrencyModule.HandleBuyCurrency). Defaults to true here
+    ;; (unlike the legacy MoneyServer.ini's own false default) so this
+    ;; doesn't silently disable an already-working purchase flow.
+    ; CurrencyOnOff = true
+
+    ;; Restrict the Buy Currency flow to members of one group - needs
+    ;; OpenSim.Addons.Groups referenced (see prebuild.xml).
+    ; CurrencyGroupOnly = false
+    ; CurrencyGroupID = "00000000-0000-0000-0000-000000000000"
+
+    ;; Require a resident's account to have a real email on file before Buy
+    ;; Currency will work.
+    ; UserMailLock = false
+
     ;; Real-money purchase caps (US dollars, rolling windows). 0 disables a
     ;; given cap.
     DailyPurchaseCapUSD = 500

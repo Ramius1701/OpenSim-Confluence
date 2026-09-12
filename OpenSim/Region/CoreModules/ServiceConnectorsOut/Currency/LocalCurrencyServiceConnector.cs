@@ -133,6 +133,11 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Currency
             return m_service.GetBalance(agentID);
         }
 
+        public int GetDefaultRegistrationBalance()
+        {
+            return m_service.GetDefaultRegistrationBalance();
+        }
+
         public int SetBalance(UUID agentID, int amount, string description)
         {
             return m_service.SetBalance(agentID, amount, description);

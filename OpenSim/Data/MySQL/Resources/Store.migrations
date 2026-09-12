@@ -93,3 +93,34 @@ ALTER TABLE `store_orders` ADD COLUMN `RequestedLocationX` INT NULL AFTER `Reque
 ALTER TABLE `store_orders` ADD COLUMN `RequestedLocationY` INT NULL AFTER `RequestedLocationX`;
 
 COMMIT;
+
+:VERSION 4 # -----------------
+
+BEGIN;
+
+ALTER TABLE `store_catalog_items` ADD COLUMN `RegionType` VARCHAR(20) NOT NULL DEFAULT '' AFTER `RegionSizeY`;
+
+COMMIT;
+
+:VERSION 5 # -----------------
+
+BEGIN;
+
+ALTER TABLE `store_catalog_items` ADD COLUMN `MaxAgentsAmount` INT NOT NULL DEFAULT 0 AFTER `PrimAmount`;
+
+COMMIT;
+
+:VERSION 6 # -----------------
+
+BEGIN;
+
+ALTER TABLE `store_catalog_items` ADD COLUMN `RecurringBilling` TINYINT(1) NOT NULL DEFAULT 0 AFTER `Updated`;
+
+ALTER TABLE `store_orders` ADD COLUMN `IsRecurring` TINYINT(1) NOT NULL DEFAULT 0 AFTER `Updated`;
+ALTER TABLE `store_orders` ADD COLUMN `NextBillingDate` INT NULL AFTER `IsRecurring`;
+ALTER TABLE `store_orders` ADD COLUMN `GraceUntil` INT NULL AFTER `NextBillingDate`;
+ALTER TABLE `store_orders` ADD INDEX `IsRecurring_NextBillingDate` (`IsRecurring`, `NextBillingDate`) USING BTREE;
+
+ALTER TABLE `store_gloebit_transactions` ADD COLUMN `IsRenewal` TINYINT(1) NOT NULL DEFAULT 0 AFTER `Updated`;
+
+COMMIT;

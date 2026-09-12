@@ -23039,3 +23039,141 @@ ground-detection tuning work) is actually worked out and re-verified
 against both a mesh-walk test AND a slope test before it goes live
 again. `sweepstatics` stays in the codebase as a reusable diagnostic
 for whenever that resumes.
+
+## Currency parity audit against legacy MoneyServer, and Store region-type economy fully built and populated (2026-09-12)
+
+Designing the Store's region-type/size-tier economy (Full Region/
+Homestead/Openspace/Event, VarRegion 1x1-4x4) surfaced a currency
+question - do new residents get a starting balance? They didn't. That
+led to a full parity audit against the legacy `DTLNSLMoneyModule`'s
+own standalone `MoneyServer.exe` config
+(`addon-modules/OpenSim-Grid-MoneyServer/config/MoneyServer.ini.example`),
+the real HTTP backend `ConfluenceCurrencyModule` was built to replace.
+Six real settings were never ported: `DefaultBalance` (no registration
+grant existed at all - now 1,000, granted in `HandleRegister` right
+after account creation), `CurrencyMaximum` (no balance cap existed -
+now 20,000, clamps rather than rejects in `Transfer()`/`SetBalance()`),
+`EnableAmountZero` (native `Transfer()` silently allowed $0 transfers
+- now blocked by default), and `CurrencyOnOff`/`CurrencyGroupOnly`+
+`CurrencyGroupID`/`UserMailLock` (all three gate the still-live
+viewer-native "Buy Currency" flow, `HandleBuyCurrency`, confirmed NOT
+obsoleted by Gloebit as first assumed). Needed a real project-reference
+fix too (`OpenSim.Region.CoreModules` had no reference to
+`OpenSim.Addons.Groups`, needed for the group-membership check) - see
+the build-tooling section below for what regenerating the `.csproj`
+files to pick that up then broke.
+
+A separately-disabled stipend system (`PayStipends = false` in
+`Robust.HG.ini`) was also found already fully built and tested
+(WhiteCore-derived, `stipend info`/`stipend paynow` console commands)
+- simply never turned on. Left disabled this session; enabling it is
+still an open decision. Full details: `casperia-dtlnsl-legacy-currency-module`
+memory.
+
+Deployed as one batch - the first deploy this session to genuinely
+need a full grid stop (not an over-cautious one): `OpenSim.Framework.dll`,
+`OpenSim.Region.CoreModules.dll` (`ConfluenceCurrencyModule` runs
+inside every region process), and `OpenSim.Services.CurrencyService.dll`
+(loaded per-region via `LocalCurrencyServiceConnector`) all changed,
+so unlike the Server.Handlers-only WebUI fixes earlier in the week,
+every region genuinely needed to come down. Verified via a full
+DLL-hash drift sweep (master vs. all 15 regions' own `bin\` copies,
+all clean) and a post-restart log check across all 15 regions -
+`ConfluenceCurrencyModule` loaded without error everywhere, no
+unhandled exceptions, only pre-existing content-decay warnings
+(degenerated meshes, missing script assets, already tracked from the
+Jolt mesh-cooking investigation).
+
+**Store catalog actually populated, end to end.** The mechanism (
+`RegionType` field, `MaxAgentsPack` item type, VarRegion
+footprint-aware placement) was already built; tonight it got real
+data. Resolved via `AskUserQuestion` before writing anything: VarRegion
+sizing (1x1/2x2/3x3/4x4) applies to all four types, not just Full
+Region (16 region SKUs, not 4); pricing scales the older `Prices.md`
+reference doc's own real per-size ratio against each type's 1x1 base
+price (Full Region's numbers are an exact match to that doc; Event,
+which the doc never had, priced at 1.5x Full Region's 1x1 rate); Prim
+Packs stay 3 flat tiers (+5,000/+10,000/+20,000) and Max Agents Pack
+one tier (+10, Full Region only), matching the doc's own tier count.
+20 rows inserted directly into `store_catalog_items` (matching
+`MySQLStoreData.cs`'s schema - `Created`/`Updated` are Unix-epoch
+`int`, a real gotcha caught building the insert script), after
+deleting one stale pre-design test row confirmed to have zero real
+orders against it. Verified live via `curl http://127.0.0.1:8002/store`
+- all 20 names render correctly on the real public store page.
+
+Along the way, a real bug surfaced: `BuildStoreOrder`'s Prim Pack/Max
+Agents Pack ceiling checks were hardcoded flat numbers (15,000/50,000
+prims, 80 agents) - correct only for a single 256x256 sim. Selling
+VarRegions at every type exposed this immediately (a 4x4 Homestead's
+own starting capacity, 16,500, would already exceed a stale flat
+15,000 ceiling before any pack purchase). Fixed with `ScaledPrimCeiling`/
+`ScaledAgentCeiling` helpers, both using the same footprint-based
+scaling curve that generated the catalog's own numbers, so the two are
+consistent by construction. Server.Handlers-only change - deployed
+with zero grid downtime, Robust restarted alone, all 15 regions never
+touched.
+
+Full details, exact pricing table, and the still-unbuilt free-Homestead
++monthly-fee billing model idea: `casperia-store-region-type-economy`
+memory.
+
+## Store recurring billing, MaxBalance raise, and admin Create Region tool (2026-09-13)
+
+Closed out the recurring-billing gap the same night it was flagged as
+unbuilt. Confirmed the mechanics via `AskUserQuestion` first: auto-charge
+from balance on the due date (not a manual pay-now click), a grace
+period then genuine suspension on repeated failure, billing period
+reuses each catalog item's own `DurationDays` (no separate monthly
+field). New admin "Recurring billing" checkbox on `/admin/store`, only
+meaningful with `DurationDays > 0`; turned on for Full Region/Event/
+Prim Packs/Max Agents Pack (30-day period), left off for Homestead/
+Openspace, which stay genuinely free one-time purchases.
+
+A new `Timer`-based billing pass in `WebInterfaceServiceConnector`
+mirrors `CurrencyServerConnector`'s existing Stipend timer shape
+exactly. Confluence charges resolve synchronously; Gloebit submits and
+resolves later through the existing enact/consume/cancel callback, now
+branching on a new `StoreGloebitTransaction.IsRenewal` flag instead of
+`order.Status == "PendingPayment"` so a renewal can never double-fire
+`ProcessPaidOrder`. Suspension is real, not just a status flag - a
+lapsed region gets genuinely stopped (`TryStopRegion`, same graceful
+path the admin Stop button uses); a lapsed Prim/Max Agents Pack gets
+its specific contribution clawed back via two new absolute-set console
+commands (`set-prim-limit` already existed; added `set-agent-limit`
+since `add-agent-limit` only ever accepted a non-negative delta, no
+way to subtract with it). New `Status` values `PastDue`/`Suspended`,
+new `StoreOrder` fields `IsRecurring`/`NextBillingDate`/`GraceUntil`,
+new `StoreCatalogItem.RecurringBilling` - migration version 6 across
+all three DB backends.
+
+This deploy genuinely needed a full grid stop, not just Robust - the
+new `set-agent-limit` command lives in `OpenSim.Region.CoreModules.dll`
+(region-loaded), confirmed via `git status` before deciding scope
+rather than assuming from habit either way.
+
+Separately, the user connected the new catalog's own prices back to
+`ConfluenceCurrencyModule`'s `MaxBalance` (set to 20,000 earlier this
+session): checkout is one item at a time, so the cap only ever needs
+to clear the single priciest SKU (Event 4x4 at 15,300) - but 20,000
+left only ~4,700 of headroom. Raised to 50,000, set explicitly in
+`[CurrencyService]` on Robust.HG.ini and all 15 regions' own
+OpenSim.ini (each runs its own `CurrencyService` instance - previously
+relying on the same C# hardcoded default silently). Also backfilled
+`bin/*.ini.example` with `MaxBalance`/`DefaultBalance` and the other 4
+currency-parity settings coded earlier tonight but never documented in
+the example templates.
+
+Last piece: a real admin "Create Region" tool
+(`/admin/store/create-region`) - any region type (including Mainland,
+which the buyer-facing form deliberately excludes), any VarRegion
+size, any prim/agent capacity, for any resident, entirely outside the
+Store's payment/catalog machinery. Deliberately reuses
+`FulfillRegionOrder` verbatim (builds a real `StoreOrder` with
+`CurrencyUsed = "AdminGrant"`/`AmountCharged = 0` and a transient,
+never-publicly-listed `StoreCatalogItem`) rather than a second
+provisioning implementation - one code path stays correct instead of
+two that can drift.
+
+Full details: `casperia-store-region-type-economy` memory (now closed
+out - no known gaps left in the Store's core mechanics).
