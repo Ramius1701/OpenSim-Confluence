@@ -121,11 +121,15 @@ namespace PrimMesher
             }
             catch (Exception e)
             {
+                if (needsScaling)
+                    bm.Dispose();
                 throw new Exception("Caught exception processing byte arrays in SculptMap(): e: " + e.ToString());
             }
 
             width++;
             height++;
+            if (needsScaling)
+                bm.Dispose();
         }
 
         public List<List<Coord>> ToRows(bool mirror)

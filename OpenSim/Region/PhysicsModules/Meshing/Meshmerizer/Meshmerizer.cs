@@ -308,19 +308,43 @@ namespace OpenSim.Region.PhysicsModule.Meshing
                     if (!useMeshiesPhysicsMesh)
                         return null;
 
-                    if (!GenerateCoordsAndFacesFromPrimMeshData(primName, primShape, size, out coords, out faces))
+                    try
+                    {
+                        if (!GenerateCoordsAndFacesFromPrimMeshData(primName, primShape, size, out coords, out faces))
+                            return null;
+                    }
+                    catch
+                    {
+                        m_log.ErrorFormat("[MESH]: fail to process mesh asset for prim {0}", primName);
                         return null;
+                    }
                 }
                 else
                 {
-                    if (!GenerateCoordsAndFacesFromPrimSculptData(primName, primShape, size, lod, out coords, out faces))
+                    try
+                    {
+                        if (!GenerateCoordsAndFacesFromPrimSculptData(primName, primShape, size, lod, out coords, out faces))
+                            return null;
+                    }
+                    catch
+                    {
+                        m_log.ErrorFormat("[MESH]: fail to process sculpt map for prim {0}", primName);
                         return null;
+                    }
                 }
             }
             else
             {
-                if (!GenerateCoordsAndFacesFromPrimShapeData(primName, primShape, size, lod, out coords, out faces))
+                try
+                {
+                    if (!GenerateCoordsAndFacesFromPrimShapeData(primName, primShape, size, lod, out coords, out faces))
+                        return null;
+                }
+                catch
+                {
+                    m_log.ErrorFormat("[MESH]: fail to process shape parameters for prim {0}", primName);
                     return null;
+                }
             }
 
             // Remove the reference to any JPEG2000 sculpt data so it can be GCed
@@ -328,6 +352,12 @@ namespace OpenSim.Region.PhysicsModule.Meshing
 
             int numCoords = coords.Count;
             int numFaces = faces.Count;
+
+            if (numCoords < 3 || numFaces < 1)
+            {
+                m_log.ErrorFormat("[MESH]: invalid degenerated mesh for prim {0} ignored", primName);
+                return null;
+            }
 
             // Create the list of vertices
             List<Vertex> vertices = new List<Vertex>();
@@ -773,7 +803,9 @@ namespace OpenSim.Region.PhysicsModule.Meshing
 
             int sides = 4;
             LevelOfDetail iLOD = (LevelOfDetail)lod;
-            if ((primShape.ProfileCurve & 0x07) == (byte)ProfileShape.EquilateralTriangle)
+            if ((primShape.ProfileCurve & 0x07) == (byte)ProfileShape.EquilateralTriangle
+                || (primShape.ProfileCurve & 0x07) == (byte)ProfileShape.IsometricTriangle
+                || (primShape.ProfileCurve & 0x07) == (byte)ProfileShape.RightTriangle)
                 sides = 3;
             else if ((primShape.ProfileCurve & 0x07) == (byte)ProfileShape.Circle)
             {

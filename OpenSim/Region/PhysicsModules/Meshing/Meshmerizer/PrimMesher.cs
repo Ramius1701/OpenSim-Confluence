@@ -1123,7 +1123,9 @@ namespace PrimMesher
             {
                 vert = this.coords[i];
                 vert.X *= x;
+                vert.X = (float)Math.Round(vert.X, 5);
                 vert.Y *= y;
+                vert.Y = (float)Math.Round(vert.Y, 5);
                 this.coords[i] = vert;
             }
         }
