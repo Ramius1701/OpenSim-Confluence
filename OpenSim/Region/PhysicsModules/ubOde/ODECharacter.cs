@@ -1563,9 +1563,19 @@ namespace OpenSim.Region.PhysicsModule.ubOde
 
             bool tviszero = m_targetVelocity.IsZero();
 
+            // Always-run only changes ground gait (SL: the toggle says "run,"
+            // not "move faster," and does nothing while airborne) - gate this
+            // the same way BSCharacter.TargetVelocity already does for
+            // BulletSim (`if (!_flying)`). Found live via a real Homeworldz
+            // design-research finding, 2026-09-13: flight speed was silently
+            // riding whatever the walk/run toggle happened to be, since
+            // nothing here ever excluded m_flying before applying the
+            // ground-gait multiplier.
             Vector3 ctv;
             if (tviszero)
                 ctv = Vector3.Zero;
+            else if (m_flying)
+                ctv = m_targetVelocity;
             else
             {
                 if (m_alwaysRun)
