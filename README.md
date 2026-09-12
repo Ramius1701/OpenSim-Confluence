@@ -148,26 +148,40 @@ half-finished work on the integration branch.
 
 ## Deployment
 
-Confluence supports running a live grid and a separate beta/test grid
-side by side — the same split Second Life itself uses (its Agni main
-grid and Aditi beta grid). A test grid running the same codebase and a
-cloned copy of live data lets new builds, config changes, and content
-get verified against something real before ever touching the live
-grid, without any risk to live residents or their data.
+Confluence's regions run one-process-per-region rather than the stock
+single shared `OpenSim.exe`, so any individual region can be started,
+stopped, or restarted (to pick up a new build) without ever having to
+take down the rest of the grid — a real, live-tested requirement, not
+a theoretical one. Setting this up is a normal deploy step, not a
+separate tool or wizard:
 
-Casperia, the reference deployment built on Confluence, follows exactly
-this pattern:
+1. Build Confluence, then copy `Robust.exe`, `OpenSim.exe`, every built
+   DLL, and a real, configured `OpenSim.ini` (DB credentials, grid
+   name, etc. — the same one-time setup any OpenSim install needs)
+   into a single folder, e.g. `C:\opensim`. This folder is both where
+   Robust itself runs from and the source every region's own binaries
+   get synced from.
+2. In `Robust.HG.ini`'s `[StoreService]` section, set
+   `RegionOrderGridRoot` to that same folder, and
+   `RegionOrderTemplateIniPath` to the `OpenSim.ini` you just put there
+   — it only ever needs to be read as a template (cloned and have a
+   handful of region-specific keys rewritten), never actually run
+   itself, so there's no chicken-and-egg step where a region has to
+   already exist before this works.
+3. Run **only `Robust.exe`**. No region process needs to be started by
+   hand.
+4. Log into the web UI as a grid admin and use **Create Region**
+   (`/admin/store/create-region`) to provision your first region — any
+   type, any size, for any resident, with no purchase involved. This
+   clones the template from step 2 into its own
+   `Simulators\<name>\bin\` copy and starts it automatically. Every
+   region after that can come the same way, or be sold through the
+   Store to residents directly.
 
-| Grid | Role |
-|---|---|
-| Casperia Prime | The live, public grid. Real residents, real currency, real data. |
-| Casperia-Dev | A separate beta/test grid — its own domain and port range, cloned from Casperia Prime's data — for verifying changes before they reach the live grid. |
-
-Each grid runs its own Robust and region processes against its own
-database, so both can run at the same time without colliding. This
-isn't a special mode Confluence has to be configured into — it's just
-two independent standalone/grid deployments of the same software,
-pointed at different data.
+Casperia Prime is the reference deployment built this way — a real,
+live, public grid with real residents and currency, used throughout
+this project's development as the actual proving ground for every
+feature described in this README, not just a demo.
 
 ## Documentation
 

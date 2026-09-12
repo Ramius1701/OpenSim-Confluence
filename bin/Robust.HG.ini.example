@@ -1010,17 +1010,35 @@
     ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
     ;; Region-order fulfillment: port/grid-coordinate ranges to auto-allocate
-    ;; from when a resident orders a new region, and the template a new
-    ;; Simulators\<slug>\OpenSim.ini is cloned from before an admin clicks
-    ;; "Start Region". Pick ranges clear of every port/coordinate already
-    ;; in use on your grid.
+    ;; from when a resident orders a new region (or an admin uses Create
+    ;; Region), and the template a new Simulators\<slug>\OpenSim.ini is
+    ;; cloned from. Pick ranges clear of every port/coordinate already in
+    ;; use on your grid.
     RegionOrderPortRangeStart = 9050
     RegionOrderPortRangeEnd = 9099
     RegionOrderGridXStart = 1050
     RegionOrderGridYStart = 1050
     RegionOrderGridXEnd = 1099
     RegionOrderGridYEnd = 1099
-    RegionOrderTemplateIniPath = "C:\opensim\Simulators\Sandbox\OpenSim.ini"
+    ;; This does NOT need to be an already-running region's ini - it's read
+    ;; once with File.ReadAllText and cloned (logfile/regionload_regionsdir/
+    ;; http_listener_port get rewritten per new region), so a dormant file
+    ;; is exactly as valid a template as a live one. Point this at the same
+    ;; OpenSim.ini you configure at your deployment root (RegionOrderGridRoot
+    ;; below, right next to Robust.exe/OpenSim.exe) - the one you already
+    ;; have to set up with real DB credentials/grid name to run anything at
+    ;; all - and this becomes your first region's own template with no
+    ;; separate manual Simulators\ folder needed. That's the whole
+    ;; bootstrap: configure Robust + this one OpenSim.ini once, run only
+    ;; Robust.exe, then use the WebUI's admin "Create Region" for your
+    ;; first sim (and the Store for every one after).
+    RegionOrderTemplateIniPath = "C:\opensim\OpenSim.ini"
+    ;; The single folder your whole deployment lives in - Robust.exe,
+    ;; OpenSim.exe, every built DLL, and this ini all sit here at the root;
+    ;; each region then gets its own Simulators\<name>\bin\ copy synced
+    ;; from here automatically on every start (SyncRegionBinaries) - see
+    ;; FEATURES.md's Store section and PROJECT_LOG.md's per-region binary
+    ;; isolation entry.
     RegionOrderGridRoot = "C:\opensim"
     RegionOrderExternalHostName = "${Const|BaseHostname}"
 
