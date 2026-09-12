@@ -15244,7 +15244,24 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // web console (/consoleweb, used by RunRegionConsoleCommand
                 // for things like add-prim-limit), which is wired up during
                 // normal region-module startup either way.
-                Arguments = "-inifile=" + relativeIniArg + " -background=true",
+                //
+                // -console=rest is equally required, not optional - without
+                // it, OpenSim.cs's StartupSpecific still defaults to
+                // constructing a LocalConsole even under OpenSimBackground
+                // (background=true only swaps which class blocks after
+                // startup; it never changes m_consoleType). LocalConsole's
+                // constructor calls Console.TreatControlCAsInput, which
+                // throws immediately ("The handle is invalid") against this
+                // child's redirected stdout/stderr below - a fatal,
+                // unhandled crash before any region ever loads. Found live
+                // via a real Create Region test, 2026-09-13: the region
+                // order/DB row and SyncRegionBinaries both succeeded, but
+                // the spawned process died on its very first line with no
+                // region ever starting. RemoteConsole has no such
+                // dependency - it just adds routes onto this process's own
+                // already-running HTTP server (SetServer), so this needs no
+                // new port or config.
+                Arguments = "-inifile=" + relativeIniArg + " -background=true -console=rest",
                 WorkingDirectory = m_regionOrderGridRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true,

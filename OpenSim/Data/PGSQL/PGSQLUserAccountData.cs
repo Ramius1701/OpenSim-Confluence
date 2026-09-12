@@ -323,12 +323,29 @@ namespace OpenSim.Data.PGSQL
             using (NpgsqlConnection conn = new NpgsqlConnection(m_ConnectionString))
             using (NpgsqlCommand cmd = new NpgsqlCommand())
             {
-                // Fix case sensitivity for PostgreSQL column names
+                // Fix case sensitivity for PostgreSQL column names. Must cover
+                // every real UserAccounts column (see Resources/UserAccount.migrations)
+                // that a raw "where" fragment might reference - callers build
+                // these from PascalCase C# property names (e.g.
+                // UserAccountService.PromoteExpiredTrialMembers's "UserFlags"/
+                // "Created" check), and an unquoted identifier folds to
+                // lowercase in Postgres, so any column missing from this list
+                // fails with "column ... does not exist" instead of matching
+                // the real, quoted-mixed-case column.
                 where = where.Replace("PrincipalID", "\"PrincipalID\"")
                             .Replace("ScopeID", "\"ScopeID\"")
                             .Replace("FirstName", "\"FirstName\"")
-                            .Replace("LastName", "\"LastName\"");
-                            
+                            .Replace("LastName", "\"LastName\"")
+                            .Replace("ServiceURLs", "\"ServiceURLs\"")
+                            .Replace("UserLevel", "\"UserLevel\"")
+                            .Replace("UserFlags", "\"UserFlags\"")
+                            .Replace("UserTitle", "\"UserTitle\"")
+                            .Replace("DisplayName", "\"DisplayName\"")
+                            .Replace("NameChanged", "\"NameChanged\"")
+                            .Replace("TOSDate", "\"TOSDate\"")
+                            .Replace("Email", "\"Email\"")
+                            .Replace("Created", "\"Created\"");
+
                 if (!scopeID.IsZero())
                 {
                     where = "(\"ScopeID\"=:ScopeID or \"ScopeID\"='00000000-0000-0000-0000-000000000000') and (" + where + ")";
