@@ -6988,7 +6988,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // seconds of page-load time on a page full of down regions.
                     HashSet<UUID> onlineRegionIDs = new HashSet<UUID>(
                             FilterOnlineRegions(pageRegions).ConvertAll(r => r.RegionID));
-                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Online</th><th>Hypergrid</th><th></th><th></th><th></th><th></th><th>Group Auto-Invite</th></tr>");
+                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Online</th><th>Hypergrid</th><th></th><th></th><th></th><th>Group Auto-Invite</th></tr>");
                     foreach (GridRegion region in pageRegions)
                     {
                         bool open = m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID);
@@ -7024,11 +7024,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                         rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                         rows.Append("<button type=\"submit\">Save OAR backup</button>");
                         rows.Append("</form></td>");
-                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/regions/restart\" onsubmit=\"return confirm('Restart ")
-                                .Append(Html(region.RegionName).Replace("'", "\\'")).Append("? Everyone in the region will be disconnected.');\">");
-                        rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
-                        rows.Append("<button type=\"submit\">Restart</button>");
-                        rows.Append("</form></td>");
+                        // Restart moved to the Simulators page's own
+                        // per-row Actions (2026-09-12) - it's a process-
+                        // lifecycle action, same family as Start/Stop, and
+                        // didn't belong on this registration/HG/maptile
+                        // page. Same handler (HandleAdminRegionRestart),
+                        // just reached from a different row of buttons now.
                         // Live toggle, no restart - runs "group-auto-invite
                         // enable/disable" on the target region via the same
                         // remote-console channel Restart above uses. Off by
@@ -8185,16 +8186,25 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             Dictionary<string, string> form = ReadForm(request);
+
+            // Restart is reachable from both Region Management and (as of
+            // 2026-09-12) the Simulators page's own per-row Actions - this
+            // handler is shared, unchanged, but the redirect target now
+            // follows wherever the admin actually clicked from instead of
+            // hardcoding Region Management, so a Simulators-page click
+            // doesn't bounce them somewhere else.
+            string returnTo = FormValue(form, "return_to") == "simulators" ? "/admin/simulators" : "/admin/regions";
+
             if (!UUID.TryParse(FormValue(form, "region_id"), out UUID regionID))
             {
-                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("No region selected."), HttpStatusCode.Redirect);
+                response.Redirect(BasePath + returnTo + "?message=" + Uri.EscapeDataString("No region selected."), HttpStatusCode.Redirect);
                 return;
             }
 
             GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, regionID);
             if (region == null || string.IsNullOrEmpty(region.ServerURI))
             {
-                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("That region's server address is not known to the grid service."), HttpStatusCode.Redirect);
+                response.Redirect(BasePath + returnTo + "?message=" + Uri.EscapeDataString("That region's server address is not known to the grid service."), HttpStatusCode.Redirect);
                 return;
             }
 
@@ -8210,7 +8220,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string simFolder = DiscoverSimulators().FirstOrDefault(s => s.RegionID == regionID).SimulatorFolder;
             if (string.IsNullOrEmpty(simFolder))
             {
-                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(region.RegionName + " isn't currently discoverable as a simulator folder, so it can't be fully restarted from here."), HttpStatusCode.Redirect);
+                response.Redirect(BasePath + returnTo + "?message=" + Uri.EscapeDataString(region.RegionName + " isn't currently discoverable as a simulator folder, so it can't be fully restarted from here."), HttpStatusCode.Redirect);
                 return;
             }
 
@@ -8218,7 +8228,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             { IsBackground = true };
             t.Start();
 
-            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(region.RegionName + ": 120-second warning sent, then a real restart to pick up any deployed code."), HttpStatusCode.Redirect);
+            response.Redirect(BasePath + returnTo + "?message=" + Uri.EscapeDataString(region.RegionName + ": 120-second warning sent, then a real restart to pick up any deployed code."), HttpStatusCode.Redirect);
         }
 
         // Shared by the single-region Restart button (HandleAdminRegionRestart)
@@ -9107,14 +9117,24 @@ namespace OpenSim.Server.Handlers.WebInterface
                         // Location/Online at a glance - real gap, this list
                         // made you open each account to see presence. Cheap
                         // here since the page is already capped at 25 rows.
-                        rows.Append("<table><tr><th>Name</th><th>Email</th><th>User Level</th><th>Online</th></tr>");
+                        rows.Append("<table><tr><th>Name</th><th>Email</th><th>User Level</th><th>Last Login</th><th>Online</th></tr>");
                         foreach (UserAccount account in pageResults)
                         {
                             GridRegion onlineRegion = FindOnlineUserRegion(account.PrincipalID);
+
+                            string lastLogin = "<em>Never</em>";
+                            if (m_GridUserService != null)
+                            {
+                                GridUserInfo info = m_GridUserService.GetGridUserInfo(account.PrincipalID.ToString());
+                                if (info != null && info.Login > DateTime.MinValue.AddYears(1))
+                                    lastLogin = Html(info.Login.ToString("yyyy-MM-dd HH:mm"));
+                            }
+
                             rows.Append("<tr><td><a href=\"").Append(BasePath).Append("/admin/users?principal=").Append(account.PrincipalID).Append("\">")
                                     .Append(Html(account.Name)).Append("</a></td>");
                             rows.Append("<td>").Append(Html(account.Email)).Append("</td>");
                             rows.Append("<td>").Append(account.UserLevel).Append("</td>");
+                            rows.Append("<td>").Append(lastLogin).Append("</td>");
                             rows.Append("<td>").Append(onlineRegion != null
                                     ? "<span class=\"pill pill-yes\">" + Html(onlineRegion.RegionName) + "</span>"
                                     : "<span class=\"pill pill-no\">Offline</span>").Append("</td></tr>");
@@ -14613,7 +14633,20 @@ namespace OpenSim.Server.Handlers.WebInterface
                           .Append("onsubmit=\"return confirm('Gracefully shut down ").Append(Html(s.RegionName).Replace("'", "\\'"))
                           .Append("? Anyone currently there will be disconnected.');\">");
                         sb.Append("<input type=\"hidden\" name=\"folder\" value=\"").Append(Html(s.SimulatorFolder)).Append("\">");
-                        sb.Append("<button type=\"submit\">Stop</button></form>");
+                        sb.Append("<button type=\"submit\">Stop</button></form> ");
+                        // Moved here from Region Management (2026-09-12) -
+                        // restarting a single region is a process-lifecycle
+                        // action, same family as Start/Stop, not something
+                        // that belonged on the region-registration/HG/
+                        // maptile page. Same RealRestartRegion warn-wait-
+                        // stop-start sequence, same /admin/regions/restart
+                        // endpoint - no new handler needed.
+                        sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/regions/restart\" style=\"display:inline\" ")
+                          .Append("onsubmit=\"return confirm('Restart ").Append(Html(s.RegionName).Replace("'", "\\'"))
+                          .Append("? 120-second in-world warning, then a real restart to pick up any deployed code.');\">");
+                        sb.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(s.RegionID).Append("\">");
+                        sb.Append("<input type=\"hidden\" name=\"return_to\" value=\"simulators\">");
+                        sb.Append("<button type=\"submit\">Restart</button></form>");
                     }
                     sb.Append("</td></tr>");
                 }
