@@ -24,21 +24,39 @@
   it looks like a limitation of this specific prebuild.dll build, not
   investigated further).
 
+  2026-09-13: fixed a real build-breaking bug found by an actual fresh-
+  clone test (this dev machine's own checkout has a second "origin" remote
+  pointing at upstream opensim/opensim with a real master branch to diff
+  against - a plain single-remote fork clone has no such branch at all).
+  "git rev-list --count origin/master..HEAD" then fails with a multi-line
+  "fatal: ambiguous argument 'origin/master..HEAD'" message on stderr -
+  ConsoleToMSBuild merges stdout+stderr with no way to separate them, so
+  that error text landed verbatim in the CommitsAheadOfMaster string
+  constant, breaking compilation with "newline in constant" errors. The
+  old fallback only triggered on an EMPTY captured value, which this
+  wasn't (it was non-empty error text) - now falls back on a non-zero
+  exit code too, checked via each Exec's own ExitCode output parameter
+  rather than string-matching the output.
+
   Note the %3B escapes below: WriteLinesToFile's Lines attribute splits
   item values on a literal ";" as an MSBuild list separator, so a real
   semicolon in the generated C# has to be escaped this way or it gets
   silently dropped.
 -->
 <Target Name="GenerateGitVersionInfo" BeforeTargets="BeforeCompile;CoreCompile">
-  <Exec Command="git rev-list --count origin/master..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
-    <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitsAhead" />
+  <Exec Command="git rev-list --count origin/master..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
+    <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitsAheadRaw" />
+    <Output TaskParameter="ExitCode" PropertyName="GitCommitsAheadExitCode" />
   </Exec>
-  <Exec Command="git rev-parse --short=10 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
-    <Output TaskParameter="ConsoleOutput" PropertyName="GitShortHash" />
+  <Exec Command="git rev-parse --short=10 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
+    <Output TaskParameter="ConsoleOutput" PropertyName="GitShortHashRaw" />
+    <Output TaskParameter="ExitCode" PropertyName="GitShortHashExitCode" />
   </Exec>
   <PropertyGroup>
-    <GitCommitsAhead Condition="'$(GitCommitsAhead)' == ''">0</GitCommitsAhead>
-    <GitShortHash Condition="'$(GitShortHash)' == ''">unknown</GitShortHash>
+    <GitCommitsAhead>0</GitCommitsAhead>
+    <GitCommitsAhead Condition="'$(GitCommitsAheadExitCode)' == '0' AND '$(GitCommitsAheadRaw)' != ''">$(GitCommitsAheadRaw)</GitCommitsAhead>
+    <GitShortHash>unknown</GitShortHash>
+    <GitShortHash Condition="'$(GitShortHashExitCode)' == '0' AND '$(GitShortHashRaw)' != ''">$(GitShortHashRaw)</GitShortHash>
   </PropertyGroup>
   <ItemGroup>
     <GitVersionInfoLines Include="namespace OpenSim" />
