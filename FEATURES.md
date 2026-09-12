@@ -39,7 +39,14 @@ alongside the existing support-ticket system.
 
 - Home/splash with live grid stats.
 - Self-service sign-up with a starting-region picker (defaults to the
-  grid's `DefaultRegion`-flagged regions).
+  grid's `DefaultRegion`-flagged regions) and an optional avatar-
+  selection starter-look carousel — admin-curated "model" accounts
+  (dressed up in-world like any normal avatar, no separate archive
+  format) a new resident can pick from to start already looking like
+  something, cloning that model's shape/skin/clothing/attachments onto
+  the new account via the same appearance-copy mechanism RemoteAdmin's
+  `admin_create_user` already used. Shows nothing until an admin adds
+  at least one look.
 - Grid-wide search (People/Places/Events/Classifieds/Groups, plus a
   dedicated Land for Sale page with size buckets, per-region maturity
   filtering, and trending/autocomplete).
@@ -48,6 +55,9 @@ alongside the existing support-ticket system.
   status, drawing only regions actually online right now, with an
   all-regions table below covering the full roster and its own status
   column.
+- A per-region profile page — thumbnail, owner, maturity rating, live
+  online status, and a one-click teleport/hop link, linked from the
+  world map and search results.
 - A viewer download page.
 - A live grid-capability "Features" page.
 - Guest support tickets.
@@ -100,13 +110,19 @@ alongside the existing support-ticket system.
   managers/access/ban/group lists.
 - Grid-wide group oversight — list every group, moderate
   visibility/enrollment flags, delete a group.
-- Abuse report review, financial/transaction reporting, grid
-  statistics.
+- Abuse report review — a real editable queue, not read-only:
+  `Active`/`AssignedTo`/`Notes` fields track resolution and ownership
+  per report, financial/transaction reporting, grid statistics.
 - Static page and news/events content management.
-- Grid settings, including an opt-in "clear all map tiles on next
-  restart" toggle for the rare case tiles have gone stale (off by
-  default, since tiles only ever refresh when a region re-uploads
-  one).
+- `/admin/starter-looks` — CRUD for the `/register` starter-look
+  carousel: pick which existing account is the model by name, set
+  display order, enable/disable a tile.
+- Grid settings, including a grid-wide login toggle (blocks new
+  logins server-side at `LLLoginService`, with a configurable closed-
+  message shown to anyone who tries) and an opt-in "clear all map
+  tiles on next restart" toggle for the rare case tiles have gone
+  stale (off by default, since tiles only ever refresh when a region
+  re-uploads one).
 - A web-based region console, per-region Hypergrid open/close
   toggling, on-demand map-tile regeneration.
 - A region config file browser/editor — every region's raw `.ini`,
