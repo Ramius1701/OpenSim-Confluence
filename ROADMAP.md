@@ -333,37 +333,13 @@ Web & Admin UI section rather than here.)*
   gunthar's buoyancy/water/rubber-bounce/rolling-resistance/avatar-
   avatar-social-physics/boat-wave cluster IS already live in both
   ubODE and BulletSim, byte-identical - see `PROJECT_LOG.md`).
-- **Legion-Grid-Code `slua-tier2-tables` review: CLOSED, fully sampled
-  (2026-09-08).** The ~115 commits left uncharacterized after the
-  Experience (23 commits) and LegionJolt (~65 commits, above) clusters
-  were pulled out have now all been checked against Confluence's
-  actual current code. Real bugs found and fixed across several
-  entries in PROJECT_LOG.md: a vehicle border-crossing bounce loop, a
-  DisplayNames clear-throttle bug plus a deeper DisplayNames
-  persistence gap in Confluence's own independently-built code, ~16
-  LAND/ESTATE bugs (group-power bypasses, missing root-agent guards on
-  a money-moving handler and 11 others, missing-return NRE/permission-
-  bypass bugs, loop-variable bugs, a data-integrity flag bug), a real
-  MySQL data-integrity bug (`StorePrimInventory`'s unprotected
-  DELETE-then-INSERT could destroy already-persisted prim inventory on
-  a crash - now transactional with a kill-switch and retry-on-failure
-  semantics), and a real multi-region console-command bug (`debug
-  eq`/`debug attachments log`/several estate commands firing once per
-  region on invocation). Search/Classifieds and DirectDelivery were
-  checked and confirmed already superseded by Confluence's own more
-  mature, independently-built implementations - not porting targets.
-  Terrain-gen tooling and a new inbound-email-IMAP capability were
-  identified but are out of scope for a bug-porting pass (external
-  tooling / a genuinely new feature needing an operator decision,
-  respectively) - available on request. See `casperia-fork-review-status.md`
-  memory and PROJECT_LOG.md for the full trail.
-- **wolfvoice** (`wolfsoftwaresystemsltd/wolfvoice`) — an alternative
-  WebRTC voice backend for the already-merged `os-webrtc-janus` addon
-  (see "WebRTC voice" below), offering per-listener spatial audio
-  mixing without needing a separate Janus gateway server, and claiming
-  zero client-side configuration for Firestorm 7.1.10+. Not yet
-  evaluated for actual maturity/completeness — only the README has been
-  read so far.
+- Legion-Grid-Code's terrain-gen tooling and a genuinely new inbound-
+  email-IMAP capability were flagged during the (now-closed)
+  `slua-tier2-tables` fork review as real but out of scope for a
+  bug-porting pass - external tooling / a feature needing an operator
+  decision, respectively. Available on request if either becomes
+  wanted; the review's own closed findings (real bugs found and fixed)
+  are in `PROJECT_LOG.md`, not repeated here.
 - **Halcyon/InWorldz Bot/NPC framework.** A complete, mature LSL-scriptable
   bot framework exists in Halcyon's open C# layer (its scripting engine
   and physics core are closed-source and not portable, but this part
@@ -375,8 +351,17 @@ Web & Admin UI section rather than here.)*
   versions — the OSSL equivalents already exist), roughly 80 `iw*`
   inventory/string/list/agent/group utility functions, Euler-rotation
   LSL functions, and a small JWT auth module.
+
 ## Explicitly out of scope for now
 
+- **`wolfvoice` (`wolfsoftwaresystemsltd/wolfvoice`) — excluded by
+  direct operator decision (2026-09-09), not revisited.** Was under
+  evaluation as an alternative WebRTC voice backend for the
+  already-merged `os-webrtc-janus` addon (per-listener spatial audio
+  mixing without a separate Janus gateway). The operator said
+  explicitly to exclude it, mid-investigation, no reason given - stop
+  evaluating or recommending it; don't re-derive a reason or resume
+  unless asked.
 - **JPEG2000 texture decoder default: CSJ2K vs. OpenJPEG — benchmarked
   for real, keeping CSJ2K (2026-09-05).** WhiteCore-Dev's own timing
   comparison found their native OpenJPEG decoder considerably faster
