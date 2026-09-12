@@ -148,6 +148,22 @@ half-finished work on the integration branch.
 
 ## Deployment
 
+Confluence supports both of OpenSim's standard deployment shapes —
+**grid mode** (a separate Robust process, one or more regions) and
+**standalone mode** (a single self-contained `OpenSim.exe`, no Robust
+at all) — and the full web UI (registration, dashboard, admin panel,
+Store, currency) works in either, not just grid mode.
+
+In both modes, if this is a genuinely fresh install (a brand-new
+database with zero accounts), the very first time the web UI starts up
+it automatically creates one real admin account — username **Grid
+Admin** — with a random temporary password printed once to the
+console/log. Log in with it and you'll be required to set a real
+password before anything else is reachable. There's no separate setup
+wizard or database step to create your first admin account by hand.
+
+### Grid mode
+
 Confluence's regions run one-process-per-region rather than the stock
 single shared `OpenSim.exe`, so any individual region can be started,
 stopped, or restarted (to pick up a new build) without ever having to
@@ -170,7 +186,8 @@ separate tool or wizard:
    already exist before this works.
 3. Run **only `Robust.exe`**. No region process needs to be started by
    hand.
-4. Log into the web UI as a grid admin and use **Create Region**
+4. Log into the web UI (with the auto-created Grid Admin account, or
+   any account you promote to admin level) and use **Create Region**
    (`/admin/store/create-region`) to provision your first region — any
    type, any size, for any resident, with no purchase involved. This
    clones the template from step 2 into its own
@@ -181,6 +198,35 @@ separate tool or wizard:
 Casperia Prime is the reference deployment built this way — a real,
 live, public grid with real residents and currency, used throughout
 this project's development as the actual proving ground for every
+grid-mode feature.
+
+### Standalone mode
+
+A single `OpenSim.exe`, no Robust process, everything in one deployment
+— the simplest way to run Confluence, and the full web UI comes along
+for free:
+
+1. Build Confluence, copy the build output to a deployment folder, and
+   copy `OpenSim.ini.example` to `OpenSim.ini`.
+2. Copy `config-include/StandaloneCommon.ini.example` to
+   `config-include/StandaloneCommon.ini`. The database defaults to
+   SQLite with zero further configuration — uncomment the MySQL/MSSQL/
+   PGSQL block instead if you'd rather use one of those. `[WebInterface]
+   Enabled = true` is already set at the bottom of this file by
+   default, so the web UI starts automatically; nothing else to turn on.
+3. Run `OpenSim.exe`. On a genuinely first run (no `Regions/Regions.ini`
+   yet) it drops into OpenSim's own interactive console wizard asking a
+   few questions about your first region — this is stock OpenSim
+   behavior, not something Confluence changes. Answer them (or press
+   Enter to accept every default).
+4. Once it's running, the web UI is live on this same process's own
+   HTTP port (`http_listener_port`, 9000 by default) — log in with the
+   auto-created Grid Admin account and you're on the same dashboard/
+   admin panel grid mode gets. The Store's region-provisioning
+   mechanics (Create Region, `Simulators\` per-region isolation) are
+   grid-mode-specific — a standalone instance only ever runs the one
+   region-per-process the console wizard set up, or however many you
+   add the stock OpenSim way (additional `.ini` files under `Regions\`).
 feature described in this README, not just a demo.
 
 ## Documentation
