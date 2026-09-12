@@ -16,6 +16,7 @@ using Nini.Config;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
+using OpenSim.Framework.Console;
 using OpenSim.Server.Base;
 using OpenSim.Server.Handlers.Base;
 using OpenSim.Services.Interfaces;
@@ -697,6 +698,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/admin/store/create-region":
                         HandleAdminStoreCreateRegion(request, response);
+                        break;
+                    case BasePath + "/admin/economy/stipend-paynow":
+                        HandleAdminStipendPayNow(request, response);
                         break;
                     case BasePath + "/admin/regions/ini":
                         HandleAdminRegionIniList(request, response);
@@ -6920,7 +6924,19 @@ namespace OpenSim.Server.Handlers.WebInterface
             adminNav.Append("<h2>Commerce</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/store", "bi-shop", "Store Catalog", "Manage prim packs and region order listings");
             AppendDashboardLink(adminNav, BasePath + "/admin/store/orders", "bi-receipt-cutoff", "Store Orders", "Fulfillment queue, renewals, Start Region");
+            AppendDashboardLink(adminNav, BasePath + "/admin/store/create-region", "bi-plus-square", "Create Region", "Provision any region for a resident, no purchase");
             AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "Purchases & Transactions", "Financial reporting across the grid");
+            // Same widget-card look as every AppendDashboardLink tile above,
+            // just a <button class="widget-card dashboard-link"> inside a
+            // <form> instead of an <a href> - this one POSTs an action
+            // rather than navigating, so it belongs in the same card grid,
+            // not as a lone button dropped below it.
+            adminNav.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/economy/stipend-paynow\" ")
+              .Append("onsubmit=\"return confirm('Trigger a stipend payment cycle right now, outside the normal weekly schedule? This pays every eligible resident immediately.');\">")
+              .Append("<button type=\"submit\" class=\"widget-card dashboard-link\">")
+              .Append("<h3><i class=\"bi bi-piggy-bank\"></i> Pay Stipends Now</h3>")
+              .Append("<div class=\"widget-meta\">Trigger an out-of-cycle stipend payment immediately</div>")
+              .Append("</button></form>");
             adminNav.Append("</div>");
 
             adminNav.Append("<h2>Content</h2><div class=\"widget-grid\">");
@@ -14766,6 +14782,49 @@ namespace OpenSim.Server.Handlers.WebInterface
             WritePage(request, response, PageTitle("Create Region"), sb.ToString());
         }
 
+        // Deliberately narrow - runs exactly one hardcoded command, not a
+        // free-text Robust console field. WebInterfaceServiceConnector runs
+        // in-process inside Robust.exe itself (unlike the region console
+        // above, which has to round-trip over HTTP to a separate process),
+        // so MainConsole.Instance.RunCommand reaches CurrencyServerConnector's
+        // own "stipend paynow" handler directly - no new IPC needed. A
+        // general "run any Robust console command" admin page was
+        // deliberately never built (see the dropped "Restart Robust from
+        // the WebUI" plan in this session's own history) - that would let
+        // an admin reach "shutdown"/"quit" with no watchdog to bring Robust
+        // back up, the exact risk that plan was shelved over. This command
+        // is safe by construction: it only ever pays currency, it never
+        // stops the process.
+        private void HandleAdminStipendPayNow(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message;
+            if (request.HttpMethod == "POST")
+            {
+                try
+                {
+                    MainConsole.Instance.RunCommand("stipend paynow");
+                    message = "Stipend payment cycle triggered - check Purchases & Transactions for the resulting payments.";
+                }
+                catch (Exception e)
+                {
+                    message = "Failed to trigger stipend payment: " + e.Message;
+                }
+            }
+            else
+            {
+                message = "Use the button on the admin dashboard to trigger this.";
+            }
+
+            response.Redirect(BasePath + "/admin?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
         // Distinguishes "genuinely down" from "the process is running but
         // not reachable from outside this server" - found live: a freshly
         // auto-created Store region order answers fine on 127.0.0.1 (the
@@ -17360,6 +17419,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".stat-value{color:var(--accent-bright);font-size:1.5em;font-weight:700;}" +
                 ".stat-sub{color:var(--muted);font-size:13px;margin-top:2px;}" +
                 ".widget-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin:0 0 8px;}" +
+                // A <form> wrapping a card-styled <button> (e.g. Pay
+                // Stipends Now) would otherwise become the actual grid item
+                // instead of the button inside it - display:contents drops
+                // the form out of the box model entirely so its child button
+                // sizes and aligns exactly like every sibling <a> card.
+                ".widget-grid form{display:contents;}" +
                 ".widget-card{background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;}" +
                 ".widget-card h3{margin:0 0 4px;}" +
                 ".widget-meta{color:var(--muted);font-size:13px;margin:0 0 6px;}" +
@@ -17368,11 +17433,22 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // Clickable variant of .widget-card (Dashboard's Quick Links) -
                 // same hover-lift/no-underline treatment as .bucket, since an
                 // entire card acting as one <a> looks broken if hover
-                // underlines all its text.
-                "a.dashboard-link{display:block;color:inherit;transition:border-color .15s ease,transform .15s ease;}" +
-                "a.dashboard-link:hover{border-color:var(--accent);transform:translateY(-2px);text-decoration:none;}" +
-                "a.dashboard-link h3{color:var(--text);}" +
-                "a.dashboard-link h3 .bi{color:var(--accent-bright);margin-right:6px;}" +
+                // underlines all its text. Class selector (not "a.dashboard-
+                // link") so the same look works on a <button> too - a
+                // dashboard action that POSTs (Pay Stipends Now) instead of
+                // navigating shouldn't look like a plain form button dropped
+                // outside the card grid.
+                ".dashboard-link{display:block;width:100%;text-align:left;color:inherit;" +
+                "font:inherit;cursor:pointer;transition:border-color .15s ease,transform .15s ease;}" +
+                // The global button{} rule (Store's Buy buttons etc.) sets
+                // text-transform:uppercase - override back to regular case
+                // here so this reads the same as every sibling <a> card
+                // instead of shouting.
+                "button.dashboard-link{margin:0;text-transform:none;letter-spacing:normal;}" +
+                ".dashboard-link:hover{border-color:var(--accent);transform:translateY(-2px);text-decoration:none;}" +
+                "button.dashboard-link:hover{background:var(--input-bg);}" +
+                ".dashboard-link h3{color:var(--text);}" +
+                ".dashboard-link h3 .bi{color:var(--accent-bright);margin-right:6px;}" +
                 // Icon-headed, hover-lift cards - matches the reference
                 // grid-portal projects' own region/feature-card treatment
                 // (translateY lift + accent border-left + real box-shadow on
