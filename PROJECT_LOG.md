@@ -23177,3 +23177,76 @@ two that can drift.
 
 Full details: `casperia-store-region-type-economy` memory (now closed
 out - no known gaps left in the Store's core mechanics).
+
+## PostgreSQL verification pass (2026-09-13)
+
+Following the standalone-WebUI work above, closed out the last
+unfulfilled piece of this build's own stated scope ("this has to work
+with Standalone and Grid modes, SQLite, MySQL, MariaDB, and
+PostgreSQL") by actually standing up isolated PostgreSQL-backed
+deployments in both modes - `S:\FreshTestStandalonePG` and
+`S:\FreshTestDeployPG`, reusing the `S:\Github\ConfluenceFreshTest`
+fresh clone (first re-synced to the latest pushed commits - it had
+gone four commits stale mid-session, including the entire standalone
+WebUI feature, so the very first PostgreSQL run 404'd on every WebUI
+route until that was caught and fixed).
+
+Found and fixed three real, previously-untested PostgreSQL bugs, none
+of which showed on SQLite/MySQL:
+
+1. `PGSQLUserAccountData.GetUsersWhere`'s hand-rolled case-sensitivity
+   fix-up only quoted 4 of the real `UserAccounts` columns
+   (`PrincipalID`/`ScopeID`/`FirstName`/`LastName`) - any raw
+   `where`-fragment referencing a column outside that list (the home
+   dashboard's new-accounts-this-week stat uses `Created`; the Trial
+   Member promotion sweep uses `UserFlags` and `Created` together)
+   failed with a genuine `column "created" does not exist` error on
+   Postgres, silently breaking both features. Extended the list to
+   cover every real column from the migration file.
+2. `RegionStore.migrations` version 58 (`add rez start string param
+   column`) used MySQL-style backtick identifiers in the PGSQL-specific
+   migration file - a straight copy-paste bug. Failed silently every
+   single boot ("safely ignorable" per the generic migration-error
+   handler), so the `StartStr` column - which `llGetStartString()` and
+   OAR/IAR rez-string persistence both genuinely read/write - never
+   actually existed on a fresh PostgreSQL region. Fixed to real PG
+   syntax; confirmed the column now exists after a clean re-migration.
+3. The biggest one, and NOT actually PostgreSQL-specific despite being
+   found during this pass: `TryStartRegionProcess` (the Store's own
+   Create Region / purchase-fulfillment auto-start mechanism) crashed
+   its spawned region process instantly, every time, on this machine -
+   "Region provisioned... but automatic start failed." The comment
+   already on that code explained `-background=true` avoids
+   `Application.cs`'s console-spin bug, but missed that
+   `OpenSim.cs.StartupSpecific` still unconditionally builds a
+   `LocalConsole` unless `-console=` says otherwise, and
+   `LocalConsole`'s constructor touches the real console handle - fatal
+   against this call's own `RedirectStandardOutput = true`. Added
+   `-console=rest` to the spawned arguments (`RemoteConsole` just
+   attaches routes to the process's own already-running HTTP server, no
+   new port needed). This bug would affect Windows Create Region/Store
+   purchases on ANY database backend - PostgreSQL testing just happened
+   to be what surfaced it, since the earlier MySQL grid-mode pass this
+   session apparently never actually exercised the automatic-start path
+   the same way.
+
+All three fixed, committed, and pushed (`f67fdfe131`). Re-verified
+clean after each fix - migrations run without error, registration/
+login/currency/admin-panel all confirmed live on a real PostgreSQL
+database in standalone mode, and in grid mode a real Create Region
+call now provisions AND auto-starts the region process, which reaches
+`RegionReady` with its HTTP/UDP ports genuinely listening.
+
+Two real, confirmed-remaining PostgreSQL gaps, deliberately NOT fixed
+this pass (new data-layer classes, not verification-scope fixes) - see
+`ROADMAP.md`'s "Known limitations": the native Marketplace
+(`MySqlMarketplaceListingsData` has no PGSQL equivalent, matching the
+already-known SQLite gap) and `RegionHGService`
+(`MySQLRegionHGData.cs` has no PGSQL equivalent - Hypergrid travel-
+record state). Both fail non-fatally, confirmed via log inspection,
+not by assumption.
+
+Not separately re-verified as distinct from MySQL: MariaDB (same wire
+protocol/client throughout this whole build, no separate test run).
+
+Full details: `casperia-fresh-clone-test-findings` memory.

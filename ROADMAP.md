@@ -1018,6 +1018,23 @@ forgotten:
 
 ## Known limitations
 
+- **Two features have no PostgreSQL backend at all**, found via a real
+  fresh-clone PostgreSQL test (both grid and standalone mode,
+  2026-09-13): the native Marketplace (`MySqlMarketplaceListingsData`
+  is the only `IMarketplaceListingsService`/`IDeliveryLedger`
+  implementation - SQLite has one, PostgreSQL doesn't) and
+  `RegionHGService` (backs Hypergrid inter-grid travel-record state -
+  `MySQLRegionHGData.cs` exists, no PGSQL equivalent does). Both fail
+  non-fatally on Postgres (a clear "could not find a storage interface"
+  log line at startup, everything else keeps running) rather than
+  crashing, but Marketplace checkout and HG travel-record persistence
+  simply don't work on a PostgreSQL-backed deployment until someone
+  writes the missing data classes. Everything else in the currency/
+  search/events/auction/user-profiles/abuse-reports/store/web-account/
+  starter-look/static-page/support-ticket/suggestion/recovery-code
+  family has a real, now-verified-working PostgreSQL implementation -
+  these two are genuinely the only gaps, not a sign the rest are
+  unreliable.
 - **WebRTC voice** (`OpenSim/Addons/os-webrtc-janus`) is real, merged
   code (5,471 lines, builds into the solution, has a real
   `.ini.example`) — not documented in `FEATURES.md` as a working
