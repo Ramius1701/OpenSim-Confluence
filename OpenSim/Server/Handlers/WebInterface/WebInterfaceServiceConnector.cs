@@ -1245,11 +1245,49 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<GridRegion> aliveRegions = FilterOnlineRegions(
                     m_GridService?.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000) ?? new List<GridRegion>());
             List<GridRegion> regions = FilterListedRegions(aliveRegions);
+            HashSet<string> aliveRegionIDs = new HashSet<string>(aliveRegions.Select(r => r.RegionID.ToString()));
             int onlineNow = 0;
+            GridRegion busiestRegion = null;
+            int busiestRegionCount = 0;
             if (m_GridUserService != null)
             {
-                HashSet<string> aliveRegionIDs = new HashSet<string>(aliveRegions.Select(r => r.RegionID.ToString()));
                 onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
+
+                // Names the single most-populated LISTED region right now,
+                // with a direct teleport link - a flat "2 online" reads as
+                // sparse on a smaller grid; naming somewhere specific and
+                // inviting to land gives a visitor an actual reason to
+                // click rather than just a number. Unlisted regions are
+                // excluded from the SUGGESTION (respects the same opt-out
+                // as the regions-to-explore count/list above) even though
+                // their occupants still count toward onlineNow itself.
+                List<GridUserInfo> onlineUsers = m_GridUserService.GetOnlineUsers(aliveRegionIDs);
+                HashSet<UUID> listedRegionIDs = new HashSet<UUID>(regions.Select(r => r.RegionID));
+                Dictionary<UUID, int> byRegion = new Dictionary<UUID, int>();
+                foreach (GridUserInfo u in onlineUsers)
+                {
+                    if (!listedRegionIDs.Contains(u.LastRegionID))
+                        continue;
+                    byRegion.TryGetValue(u.LastRegionID, out int c);
+                    byRegion[u.LastRegionID] = c + 1;
+                }
+                foreach (var kvp in byRegion)
+                {
+                    if (kvp.Value > busiestRegionCount)
+                    {
+                        busiestRegionCount = kvp.Value;
+                        busiestRegion = regions.FirstOrDefault(r => r.RegionID == kvp.Key);
+                    }
+                }
+            }
+
+            int totalAccounts = 0;
+            int newAccounts7d = 0;
+            if (m_UserAccountService != null)
+            {
+                totalAccounts = GetCachedTotalAccountCount();
+                long cutoff = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
+                newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
             }
 
             StringBuilder sb = new StringBuilder();
@@ -1262,13 +1300,27 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_GridUserService != null)
                 sb.Append("<span>").Append(onlineNow.ToString("N0")).Append(" online now</span>");
             sb.Append("<span>").Append(regions.Count.ToString("N0")).Append(" regions to explore</span>");
+            if (totalAccounts > 0)
+                sb.Append("<span>").Append(totalAccounts.ToString("N0")).Append(" residents strong</span>");
+            if (newAccounts7d > 0)
+                sb.Append("<span>+").Append(newAccounts7d.ToString("N0")).Append(" new this week</span>");
             sb.Append("</div>");
 
-            sb.Append("<div class=\"cta-row\">");
-            if (allowRegistration)
-                sb.Append("<a href=\"").Append(BasePath).Append("/register\" class=\"cta-primary\">Create a Free Account</a>");
-            sb.Append("<a href=\"").Append(BasePath).Append("/login\" class=\"cta-secondary\">Log In</a>");
-            sb.Append("</div>");
+            if (busiestRegion != null)
+            {
+                string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(busiestRegion.RegionName) + "/128/128/25";
+                sb.Append("<p class=\"tagline-lead\" style=\"margin-top:-10px;\">")
+                  .Append(busiestRegionCount).Append(busiestRegionCount == 1 ? " person is " : " people are ")
+                  .Append("in <a href=\"").Append(Html(hopUrl)).Append("\">").Append(Html(busiestRegion.RegionName))
+                  .Append("</a> right now - join them.</p>");
+            }
+
+            // No CTA row here - Log In/Sign Up are already one click away in
+            // the top nav for every logged-out visitor (see WritePage's
+            // navActions), so a second identical pair of buttons right
+            // below the tagline was pure duplication. The bottom "Ready to
+            // join?" CTA further down stays - that one's a re-prompt after
+            // scrolling through the actual pitch, a different, real job.
 
             // Hypergrid address up front, not buried on /viewers - the
             // homepage's other real audience besides a brand-new signup is
@@ -1298,6 +1350,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     "Larger-than-standard VarRegions with no sim-crossing stutter, mesh uploads, full LSL/OSSL scripting.");
             AppendFeatureCard(sb, "Runs From a Browser", "No viewer required for the basics",
                     "Search, events, classifieds, your store listings, account and land - all reachable without logging in-world.");
+            AppendFeatureCard(sb, "Voice Built In", "Talk, don't just type",
+                    "In-world voice chat works out of the box, region and parcel-aware, no extra setup.");
+            AppendFeatureCard(sb, "Get Your Own Region", "Land ownership in minutes",
+                    "Order a full region self-service from the Store - it's provisioned and online automatically, no waiting on an admin.");
+            AppendFeatureCard(sb, "We Actually Listen", "Feedback that goes somewhere",
+                    "A real suggestion box and support queue an admin reads - not a dead mailbox.");
             sb.Append("</div>");
 
             string classifieds = RenderFeaturedClassifieds(6);
@@ -2707,7 +2765,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     {
                         sb.Append("<tr><td>").Append(Html(parcel.Name)).Append("</td>")
                           .Append("<td>").Append(parcel.Area.ToString("N0")).Append(" m&sup2;</td>")
-                          .Append("<td>").Append(parcel.ForSale ? "Yes" : "No").Append("</td></tr>");
+                          .Append("<td>").Append(Pill(parcel.ForSale)).Append("</td></tr>");
                     }
                     sb.Append("</table>");
                 }
@@ -2818,20 +2876,23 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // LastRegionID is kept current by presence reporting
                     // while a session is active, so it's a safe read here.
                     string status;
+                    string pillClass;
                     if (info.Online)
                     {
                         GridRegion currentRegion = m_GridService?.GetRegionByUUID(UUID.Zero, info.LastRegionID);
                         status = currentRegion != null
                                 ? "Online now @ " + Html(currentRegion.RegionName)
                                 : "Online now";
+                        pillClass = "pill-yes";
                     }
                     else
                     {
                         status = info.Logout > DateTime.MinValue.AddYears(1)
                                 ? "Last seen " + Html(info.Logout.ToString("yyyy-MM-dd"))
                                 : "Never logged in";
+                        pillClass = "pill-no";
                     }
-                    sb.Append("<p class=\"news-meta\">").Append(status).Append("</p>");
+                    sb.Append("<p class=\"news-meta\"><span class=\"pill ").Append(pillClass).Append("\">").Append(status).Append("</span></p>");
                 }
             }
 
@@ -2995,7 +3056,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             sb.Append("<tr><td>").Append(Html(membership.GroupName)).Append("</td>")
                               .Append("<td>").Append(Html(membership.GroupTitle)).Append("</td>")
                               .Append("<td><span class=\"pill ").Append(membership.ListInProfile ? "pill-yes\">Shown" : "pill-no\">Hidden").Append("</span></td>")
-                              .Append("<td>").Append(membership.AcceptNotices ? "Yes" : "No").Append("</td></tr>");
+                              .Append("<td>").Append(Pill(membership.AcceptNotices)).Append("</td></tr>");
                         }
                         sb.Append("</table>");
                     }
@@ -3583,8 +3644,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         }
                     }
 
+                    string statusPill = "<span class=\"pill " + (status == "Online now" ? "pill-yes" : "pill-no") + "\">" + Html(status) + "</span>";
                     localRows.Append("<tr><td><a href=\"").Append(BasePath).Append("/profile?id=").Append(friendId).Append("\">")
-                      .Append(Html(name)).Append("</a></td><td>").Append(Html(status)).Append("</td><td>").Append(locationCell)
+                      .Append(Html(name)).Append("</a></td><td>").Append(statusPill).Append("</td><td>").Append(locationCell)
                       .Append("</td><td>").Append(rightsCell).Append("</td></tr>");
                 }
                 else if (Util.ParseUniversalUserIdentifier(friend.Friend, out UUID hgFriendId, out string homeUrl, out string firstName, out string lastName))
@@ -6807,26 +6869,47 @@ namespace OpenSim.Server.Handlers.WebInterface
             // navigation into every admin sub-page, not just decoration.
             // Same nav-as-cards shape as OpenSim-Grid-Interface's own
             // _account_shell_top.php (icon, label, description card grid).
+            //
+            // Grouped into 5 categories (2026-09-12) - this had grown from
+            // that original flat 13 items to 18 with no structure at all,
+            // exactly the "all over the place" complaint the resident
+            // sidebar's own grouping (Avatars/Social/Community/Land &
+            // Estate/Store/Account) already solved for the non-admin side.
+            // Same widget-grid card shape per group, just under real
+            // headings now instead of one undifferentiated "Manage" wall.
             StringBuilder adminNav = new StringBuilder();
-            adminNav.Append("<h2>Manage</h2><div class=\"widget-grid\">");
-            AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "Abuse Reports", "Review reports filed by residents");
-            AppendDashboardLink(adminNav, BasePath + "/admin/starter-looks", "bi-person-bounding-box", "Starter Looks", "Manage the avatar-selection carousel on /register");
+
+            adminNav.Append("<h2>People &amp; Community</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/users", "bi-people", "User Management", "Search, ban, message and edit accounts");
+            AppendDashboardLink(adminNav, BasePath + "/admin/groups", "bi-people-fill", "Groups Management", "Grid-wide group administration");
+            AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "Abuse Reports", "Review reports filed by residents");
+            AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue", "Respond to open support tickets");
+            adminNav.Append("</div>");
+
+            adminNav.Append("<h2>Regions &amp; Simulators</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/regions", "bi-map", "Region Management", "Search regions, Hypergrid, maptiles, backups, restart, create");
             AppendDashboardLink(adminNav, BasePath + "/admin/estates", "bi-building", "Estate Management", "Edit estate settings and access lists");
-            AppendDashboardLink(adminNav, BasePath + "/admin/groups", "bi-people-fill", "Groups Management", "Grid-wide group administration");
-            AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "Purchases & Transactions", "Financial reporting across the grid");
-            AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions and online totals");
-            AppendDashboardLink(adminNav, BasePath + "/admin/news", "bi-newspaper", "News Feed", "Post announcements to the splash page");
-            AppendDashboardLink(adminNav, BasePath + "/admin/events", "bi-calendar-event", "Events", "Manage the grid-wide events calendar");
-            AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue", "Respond to open support tickets");
+            AppendDashboardLink(adminNav, BasePath + "/admin/simulators", "bi-play-circle", "Simulators", "Start any region process - only Robust needs to be running for this site itself");
+            AppendDashboardLink(adminNav, BasePath + "/admin/regions/ini", "bi-file-earmark-code", "Region Config Files", "View/edit any region's raw .ini file");
+            AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "Region Console", "Run console commands on a region");
+            adminNav.Append("</div>");
+
+            adminNav.Append("<h2>Commerce</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/store", "bi-shop", "Store Catalog", "Manage prim packs and region order listings");
             AppendDashboardLink(adminNav, BasePath + "/admin/store/orders", "bi-receipt-cutoff", "Store Orders", "Fulfillment queue, renewals, Start Region");
-            AppendDashboardLink(adminNav, BasePath + "/admin/regions/ini", "bi-file-earmark-code", "Region Config Files", "View/edit any region's raw .ini file");
-            AppendDashboardLink(adminNav, BasePath + "/admin/simulators", "bi-play-circle", "Simulators", "Start any region process - only Robust needs to be running for this site itself");
+            AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "Purchases & Transactions", "Financial reporting across the grid");
+            adminNav.Append("</div>");
+
+            adminNav.Append("<h2>Content</h2><div class=\"widget-grid\">");
+            AppendDashboardLink(adminNav, BasePath + "/admin/news", "bi-newspaper", "News Feed", "Post announcements to the splash page");
+            AppendDashboardLink(adminNav, BasePath + "/admin/events", "bi-calendar-event", "Events", "Manage the grid-wide events calendar");
+            AppendDashboardLink(adminNav, BasePath + "/admin/starter-looks", "bi-person-bounding-box", "Starter Looks", "Manage the avatar-selection carousel on /register");
             AppendDashboardLink(adminNav, BasePath + "/admin/pages", "bi-file-earmark-text", "Static Pages", "Edit About/ToS/DMCA and custom pages");
+            adminNav.Append("</div>");
+
+            adminNav.Append("<h2>Grid</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
-            AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "Region Console", "Run console commands on a region");
+            AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions and online totals");
             adminNav.Append("</div>");
 
             string body = "<h1>Grid Administration</h1>"
@@ -9032,7 +9115,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                                     .Append(Html(account.Name)).Append("</a></td>");
                             rows.Append("<td>").Append(Html(account.Email)).Append("</td>");
                             rows.Append("<td>").Append(account.UserLevel).Append("</td>");
-                            rows.Append("<td>").Append(onlineRegion != null ? Html(onlineRegion.RegionName) : "Offline").Append("</td></tr>");
+                            rows.Append("<td>").Append(onlineRegion != null
+                                    ? "<span class=\"pill pill-yes\">" + Html(onlineRegion.RegionName) + "</span>"
+                                    : "<span class=\"pill pill-no\">Offline</span>").Append("</td></tr>");
                         }
                         rows.Append("</table>");
 
@@ -9792,6 +9877,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            // Computed once, up front, so both the single-estate detail view
+            // below and the list view further down agree on it. /myestates
+            // has to mean "my own estates" even for an admin - found live
+            // (2026-09-12) that the list was already leaking every estate on
+            // the grid to an admin viewing their own personal page; the same
+            // gap existed here too, one URL parameter away
+            // (/myestates?id=<any estate>), since CanManageEstate's
+            // admin-bypass doesn't know which URL was used to reach it.
+            bool isPersonalView = (request.RawUrl ?? string.Empty).StartsWith(BasePath + "/myestates", StringComparison.OrdinalIgnoreCase);
+
             string message = string.Empty;
             string queryMessage = request.QueryString.Get("message");
             if (!string.IsNullOrEmpty(queryMessage))
@@ -9809,7 +9904,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "<p><a href=\"" + BasePath + "/admin/estates\">Back to list</a></p>"
                             + "<p>Estate not found.</p>";
                 }
-                else if (!CanManageEstate(session, estate))
+                else if (isPersonalView ? (estate.EstateOwner != session.PrincipalID) : !CanManageEstate(session, estate))
                 {
                     response.StatusCode = (int)HttpStatusCode.Forbidden;
                     WritePage(request, response, PageTitle("Estate Management"), "<h1>Not authorized</h1><p>You don't manage this estate.</p>");
@@ -9876,17 +9971,6 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             else
             {
-                // /myestates is reached from the personal "Land & Estate"
-                // nav, not the admin panel - it has to mean "my own
-                // estates," full stop, even when the logged-in user also
-                // happens to be a grid admin. Found live: an admin who owns
-                // some estates AND is an estate owner elsewhere got the
-                // grid's entire estate list on their own "My Estate" page,
-                // exactly as confusing as it sounds - the admin-sees-all
-                // behavior only belongs on /admin/estates, which is a
-                // different, explicitly admin-labeled entry point sharing
-                // this same handler.
-                bool isPersonalView = (request.RawUrl ?? string.Empty).StartsWith(BasePath + "/myestates", StringComparison.OrdinalIgnoreCase);
                 List<int> estateIDs = (session.IsAdmin && !isPersonalView) ? m_EstateDataService.GetEstatesAll() : m_EstateDataService.GetEstatesByOwner(session.PrincipalID);
 
                 StringBuilder rows = new StringBuilder();
@@ -9920,10 +10004,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                             string ownerName = owner != null ? owner.Name : estate.EstateOwner.ToString();
                             rows.Append("<td>").Append(Html(ownerName)).Append("</td>");
                         }
-                        rows.Append("<td>").Append(estate.PublicAccess ? "Yes" : "No").Append("</td>")
-                                .Append("<td>").Append(estate.AllowVoice ? "Yes" : "No").Append("</td>")
-                                .Append("<td>").Append(estate.TaxFree ? "Yes" : "No").Append("</td>")
-                                .Append("<td>").Append(estate.AllowDirectTeleport ? "Yes" : "No").Append("</td>")
+                        rows.Append("<td>").Append(Pill(estate.PublicAccess)).Append("</td>")
+                                .Append("<td>").Append(Pill(estate.AllowVoice)).Append("</td>")
+                                .Append("<td>").Append(Pill(estate.TaxFree)).Append("</td>")
+                                .Append("<td>").Append(Pill(estate.AllowDirectTeleport)).Append("</td>")
                                 .Append("<td>").Append(regionCount).Append("</td></tr>");
                     }
                     rows.Append("</table>");
@@ -13649,7 +13733,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     sb.Append("<td>").Append(item.PriceConfluence.ToString("N0")).Append("</td>");
                     sb.Append("<td>").Append(item.PriceGloebits.ToString("N0")).Append("</td>");
                     sb.Append("<td>").Append(item.DurationDays).Append("</td>");
-                    sb.Append("<td>").Append(item.IsActive ? "Yes" : "No").Append("</td>");
+                    sb.Append("<td>").Append(Pill(item.IsActive)).Append("</td>");
                     sb.Append("<td><a href=\"").Append(BasePath).Append("/admin/store?edit=").Append(item.ID).Append("\">Edit</a></td></tr>");
                 }
                 sb.Append("</table>");
@@ -16225,7 +16309,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // with (online-now/region-count), missing here entirely
                 // until a visitor scrolled past the pitch cards down to
                 // Economy.
-                ".home-live-strip{display:flex;align-items:center;flex-wrap:wrap;gap:16px;" +
+                ".home-live-strip{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:16px;" +
                 "margin:0 0 18px;font-size:13.5px;color:var(--muted);}" +
                 ".home-online-badge{display:inline-flex;align-items:center;gap:6px;color:var(--success);" +
                 "font-weight:700;}" +
@@ -16564,6 +16648,15 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (string.IsNullOrEmpty(s))
                 return string.Empty;
             return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+        }
+
+        // Standard Yes/No pill for a boolean table cell - written out by
+        // hand in enough places (estates, groups, land, store items) that
+        // it drifted into plain text in some of them. One helper going
+        // forward instead of re-typing the span each time.
+        private static string Pill(bool value, string trueLabel = "Yes", string falseLabel = "No")
+        {
+            return "<span class=\"pill " + (value ? "pill-yes\">" + Html(trueLabel) : "pill-no\">" + Html(falseLabel)) + "</span>";
         }
 
         // Federated avatar via the public Libravatar CDN (falls back to
