@@ -506,6 +506,85 @@ namespace OpenSim.Server.Handlers.WebInterface
             // BaseHttpServer.HandleRequest to see why. RootHomeHandler below adapts
             // that older API to the same HandleHome method.
             server.AddStreamHandler(new RootHomeHandler(HandleHome));
+
+            BootstrapDefaultAdminIfNeeded();
+        }
+
+        // Bits 0-7 of UserAccount.UserFlags are SL-standard account flags
+        // (indexed/mature/identified/etc, see UserProfileModule.cs) and bits
+        // 8-11 are AccountMembershipHelper's own membership-type nibble - both
+        // fully allocated, never touch them. Bit 12 is free.
+        private const int MUST_CHANGE_PASSWORD_FLAG = 0x1000;
+
+        // Runs once per WebUI startup (Robust, or a standalone region host -
+        // see the standalone WebUI module) - a brand-new grid (fresh clone,
+        // fresh database, zero accounts) had no way to reach the WebUI at all
+        // without either the DB directly or the old console-only account
+        // creation path, undermining the whole "easy setup for any grid
+        // owner" goal a fresh-clone test surfaced this session. If zero
+        // accounts exist yet, creates one real admin account ("Grid Admin")
+        // with a random temporary password, printed to the console/log
+        // exactly once, flagged to force a password change on first login
+        // (see HandleLogin/HandleChangePassword's own MUST_CHANGE_PASSWORD_FLAG
+        // handling). Safe to call on every startup - the account-count check
+        // makes this a no-op the moment any account exists, including a real
+        // resident registering before an admin ever logs in.
+        private void BootstrapDefaultAdminIfNeeded()
+        {
+            if (m_UserAccountService == null || m_AuthenticationService == null)
+                return;
+
+            try
+            {
+                List<UserAccount> existing = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1");
+                if (existing != null && existing.Count > 0)
+                    return;
+
+                string tempPassword = GenerateBootstrapPassword();
+
+                UserAccount account = new UserAccount(UUID.Zero, "Grid", "Admin", string.Empty);
+                account.UserLevel = 250;
+                account.UserFlags = MUST_CHANGE_PASSWORD_FLAG;
+                if (!m_UserAccountService.StoreUserAccount(account))
+                {
+                    m_log.Error("[WEB INTERFACE]: Failed to create the default Grid Admin bootstrap account.");
+                    return;
+                }
+
+                m_AuthenticationService.SetPassword(account.PrincipalID, tempPassword);
+                m_InventoryService?.CreateUserInventory(account.PrincipalID);
+
+                if (m_CurrencyService != null)
+                {
+                    int startingBalance = m_CurrencyService.GetDefaultRegistrationBalance();
+                    if (startingBalance > 0)
+                        m_CurrencyService.Transfer(account.PrincipalID, UUID.Zero, startingBalance,
+                                "Welcome to " + GetSetting("GridName", m_gridName) + "!", 0, UUID.Random());
+                }
+
+                m_log.Warn("=====================================================================");
+                m_log.Warn("[WEB INTERFACE]: No accounts existed yet - created a default admin account.");
+                m_log.Warn("[WEB INTERFACE]: Username: Grid Admin");
+                m_log.Warn("[WEB INTERFACE]: Temporary password: " + tempPassword);
+                m_log.Warn("[WEB INTERFACE]: Log in at the web UI and change this password immediately -");
+                m_log.Warn("[WEB INTERFACE]: you will be required to before doing anything else.");
+                m_log.Warn("=====================================================================");
+            }
+            catch (Exception e)
+            {
+                m_log.Error("[WEB INTERFACE]: Failed to bootstrap the default admin account", e);
+            }
+        }
+
+        private static string GenerateBootstrapPassword()
+        {
+            const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+            byte[] randomBytes = new byte[16];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
+            StringBuilder sb = new StringBuilder(16);
+            foreach (byte b in randomBytes)
+                sb.Append(chars[b % chars.Length]);
+            return sb.ToString();
         }
 
         // Thin adapter from the older IStreamedRequestHandler API (the only one
@@ -3741,9 +3820,11 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            bool forced = request.QueryString.Get("forced") == "true";
+
             if (request.HttpMethod != "POST")
             {
-                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm(null));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm(null, forced));
                 return;
             }
 
@@ -3754,17 +3835,17 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword))
             {
-                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("All fields are required."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("All fields are required.", forced));
                 return;
             }
             if (newPassword != confirmPassword)
             {
-                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("New passwords do not match."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("New passwords do not match.", forced));
                 return;
             }
             if (newPassword.Length < 6)
             {
-                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("New password must be at least 6 characters."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("New password must be at least 6 characters.", forced));
                 return;
             }
 
@@ -3774,7 +3855,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string authToken = m_AuthenticationService?.Authenticate(session.PrincipalID, Util.Md5Hash(currentPassword), 30);
             if (string.IsNullOrEmpty(authToken))
             {
-                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("Current password is incorrect."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("Current password is incorrect.", forced));
                 return;
             }
 
@@ -3782,26 +3863,40 @@ namespace OpenSim.Server.Handlers.WebInterface
             // same convention HandleRegister/HandleResetPassword already use.
             if (m_AuthenticationService == null || !m_AuthenticationService.SetPassword(session.PrincipalID, newPassword))
             {
-                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("Could not update your password. Please try again."));
+                WritePage(request, response, PageTitle("Change Password"), ChangePasswordForm("Could not update your password. Please try again.", forced));
                 return;
+            }
+
+            // Clears BootstrapDefaultAdminIfNeeded's forced-change flag the
+            // moment the temporary password is actually replaced - a no-op
+            // for every other account, which never had the bit set.
+            UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, session.PrincipalID);
+            if (account != null && (account.UserFlags & MUST_CHANGE_PASSWORD_FLAG) != 0)
+            {
+                account.UserFlags &= ~MUST_CHANGE_PASSWORD_FLAG;
+                m_UserAccountService.StoreUserAccount(account);
             }
 
             WritePage(request, response, PageTitle("Change Password"),
                     "<h1>Change Password</h1><p>Your password has been updated.</p><p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>");
         }
 
-        private static string ChangePasswordForm(string error)
+        private static string ChangePasswordForm(string error, bool forced = false)
         {
             string errorHtml = string.IsNullOrEmpty(error) ? string.Empty : "<p class=\"error\">" + Html(error) + "</p>";
+            string forcedNotice = forced
+                    ? "<p class=\"error\">This account was just created with a temporary password - set a real one before continuing.</p>"
+                    : string.Empty;
             return "<h1>Change Password</h1>"
+                    + forcedNotice
                     + errorHtml
-                    + "<form method=\"post\" action=\"" + BasePath + "/change-password\">"
+                    + "<form method=\"post\" action=\"" + BasePath + "/change-password" + (forced ? "?forced=true" : string.Empty) + "\">"
                     + "<label>Current password<br/><input type=\"password\" name=\"current_password\" required></label><br/>"
                     + "<label>New password<br/><input type=\"password\" name=\"new_password\" required></label><br/>"
                     + "<label>Confirm new password<br/><input type=\"password\" name=\"confirm_password\" required></label><br/>"
                     + "<button type=\"submit\">Update password</button>"
                     + "</form>"
-                    + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>";
+                    + (forced ? string.Empty : "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>");
         }
 
         // Self-service backup codes for resetting THIS avatar's own
@@ -11197,6 +11292,19 @@ namespace OpenSim.Server.Handlers.WebInterface
                 if (error == null)
                 {
                     SetSessionCookie(response, token);
+
+                    // BootstrapDefaultAdminIfNeeded flags the auto-created
+                    // "Grid Admin" account to force a password change before
+                    // anything else - re-fetch rather than widen TryLogin's
+                    // signature, which HandleRegister also calls and has no
+                    // use for this.
+                    UserAccount loggedInAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, firstName, lastName);
+                    if (loggedInAccount != null && (loggedInAccount.UserFlags & MUST_CHANGE_PASSWORD_FLAG) != 0)
+                    {
+                        response.Redirect(BasePath + "/change-password?forced=true", HttpStatusCode.Redirect);
+                        return;
+                    }
+
                     response.Redirect(BasePath + "/dashboard", HttpStatusCode.Redirect);
                     return;
                 }

@@ -400,3 +400,19 @@
 
     UserAccountService = OpenSim.Services.UserAccountService.dll:UserAccountService
     AuthenticationServiceModule = "OpenSim.Services.AuthenticationService.dll:PasswordAuthenticationService"
+
+;; Confluence's own web UI (registration, dashboard, admin panel, Store,
+;; currency) - normally hosted by Robust.exe in grid mode, but a standalone
+;; deployment has no separate Robust process at all. Enabling this loads it
+;; directly on THIS region's own HTTP server instead (StandaloneWebInterfaceModule,
+;; OpenSim.Region.CoreModules.dll) - same web UI, same routes, just a
+;; different host process. Every service it depends on (UserAccountService,
+;; GridService, CurrencyService, etc.) already resolves through the Local*
+;; connectors this file configures above - nothing else to set up.
+;;
+;; If no account exists yet anywhere on this install, a one-time "Grid Admin"
+;; account is created automatically with a random temporary password printed
+;; to the console/log - log in with it and you will be required to set a
+;; real password before doing anything else.
+[WebInterface]
+    Enabled = true
