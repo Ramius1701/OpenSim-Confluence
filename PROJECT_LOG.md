@@ -23250,3 +23250,116 @@ Not separately re-verified as distinct from MySQL: MariaDB (same wire
 protocol/client throughout this whole build, no separate test run).
 
 Full details: `casperia-fresh-clone-test-findings` memory.
+
+## ROADMAP.md audit, Meshmerizer fixes, and a full grid restart (2026-09-13)
+
+Audited every section of `ROADMAP.md` against current code rather than
+trusting its own claims - real findings: two fully-shipped items
+(WebUI parity audit, starter-look carousel) were still sitting under
+"In progress"; a ~300-line JoltPhysics entry read as an unqualified
+success story with zero mention it had since been pulled off Starbase
+Andromeda; a closed fork review and an explicitly-excluded `wolfvoice`
+candidate were both misfiled under "Planned, not started." All fixed:
+the two shipped items moved into `FEATURES.md`, JoltPhysics trimmed to
+current status with `PROJECT_LOG.md` pointers, the closed review
+removed (redundant with this file), `wolfvoice` relocated to
+"Explicitly out of scope" with the real exclusion recorded. The
+remaining three sections ("Explicitly out of scope," "Design research
+from other projects," "Known limitations") were checked and found
+accurate - no changes needed there.
+
+**Meshmerizer's six lower-priority findings, five real, one not.**
+Investigated each of ROADMAP's own "not yet actioned" list against the
+actual code before fixing anything, since the first one turned out to
+be a non-issue on inspection: `PrimMesh`'s own constructor already
+unconditionally clamps `profileStart`/`profileEnd` (including the
+exact `>=` case the guard "misses"), and the un-clamped local
+variables the guard operates on are never read again afterward - no
+functional effect either way, left as a no-op finding rather than
+adding cosmetic code. The other five were genuine: `SculptMap` never
+disposed the scaled intermediate GDI bitmap (a real native-handle leak
+on a hot path, fixed to dispose on both the normal and exception exit
+paths); `IsometricTriangle`/`RightTriangle` profile prims were treated
+as 4-sided; no degenerate (0-vertex/0-face) mesh rejection existed,
+so a failed generation pass could return an empty-but-valid `Mesh`
+instead of null; the three mesh-generation call sites had no
+try/catch, so a malformed asset could throw uncaught instead of
+failing just that one prim; and `PrimMesh.Scale(x,y)` didn't round its
+output (5 decimals, not 6 as the original roadmap note said - corrected
+while porting), mattering because generic's own `Mesh` welds vertices
+via exact-value dictionary lookup. Verified: full solution build
+clean, an isolated scratch region (BulletSim + Meshmerizer) booted
+clean and reached `RegionReady`. Commits `ef7aa6e567` (fixes),
+`e689f4c33e` (roadmap update).
+
+**Casperia went down mid-session - a clean shutdown, not a crash.**
+Discovered while doing routine test-artifact cleanup: zero
+`OpenSim.exe`/`Robust.exe` processes running at all, confirmed two
+ways (`tasklist` and PowerShell `Get-Process`). Checked `Robust.log`
+before touching anything: every region cleanly deregistering in
+sequence, ending in `[CONSOLE] Quitting` - the signature of a
+deliberate stop, not a fault, and nothing in this session's own
+actions (all test-folder-scoped) could have caused it. Given the
+operator's explicit go-ahead, deployed the fresh build (Meshmerizer
+fixes + the earlier PostgreSQL-session fixes, including the
+`TryStartRegionProcess` console-crash fix) to Casperia's root via the
+same robocopy pattern `CasperiaControl.bat`'s own `:launch_sim`
+uses, then did a full cold start: Robust, then all 15 regions
+(including `GFC`, which isn't in the batch menu but is a real live
+region) with the same per-region binary-sync-then-start sequence.
+Verified after: Robust clean with zero new errors, all 15 regions
+reached `RegionReady` with zero fatal lines, and the 3 regions running
+BulletSim (Ranchero, Tangle, UFPGC - the ones the Meshmerizer fixes
+actually affect) initialized their physics engine without incident.
+
+## Sibling-repo sweep: 2 real upstream fixes cherry-picked, 1 real ubODE bug found (2026-09-13)
+
+Fetched all 20 tracked sibling/reference remotes (skipping `wolfvoice`,
+excluded per operator decision) to check for new commits since the
+last review. Fifteen had nothing new. Five did:
+
+- **`origin` (real opensim/opensim upstream), 2 commits, cherry-picked
+  clean** (`af773f34ec`, `354ebfd27c`): a naive LSL float parser fix
+  for `inf`/`nan` literals, and switching `Culture.cs`'s default from
+  hardcoded `en-US` to culture-invariant (`en-US` now renders a
+  non-standard UTF-8 infinity glyph on Windows instead of the word
+  "Infinity"). Both small, clean, from the real upstream maintainer
+  (UbitUmarov); `git merge-base --is-ancestor` confirmed this fork's
+  own history uses cherry-picks rather than real merges when pulling
+  from upstream, same finding as the earlier gunthar-cluster
+  provenance correction - so cherry-picked these two specifically
+  rather than attempting a full branch merge. Build confirmed clean.
+- **Tranquillity and Sasquatch (OpenSim-NGC's two repos) showed
+  byte-identical new commits** - same 3 SHAs on both, a Phlox
+  `llHTTPRequest`/`remote_data` cross-load-context bug fix plus
+  consolidation notes. Informational only - Confluence doesn't ship
+  Phlox (held per the existing YEngine-is-faster decision), and this
+  just confirms Phlox development continues elsewhere, already noted
+  in ROADMAP's "Explicitly out of scope" entry.
+- **Homeworldz, 7 new commits** - still a non-portable C++/Go
+  reimplementation, so design research rather than code to merge, but
+  one finding was directly checkable against this codebase and turned
+  out to be real: "Fly at one speed, whatever the walk gait is"
+  describes exactly the bug class this session already fixed once for
+  Jolt. Checked all three of Confluence's own physics engines directly
+  rather than assuming - BulletSim already gates its walk/run velocity
+  scaling on `if (!_flying)` (`BSCharacter.TargetVelocity`), Jolt does
+  too, but **ubODE never did**: `ODECharacter.cs`'s per-step movement
+  loop applied `m_walkMultiplier`/`m_runMultiplier` to horizontal
+  velocity unconditionally, with `TargetVelocity`'s own setter
+  confirmed to do no scaling at all (the only application site). Real
+  live consequence: flight speed silently varied with the always-run
+  toggle on ubODE - the grid-default engine most Casperia regions
+  currently run. Fixed by returning the raw target velocity unscaled
+  while `m_flying` is true (commit `fc88b3edbd`). A second Homeworldz
+  finding ("Say why DisableSimulator stays on the circuit," a viewer-
+  side event-queue-vs-UDP-circuit sender-address bug) was checked and
+  found not applicable - Confluence's own event-queue `DisableSimulator`
+  path is dead code, `IEventQueue`'s interface method is commented out
+  and nothing calls the handler. Not yet deployed to live Casperia -
+  same restart-required caveat as any physics-module change.
+- **DreamGrid, 3 new commits** - all packaging/distribution noise (a
+  build-icons step, a `.gitignore`-style exclusion, and adding an
+  `os-webrtc-janus.ini` config file to their own distribution bundle
+  for the same addon Confluence already has from the real upstream).
+  Nothing to merge.

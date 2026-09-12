@@ -609,6 +609,26 @@ reimplementation, but well-documented design rationale):
   directly, it registers AND redirects correctly, not the same bug
   (also already independently hardened earlier in this project's own
   Tranquillity-review pass, for a different bug in the same module).
+- **2026-09-13 pass**: one finding checked directly and fixed - "fly at
+  one speed, whatever the walk gait is" (flight speed silently riding
+  the always-run toggle) turned out to be a real, live bug in
+  Confluence's own ubODE, not just a Homeworldz idea; see `PROJECT_LOG.md`.
+  Two more design ideas, not yet checked against Confluence's own code:
+  pre-fetching a visiting avatar's worn-attachment inventory during the
+  child-agent phase (one lookup per tick, paced across the seconds
+  before a real crossing) instead of paying the full synchronous cost
+  at the moment of crossing itself - the stated win was collapsing a
+  56ms-for-14-items stall into effectively zero at crossing time; and
+  deriving a login "userid" through exactly one canonical function
+  everywhere rather than re-implementing the same case/punctuation
+  folding rule by hand in a second place, which is what let their own
+  login path silently diverge from the canonical rule for certain
+  names. The second doesn't map cleanly onto Confluence's own
+  UUID+FirstName/LastName login model (Homeworldz derives a synthetic
+  "userid" key OpenSim doesn't have an equivalent of), but the general
+  discipline - one authoritative function for any derived identifier,
+  never duplicated by hand - is worth keeping in mind if a similar
+  pattern ever shows up here.
 
 **From Aurora-Sim** (`aurora-sim/Aurora-Sim` — dead since 2014-01-13,
 20,692-commit history, zero shared git ancestry with either Confluence
