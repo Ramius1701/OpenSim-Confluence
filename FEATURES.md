@@ -461,6 +461,12 @@ alone can't reach. Both reuse the existing `RemoveMapTile` path, so
 the composite/overview zoom levels regenerate correctly too, not just
 the single-region tile.
 
+Background maptile (re)generation defers while real avatars are
+present so it doesn't compete for resources, but correctly ignores
+NPCs when deciding that - a region with only bots/NPCs and no actual
+residents still generates and uploads its tile normally instead of
+waiting indefinitely for NPCs to "leave."
+
 ### Weather
 
 `OpenSimWeather` (rain, snow, storms, lightning, thunder, wind, clouds)

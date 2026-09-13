@@ -23917,3 +23917,73 @@ principle as everything else opt-in in this repo; Casperia's own live
 `Robust.HG.ini` has `[MapImageService] GridService` set, turning on
 both the serve-time check and the sweep together (they share the one
 config key by design, not two separate toggles to keep in sync).
+
+---
+
+## Deploy-drift: a partial file copy left a real fix uncompiled-in for hours (2026-09-14)
+
+The maptile/NPC-block fix (`Scene.AnyRootAgentsInInstance()` excluding
+NPCs via `GetRootAgentCount() - GetRootNPCCount() > 0`, from an earlier
+pass this same night) was correct in source and built clean, but kept
+failing live on Starbase Andromeda - `Delaying background maptile
+generation for Starbase Andromeda until avatars leave the simulator`
+kept firing with only a persistent NPC present, across many boots,
+hours after the fix had supposedly been deployed.
+
+**Real cause, found by diffing binaries instead of re-reading the
+source again**: the deploy step that shipped this fix only copied
+three named DLLs (`OpenSim.Framework.dll`, `OpenSim.Region.Framework.dll`,
+`OpenSim.Region.CoreModules.dll`) to Andromeda's `bin/` - a reasonable
+guess at "the files this change touches," but wrong. An `md5sum` diff
+of every `*.dll`/`*.pdb` in the repo's `bin/` against Andromeda's
+deployed `bin/` turned up **54 files** that actually differed,
+including `OpenSim.Services.MapImageService.dll` itself and most of
+the other core service DLLs - Andromeda had been running a binary set
+from well before the fix, not a stale-but-close one. The other 14
+regions and Robust's own root binaries were audited the same way and
+found equally out of date, for the same reason (past deploys only ever
+copied the files believed relevant to that specific change).
+
+**Fix**: stopped guessing which files a change touches. Full clean
+`dotnet build OpenSim.sln -c Release`, then a real diff-and-copy pass
+of the *entire* `bin/` output against every region's own `bin/` plus
+Robust's root (regions each hold an independent binary copy, see the
+per-region binary isolation design) - copying whatever actually
+differs by hash, not by name-guessing. Locked/running files are copied
+after a graceful warn-then-stop, same discipline as every other live
+deploy this session.
+
+**Verified live**: after redeploying the full set and cycling
+Andromeda (120s courtesy warning, graceful `shutdown`, confirmed PID
+exit, redeploy, relaunch), it generated and uploaded its own maptile
+successfully on the very next boot - no NPC block, NPC still present.
+Confirmed via `OpenSim.log`: 180s startup delay, then a clean
+`AddMapTile` sequence, with no `"until avatars leave the simulator"`
+line at all.
+
+**Separately, not a new bug**: during this same investigation the
+in-viewer World Map briefly showed far fewer regions than expected,
+twice, for two different real reasons rather than a rendering defect -
+(1) several regions actually were stopped at the time (left down after
+an earlier grid-wide sync and never relaunched - the map was correctly
+reporting reality), and (2) immediately after a full grid restart, the
+map is genuinely empty for the first few minutes until each region
+clears its own 180-second startup delay and uploads its tile - a
+relog after tiles existed resolved the viewer's own stale cached view.
+Neither needed a code fix.
+
+**Lesson for future deploys**: never hand-pick "the files this commit
+touched" as the deploy set. A single source change can ripple into
+dependent assemblies in ways that aren't obvious from the diff alone
+(and in this case, at least one entirely unrelated-looking DLL -
+`OpenSim.Services.MapImageService.dll` - was also stale simply because
+it hadn't been touched by *any* recent deploy, not because this fix
+depended on it). Always diff the full `bin/` output by hash against
+every deployed copy and copy whatever differs.
+
+Static/no-op by default in the shipped templates (`Robust.HG.ini.example`/
+`Robust.ini.example`) - same "grid owners choose what to enable"
+principle as everything else opt-in in this repo; Casperia's own live
+`Robust.HG.ini` has `[MapImageService] GridService` set, turning on
+both the serve-time check and the sweep together (they share the one
+config key by design, not two separate toggles to keep in sync).
