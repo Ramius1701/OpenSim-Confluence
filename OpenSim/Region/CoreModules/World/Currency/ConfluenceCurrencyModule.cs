@@ -217,6 +217,20 @@ namespace OpenSim.Region.CoreModules.World.Currency
             // this, never the viewer.
             MainServer.Instance.AddXmlRPCHandler("UpdateBalance", HandleUpdateBalance);
 
+            // Same Robust-can't-reach-the-client problem, for Marketplace/
+            // Store deliveries rather than currency: after
+            // WebInterfaceServiceConnector.ProcessMarketplaceBuy/ChargeConfluenceCurrency
+            // writes a new item straight to the inventory DB, an already-
+            // connected buyer's viewer is never told, so it silently doesn't
+            // show up until a relog. Reuses this module's own already-proven
+            // "look up the agent's region, call back into it" plumbing rather
+            // than building a whole new module for one callback - not
+            // currency-specific in spirit, but the pragmatic, already-loaded
+            // home for it. Found live, 2026-09-13: a real purchase charged
+            // correctly and wrote a real inventory row, but neither party's
+            // already-open viewer ever found out.
+            MainServer.Instance.AddXmlRPCHandler("NotifyInventoryDelivery", HandleNotifyInventoryDelivery);
+
             // The above only fires for requests to the bare root path ("/") -
             // BaseHttpServer.HandleRequest special-cases request.UriPath == "/" as
             // the only place XML-RPC method dispatch happens. The real viewer
@@ -726,6 +740,63 @@ namespace OpenSim.Region.CoreModules.World.Currency
 
             response.Value = result;
             return response;
+        }
+
+        // Companion to HandleUpdateBalance above - same Robust-calls-back-in
+        // shape, for the inventory side of a Robust-hosted Marketplace/Store
+        // delivery. Only pushes the item; the folder push happens too, from
+        // PushInventoryDelivery, since a first-ever purchase's destination
+        // folder (e.g. "Marketplace Purchases") may not exist in the client's
+        // own inventory tree yet - pushing only the item would leave it
+        // orphaned in the viewer's eyes even though the server-side write
+        // succeeded correctly either way.
+        private XmlRpcResponse HandleNotifyInventoryDelivery(XmlRpcRequest request, IPEndPoint remoteClient)
+        {
+            Hashtable requestData = (Hashtable)request.Params[0];
+            Hashtable result = new Hashtable();
+            XmlRpcResponse response = new XmlRpcResponse();
+
+            if (requestData.ContainsKey("agentId") && UUID.TryParse(requestData["agentId"].ToString(), out UUID agentId)
+                    && requestData.ContainsKey("itemId") && UUID.TryParse(requestData["itemId"].ToString(), out UUID itemId))
+            {
+                result["success"] = PushInventoryDelivery(agentId, itemId);
+            }
+            else
+            {
+                result["success"] = false;
+            }
+
+            response.Value = result;
+            return response;
+        }
+
+        private bool PushInventoryDelivery(UUID agentId, UUID itemId)
+        {
+            if (agentId == UUID.Zero || itemId == UUID.Zero)
+                return false;
+
+            List<Scene> scenes;
+            lock (m_Scenes)
+                scenes = new List<Scene>(m_Scenes);
+
+            foreach (Scene scene in scenes)
+            {
+                ScenePresence sp = scene.GetScenePresence(agentId);
+                if (sp == null || sp.IsChildAgent || sp.IsDeleted)
+                    continue;
+
+                InventoryItemBase item = scene.InventoryService.GetItem(agentId, itemId);
+                if (item == null)
+                    return false;
+
+                InventoryFolderBase folder = scene.InventoryService.GetFolder(agentId, item.Folder);
+                sp.ControllingClient.SendBulkUpdateInventory(
+                        folder != null ? new[] { folder } : Array.Empty<InventoryFolderBase>(),
+                        new[] { item });
+                return true;
+            }
+
+            return false;
         }
 
         private int EstimatedCostHundredths(int amount)

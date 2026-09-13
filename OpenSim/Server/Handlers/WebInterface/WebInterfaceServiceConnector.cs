@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -13,6 +14,7 @@ using System.Timers;
 using MailKit.Net.Smtp;
 using MimeKit;
 using Nini.Config;
+using Nwc.XmlRpc;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
@@ -9774,6 +9776,55 @@ namespace OpenSim.Server.Handlers.WebInterface
             return m_GridService.GetRegionByUUID(UUID.Zero, info.LastRegionID);
         }
 
+        // This handler moves currency/inventory directly (m_CurrencyService.
+        // Transfer / MarketplaceInventoryOperations.DeliverListingItem), never
+        // through the real HTTP CurrencyServerConnector endpoint - so it never
+        // got that connector's own "NotifyRegionOfBalanceChange" callback for
+        // free, and no inventory equivalent existed anywhere. Found live,
+        // 2026-09-13: a real Marketplace purchase charged and delivered
+        // correctly, but neither the buyer's nor the seller's already-open
+        // viewer found out - both showed stale balances/inventory until a
+        // relog. Best-effort exactly like CurrencyServerConnector's own
+        // version: the purchase itself already succeeded and was recorded: a
+        // resident who isn't online, or whose region can't be reached, just
+        // doesn't get the live push and sees the correct state on next login
+        // instead.
+        private void NotifyRegionOfBalanceChange(UUID agentId)
+        {
+            GridRegion region = FindOnlineUserRegion(agentId);
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+                return;
+
+            try
+            {
+                Hashtable callParams = new Hashtable { { "agentId", agentId.ToString() } };
+                ArrayList sendParams = new ArrayList { callParams };
+                XmlRpcRequest updateRequest = new XmlRpcRequest("UpdateBalance", sendParams);
+                updateRequest.Send(region.ServerURI, 10000);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private void NotifyRegionOfInventoryDelivery(UUID agentId, UUID itemId)
+        {
+            GridRegion region = FindOnlineUserRegion(agentId);
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+                return;
+
+            try
+            {
+                Hashtable callParams = new Hashtable { { "agentId", agentId.ToString() }, { "itemId", itemId.ToString() } };
+                ArrayList sendParams = new ArrayList { callParams };
+                XmlRpcRequest updateRequest = new XmlRpcRequest("NotifyInventoryDelivery", sendParams);
+                updateRequest.Send(region.ServerURI, 10000);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
         // Kick/Message reuse the exact same region-side channel as the free-
         // form Region Console (task #26, RunRegionConsoleCommand above) -
         // they just build the command string server-side from the target
@@ -12991,6 +13042,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             order.Updated = DateTime.UtcNow;
             m_StoreService.StoreOrder(order);
 
+            // Live-push the balance change if the buyer is currently
+            // connected - see NotifyRegionOfBalanceChange's own comment.
+            // No seller-side notify needed here (the house, UUID.Zero, isn't
+            // a real resident) - unlike Marketplace, which pays a real seller.
+            NotifyRegionOfBalanceChange(session.PrincipalID);
+
             ProcessPaidOrder(order, item);
             return "Purchase complete.";
         }
@@ -13483,6 +13540,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     return BasePath + "/marketplace/listing?id=" + listingId + "&message=" + Uri.EscapeDataString("Payment failed - insufficient balance?");
                 }
 
+                // Live-push the balance change to both parties if they're
+                // currently connected - see NotifyRegionOfBalanceChange's own
+                // comment for why this doesn't happen automatically.
+                NotifyRegionOfBalanceChange(session.PrincipalID);
+                NotifyRegionOfBalanceChange(listing.SellerID);
+
                 DeliveryResponse delivery = MarketplaceInventoryOperations.DeliverListingItem(
                         m_InventoryService,
                         m_UserAccountService,
@@ -13506,10 +13569,19 @@ namespace OpenSim.Server.Handlers.WebInterface
                     m_CurrencyService.Transfer(session.PrincipalID, listing.SellerID, listing.Price,
                             "Marketplace purchase refund (delivery failed): " + listing.Title,
                             MARKETPLACE_PURCHASE_TRANSACTION_TYPE, UUID.Random());
+                    NotifyRegionOfBalanceChange(session.PrincipalID);
+                    NotifyRegionOfBalanceChange(listing.SellerID);
                     m_MarketplaceListingsService.ReleaseStock(listingId);
                     return BasePath + "/marketplace/listing?id=" + listingId + "&message="
                             + Uri.EscapeDataString("Delivery failed and your payment was refunded: " + delivery.Message);
                 }
+
+                // DeliverListingItem's own DestinationFolderId field actually
+                // holds the new inventory ITEM's ID for this single-item
+                // overload (shared field name with the multi-item Deliver(),
+                // which uses it for a real folder ID instead).
+                if (UUID.TryParse(delivery.DestinationFolderId, out UUID deliveredItemId))
+                    NotifyRegionOfInventoryDelivery(session.PrincipalID, deliveredItemId);
 
                 return BasePath + "/marketplace/listing?id=" + listingId + "&message="
                         + Uri.EscapeDataString("Purchase complete - check your Marketplace Purchases folder.");
