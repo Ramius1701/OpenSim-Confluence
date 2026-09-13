@@ -23747,3 +23747,173 @@ and message text ("Allen Blackwood has proposed a partnership with
 you. Visit /partner to respond."), then cancelled to leave no stray
 pending state - the cancel's own notification confirmed working the
 same way.
+
+## wolfvoice exclusion reversed; ConfluenceVoice built and wired into os-webrtc-janus (2026-09-13)
+
+The 2026-09-09 exclusion (`ROADMAP.md`, "Explicitly out of scope") stood
+until the operator explicitly asked to resume — in a separate session with
+no memory of that decision, which surfaced it back to the operator before
+proceeding rather than silently overriding a recorded exclusion with an
+unknown reason. Confirmed explicitly to continue.
+
+**wolfvoice builds and runs correctly on Windows.** Its own release CI
+(`(.github/workflows/release.yml`) skips Windows/macOS entirely, with a
+comment blaming a version deadlock in the `opus` crate's vendored
+libopus: `cmake_minimum_required(VERSION 3.1)` is refused outright by
+CMake 4 ("Compatibility with CMake < 3.5 has been removed"), and pinning
+CMake 3.31 to dodge that then fails to recognize the current Visual
+Studio generator name. Reproduced both failures locally, then found
+CMake's own documented escape hatch fixes both at once:
+`CMAKE_POLICY_VERSION_MINIMUM=3.5` lets a CMake new enough to know the
+current VS generator configure the old libopus project anyway. With
+only that env var set: `cargo build --release` succeeds, `cargo test`
+passes 31/31, and the project's own `two_clients` end-to-end harness
+(real SDP offer/answer, real Opus encode/decode, real per-listener
+spatial mixing) reports `PASS`. Forked to `S:\Github\wolfvoice`
+(`github.com/Ramius1701/wolfvoice`, tracking upstream
+`intelligentwolf/wolfvoice`) and submitted the fix upstream as
+`intelligentwolf/wolfvoice#1`.
+
+**Built ConfluenceVoice as its own independent project**, not a
+wolfvoice fork-to-contribute-back: `S:\Github\ConfluenceVoice`
+(`github.com/Ramius1701/ConfluenceVoice`, public, own git history — a
+manual port would be needed to pull a specific upstream wolfvoice fix
+later, since the two repos share no commit ancestry). Carried over
+`mixer.rs`/`proto.rs`/`room.rs`/`session.rs` unchanged — the spatial
+mixing math and Linden Lab protocol handling were never Unix-specific —
+and replaced only wolfvoice's packaging: `src/config.rs` reads a
+`confluencevoice.toml` from beside the executable (writing a commented
+template and exiting with instructions on first run if one doesn't
+exist) instead of `WOLFVOICE_PUBLIC_IP` and hardcoded `/etc/wolfvoice/tls/`
+paths, so it runs like any other Windows program rather than a system
+service. NOTICE carries forward wolfvoice's full attribution chain
+(Wolf Software Systems Ltd -> os-webrtc-janus/Robert Adams ->
+OpenSimulator/Firestorm), per Apache-2.0's retention requirement.
+Verified independently of wolfvoice's own tests: `cargo build --release`,
+`cargo test` (31/31), and `two_clients` all pass against the
+config-file-driven build.
+
+**Wired into this tree's already-built os-webrtc-janus.** Confluence's
+copy at `OpenSim/Addons/os-webrtc-janus` needed no rebuild — it's
+already registered in `prebuild.xml` and `bin/WebRtcVoice.dll`,
+`WebRtcVoiceRegionModule.dll`, `WebRtcVoiceServiceModule.dll` and
+`WebRtcJanusService.dll` were already current from the earlier STUN/
+`ChatSessionRequest` fix work (see "WebRTC voice: four real gaps
+found..." above). Only the target changes: `bin/config/os-webrtc-janus.ini`
+(new file; no prior copy existed, only the shipped `.example`) sets
+`SpatialVoiceService`/`NonSpatialVoiceService` to
+`WebRtcVoice.dll:WebRtcVoiceServiceConnector` — a plain JSON-RPC client
+that posts to any URL — instead of `WebRtcJanusService.dll:WebRtcJanusService`,
+pointing `WebRtcVoiceServerURI` at ConfluenceVoice
+(`https://192.168.88.14:9443` for this machine) and disabling
+`[VivoxVoice]` (both modules register the same capability name; last
+registration wins). Confirmed estate/parcel voice need no explicit
+enabling for this: `EstateSettings.AllowVoice` and `LandData`'s default
+parcel flags both default to `true` (`OpenSim/Framework/EstateSettings.cs:141`,
+`LandData.cs:67`), so the dev tree's Smoke Test Region (the only region
+this tree defines; `bin/Regions/Regions.ini`) needs no estate changes
+to test against.
+
+**Not done, deliberately:**
+- **Not deployed to live Casperia** (`S:\Opensim`, a separate directory
+  from this dev tree entirely) — wired and testable here only. Casperia
+  runs 15 regions with real residents; rolling this out there is a
+  separate, explicit decision, not a natural continuation of a dev-tree
+  wiring pass.
+- **No trusted TLS cert for `WebRtcVoiceServerURI`.** The self-signed
+  dev cert ConfluenceVoice was tested with fails .NET's HttpClient chain
+  validation regardless of hostname match — untrusted issuer, not a CN
+  mismatch. A real viewer test needs either a CA-issued cert (Let's
+  Encrypt, once this has a public DNS name) or extending this machine's
+  trust store for the dev cert, which is a system-trust change and was
+  left to the operator rather than automated.
+- **No Windows Service wrapper for ConfluenceVoice.** Runs as a console
+  app for now, by explicit choice when the project was scoped — holds a
+  console window rather than starting with Windows. Revisit once it's
+  proven out day-to-day.
+
+## Stale map tiles for offline regions - three real fixes at three different layers (2026-09-13)
+
+Followed on from an unexplained live incident: every running region
+process died simultaneously with zero crash trace (no Windows Event
+Log entry, no .NET unhandled-exception dump) and no graceful-shutdown
+sequence in any region's own log - confirmed not caused by anything in
+this session (only read-only investigation and one HTTP test call
+preceded it). Root cause never identified; Robust itself was
+untouched, and every affected region was brought back up cleanly.
+Logged as a genuine open incident, not resolved, in case it recurs.
+
+While recovering, the operator noticed the in-viewer World Map kept
+showing tiles for regions that were confirmed offline - initially
+investigated as a map-search bug (`MapSearchModule`/`GetRegionsByName`/
+`RegionURI` parsing/`ScopeID`), all of which turned out to be a real
+dead end: that whole code path had zero log trace even for searches
+that visibly worked, because Firestorm's OpenSim build resolves exact
+region names via the Hypergrid/Gatekeeper `hop://` path instead
+(confirmed via the actual `teleport completed from hop://...`
+messages in local chat) - a different subsystem than the one being
+chased. Real lesson: a theory that explains the symptom but has zero
+supporting log evidence, even with logging confirmed active, is wrong,
+not just unproven - move on rather than kept refining it.
+
+**The real bug**, found via a temporary diagnostic log line in
+`WorldMapModule.GetAndSendBlocksInternal` proving the region's own
+`GetRegionRange` result was already correct (matching the live
+`regions` table exactly): the tile *image* serving path
+(`MapGetServerConnector.cs`, the actual endpoint `MapNameRequest`
+metadata leads a viewer to `GET /map/map-1-X-Y-objects.jpg` from) is a
+pure file-by-filename lookup with zero awareness of whether a region
+still exists at that position. Map tile images have no expiry
+mechanism anywhere in this codebase - a region's last-generated tile
+sits on disk and keeps being served forever, regardless of whether the
+region itself still exists.
+
+**Three fixes, each covering a different gap - confirmed live to be
+genuinely distinct, not redundant, after being asked directly "is this
+really a fix or a workaround?":**
+
+1. **`MapGetServerConnector.cs`** - `GetMapTile`'s zoom level 1
+   requests now check `GetRegionByPosition` before serving, gated by
+   the same optional `[MapImageService] GridService` cross-reference
+   `MapAddServerConnector.cs` already used for its own upload-side
+   anti-spoofing check. This is the actual correctness guarantee: it
+   re-verifies against live state on every request, so it works
+   identically whether a region went down gracefully or via a crash.
+   First deploy of this had a real regression, caught live by the
+   operator - the same coordinate math was wrongly applied to
+   composite/overview zoom levels (2-8), which use a completely
+   different coordinate scale than a single region's own position,
+   briefly making *online* regions' overview tiles disappear too.
+   Fixed by restricting the check to zoom level 1 specifically (parsed
+   from the tile filename, not assumed).
+2. **`GridService.DeregisterRegion`** (`GridService.cs`) - now calls
+   `RemoveMapTile` via a new optional `[GridService] MapImageService`
+   cross-reference, so a region that deregisters *gracefully* actually
+   deletes its own stale tile instead of just no longer being served.
+   Real gap, self-identified when asked to justify fix #1 as a "real
+   fix vs a workaround": `DeregisterRegion` only ever runs on a clean
+   shutdown - it was never going to help with the actual incident that
+   started this (an ungraceful mass kill), so on its own this is
+   necessary but not sufficient.
+3. **`MapImageService`'s own periodic orphan sweep** - the piece that
+   actually covers the crash/hard-kill case fix 2 can't reach. Optional
+   (same `GridService` cross-reference key enables it, reusing
+   `LoadPlugin` the same way `MapAddServerConnector`/`GridService.cs`
+   already do), runs every `OrphanTileSweepMinutes` (default 60),
+   lists every zoom-1 tile file on disk, and removes any with no
+   currently-registered region - via the public `RemoveMapTile` method
+   itself, not a raw file delete, so the composite zoom levels
+   regenerate too (confirmed: `RemoveMapTile` already calls
+   `UpdateMultiResolutionFiles` for exactly this, an existing
+   mechanism this whole investigation initially assumed didn't exist).
+   Live-verified: temporarily set to a 2-minute interval, confirmed it
+   removed 42 real stale tiles from the regions still down from the
+   earlier incident on its first run, confirmed all 6 live regions'
+   tiles were untouched, then reverted to the 60-minute default.
+
+Static/no-op by default in the shipped templates (`Robust.HG.ini.example`/
+`Robust.ini.example`) - same "grid owners choose what to enable"
+principle as everything else opt-in in this repo; Casperia's own live
+`Robust.HG.ini` has `[MapImageService] GridService` set, turning on
+both the serve-time check and the sweep together (they share the one
+config key by design, not two separate toggles to keep in sync).

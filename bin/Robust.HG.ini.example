@@ -696,7 +696,24 @@
     ;
     ; If for some reason you have the AddMapTile service outside the firewall (e.g. ${Const|PublicPort}),
     ; you may want to set this. Otherwise, don't set it, because it's already protected.
+    ; Also enables two other things once set (map tiles otherwise have no
+    ; cleanup/expiry mechanism at all, so a region that goes offline -
+    ; gracefully or via a crash/hard kill - would leave its last-generated
+    ; tile behind on the World Map forever without this):
+    ;   1. GetMapTile checks GetRegionByPosition before serving a zoom
+    ;      level 1 tile, so a deregistered region's stale tile stops being
+    ;      served immediately instead of persisting until manually cleaned.
+    ;   2. A periodic sweep (OrphanTileSweepMinutes below) catches tiles
+    ;      left behind by a crash/hard kill specifically - the ordinary
+    ;      graceful-deregister cleanup (GridService.DeregisterRegion) can't
+    ;      reach those, since DeregisterRegion is never called for an
+    ;      ungraceful shutdown.
     ; GridService = "OpenSim.Services.GridService.dll:GridService"
+    ;
+    ; How often the orphan-tile sweep above runs, in minutes. Only takes
+    ; effect if GridService is also set. Defaults to 60 if GridService is
+    ; set and this isn't.
+    ; OrphanTileSweepMinutes = 60
     ;
     ; Additionally, if you run this server behind a proxy, set this to true
     ; HasProxy = false

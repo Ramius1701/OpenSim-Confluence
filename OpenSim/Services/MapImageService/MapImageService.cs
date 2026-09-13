@@ -41,6 +41,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 
@@ -65,6 +66,30 @@ namespace OpenSim.Services.MapImageService
         private static Color m_Watercolor = Color.FromArgb(29, 72, 96);
         private static Bitmap m_WaterBitmap = null;
         private static byte[] m_WaterJPEGBytes = null;
+
+        // Real cleanup for tiles GridService.DeregisterRegion never got a
+        // chance to clean up itself - a region that goes offline via a
+        // crash or hard kill (confirmed live, 2026-09-13: a mass process
+        // kill left every region's own tile orphaned with zero graceful-
+        // shutdown trace) never calls DeregisterRegion at all, so that
+        // fix alone can't reach it. This periodically re-derives ground
+        // truth instead: for every zoom-1 tile file actually on disk,
+        // ask GridService whether a region still exists at that position,
+        // and if not, remove it the same way DeregisterRegion does
+        // (RemoveMapTile, not a raw File.Delete - reuses its existing
+        // UpdateMultiResolutionFiles call so the composite/overview zoom
+        // levels regenerate correctly too, not just the zoom-1 tile).
+        // Opt-in via the same [MapImageService] GridService cross-
+        // reference key the connectors already use for their own
+        // liveness checks - only runs at all once that's configured.
+        private static readonly Regex ZoomOneTileRegex = new Regex(@"^map-1-(\d+)-(\d+)-objects\.", RegexOptions.Compiled);
+        // Static, like m_Initialized/m_WaterBitmap above - separate
+        // connectors (MapGetServiceConnector, MapAddServiceConnector) each
+        // construct their own MapImageService instance via LoadPlugin, and
+        // the sweep must only ever run once per process, not once per
+        // connector.
+        private static IGridService m_GridService;
+        private static Timer m_OrphanSweepTimer;
 
         public MapImageService(IConfigSource config) : base(config)
         {
@@ -135,6 +160,23 @@ namespace OpenSim.Services.MapImageService
                         if (clearTiles)
                             ClearAllTiles();
 
+                        string gridServiceDll = serviceConfig.GetString("GridService", string.Empty);
+                        if (!string.IsNullOrWhiteSpace(gridServiceDll))
+                        {
+                            m_GridService = LoadPlugin<IGridService>(gridServiceDll, new object[] { config });
+
+                            int sweepMinutes = serviceConfig.GetInt("OrphanTileSweepMinutes", 60);
+                            if (m_GridService != null && sweepMinutes > 0)
+                            {
+                                m_OrphanSweepTimer = new Timer(
+                                        _ => SweepOrphanedTiles(),
+                                        null,
+                                        TimeSpan.FromMinutes(5),
+                                        TimeSpan.FromMinutes(sweepMinutes));
+                                m_log.Info($"[MAP IMAGE SERVICE]: Orphaned map tile sweep enabled, every {sweepMinutes} minutes");
+                            }
+                        }
+
                         //memory cache JPEG tile with just water.
                         m_WaterBitmap = new Bitmap(IMAGE_WIDTH, IMAGE_WIDTH, PixelFormat.Format24bppRgb);
                         FillImage(m_WaterBitmap, m_Watercolor);
@@ -146,6 +188,57 @@ namespace OpenSim.Services.MapImageService
                         }
                     }
                 }
+            }
+        }
+
+        private void SweepOrphanedTiles()
+        {
+            if (m_GridService == null)
+                return;
+
+            try
+            {
+                if (!Directory.Exists(m_TilesStoragePath))
+                    return;
+
+                // Just listing/deciding here - not holding m_Sync for the
+                // whole scan (which can mean many files and just as many
+                // GetRegionByPosition round-trips) would block every real
+                // AddMapTile/GetMapTile call from every live region for the
+                // full sweep duration. RemoveMapTile below takes m_Sync
+                // itself, scoped to just that one file.
+                int removed = 0;
+                foreach (string scopeDir in Directory.GetDirectories(m_TilesStoragePath))
+                {
+                    if (!UUID.TryParse(Path.GetFileName(scopeDir), out UUID scopeID))
+                        continue;
+
+                    foreach (string filePath in Directory.GetFiles(scopeDir, "map-1-*-objects.*"))
+                    {
+                        Match m = ZoomOneTileRegex.Match(Path.GetFileName(filePath));
+                        if (!m.Success
+                                || !int.TryParse(m.Groups[1].Value, out int x)
+                                || !int.TryParse(m.Groups[2].Value, out int y))
+                            continue;
+
+                        OpenSim.Services.Interfaces.GridRegion r = m_GridService.GetRegionByPosition(scopeID,
+                                (int)Util.RegionToWorldLoc((uint)x), (int)Util.RegionToWorldLoc((uint)y));
+                        if (r == null)
+                        {
+                            if (RemoveMapTile(x, y, scopeID, out string reason))
+                                removed++;
+                            else
+                                m_log.Warn($"[MAP IMAGE SERVICE]: Orphan sweep could not remove tile at {x},{y}: {reason}");
+                        }
+                    }
+                }
+
+                if (removed > 0)
+                    m_log.Info($"[MAP IMAGE SERVICE]: Orphan tile sweep removed {removed} stale tile(s) with no currently-registered region");
+            }
+            catch (Exception e)
+            {
+                m_log.Warn("[MAP IMAGE SERVICE]: Orphan tile sweep failed", e);
             }
         }
 

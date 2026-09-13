@@ -55,6 +55,14 @@ namespace OpenSim.Services.GridService
         protected IAuthenticationService m_AuthenticationService = null;
         protected bool m_AllowDuplicateNames = false;
         protected bool m_AllowHypergridMapSearch = false;
+        // Optional, same "graceful, config-gated cross-service reference"
+        // pattern as m_AuthenticationService above - lets deregistration
+        // actually clean up a region's own last-generated map tile instead
+        // of leaving it orphaned on disk forever (map tile images are never
+        // otherwise deleted). Without this configured, deregistration keeps
+        // its prior behavior exactly - this is additive, not a behavior
+        // change for grids that don't opt in.
+        protected IMapImageService m_MapImageService = null;
 
         private static Dictionary<string,object> m_ExtraFeatures = new Dictionary<string, object>();
 
@@ -81,6 +89,13 @@ namespace OpenSim.Services.GridService
                 }
                 m_AllowDuplicateNames = gridConfig.GetBoolean("AllowDuplicateNames", m_AllowDuplicateNames);
                 m_AllowHypergridMapSearch = gridConfig.GetBoolean("AllowHypergridMapSearch", m_AllowHypergridMapSearch);
+
+                string mapImageService = gridConfig.GetString("MapImageService", String.Empty);
+                if (mapImageService != String.Empty)
+                {
+                    Object[] mapArgs = new Object[] { config };
+                    m_MapImageService = ServerUtils.LoadPlugin<IMapImageService>(mapImageService, mapArgs);
+                }
 
                 // This service is also used locally by a simulator running in grid mode.  This switches prevents
                 // inappropriate console commands from being registered
@@ -416,6 +431,24 @@ namespace OpenSim.Services.GridService
             m_log.DebugFormat(
                 "[GRID SERVICE]: Deregistering region {0} ({1}) at {2}-{3}",
                 region.RegionName, region.RegionID, region.coordX, region.coordY);
+
+            // Real fix, not just a display-time filter: a region's own
+            // last-generated map tile is never otherwise deleted (map
+            // tiles have no retention/expiry mechanism at all), so without
+            // this every region that ever goes offline leaves a stale
+            // tile behind permanently - the World Map's own GET handler
+            // filtering it out (MapGetServerConnector.cs) only hides the
+            // symptom for zoom level 1, not the underlying leak, and
+            // can't safely extend to composite/overview zoom levels at
+            // all. Cleaning up here, at the one point a region's departure
+            // is actually known, is the correct place for this - both the
+            // soft (marked offline, row kept) and hard-delete paths below
+            // remove the tile, since either way nothing should keep
+            // rendering it as if the region were still there.
+            if (m_MapImageService != null)
+            {
+                m_MapImageService.RemoveMapTile(region.coordX, region.coordY, region.ScopeID, out string tileRemoveReason);
+            }
 
             int flags = Convert.ToInt32(region.Data["flags"]);
 

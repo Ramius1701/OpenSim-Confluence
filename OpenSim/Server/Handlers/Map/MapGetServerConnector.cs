@@ -29,16 +29,20 @@ using System;
 using System.IO;
 using System.Net;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 using Nini.Config;
 using log4net;
 
+using OpenSim.Framework;
 using OpenSim.Server.Base;
 using OpenSim.Services.Interfaces;
 using OpenSim.Framework.Servers.HttpServer;
 using OpenSim.Server.Handlers.Base;
 using OpenMetaverse;
+
+using GridRegion = OpenSim.Services.Interfaces.GridRegion;
 
 namespace OpenSim.Server.Handlers.MapImage
 {
@@ -46,6 +50,7 @@ namespace OpenSim.Server.Handlers.MapImage
     {
         //private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private IMapImageService m_MapService;
+        private IGridService m_GridService;
 
         private string m_ConfigName = "MapImageService";
 
@@ -64,7 +69,18 @@ namespace OpenSim.Server.Handlers.MapImage
             object[] args = new object[] { config };
             m_MapService = ServerUtils.LoadPlugin<IMapImageService>(gridService, args);
 
-            server.AddStreamHandler(new MapServerGetHandler(m_MapService));
+            // Same optional "[MapImageService] GridService" liveness-check
+            // key MapAddServerConnector.cs already uses on the upload side
+            // (GetRegionByPosition, anti-spoofing) - reused here so a
+            // deregistered region's own last-generated tile image (never
+            // deleted, per this grid's asset-retention policy) stops being
+            // served once nothing is actually registered at that
+            // coordinate, instead of persisting on the World Map forever.
+            string gridServiceForCheck = serverConfig.GetString("GridService", string.Empty);
+            if (!string.IsNullOrWhiteSpace(gridServiceForCheck))
+                m_GridService = ServerUtils.LoadPlugin<IGridService>(gridServiceForCheck, args);
+
+            server.AddStreamHandler(new MapServerGetHandler(m_MapService, m_GridService));
         }
     }
 
@@ -74,12 +90,24 @@ namespace OpenSim.Server.Handlers.MapImage
 
         //private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
-        private IMapImageService m_MapService;
+        // Zoom level 1 tiles map 1:1 to a real region's own grid position -
+        // that's the only shape GetRegionByPosition below can meaningfully
+        // check. Higher zoom levels are pre-rendered composite/overview
+        // mosaics covering multiple regions at a different coordinate
+        // scale entirely - checking those against a single region's
+        // position was a real bug found live (2026-09-13): it rejected
+        // still-online regions' own composite tiles, not just offline
+        // ones. Only ever validate zoom level 1.
+        private static readonly Regex TileNameRegex = new Regex(@"^map-(\d+)-(\d+)-(\d+)-", RegexOptions.Compiled);
 
-        public MapServerGetHandler(IMapImageService service) :
+        private IMapImageService m_MapService;
+        private IGridService m_GridService;
+
+        public MapServerGetHandler(IMapImageService service, IGridService gridService) :
                 base("GET", "/map")
         {
             m_MapService = service;
+            m_GridService = gridService;
         }
 
         protected override byte[] ProcessRequest(string path, Stream request, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
@@ -136,6 +164,26 @@ namespace OpenSim.Server.Handlers.MapImage
                 httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
                 httpResponse.ContentType = "text/plain";
                 return Array.Empty<byte>();
+            }
+
+            if (m_GridService != null)
+            {
+                Match m = TileNameRegex.Match(path);
+                if (m.Success
+                        && int.TryParse(m.Groups[1].Value, out int tileZoom) && tileZoom == 1
+                        && int.TryParse(m.Groups[2].Value, out int tileX)
+                        && int.TryParse(m.Groups[3].Value, out int tileY))
+                {
+                    GridRegion r = m_GridService.GetRegionByPosition(scopeID,
+                            (int)Util.RegionToWorldLoc((uint)tileX), (int)Util.RegionToWorldLoc((uint)tileY));
+                    if (r == null)
+                    {
+                        Monitor.Exit(ev);
+                        httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
+                        httpResponse.ContentType = "text/plain";
+                        return Array.Empty<byte>();
+                    }
+                }
             }
 
             result = m_MapService.GetMapTile(path, scopeID, out format);
