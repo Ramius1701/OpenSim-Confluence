@@ -23409,3 +23409,83 @@ up until the resident's session went quiet. Real next step recorded:
 catch it live next time, tailing logs and checking CAPS/circuit state
 before a rebake clears the evidence, rather than reconstructing
 afterward.
+
+## Marketplace end-to-end purchase verified live - a real notification bug found and fixed (2026-09-13)
+
+Continuing the cloud-avatar investigation above, ran a real Marketplace
+purchase between two live accounts (Allen Blackwood buying, Ramius
+Easterwood selling) to actually verify the buy-charge-deliver flow
+end to end, per `ROADMAP.md`'s long-standing "not yet independently
+verified" flag. The purchase itself worked correctly - real currency
+moved (confirmed in `currency_transactions`), a real inventory row
+landed in the buyer's own "Marketplace Purchases" folder - but neither
+account's already-open Firestorm session showed any of it. The
+resident had to relog to see either change, which is not how this is
+supposed to work and was called out directly, sharply, as a real bug
+rather than something to explain away.
+
+**Root cause, traced precisely rather than guessed**:
+`WebInterfaceServiceConnector`'s purchase handlers (`ProcessMarketplaceBuy`,
+`ChargeConfluenceCurrency`) call `ICurrencyService.Transfer()` and
+`MarketplaceInventoryOperations.DeliverListingItem()` directly,
+in-process - never through the real HTTP `CurrencyServerConnector`
+endpoint. That connector already has a working, comment-documented
+"Robust can't reach the client directly, so call back into whichever
+region has this agent" mechanism (`NotifyRegionOfBalanceChange`, an
+XML-RPC callback to `ConfluenceCurrencyModule`'s own `UpdateBalance`
+handler) - but since the WebUI's own purchase paths bypass that
+connector entirely, they never got this behavior for free. No
+equivalent existed anywhere for inventory delivery -
+`MarketplaceInventoryOperations.Deliver`/`DeliverListingItem` both
+have a `notifyRecipient` callback parameter clearly designed for
+exactly this, but grepping the whole repo found only one real caller
+(`ProcessMarketplaceBuy`), always passing `null`.
+
+**Fixed both sides**:
+- Currency: added `NotifyRegionOfBalanceChange` to
+  `WebInterfaceServiceConnector` itself, mirroring
+  `CurrencyServerConnector`'s exact pattern (already had
+  `FindOnlineUserRegion` on hand from the admin Kick/Message
+  feature) - now called for both buyer and seller after a Marketplace
+  transfer (including the refund path), and the buyer after a Store
+  charge.
+- Inventory: genuinely new capability. Added a `NotifyInventoryDelivery`
+  XML-RPC handler to `ConfluenceCurrencyModule` - not currency-specific
+  in spirit, but the pragmatic, already-loaded home for the same
+  registration/agent-lookup plumbing rather than building a whole new
+  module for one callback. Fetches the delivered item AND its parent
+  folder, pushing both via `SendBulkUpdateInventory` - a first-ever
+  purchase's destination folder ("Marketplace Purchases") may not
+  exist in the client's own tree yet, so pushing only the item would
+  leave it orphaned in the viewer's eyes.
+
+Deployed to Robust and the two regions the test accounts were
+actually on (Sandbox, Sol Sector) - correctly, this time, after being
+corrected mid-session for skipping the real warning sequence on an
+earlier GFC restart (see below). Re-tested live with a second real
+purchase between the same two already-connected sessions: correct
+balance and the delivered item appeared on both screens immediately,
+confirmed directly by the user, no relog needed. Commit `eb778a634c`.
+Marketplace moved from `ROADMAP.md`'s "In progress" into `FEATURES.md`
+as a real, verified feature.
+
+**A real process correction, worth keeping**: mid-fix, also corrected
+a live misconfiguration found along the way (`GFC` region running
+Gloebit instead of `ConfluenceCurrencyModule`, per operator direction
+that new sims should default to Confluence's own currency and let the
+sim owner choose). The first attempt at fixing it skipped the actual
+in-world warning sequence - checked occupancy and asked a yes/no
+question instead of sending the real `region restart 120` notice
+residents rely on to know a restart is coming. Corrected directly:
+"When we do a restart of any sim its supposed to give the notice and
+screen shake! ... I have explained this before!" Redone properly -
+graceful 120s warning via `/consoleweb`, confirmed backup status clear
+before stopping (matching `TryStopRegion`'s own established safety
+check), and even the process stop itself was corrected mid-course: a
+hard `Stop-Process -Force` was flagged as something that "causes
+unseen issues with the grid and should only be used as a last
+resort" - redone using the region's own graceful `shutdown` console
+command instead, letting the process exit cleanly on its own, exactly
+matching what `TryStopRegion` already does in the product's own code.
+Real, durable lesson: check the established pattern in code first,
+don't improvise a "close enough" version of it under time pressure.

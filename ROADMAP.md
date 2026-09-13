@@ -135,16 +135,16 @@ gap today. For what already exists, see `FEATURES.md`.
   findings above) is now fixed and pushed; only the local-convex-hull/
   cache-eviction architectural work remains genuinely open.
 
-- **Native, viewer-integrated Marketplace** (`DirectDeliveryModule` +
-  `/marketplace` WebUI) — a real implementation of SL's actual
-  `DirectDelivery` capability, traced from Firestorm source: browse and buy
-  from a browser, auto-merchant for everyone, unlimited or real finite
-  stock per listing, ConfluenceCurrency checkout. See `MARKETPLACE.md` for
-  setup/usage. Deployed to Casperia Prime; migration and clean boot
-  verified live, browse page confirmed rendering correctly. A real
-  end-to-end purchase (buy → charge → deliver) is not yet independently
-  verified against live data - present-but-unverified caveat, same as
-  WebRTC voice/Aurora below.
+- **Marketplace end-to-end purchase - now live-verified (2026-09-13),
+  see `FEATURES.md`.** Found and fixed a real bug along the way: a
+  genuine purchase charged and delivered correctly, but neither
+  party's already-connected viewer found out until a relog -
+  `WebInterfaceServiceConnector`'s purchase handlers bypassed the real
+  notification mechanism entirely. Fixed (`eb778a634c`) by reusing
+  `CurrencyServerConnector`'s own proven region-callback pattern for
+  currency, and building the equivalent for inventory delivery (which
+  had no equivalent at all before). See `PROJECT_LOG.md` for the full
+  trace.
 
   **Real, load-bearing finding, not just a caveat:** Firestorm/AyaneStorm
   hard-block the viewer's own "Marketplace Listings" floater outside real

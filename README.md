@@ -81,12 +81,9 @@ Confluence includes a native Web/Admin UI, in-world economy and search
 services, a full moderation and access-control stack, expanded LSL/OSSL
 scripting, and a range of physics/environment/reliability improvements
 over stock OpenSimulator. See [`FEATURES.md`](FEATURES.md) for the full,
-categorized list.
-
-A native, viewer-integrated DirectDelivery Marketplace is also built (see
-[`MARKETPLACE.md`](MARKETPLACE.md) for setup and usage) — not yet listed
-in `FEATURES.md` since it's still working through live verification; see
-`ROADMAP.md`.
+categorized list. A native, viewer-integrated DirectDelivery Marketplace
+is also included — see [`MARKETPLACE.md`](MARKETPLACE.md) for setup and
+usage.
 
 ## Roadmap
 

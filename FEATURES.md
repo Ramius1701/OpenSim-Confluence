@@ -194,6 +194,23 @@ prim-capacity packs and self-service region orders.
   payment steps entirely while reusing the exact same provisioning
   path a real purchase uses.
 
+### Marketplace
+
+A native, viewer-integrated DirectDelivery marketplace — SL's actual
+`DirectDelivery` capability, traced from Firestorm source — browse and
+buy from a web browser (`/marketplace`), ConfluenceCurrency checkout,
+auto-merchant for every resident (no merchant-status gate), unlimited
+or real finite stock per listing. Merchants manage their own listings
+from `/marketplace/manage` (upload a snapshot, associate inventory)
+since real SL viewers hard-block their own in-world Marketplace
+Listings floater outside actual Second Life — buying and browsing stay
+web-based, matching real SL's own split between the viewer floater
+(listing management only) and marketplace.secondlife.com (the actual
+storefront). See `MARKETPLACE.md` for setup/usage. Live-verified
+end to end, including a real currency transfer and item delivery
+between two independent accounts, with both sides' already-connected
+sessions correctly notified in real time (no relog needed).
+
 ## Native Economy, Search & Grid Services
 
 Backed by MySQL/PostgreSQL/SQLite, replacing what would otherwise be
