@@ -23489,3 +23489,106 @@ command instead, letting the process exit cleanly on its own, exactly
 matching what `TryStopRegion` already does in the product's own code.
 Real, durable lesson: check the established pattern in code first,
 don't improvise a "close enough" version of it under time pressure.
+
+## Sim-owner currency selection, a Region Management layout cleanup, and a real shutdown-status bug found live (2026-09-13)
+
+Following the GFC Gloebit misconfiguration above, the operator asked
+for three related things: was the region restart actually fixed
+properly, was GFC's currency misconfiguration actually fixed at the
+root (not just hand-patched), and could a sim owner choose their own
+region's currency module instead of needing a manual `.ini` edit every
+time. The first two were already real, confirmed the same session -
+this entry covers the third, a genuinely new feature, plus a layout
+problem and a real bug both found live while testing it.
+
+**Sim-owner currency selection.** Scoped via `AskUserQuestion`:
+self-service (`/myregions`) can freely switch a resident's own region
+to ConfluenceCurrency directly, but selecting Gloebit only files a
+support ticket - it's real, production payment-processor config
+touching a grid-wide allowlist (`Gloebit.ini`'s
+`GLBEnabledOnlyInRegions`), not just that one region's own `.ini`, so
+only an admin action is trusted to complete it. Admin
+(`/admin/regions`) has full power either way, and picking Gloebit
+there completes both the region's own `economymodule` setting AND the
+`GLBEnabledOnlyInRegions` list in one action.
+
+New shared helpers: `GetRegionEconomyModule`/`SetRegionEconomyModule`
+read/regex-patch a region's own `Simulators\<folder>\OpenSim.ini`
+(same "optional leading `;`" regex shape as `FulfillRegionOrder`'s
+template rewrite, so it uncomments an inactive line rather than only
+matching an already-active one); `AddRegionToGloebitEnabledList`
+regex-patches the grid-wide `Gloebit.ini`, checking for existing
+membership first. New routes `/myregions/currency` and
+`/admin/regions/currency`, new handlers `HandleMyRegionsCurrency`
+(direct write or support-ticket) and `HandleAdminRegionCurrency`
+(direct write, both files for Gloebit). Build-verified clean, deployed
+to Robust (the whole feature lives in `WebInterfaceServiceConnector.cs`,
+no region-side change needed).
+
+**Layout cleanup, found live.** First live look at the new Currency
+column on `/admin/regions` (screenshot) showed a real problem: the
+page already had three separate, unlabeled `<th></th>` action columns
+(HG toggle, maptile regen, OAR backup) crammed next to the new
+dropdown+button, which wrapped onto its own line instead of staying
+inline. "We need to organize this better so it all fits properly."
+Fixed by collapsing the three unlabeled columns into one labeled
+"Actions" column (forms stack vertically inside it via their own
+default block-level layout, same pattern My Regions' own Actions
+column already used) and switching the Currency form to
+`display:inline-flex` (matching My Regions' own working version of the
+same control) so the dropdown and Set button stay on one line.
+
+**Grid Admin bootstrap account - confirmed expected, not a gap.**
+Separately, the operator noted Casperia has no "Grid Admin" account,
+referencing `README.md`'s documented fresh-install bootstrap
+(`BootstrapDefaultAdminIfNeeded`, built earlier this same session
+during the fresh-clone testing pass - see the PostgreSQL verification
+entry above). Confirmed by reading the code: it only creates that
+account when the account table is completely empty at startup.
+Casperia already had real accounts (including the operator's own) long
+before this code existed, so the zero-accounts check correctly never
+fires there - working as designed, nothing to fix.
+
+**Real bug found live: a successful shutdown reported as failed.**
+Testing the deployed layout fix, the operator tried to stop GFC from
+the Simulators page and got "GFC: failed to send shutdown - Could not
+reach GFC: An error occurred while sending the request." GFC's own log
+told a different story: a clean, complete graceful-shutdown sequence
+("World has come to an end" -> `SHUTDOWN`: closing threads/killing
+listener/killing clients -> `SCENE`: closing down the simulator ->
+deregistered from the grid service) at the exact timestamp of the
+click. The command reached GFC and it obeyed correctly - the WebUI's
+own report was wrong, not the shutdown.
+
+**Root cause**: `TryStopRegion` sends the `shutdown` console command
+via the same `/consoleweb` channel used everywhere else, then checks
+whether `RunRegionConsoleCommand`'s result starts with `"Could not
+reach "` to decide success/failure. But a genuine graceful shutdown
+makes the region process exit *before* it finishes writing the HTTP
+response - the .NET `HttpClient` on Robust's side sees this as a
+connection failure and `RunRegionConsoleCommand`'s catch block turns
+it into exactly that same `"Could not reach "` string, indistinguishable
+from an actual failure to reach the region at all. This is the same
+"empty reply from server, exit code 52, EXPECTED" behavior already
+documented for the manual `curl` version of this same command earlier
+this session - `TryStopRegion` just never accounted for it
+programmatically.
+
+**Fix**: when the shutdown result looks like a failure, don't trust it
+outright - wait 2 seconds for the process to actually finish exiting,
+then directly probe `http://127.0.0.1:<region's internal port>/` via
+`Util.IsHostAlive`. If the port is no longer answering, the shutdown
+genuinely succeeded despite the ambiguous HTTP-level error; only
+report failure if the region is still alive and reachable afterward.
+Same "verify against real, observable state rather than a fragile
+proxy signal" principle already established for restart verification
+(log sequence, not process ID/start-time) and occupancy checks (not
+"no recent log lines") earlier this session - applied here to a third,
+independent case of the same underlying lesson.
+
+Build-verified clean (0 warnings/errors), deployed to Robust, GFC
+restarted cleanly afterward and re-registered with the grid. All three
+changes live in the same commit, since they touch the same file and
+were found/fixed in one continuous pass: the currency-selection
+feature itself, the layout fix it exposed, and the shutdown-detection
+bug found while testing both.

@@ -78,7 +78,12 @@ alongside the existing support-ticket system.
 - Transaction history, classifieds/events management.
 - My Regions — estate-owner region management (OAR backup, restart,
   full estate settings/access-list editing) for any resident who owns
-  one, not just admins, in a compact per-region table.
+  one, not just admins, in a compact per-region table. Includes a
+  self-service currency-module picker: an owner can switch their own
+  region to ConfluenceCurrency directly, but selecting Gloebit only
+  files a support ticket for an admin to complete (it also touches a
+  grid-wide, real-money-affecting allowlist, not just that region's
+  own config).
 - My Land — per-parcel search / Destination Guide visibility toggles.
 - Inventory backup (IAR).
 - Account changes (password/email), self-service account deletion.
@@ -124,7 +129,12 @@ alongside the existing support-ticket system.
   stale (off by default, since tiles only ever refresh when a region
   re-uploads one).
 - A web-based region console, per-region Hypergrid open/close
-  toggling, on-demand map-tile regeneration.
+  toggling, on-demand map-tile regeneration, and a currency-module
+  picker with full power: an admin can switch any region directly to
+  either ConfluenceCurrency or Gloebit, and choosing Gloebit also adds
+  that region to `Gloebit.ini`'s grid-wide `GLBEnabledOnlyInRegions`
+  allowlist automatically (setting a region's own `.ini` alone isn't
+  enough for Gloebit to actually activate).
 - A region config file browser/editor — every region's raw `.ini`,
   discovered automatically (no filesystem/RDP access needed), with a
   restart button for changes that need one to take effect.

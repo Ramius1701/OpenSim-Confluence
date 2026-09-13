@@ -1117,6 +1117,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/regions/group-auto-invite":
                         HandleAdminRegionGroupAutoInvite(request, response);
                         break;
+                    case BasePath + "/admin/regions/currency":
+                        HandleAdminRegionCurrency(request, response);
+                        break;
                     case BasePath + "/admin/regions":
                         HandleAdminRegions(request, response);
                         break;
@@ -1131,6 +1134,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/myregions/group-auto-invite":
                         HandleMyRegionsGroupAutoInvite(request, response);
+                        break;
+                    case BasePath + "/myregions/currency":
+                        HandleMyRegionsCurrency(request, response);
                         break;
                     case BasePath + "/myland":
                         HandleMyLand(request, response);
@@ -7124,7 +7130,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // seconds of page-load time on a page full of down regions.
                     HashSet<UUID> onlineRegionIDs = new HashSet<UUID>(
                             FilterOnlineRegions(pageRegions).ConvertAll(r => r.RegionID));
-                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Online</th><th>Hypergrid</th><th></th><th></th><th></th><th>Group Auto-Invite</th></tr>");
+                    rows.Append("<table><tr><th>Region</th><th>Location</th><th>Online</th><th>Hypergrid</th><th>Currency</th><th>Actions</th><th>Group Auto-Invite</th></tr>");
                     foreach (GridRegion region in pageRegions)
                     {
                         bool open = m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID);
@@ -7147,16 +7153,32 @@ namespace OpenSim.Server.Handlers.WebInterface
                         rows.Append("<td>").Append(region.RegionCoordX).Append(",").Append(region.RegionCoordY).Append("</td>");
                         rows.Append("<td><span class=\"pill ").Append(onlineRegionIDs.Contains(region.RegionID) ? "pill-yes\">Online" : "pill-no\">Offline").Append("</span></td>");
                         rows.Append("<td>").Append(status).Append("</td>");
-                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/hg-toggle\">");
+                        // Full power, unlike My Regions' own self-service
+                        // version of this same control: an admin picking
+                        // Gloebit here completes it directly (region .ini +
+                        // the grid-wide GLBEnabledOnlyInRegions allowlist),
+                        // since only an admin action is trusted to touch
+                        // that shared, real-money-affecting file - see
+                        // HandleAdminRegionCurrency below.
+                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/regions/currency\" style=\"display:inline-flex;gap:4px;align-items:center;\" ")
+                                .Append("onsubmit=\"return confirm('Set currency module for this region? A restart is needed for it to take effect.');\">");
+                        rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                        string regionCurrency = GetRegionEconomyModule(region.RegionID);
+                        rows.Append("<select name=\"currency\">");
+                        rows.Append("<option value=\"ConfluenceCurrencyModule\"").Append(regionCurrency == "ConfluenceCurrencyModule" ? " selected" : "").Append(">ConfluenceCurrency</option>");
+                        rows.Append("<option value=\"Gloebit\"").Append(regionCurrency == "Gloebit" ? " selected" : "").Append(">Gloebit</option>");
+                        rows.Append("</select><button type=\"submit\">Set</button></form></td>");
+                        rows.Append("<td class=\"actions-cell\">");
+                        rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/hg-toggle\" style=\"margin-bottom:4px;\">");
                         rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                         rows.Append("<input type=\"hidden\" name=\"set_open\" value=\"").Append(open ? "false" : "true").Append("\">");
                         rows.Append("<button type=\"submit\"").Append(m_RegionHGService == null ? " disabled" : "").Append(">").Append(actionLabel).Append("</button>");
-                        rows.Append("</form></td>");
-                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/maptile-regen\">");
+                        rows.Append("</form>");
+                        rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/maptile-regen\" style=\"margin-bottom:4px;\">");
                         rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                         rows.Append("<button type=\"submit\">Regenerate maptile</button>");
-                        rows.Append("</form></td>");
-                        rows.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/oar-save\">");
+                        rows.Append("</form>");
+                        rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/oar-save\">");
                         rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                         rows.Append("<button type=\"submit\">Save OAR backup</button>");
                         rows.Append("</form></td>");
@@ -8437,6 +8459,58 @@ namespace OpenSim.Server.Handlers.WebInterface
             else
             {
                 message = "Enter a valid group UUID to enable Group Auto-Invite.";
+            }
+
+            response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Admin-only currency module control - full power version of
+        // HandleMyRegionsCurrency above. Unlike the self-service path,
+        // picking Gloebit here completes the switch immediately: both the
+        // region's own .ini AND the grid-wide GLBEnabledOnlyInRegions
+        // allowlist, since an admin action is the trusted point where this
+        // real, production Gloebit config is actually allowed to change
+        // (see AddRegionToGloebitEnabledList's own comment).
+        private void HandleAdminRegionCurrency(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string currency = FormValue(form, "currency");
+            if (!UUID.TryParse(FormValue(form, "region_id"), out UUID regionID) || (currency != "ConfluenceCurrencyModule" && currency != "Gloebit"))
+            {
+                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("No region/currency selected."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            GridRegion region = m_GridService.GetRegionByUUID(UUID.Zero, regionID);
+            if (region == null)
+            {
+                response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString("Region not found."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            string message;
+            if (!SetRegionEconomyModule(regionID, currency))
+            {
+                message = "Could not update " + region.RegionName + "'s currency setting - check the region's .ini file is reachable on this host.";
+            }
+            else if (currency == "Gloebit")
+            {
+                bool listUpdated = AddRegionToGloebitEnabledList(regionID);
+                message = listUpdated
+                        ? region.RegionName + " set to Gloebit and added to Gloebit.ini's enabled-region list - restart the region for this to take effect."
+                        : region.RegionName + " set to Gloebit in its own .ini, but Gloebit.ini's GLBEnabledOnlyInRegions could not be updated automatically - add "
+                                + regionID + " to that list by hand before restarting, or Gloebit will stay disabled for this region.";
+            }
+            else
+            {
+                message = region.RegionName + " set to ConfluenceCurrency - restart the region for this to take effect.";
             }
 
             response.Redirect(BasePath + "/admin/regions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
@@ -10814,12 +10888,23 @@ namespace OpenSim.Server.Handlers.WebInterface
                     .Append("a public-facing reverse proxy has real, environment-dependent failure modes (body size limits, read timeouts) ")
                     .Append("that a self-service page can't fix on its own. Restore an OAR from the region's own console instead.</p>");
 
-                rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Actions</th><th>Group Auto-Invite</th></tr>");
+                rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Currency</th><th>Actions</th><th>Group Auto-Invite</th></tr>");
                 foreach (GridRegion region in ownedRegions)
                 {
+                    string currentCurrency = GetRegionEconomyModule(region.RegionID);
                     rows.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>");
                     rows.Append("<td>").Append(RenderRegionReachabilityPill(region)).Append("</td>");
                     rows.Append("<td>(").Append(region.RegionCoordX).Append(", ").Append(region.RegionCoordY).Append(")</td>");
+                    rows.Append("<td>");
+                    rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/currency\" style=\"display:inline-flex;gap:4px;align-items:center;\" ")
+                            .Append("onsubmit=\"return this.currency.value==='Gloebit' ? confirm('Gloebit requires a grid admin to finish enabling it - this sends a request, it does not switch immediately.') : confirm('Switch to ConfluenceCurrency? The region needs a restart to pick this up.');\">");
+                    rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
+                    rows.Append("<select name=\"currency\">");
+                    rows.Append("<option value=\"ConfluenceCurrencyModule\"").Append(currentCurrency == "ConfluenceCurrencyModule" ? " selected" : "").Append(">ConfluenceCurrency</option>");
+                    rows.Append("<option value=\"Gloebit\"").Append(currentCurrency == "Gloebit" ? " selected" : "").Append(">Gloebit</option>");
+                    rows.Append("</select>");
+                    rows.Append("<button type=\"submit\">Set</button></form>");
+                    rows.Append("</td>");
                     rows.Append("<td>");
                     rows.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/myregions/oar-save\" style=\"margin-right:8px\">");
                     rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
@@ -10986,6 +11071,72 @@ namespace OpenSim.Server.Handlers.WebInterface
             else if (string.IsNullOrEmpty(m_webConsoleSecret))
             {
                 message = "Web console is not configured on this grid - region restart is unavailable.";
+            }
+
+            response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
+        }
+
+        // Self-service currency module selection - per the operator's own
+        // explicit design call (2026-09-13): a sim owner can freely switch
+        // their own region to ConfluenceCurrency (writes the .ini directly,
+        // same GetOwnedRegionOrNull ownership check as Restart above), but
+        // Gloebit is real production payment-processor config touching a
+        // grid-wide allowlist, not just this one region's .ini (see
+        // AddRegionToGloebitEnabledList) - so a Gloebit request here only
+        // ever files a support ticket for an admin to actually complete via
+        // HandleAdminRegionCurrency below, never switches it directly.
+        private void HandleMyRegionsCurrency(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            string message = "Region not found or not owned by you.";
+
+            if (request.HttpMethod == "POST")
+            {
+                Dictionary<string, string> form = ReadForm(request);
+                string currency = FormValue(form, "currency");
+                if (UUID.TryParse(FormValue(form, "region_id"), out UUID regionID) && (currency == "ConfluenceCurrencyModule" || currency == "Gloebit"))
+                {
+                    GridRegion region = GetOwnedRegionOrNull(session, regionID);
+                    if (region != null)
+                    {
+                        if (currency == "ConfluenceCurrencyModule")
+                        {
+                            message = SetRegionEconomyModule(regionID, "ConfluenceCurrencyModule")
+                                    ? region.RegionName + " set to ConfluenceCurrency - restart the region for this to take effect."
+                                    : "Could not update " + region.RegionName + "'s currency setting.";
+                        }
+                        else if (m_SupportTicketService != null)
+                        {
+                            m_SupportTicketService.Store(new SupportTicket
+                            {
+                                ID = UUID.Random(),
+                                UserId = session.PrincipalID,
+                                UserName = session.Name,
+                                ContactEmail = string.Empty,
+                                Category = "other",
+                                Subject = "Gloebit activation request: " + region.RegionName,
+                                Message = "Resident " + session.Name + " has requested Gloebit as the currency module for "
+                                        + region.RegionName + " (" + regionID + "). Enabling this requires adding the region "
+                                        + "to Gloebit.ini's GLBEnabledOnlyInRegions grid-wide - use Admin > Region Management's "
+                                        + "currency control to complete this request.",
+                                Status = "open",
+                                Created = DateTime.UtcNow,
+                                Updated = DateTime.UtcNow
+                            });
+                            message = "Gloebit request sent for " + region.RegionName + " - a grid admin needs to complete this.";
+                        }
+                        else
+                        {
+                            message = "Support ticket service is not available - contact a grid admin directly to request Gloebit.";
+                        }
+                    }
+                }
             }
 
             response.Redirect(BasePath + "/myregions?message=" + Uri.EscapeDataString(message), HttpStatusCode.Redirect);
@@ -15749,6 +15900,125 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
         }
 
+        // Currency module selection - a real gap found live, 2026-09-13:
+        // GFC was found running Gloebit instead of the grid's own
+        // ConfluenceCurrencyModule default, fixed by hand, and the operator
+        // asked for sim owners to be able to choose this themselves rather
+        // than needing a manual .ini edit every time. `[Economy]
+        // economymodule` lives in each region's own Simulators\<folder>\
+        // OpenSim.ini (same file GetSimulatorPort above already reads, just
+        // a different section) - never hot-reloadable, always needs that
+        // region's next (re)start to take effect, same caveat as every
+        // other raw-.ini change this file makes.
+        private string GetRegionEconomyModule(UUID regionId)
+        {
+            string simFolder = DiscoverSimulators().FirstOrDefault(s => s.RegionID == regionId).SimulatorFolder;
+            if (string.IsNullOrEmpty(simFolder))
+                return "ConfluenceCurrencyModule";
+
+            string iniPath = Path.Combine(m_regionOrderGridRoot, "Simulators", simFolder, "OpenSim.ini");
+            if (!File.Exists(iniPath))
+                return "ConfluenceCurrencyModule";
+
+            try
+            {
+                IConfigSource source = new IniConfigSource(iniPath);
+                IConfig economyConfig = source.Configs["Economy"];
+                string value = economyConfig?.GetString("economymodule", "ConfluenceCurrencyModule");
+                return string.IsNullOrWhiteSpace(value) ? "ConfluenceCurrencyModule" : value.Trim();
+            }
+            catch
+            {
+                return "ConfluenceCurrencyModule";
+            }
+        }
+
+        // Same commented-or-not regex shape as FulfillRegionOrder's own
+        // template rewrite (see PROJECT_LOG.md, 2026-09-13) - an optional
+        // leading `;` outside the capture group so this naturally
+        // uncomments an inactive line instead of only matching one that's
+        // already active. Only ever called for the two real, currently-
+        // supported modules (ConfluenceCurrencyModule/Gloebit) - never with
+        // arbitrary input, so no further validation of moduleName itself.
+        private bool SetRegionEconomyModule(UUID regionId, string moduleName)
+        {
+            string simFolder = DiscoverSimulators().FirstOrDefault(s => s.RegionID == regionId).SimulatorFolder;
+            if (string.IsNullOrEmpty(simFolder))
+                return false;
+
+            string iniPath = Path.Combine(m_regionOrderGridRoot, "Simulators", simFolder, "OpenSim.ini");
+            if (!File.Exists(iniPath))
+                return false;
+
+            try
+            {
+                string text = File.ReadAllText(iniPath);
+                string updated = Regex.Replace(text, @"(?m)^\s*;?\s*(economymodule\s*=\s*).*$", "${1}" + moduleName);
+                if (updated == text && !Regex.IsMatch(text, @"(?m)^\s*;?\s*economymodule\s*=", RegexOptions.None))
+                {
+                    // No existing key at all (a template missing [Economy]
+                    // entirely) - append a minimal section rather than
+                    // silently no-op. Not expected on this grid's own
+                    // regions (every real .ini here already has [Economy]),
+                    // but a defensive fallback for a hand-built one that
+                    // doesn't.
+                    updated = text.TrimEnd() + "\r\n\r\n[Economy]\r\n    economymodule = " + moduleName + "\r\n";
+                }
+                File.WriteAllText(iniPath, updated);
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_log.Warn("[WEB INTERFACE]: Could not set economymodule for region " + regionId + " at " + iniPath, e);
+                return false;
+            }
+        }
+
+        // Gloebit's own [GLOEBITMONEYMODULE] GLBEnabledOnlyInRegions is a
+        // grid-wide, space-delimited region-UUID allowlist in this deploy's
+        // shared Gloebit.ini (confirmed live, 2026-09-13 - GFC's log showed
+        // "SKIPPING region add ... is not in enabled region list" even
+        // after economymodule=Gloebit was set on that region alone).
+        // Setting economymodule=Gloebit on a region's own .ini is
+        // necessary but not sufficient without this too - deliberately
+        // admin-only to call (see HandleAdminRegionCurrency below), never
+        // from the self-service My Regions path, per the operator's own
+        // explicit call on how Gloebit selection should work: sim owners
+        // can request it, but only an admin actually completes it, since
+        // this touches real production Gloebit config grid-wide.
+        private bool AddRegionToGloebitEnabledList(UUID regionId)
+        {
+            string gloebitIniPath = Path.Combine(m_regionOrderGridRoot, "Gloebit.ini");
+            if (!File.Exists(gloebitIniPath))
+                return false;
+
+            try
+            {
+                string text = File.ReadAllText(gloebitIniPath);
+                Match match = Regex.Match(text, @"(?m)^(\s*GLBEnabledOnlyInRegions\s*=\s*)(.*)$");
+                if (!match.Success)
+                    return false;
+
+                string existing = match.Groups[2].Value.Trim();
+                string[] ids = existing.Length == 0
+                        ? Array.Empty<string>()
+                        : existing.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+                string regionIdStr = regionId.ToString();
+                if (ids.Any(id => string.Equals(id, regionIdStr, StringComparison.OrdinalIgnoreCase)))
+                    return true; // already enabled
+
+                string newList = existing.Length == 0 ? regionIdStr : existing + " " + regionIdStr;
+                string updated = text.Substring(0, match.Groups[2].Index) + newList + text.Substring(match.Groups[2].Index + match.Groups[2].Length);
+                File.WriteAllText(gloebitIniPath, updated);
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_log.Warn("[WEB INTERFACE]: Could not add region " + regionId + " to Gloebit.ini's GLBEnabledOnlyInRegions", e);
+                return false;
+            }
+        }
+
         private void HandleAdminSimulators(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -16127,6 +16397,24 @@ namespace OpenSim.Server.Handlers.WebInterface
             // from the admin page that anything had gone wrong.
             string result = RunRegionConsoleCommand(region, "shutdown");
             bool ok = !result.StartsWith("Region responded with HTTP") && !result.StartsWith("Could not reach ");
+
+            // A genuine graceful shutdown makes the region's own process exit
+            // before it finishes writing the HTTP response - the client sees
+            // this as a connection failure ("Could not reach ..."), even
+            // though the command was received and obeyed. Confirmed live,
+            // 2026-09-13: GFC's own log showed a clean "World has come to an
+            // end" -> SHUTDOWN -> deregistered sequence for a stop the admin
+            // page reported as "failed to send shutdown." Don't trust the
+            // HTTP-level failure alone here - give the process a moment to
+            // actually exit, then check whether it's still listening before
+            // believing the negative.
+            if (!ok)
+            {
+                System.Threading.Thread.Sleep(2000);
+                bool stillAlive = Util.IsHostAlive("http://127.0.0.1:" + region.InternalEndPoint.Port + "/", 1000);
+                ok = !stillAlive;
+            }
+
             message = ok
                     ? displayName + ": shutdown command sent."
                     : displayName + ": failed to send shutdown - " + result;
