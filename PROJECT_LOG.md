@@ -23917,3 +23917,97 @@ principle as everything else opt-in in this repo; Casperia's own live
 `Robust.HG.ini` has `[MapImageService] GridService` set, turning on
 both the serve-time check and the sweep together (they share the one
 config key by design, not two separate toggles to keep in sync).
+
+## wolfvoice exclusion reversed; ConfluenceVoice built and wired into os-webrtc-janus (2026-09-13)
+
+The 2026-09-09 exclusion (`ROADMAP.md`, "Explicitly out of scope") stood
+until the operator explicitly asked to resume — in a separate session with
+no memory of that decision, which surfaced it back to the operator before
+proceeding rather than silently overriding a recorded exclusion with an
+unknown reason. Confirmed explicitly to continue.
+
+**wolfvoice builds and runs correctly on Windows.** Its own release CI
+(`.github/workflows/release.yml`) skips Windows/macOS entirely, with a
+comment blaming a version deadlock in the `opus` crate's vendored
+libopus: `cmake_minimum_required(VERSION 3.1)` is refused outright by
+CMake 4 ("Compatibility with CMake < 3.5 has been removed"), and pinning
+CMake 3.31 to dodge that then fails to recognize the current Visual
+Studio generator name. Reproduced both failures locally, then found
+CMake's own documented escape hatch fixes both at once:
+`CMAKE_POLICY_VERSION_MINIMUM=3.5` lets a CMake new enough to know the
+current VS generator configure the old libopus project anyway. With
+only that env var set: `cargo build --release` succeeds, `cargo test`
+passes 31/31, and the project's own `two_clients` end-to-end harness
+(real SDP offer/answer, real Opus encode/decode, real per-listener
+spatial mixing) reports `PASS`. Forked to `S:\Github\wolfvoice`
+(`github.com/Ramius1701/wolfvoice`, tracking upstream
+`intelligentwolf/wolfvoice`) and submitted the fix upstream as
+`intelligentwolf/wolfvoice#1`.
+
+**Built ConfluenceVoice as its own independent project**, not a
+wolfvoice fork-to-contribute-back: `S:\Github\ConfluenceVoice`
+(`github.com/Ramius1701/ConfluenceVoice`, public, own git history — a
+manual port would be needed to pull a specific upstream wolfvoice fix
+later, since the two repos share no commit ancestry). Carried over
+`mixer.rs`/`proto.rs`/`room.rs`/`session.rs` unchanged — the spatial
+mixing math and Linden Lab protocol handling were never Unix-specific —
+and replaced only wolfvoice's packaging: `src/config.rs` reads a
+`confluencevoice.toml` from beside the executable (writing a commented
+template and exiting with instructions on first run if one doesn't
+exist) instead of `WOLFVOICE_PUBLIC_IP` and hardcoded `/etc/wolfvoice/tls/`
+paths, so it runs like any other Windows program rather than a system
+service. NOTICE carries forward wolfvoice's full attribution chain
+(Wolf Software Systems Ltd -> os-webrtc-janus/Robert Adams ->
+OpenSimulator/Firestorm), per Apache-2.0's retention requirement.
+Verified independently of wolfvoice's own tests: `cargo build --release`,
+`cargo test` (31/31), and `two_clients` all pass against the
+config-file-driven build.
+
+**Wired into this tree's already-built os-webrtc-janus.** Confluence's
+copy at `OpenSim/Addons/os-webrtc-janus` needed no rebuild — it's
+already registered in `prebuild.xml` and `bin/WebRtcVoice.dll`,
+`WebRtcVoiceRegionModule.dll`, `WebRtcVoiceServiceModule.dll` and
+`WebRtcJanusService.dll` were already current from the earlier STUN/
+`ChatSessionRequest` fix work (see "WebRTC voice: four real gaps
+found..." above). Only the target changes: `bin/config/os-webrtc-janus.ini`
+(new file; no prior copy existed, only the shipped `.example`) sets
+`SpatialVoiceService`/`NonSpatialVoiceService` to
+`WebRtcVoice.dll:WebRtcVoiceServiceConnector` — a plain JSON-RPC client
+that posts to any URL — instead of `WebRtcJanusService.dll:WebRtcJanusService`,
+pointing `WebRtcVoiceServerURI` at ConfluenceVoice
+(`https://192.168.88.14:9443` for this machine) and disabling
+`[VivoxVoice]` (both modules register the same capability name; last
+registration wins). Confirmed estate/parcel voice need no explicit
+enabling for this: `EstateSettings.AllowVoice` and `LandData`'s default
+parcel flags both default to `true` (`OpenSim/Framework/EstateSettings.cs:141`,
+`LandData.cs:67`), so the dev tree's Smoke Test Region (the only region
+this tree defines; `bin/Regions/Regions.ini`) needs no estate changes
+to test against.
+
+Verified with a real boot, not just static config inspection: started
+the Smoke Test Region briefly and confirmed in its own log that
+`os-webrtc-janus` read `bin/config/os-webrtc-janus.ini` and enabled
+`WebRtcVoiceServiceConnector` (not `WebRtcJanusService`) for both
+spatial and non-spatial voice - `[REGION WEBRTC VOICE] WebRtcVoiceService
+enabled`. Stopped immediately after; no actual HTTP round-trip to
+ConfluenceVoice happened (that only fires when a real viewer requests
+voice), so this confirms the config is valid and loads correctly, not a
+full end-to-end path.
+
+**Not done, deliberately:**
+- **Not deployed to live Casperia** (`S:\Opensim`, a separate directory
+  from this dev tree entirely) — wired and testable here only. Casperia
+  runs 15 regions with real residents; rolling this out there is a
+  separate, explicit decision, not a natural continuation of a dev-tree
+  wiring pass.
+- **No trusted TLS cert for `WebRtcVoiceServerURI`.** The self-signed
+  dev cert ConfluenceVoice was tested with fails .NET's HttpClient chain
+  validation regardless of hostname match — untrusted issuer, not a CN
+  mismatch. A real viewer test needs either a CA-issued cert (Let's
+  Encrypt, once this has a public DNS name) or extending this machine's
+  trust store for the dev cert, which is a system-trust change and was
+  left to the operator rather than automated.
+- **No Windows Service wrapper for ConfluenceVoice.** Runs as a console
+  app for now, by explicit choice when the project was scoped — holds a
+  console window rather than starting with Windows. Revisit once it's
+  proven out day-to-day.
