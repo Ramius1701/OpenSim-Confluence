@@ -77,7 +77,12 @@ alongside the existing support-ticket system.
 - A full partner proposal flow (propose/accept/decline/cancel/breakup),
   reachable from the web dashboard AND in-world via OSSL functions any
   scripted object can call (see "Scripting: LSL and OSSL" below) - the
-  same backend either way, no separate state to keep in sync.
+  same backend either way, no separate state to keep in sync. Every
+  transition (propose/cancel/accept/decline/breakup) sends the other
+  party a real offline message - readable at `/offline-messages` and
+  surfacing in the dashboard's unread-activity banner - so nobody finds
+  out about a proposal or a breakup only by happening to notice their
+  own profile changed.
 - Transaction history, classifieds/events management.
 - My Regions — estate-owner region management (OAR backup, restart,
   full estate settings/access-list editing) for any resident who owns

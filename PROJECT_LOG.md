@@ -23710,3 +23710,40 @@ already-partnered avatar touching it ALONE (checked via
 waiting for a second touch that was never required for this branch -
 purely an LSL change, no server-side code needed since the primitive
 already existed.
+
+## Partner actions now send a real notification - the internal message system's first real use here (2026-09-13)
+
+Following the partnering work above, the operator noted every state
+change was completely silent - the other party only ever found out by
+separately visiting their own `/partner` page, no different for a
+breakup as for a proposal. Separately flagged that this grid's
+internal message system (`IOfflineIMService` - already backing
+`/offline-messages` and the dashboard's unread-activity banner via
+`GetMessageCount`) had no real use anywhere in the WebUI: "We have to
+use the internal message for something right? its under utilezed."
+
+Added `SendPartnerNotification` to `WebInterfaceServiceConnector.cs`,
+a small wrapper around `IOfflineIMService.StoreMessage` (following the
+exact `GridInstantMessage` field pattern already established in
+`HGGroupsService.cs`'s own group-invite notification), and wired it
+into all five `ApplyPartnerAction` transitions - propose, cancel,
+accept, decline, breakup - each telling the OTHER party what just
+happened, with a link back to `/partner`. Best-effort by design: a
+missing/broken offline-IM service logs a warning but never blocks the
+actual partner action.
+
+Because both the web `/partner` page and the new in-world OSSL
+functions already share this one `ApplyPartnerAction` implementation
+(see the entry above), this took effect for both surfaces from a
+single change - an in-world ceremony ring's propose/accept/breakup now
+notify the other party exactly the same way a web-initiated one does,
+with no separate wiring needed on the OSSL side.
+
+Build-verified clean, deployed to Robust only (purely server-side, no
+region DLL involved). Live-verified via the real `/internal/partner-action`
+endpoint: proposed Allen Blackwood -> Jessica Starlight, confirmed a
+real row landed in `im_offline` with the correct recipient, sender,
+and message text ("Allen Blackwood has proposed a partnership with
+you. Visit /partner to respond."), then cancelled to leave no stray
+pending state - the cancel's own notification confirmed working the
+same way.

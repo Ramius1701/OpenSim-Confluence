@@ -4273,8 +4273,49 @@ namespace OpenSim.Server.Handlers.WebInterface
             WritePage(request, response, PageTitle("Partner"), sb.ToString());
         }
 
+        // The internal message system (IOfflineIMService, already backing
+        // /offline-messages and the dashboard's unread-activity banner) had
+        // no partner-related use at all before this - every state change
+        // here was silent, so the other party only ever found out by
+        // separately visiting their own /partner page. Best-effort: a
+        // failed/missing offline-IM service should never block the actual
+        // partner action itself.
+        private void SendPartnerNotification(UUID toId, UUID fromId, string fromName, string message)
+        {
+            if (m_OfflineIMService == null || toId == UUID.Zero)
+                return;
+
+            try
+            {
+                GridInstantMessage im = new GridInstantMessage
+                {
+                    imSessionID = UUID.Random().Guid,
+                    fromAgentID = fromId.Guid,
+                    toAgentID = toId.Guid,
+                    timestamp = (uint)Util.UnixTimeSinceEpoch(),
+                    fromAgentName = fromName,
+                    message = message,
+                    dialog = (byte)InstantMessageDialog.MessageFromAgent,
+                    fromGroup = false,
+                    offline = 1,
+                    ParentEstateID = 0,
+                    Position = Vector3.Zero,
+                    RegionID = UUID.Zero.Guid,
+                    binaryBucket = Array.Empty<byte>()
+                };
+
+                m_OfflineIMService.StoreMessage(im, out _);
+            }
+            catch (Exception e)
+            {
+                m_log.Warn("[WEB INTERFACE]: Could not store partner notification message", e);
+            }
+        }
+
         private string ApplyPartnerAction(UUID myId, string action, string targetName)
         {
+            string myName = m_UserAccountService?.GetUserAccount(UUID.Zero, myId)?.Name ?? "Someone";
+
             switch (action)
             {
                 case "propose":
@@ -4297,6 +4338,8 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                     SetPartnerAppDataUUID(target.PrincipalID, PartnerIncomingTag, myId);
                     SetPartnerAppDataUUID(myId, PartnerOutgoingTag, target.PrincipalID);
+                    SendPartnerNotification(target.PrincipalID, myId, myName,
+                            myName + " has proposed a partnership with you. Visit " + BasePath + "/partner to respond.");
                     return "Proposal sent to " + target.Name + ".";
                 }
 
@@ -4308,6 +4351,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                     SetPartnerAppDataUUID(myId, PartnerOutgoingTag, UUID.Zero);
                     SetPartnerAppDataUUID(outgoing, PartnerIncomingTag, UUID.Zero);
+                    SendPartnerNotification(outgoing, myId, myName, myName + " cancelled their partnership proposal to you.");
                     return "Proposal cancelled.";
                 }
 
@@ -4328,6 +4372,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     SetPartnerAppDataUUID(incoming, PartnerOutgoingTag, UUID.Zero);
 
                     UserAccount partner = m_UserAccountService.GetUserAccount(UUID.Zero, incoming);
+                    SendPartnerNotification(incoming, myId, myName, myName + " accepted your partnership proposal! You are now partnered.");
                     return "You are now partnered with " + (partner != null ? partner.Name : incoming.ToString()) + ".";
                 }
 
@@ -4339,6 +4384,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                     SetPartnerAppDataUUID(myId, PartnerIncomingTag, UUID.Zero);
                     SetPartnerAppDataUUID(incoming, PartnerOutgoingTag, UUID.Zero);
+                    SendPartnerNotification(incoming, myId, myName, myName + " declined your partnership proposal.");
                     return "Proposal declined.";
                 }
 
@@ -4351,6 +4397,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     string updateResult = string.Empty;
                     m_UserProfilesService.UpdateAvatarPartner(myId, UUID.Zero, ref updateResult);
                     m_UserProfilesService.UpdateAvatarPartner(partnerId, UUID.Zero, ref updateResult);
+                    SendPartnerNotification(partnerId, myId, myName, myName + " has ended your partnership.");
                     return "Partnership ended.";
                 }
 
