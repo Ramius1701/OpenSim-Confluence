@@ -17,6 +17,7 @@ using Nini.Config;
 using Nwc.XmlRpc;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
+using OpenSim.Data;
 using OpenSim.Framework;
 using OpenSim.Framework.Console;
 using OpenSim.Server.Base;
@@ -135,6 +136,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IRecoveryCodeService m_RecoveryCodeService;
         private IGridSettingsService m_GridSettingsService;
         private IStarterLookService m_StarterLookService;
+        private IWebSessionService m_WebSessionService;
         private IUserProfilesService m_UserProfilesService;
         private IFriendsService m_FriendsService;
         private ISearchService m_SearchService;
@@ -291,6 +293,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_SuggestionService = LoadReusedPlugin<ISuggestionService>(config, "SuggestionService", args);
             m_RecoveryCodeService = LoadReusedPlugin<IRecoveryCodeService>(config, "RecoveryCodeService", args);
             m_GridSettingsService = LoadReusedPlugin<IGridSettingsService>(config, "GridSettingsService", args);
+            // Lets a WebSession survive a Robust restart instead of
+            // force-logging-out every open browser tab with no warning -
+            // a real, repeated annoyance during a single day of heavy
+            // redeployment (2026-09-13). See GetSession/CreateSession/
+            // ClearSession below for the actual write-through-cache logic.
+            m_WebSessionService = LoadReusedPlugin<IWebSessionService>(config, "WebSessionService", args);
             m_StarterLookService = LoadReusedPlugin<IStarterLookService>(config, "StarterLookService", args);
             // Same [UserProfilesService] LocalServiceModule the region-side
             // LocalUserProfilesServiceConnector already reuses - backs the
@@ -1253,6 +1261,39 @@ namespace OpenSim.Server.Handlers.WebInterface
                     return session;
 
                 m_sessions.TryRemove(token, out _);
+                m_WebSessionService?.Delete(token);
+                return null;
+            }
+
+            // Cache miss - only really happens right after a fresh Robust
+            // start, when m_sessions is empty but the resident's browser
+            // still holds a cookie for a session that hasn't actually
+            // expired yet. Falls back to the persisted copy so a restart
+            // no longer force-logs-out every open tab (real, repeated
+            // annoyance during a single day of heavy redeployment,
+            // 2026-09-13) - re-populates the in-memory cache on the way
+            // out so subsequent requests hit the fast path again.
+            if (m_WebSessionService != null)
+            {
+                WebSessionRecord record = m_WebSessionService.Get(token);
+                if (record != null)
+                {
+                    if (record.Expires > DateTime.UtcNow)
+                    {
+                        session = new WebSession
+                        {
+                            PrincipalID = record.PrincipalID,
+                            Name = record.Name,
+                            IsAdmin = record.IsAdmin,
+                            Expires = record.Expires,
+                            WebAccountID = record.WebAccountID
+                        };
+                        m_sessions[token] = session;
+                        return session;
+                    }
+
+                    m_WebSessionService.Delete(token);
+                }
             }
 
             return null;
@@ -1261,14 +1302,26 @@ namespace OpenSim.Server.Handlers.WebInterface
         private string CreateSession(UUID principalID, string name, bool isAdmin, UUID webAccountId)
         {
             string token = UUID.Random().ToString();
+            DateTime expires = DateTime.UtcNow.Add(SessionLifetime);
             m_sessions[token] = new WebSession
             {
                 PrincipalID = principalID,
                 Name = name,
                 IsAdmin = isAdmin,
-                Expires = DateTime.UtcNow.Add(SessionLifetime),
+                Expires = expires,
                 WebAccountID = webAccountId
             };
+
+            m_WebSessionService?.Store(new WebSessionRecord
+            {
+                Token = token,
+                PrincipalID = principalID,
+                Name = name,
+                IsAdmin = isAdmin,
+                Expires = expires,
+                WebAccountID = webAccountId
+            });
+
             return token;
         }
 
@@ -4025,7 +4078,10 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             string token = ReadCookie(request, SessionCookieName);
             if (!string.IsNullOrEmpty(token))
+            {
                 m_sessions.TryRemove(token, out _);
+                m_WebSessionService?.Delete(token);
+            }
             ClearSessionCookie(response);
 
             WritePage(request, response, PageTitle("Delete Account"),
@@ -12463,6 +12519,24 @@ namespace OpenSim.Server.Handlers.WebInterface
             session.Name = target.FirstName + " " + target.LastName;
             session.IsAdmin = target.UserLevel >= 200;
 
+            // In-place mutation, not a new CreateSession call - the
+            // persisted copy needs the same update, or a Robust restart
+            // between now and this session's natural expiry would resurrect
+            // the pre-switch avatar identity from the stale DB row.
+            string switchToken = ReadCookie(request, SessionCookieName);
+            if (!string.IsNullOrEmpty(switchToken))
+            {
+                m_WebSessionService?.Store(new WebSessionRecord
+                {
+                    Token = switchToken,
+                    PrincipalID = session.PrincipalID,
+                    Name = session.Name,
+                    IsAdmin = session.IsAdmin,
+                    Expires = session.Expires,
+                    WebAccountID = session.WebAccountID
+                });
+            }
+
             m_WebAccountService.LogActivity(new WebActivityEntry
             {
                 WebAccountID = session.WebAccountID,
@@ -17035,7 +17109,10 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             string token = ReadCookie(request, SessionCookieName);
             if (!string.IsNullOrEmpty(token))
+            {
                 m_sessions.TryRemove(token, out _);
+                m_WebSessionService?.Delete(token);
+            }
 
             ClearSessionCookie(response);
             WritePage(request, response, PageTitle("Logged Out"),

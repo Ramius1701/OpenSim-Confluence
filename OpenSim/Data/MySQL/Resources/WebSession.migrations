@@ -1,0 +1,16 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `web_sessions` (
+	`Token` VARCHAR(36) NOT NULL,
+	`PrincipalID` VARCHAR(36) NOT NULL,
+	`Name` VARCHAR(255) NOT NULL,
+	`IsAdmin` TINYINT(1) NOT NULL DEFAULT 0,
+	`WebAccountID` VARCHAR(36) NOT NULL,
+	`Expires` DATETIME NOT NULL,
+	PRIMARY KEY (`Token`) USING BTREE,
+	KEY `Expires` (`Expires`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+COMMIT;

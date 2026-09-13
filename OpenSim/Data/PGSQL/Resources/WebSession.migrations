@@ -1,0 +1,16 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+	"Token" varchar(36) NOT NULL PRIMARY KEY,
+	"PrincipalID" varchar(36) NOT NULL,
+	"Name" varchar(255) NOT NULL,
+	"IsAdmin" boolean NOT NULL DEFAULT false,
+	"WebAccountID" varchar(36) NOT NULL,
+	"Expires" timestamp NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS web_sessions_expires ON web_sessions ("Expires");
+
+COMMIT;

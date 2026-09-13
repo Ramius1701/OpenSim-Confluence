@@ -716,3 +716,11 @@
     StorageProvider = "OpenSim.Data.MySQL.dll:MySqlStarterLookData"
 
     UserAccountService = "OpenSim.Services.UserAccountService.dll:UserAccountService"
+
+;; Lets a built-in WebUI login session survive a Robust restart instead
+;; of force-logging-out every open browser tab with no warning - see
+;; WebInterfaceServiceConnector.cs's GetSession/CreateSession comments.
+[WebSessionService]
+    LocalServiceModule = "OpenSim.Services.WebSessionService.dll:WebSessionService"
+    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlWebSessionData"
+    ;; ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
