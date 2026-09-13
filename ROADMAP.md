@@ -5,33 +5,6 @@ gap today. For what already exists, see `FEATURES.md`.
 
 ## In progress / being investigated
 
-- **`wolfvoice` reversal: back in scope, ConfluenceVoice wired in
-  (2026-09-13).** The 2026-09-09 exclusion below stood until the
-  operator explicitly asked to resume, this time with a concrete goal:
-  a Windows-native build to run as Confluence's own Vivox replacement.
-  wolfvoice itself turned out to build and run correctly on Windows —
-  its release CI skips Windows/macOS only because of an `opus`-crate
-  cmake/CMake-4 version knot (fixed upstream via
-  `CMAKE_POLICY_VERSION_MINIMUM=3.5`, submitted as
-  `intelligentwolf/wolfvoice#1`). Forked that fix to
-  `S:\Github\wolfvoice`, then built a separate, independently-versioned
-  project, **ConfluenceVoice** (`S:\Github\ConfluenceVoice`,
-  `github.com/Ramius1701/ConfluenceVoice`), carrying over wolfvoice's
-  protocol/mixer/session code unchanged and replacing only its
-  packaging: a `confluencevoice.toml` next to the exe instead of
-  environment variables and hardcoded `/etc` paths, so it runs like any
-  other Windows program. Verified end-to-end on this machine (`cargo
-  test`, and the `two_clients` harness: real SDP negotiation, real Opus
-  encode/decode, real per-listener spatial mixing, all passing).
-  Wired into this tree's already-built `os-webrtc-janus` addon via
-  `bin/config/os-webrtc-janus.ini` (`WebRtcVoiceServiceConnector`
-  pointed at ConfluenceVoice instead of `WebRtcJanusService`), tested
-  against the dev tree's Smoke Test Region — not yet deployed to live
-  Casperia. Outstanding before a real viewer test: `WebRtcVoiceServerURI`
-  needs a certificate .NET's HttpClient will actually trust (a
-  self-signed dev cert fails chain validation regardless of hostname
-  match); that's a system-trust decision left to the operator, not
-  automated here.
 - **Recurring "cloud" avatar on login/teleport - root cause not yet
   found (2026-09-13).** A resident reported getting stuck as a cloud
   after teleporting into Starbase Andromeda, resolved by the client's
@@ -432,6 +405,14 @@ Web & Admin UI section rather than here.)*
 
 ## Explicitly out of scope for now
 
+- **`wolfvoice` (`wolfsoftwaresystemsltd/wolfvoice`) — excluded by
+  direct operator decision (2026-09-09), not revisited.** Was under
+  evaluation as an alternative WebRTC voice backend for the
+  already-merged `os-webrtc-janus` addon (per-listener spatial audio
+  mixing without a separate Janus gateway). The operator said
+  explicitly to exclude it, mid-investigation, no reason given - stop
+  evaluating or recommending it; don't re-derive a reason or resume
+  unless asked.
 - **JPEG2000 texture decoder default: CSJ2K vs. OpenJPEG — benchmarked
   for real, keeping CSJ2K (2026-09-05).** WhiteCore-Dev's own timing
   comparison found their native OpenJPEG decoder considerably faster
