@@ -190,6 +190,11 @@ namespace OpenSim.Server.Handlers.WebInterface
         // stopped, or a Prim/Max Agents Pack's capacity clawed back).
         private int m_recurringGraceDays = 5;
         private string m_webConsoleSecret = string.Empty;
+        // Separate from m_webConsoleSecret on purpose - this authenticates
+        // the opposite direction (a region calling INTO Robust, for the
+        // in-world partnering OSSL functions) and shouldn't be coupled to
+        // the console secret's own rotation. See HandleInternalPartnerAction.
+        private string m_partnerActionSecret = string.Empty;
 
         private string m_gridName = "OpenSim Grid";
         private string m_gridNick = "OpenSim";
@@ -448,6 +453,14 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (webConsoleConfig != null)
                 m_webConsoleSecret = webConsoleConfig.GetString("SharedSecret", string.Empty);
 
+            // Empty/missing disables the feature entirely (same "no auth
+            // fallback" refusal as WebConsole's own secret) - a region's
+            // osProposePartnership/etc. calls simply fail closed until an
+            // operator sets this.
+            IConfig partnerServiceConfig = config.Configs["PartnerService"];
+            if (partnerServiceConfig != null)
+                m_partnerActionSecret = partnerServiceConfig.GetString("SharedSecret", string.Empty);
+
             // BasePath used to be "/web", one prefix registered once. Losing
             // that prefix (routes live at bare /search, /login, etc. now)
             // ran into a real constraint in BaseHttpServer.TryGetSimpleStreamHandler:
@@ -479,7 +492,11 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // Native DirectDelivery marketplace - browse/buy (public) and
                 // a merchant's own listing management (the edit_url
                 // destination DirectDeliveryModule's viewer cap points at).
-                "/marketplace"
+                "/marketplace",
+                // Server-to-server only (shared-secret gated, no WebSession) -
+                // currently just /internal/partner-action, the in-world
+                // partnering OSSL functions' entry point into Robust.
+                "/internal"
             };
             foreach (string route in topLevelRoutes)
             {
@@ -893,6 +910,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/partner":
                         HandlePartner(request, response);
+                        break;
+                    case BasePath + "/internal/partner-action":
+                        HandleInternalPartnerAction(request, response);
                         break;
                     case BasePath + "/change-password":
                         HandleChangePassword(request, response);
@@ -4337,6 +4357,97 @@ namespace OpenSim.Server.Handlers.WebInterface
                 default:
                     return string.Empty;
             }
+        }
+
+        // Server-to-server entry point into the same partner state machine
+        // HandlePartner/ApplyPartnerAction above already implement, for the
+        // in-world partnering OSSL functions (osProposePartnership etc.,
+        // OSSL_Api.cs) - the opposite direction from every other shared-
+        // secret call in this file (a region calling INTO Robust, not
+        // Robust calling out to a region), so it needs its own secret
+        // rather than reusing m_webConsoleSecret (see that field's own
+        // comment). No WebSession/browser cookie involved - callerId comes
+        // from the authenticated caller's own POST body, trusted only
+        // because the shared secret already establishes this is the
+        // region's own script-engine code, not an arbitrary HTTP client.
+        // "propose" is the only action needing a target - ApplyPartnerAction
+        // takes a "First Last" name string (it's shared with the web form),
+        // so this resolves the target's UUID to that name once here rather
+        // than changing that method's signature.
+        private void HandleInternalPartnerAction(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            OSDMap body;
+            try
+            {
+                body = (OSDMap)OSDParser.DeserializeJson(request.InputStream);
+            }
+            catch
+            {
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                response.RawBuffer = Encoding.UTF8.GetBytes("Malformed request body.");
+                return;
+            }
+
+            // Secret travels in the JSON body, not a header - this endpoint
+            // exists specifically so WebUtil.PostToService(url, OSDMap, ...)
+            // (already used region-side, e.g. OSSL_Api.cs's GridUserInfo)
+            // can call it directly with no new HTTP-client code needed.
+            if (string.IsNullOrEmpty(m_partnerActionSecret) || body["secret"].AsString() != m_partnerActionSecret)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                response.RawBuffer = Encoding.UTF8.GetBytes("Forbidden");
+                return;
+            }
+
+            if (m_UserProfilesService == null || m_UserAccountService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                response.RawBuffer = Encoding.UTF8.GetBytes("Profiles service is not available.");
+                return;
+            }
+
+            string action = body["action"].AsString();
+            if (!UUID.TryParse(body["callerId"].AsString(), out UUID callerId))
+            {
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                response.RawBuffer = Encoding.UTF8.GetBytes("Missing or invalid callerId.");
+                return;
+            }
+
+            // Read-only - not one of ApplyPartnerAction's own action cases
+            // (those all mutate state), handled separately here. callerId
+            // doubles as "the avatar being looked up" for this one action.
+            if (action == "get")
+            {
+                response.StatusCode = (int)HttpStatusCode.OK;
+                response.RawBuffer = Encoding.UTF8.GetBytes(GetProfilePartnerId(callerId).ToString());
+                return;
+            }
+
+            string targetName = string.Empty;
+            if (action == "propose")
+            {
+                if (!UUID.TryParse(body["targetId"].AsString(), out UUID targetId))
+                {
+                    response.StatusCode = (int)HttpStatusCode.BadRequest;
+                    response.RawBuffer = Encoding.UTF8.GetBytes("Missing or invalid targetId.");
+                    return;
+                }
+
+                UserAccount target = m_UserAccountService.GetUserAccount(UUID.Zero, targetId);
+                if (target == null)
+                {
+                    response.StatusCode = (int)HttpStatusCode.OK;
+                    response.RawBuffer = Encoding.UTF8.GetBytes("Target resident not found.");
+                    return;
+                }
+
+                targetName = target.Name;
+            }
+
+            string message = ApplyPartnerAction(callerId, action, targetName);
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.RawBuffer = Encoding.UTF8.GetBytes(string.IsNullOrEmpty(message) ? "Unknown action." : message);
         }
 
         // My Transactions - self-service counterpart to HandleAdminTransactions

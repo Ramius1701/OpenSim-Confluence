@@ -266,6 +266,36 @@ namespace OpenSim.Region.ScriptEngine.Shared.ScriptBase
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String osProposePartnership(LSL_Key proposer, LSL_Key target)
+        {
+            return m_OSSL_Functions.osProposePartnership(proposer, target);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String osRespondToPartnershipProposal(LSL_Key responder, LSL_Integer accept)
+        {
+            return m_OSSL_Functions.osRespondToPartnershipProposal(responder, accept);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String osCancelPartnershipProposal(LSL_Key caller)
+        {
+            return m_OSSL_Functions.osCancelPartnershipProposal(caller);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_String osEndPartnership(LSL_Key caller)
+        {
+            return m_OSSL_Functions.osEndPartnership(caller);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public LSL_Key osGetPartnerId(LSL_Key avatar)
+        {
+            return m_OSSL_Functions.osGetPartnerId(avatar);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void osSetParcelMusicURL(LSL_String url)
         {
             m_OSSL_Functions.osSetParcelMusicURL(url);

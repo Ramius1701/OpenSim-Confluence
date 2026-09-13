@@ -154,6 +154,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Interfaces
               void osRegionNotice(string msg);
         //ApiDesc Send a notice message to a given avatar in the region.
               void osRegionNotice(LSL_Key agentID, string msg);
+        //ApiDesc Propose an in-world partnership from one present avatar to another.
+        LSL_String osProposePartnership(LSL_Key proposer, LSL_Key target);
+        //ApiDesc Accept or decline a pending in-world partnership proposal.
+        LSL_String osRespondToPartnershipProposal(LSL_Key responder, LSL_Integer accept);
+        //ApiDesc Cancel your own outgoing in-world partnership proposal.
+        LSL_String osCancelPartnershipProposal(LSL_Key caller);
+        //ApiDesc End an existing in-world partnership.
+        LSL_String osEndPartnership(LSL_Key caller);
+        //ApiDesc Get an avatar's current partner, or NULL_KEY if unpartnered.
+        LSL_Key osGetPartnerId(LSL_Key avatar);
         //ApiDesc Execute a console command.
               bool osConsoleCommand(string Command);
         //ApiDesc Sets the current parcel music URL.

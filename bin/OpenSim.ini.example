@@ -1442,6 +1442,23 @@
     ;; relays a command to this region.
     SharedSecret = "*****"
 
+[PartnerService]
+    ;; Backs the in-world partnering OSSL functions (osProposePartnership,
+    ;; osRespondToPartnershipProposal, osCancelPartnershipProposal,
+    ;; osEndPartnership, osGetPartnerId) - a script calls these to let two
+    ;; present avatars propose/accept/end a partnership from inside the
+    ;; viewer, same underlying state machine as the web dashboard's own
+    ;; /partner page. Authenticates this region's calls into Robust's own
+    ;; WebInterfaceServiceConnector; generate a real per-deployment secret,
+    ;; not this placeholder, and it must match [PartnerService] SharedSecret
+    ;; in Robust.HG.ini exactly. Leave blank to disable the feature entirely
+    ;; (the OSSL functions fail closed, same as [WebConsole] above with no
+    ;; secret set). These functions also need enabling per-region via
+    ;; osslDefaultEnable.ini/osslEnable.ini's Allow_osProposePartnership
+    ;; etc. - like every other OSSL capability, they default to
+    ;; ESTATE_MANAGER,ESTATE_OWNER-only until an operator widens that.
+    SharedSecret = "*****"
+
 [Economy]
     ;; Confluence's native currency module - talks directly to the
     ;; [CurrencyService] connector below (see also [Modules] CurrencyService).

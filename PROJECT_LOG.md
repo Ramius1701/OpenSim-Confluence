@@ -23592,3 +23592,121 @@ changes live in the same commit, since they touch the same file and
 were found/fixed in one continuous pass: the currency-selection
 feature itself, the layout fix it exposed, and the shutdown-detection
 bug found while testing both.
+
+## In-world partnering via OSSL, live-verified with a real ceremony (2026-09-13)
+
+Sailor's Discord wishlist (relayed by the operator) asked for three
+things: in-world partnering, bigger group title limits, and more group
+roles. The latter two were investigated and closed as real dead ends -
+confirmed against `phoenix-firestorm` source, `role_name`/`role_title`
+are hard-capped at `max_length_bytes="20"` in the viewer's own XUI
+skin (`panel_group_roles.xml:608,630`) and `MAX_ROLES = 10` is a
+compiled C++ constant (`roles_constants.h:31`) - no server-side change
+can touch either without a custom viewer build. Partnering was the one
+genuinely buildable item.
+
+**Design, corrected twice by the operator before landing right.**
+First pass planned a chat command (`/partner propose <name>`,
+mirroring the existing private-channel pattern from
+`OpenSimWeather`/`TextBuild`) - rejected directly: "we wouldnt want
+anyone just saying the command to just anyone or everyone." Second
+pass planned the object's OWNER as the trust anchor (a ring
+individually given to and worn by each resident) - also corrected:
+"anyone can create a partnership prim. It takes the two avatars that
+want to be partnered to click the prim to make it actually work.
+Having the script as only the owner can do it make no sense does it."
+Landed on: any resident can rez a ring/altar object, and the OSSL
+functions trust whichever avatar keys the object's own script passes
+in (from real `llDetectedKey` touch events), never the object's
+`OwnerID` - verified each key names a real, currently-present avatar
+(`TryResolvePresentAvatar`) as a sanity check, but the actual safety
+property is downstream: proposing changes nothing except a pending
+flag until a second, independent "accept" call, same two-step
+consent `ApplyPartnerAction` already enforces for the web flow.
+
+**New OSSL functions** (`OSSL_Api.cs`/`IOSSL_Api.cs`/`OSSL_Stub.cs` -
+confirmed via grep that exactly these three files need touching per
+new function): `osProposePartnership(proposer, target)`,
+`osRespondToPartnershipProposal(responder, accept)`,
+`osCancelPartnershipProposal(caller)`, `osEndPartnership(caller)`,
+`osGetPartnerId(avatar)`. All route through a new `PostPartnerAction`
+helper using `WebUtil.PostToService` (already used elsewhere in this
+file, `GridUserInfo`) rather than hand-rolled `HttpClient` code.
+
+**New region-to-Robust connector - a real, confirmed gap.** An
+Explore pass found no working `IUserProfilesService` path from a
+region process in true grid mode - `LocalUserProfilesServicesConnector`
+never registers the interface for `RequestModuleInterface`, and the
+one same-process precedent (`ConfluenceSearchModule.cs`) only works
+co-located with the DB. New endpoint `/internal/partner-action` on
+`WebInterfaceServiceConnector.cs`, secret-gated via a new
+`[PartnerService] SharedSecret` (deliberately separate from
+`[WebConsole]`'s - opposite direction, region calling INTO Robust, not
+Robust calling out), calling the existing `ApplyPartnerAction`
+directly - the exact same logic the web `/partner` page already uses,
+so both paths share one state machine. `osGetPartnerId` also had to go
+through this same connector (via a new "get" action) rather than a
+direct `RequestModuleInterface<IUserProfilesService>()` call - that
+interface genuinely isn't reachable region-side, a mistake caught and
+fixed during implementation before it ever shipped.
+
+**Config**: `[PartnerService]` documented in both region and Robust
+`.ini.example` templates; `Allow_osProposePartnership` etc. added to
+`osslDefaultEnable.ini` at the conservative `ESTATE_MANAGER,ESTATE_OWNER`
+default every other OSSL function in this repo ships with - deliberately
+NOT opened up in the shipped template, since that's each grid
+operator's own choice per this repo's "grid owners choose what to
+enable" principle. Casperia's own live `osslDefaultEnable.ini` was
+separately widened to `true` for these five, since letting residents
+actually use this is the whole point of the deployment.
+
+**Two real bugs found and fixed during live deployment, not before:**
+1. `/internal/partner-action` returned HTTP 200 with an empty body on
+   the first deploy - looked like success, did nothing. Root cause:
+   this file's routing is two-layer - a `topLevelRoutes` string array
+   registers which first-path-segments even reach `HandleRequest`'s
+   `switch`, separate from the `switch` cases themselves. `/internal`
+   was never added to that array, so the new case was unreachable no
+   matter how correct it was. Fixed by adding `"/internal"` to
+   `topLevelRoutes`.
+2. First real in-world touch threw `MissingMethodException: Method
+   not found: 'LSLString ...IOSSL_Api.osProposePartnership(...)'` -
+   the interface/implementation/stub DLLs were freshly deployed to
+   Sandbox, but `OpenSim.Region.ScriptEngine.YEngine.dll` itself
+   (the actual script compiler/executor) was still from that morning's
+   build, predating this feature entirely. A full solution rebuild
+   doesn't mean every region has every changed DLL - redeployed the
+   complete ScriptEngine DLL set (Api, Api.Runtime, YEngine, Shared)
+   together this time.
+
+**Live-verified end to end on Sandbox**, with real residents (Ramius
+Easterwood, Jessica Starlight) running an actual ceremony script: one
+touch set the proposer, a second touch from a different avatar fired
+`osProposePartnership` then immediately `osRespondToPartnershipProposal`,
+confirmed via `osGetPartnerId` in the same script, then confirmed a
+second time in each resident's own native Firestorm profile panel
+after a short delay (their first attempts at "reopen"/"relog" showed
+stale data, but this turned out to be ordinary viewer-side timing/
+staleness, not a bug - the same JSON-RPC `avatar_properties_request`
+call that feeds the profile panel was independently confirmed correct
+via a direct curl test before the delay resolved on its own, and a DB
+check confirmed both sides' `profilePartner` were correctly, reciprocally
+set from the very first touch). Left the real partnership in place at
+the operator's request rather than reverting it as a test artifact.
+
+**Divorce and the "partner disappeared" case - both already covered,
+no new code.** The operator asked for a way to end things via the
+same ring, and separately asked what happens if a partner's account is
+gone. Both already work by design: `ApplyPartnerAction`'s breakup case
+(and therefore `osEndPartnership`) only ever needs the calling
+resident's own account - it clears the caller's own `profilePartner`
+unconditionally, and the second write (clearing the ex-partner's side)
+is a plain `UPDATE ... WHERE useruuid=?` that silently no-ops if that
+row no longer exists (`MySQLUserProfilesData.cs:931`), no exception,
+no dependency on the other party being present, online, or still
+having an account at all. The test ring script was extended so an
+already-partnered avatar touching it ALONE (checked via
+`osGetPartnerId`) triggers `osEndPartnership` immediately, instead of
+waiting for a second touch that was never required for this branch -
+purely an LSL change, no server-side code needed since the primitive
+already existed.

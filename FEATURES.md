@@ -74,7 +74,10 @@ alongside the existing support-ticket system.
   see), plus regions-owned, both privacy-aware.
 - Friends list, split into This Grid / Hypergrid, each showing what
   rights you've granted them.
-- A full partner proposal flow (propose/accept/decline/cancel/breakup).
+- A full partner proposal flow (propose/accept/decline/cancel/breakup),
+  reachable from the web dashboard AND in-world via OSSL functions any
+  scripted object can call (see "Scripting: LSL and OSSL" below) - the
+  same backend either way, no separate state to keep in sync.
 - Transaction history, classifieds/events management.
 - My Regions — estate-owner region management (OAR backup, restart,
   full estate settings/access-list editing) for any resident who owns
@@ -320,6 +323,20 @@ Treated as core, not an optional add-on:
 - `llIsExperienceTrusted`, `llGetExperiencePermissions`,
   `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats`.
 - `osPerlinNoise2D`.
+- In-world partnering: `osProposePartnership`, `osRespondToPartnershipProposal`,
+  `osCancelPartnershipProposal`, `osEndPartnership`, `osGetPartnerId` -
+  lets a scripted object (a ring, a chapel altar, anything a resident
+  builds) run a real propose/accept ceremony using each avatar's own
+  touch, rather than object ownership, as consent - any resident can
+  rez one and have it work for whichever two avatars actually click
+  it. Ending a partnership only ever needs the one caller, so it also
+  works when a partner is offline, on another region, or gone for
+  good. Same backend state as the web dashboard's own `/partner` page -
+  either path reflects instantly in the other. Threat level Moderate
+  (propose/respond) and Low (cancel/end/get), so like every other OSSL
+  capability here it's disabled for ordinary residents by default until
+  a grid operator widens `Allow_osProposePartnership` etc. on whichever
+  regions should host this kind of content.
 
 ### Combat2 scripting
 

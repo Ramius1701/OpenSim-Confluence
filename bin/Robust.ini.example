@@ -668,6 +668,16 @@
     UserAccountService = OpenSim.Services.UserAccountService.dll:UserAccountService
     AuthenticationServiceModule = "OpenSim.Services.AuthenticationService.dll:PasswordAuthenticationService"
 
+[PartnerService]
+    ;; Authenticates a region's own in-world partnering OSSL functions
+    ;; (osProposePartnership etc.) calling INTO WebInterfaceServiceConnector's
+    ;; /internal/partner-action endpoint - the reverse direction from
+    ;; [WebConsole] SharedSecret (Robust calling out to a region), so it's
+    ;; a separate secret on purpose. Must match [PartnerService]
+    ;; SharedSecret in every region's own OpenSim.ini exactly. Leave blank
+    ;; to disable the feature entirely.
+    SharedSecret = "*****"
+
 
 [BakedTextureService]
     LocalServiceModule = "OpenSim.Server.Handlers.dll:XBakes"

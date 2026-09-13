@@ -712,6 +712,129 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             dm.SendAlertToUser(sp.ControllingClient, msg + "\n", false);
         }
 
+        // In-world partnering - a ceremony/ring-style object's own script
+        // detects both avatars' real touches (llDetectedKey in touch_start)
+        // and passes those keys through here; these functions never trust
+        // an object's OwnerID as identity, since the whole point (per the
+        // operator's own design correction) is that ANY resident can rez
+        // one of these and have it work for whichever two avatars actually
+        // click it - not just the object's owner. The one thing this layer
+        // can still verify cheaply is that each key names a real, currently
+        // -present avatar (TryGetScenePresence below) rather than an
+        // arbitrary string - a script can only ever have gotten a real
+        // avatar's key from a real touch/sensor event in the first place,
+        // so this is a sanity check, not the actual trust boundary. The
+        // real safety property is downstream: "propose" alone changes
+        // nothing except a pending flag on the TARGET's own account - no
+        // partnership is finalized without a second, independent
+        // "respond(accept)" call, exactly mirroring the existing two-step
+        // web flow (ApplyPartnerAction, WebInterfaceServiceConnector.cs).
+        // Moderate threat level (not Low) because, unlike most avatar-self
+        // functions in this file, these can change ANOTHER avatar's pending
+        // -proposal state, not just the calling script's own - a grid
+        // operator opts a region into this deliberately via osslDefaultEnable.ini,
+        // same as any other Moderate-and-above OSSL capability.
+        private string PostPartnerAction(string action, UUID callerId, UUID targetId)
+        {
+            IConfigSource config = m_ScriptEngine.ConfigSource;
+
+            string secret = config.Configs["PartnerService"]?.GetString("SharedSecret", string.Empty);
+            if (string.IsNullOrEmpty(secret))
+                return "Partnering is not configured on this grid.";
+
+            string gridInfoUri = config.Configs["GridInfo"]?.GetString("GridInfoURI", string.Empty);
+            if (string.IsNullOrEmpty(gridInfoUri))
+                return "Grid info service is not configured.";
+
+            OSDMap data = new OSDMap
+            {
+                ["secret"] = secret,
+                ["action"] = action,
+                ["callerId"] = callerId.ToString()
+            };
+            if (targetId != UUID.Zero)
+                data["targetId"] = targetId.ToString();
+
+            try
+            {
+                OSDMap result = WebUtil.PostToService(gridInfoUri.TrimEnd('/') + "/internal/partner-action", data, 8000, false);
+                string raw = result["_RawResult"].AsString();
+                return string.IsNullOrEmpty(raw) ? "No response from the partnering service." : raw;
+            }
+            catch (Exception e)
+            {
+                m_log.Warn("[OSSL PARTNER]: Could not reach the partnering service", e);
+                return "Could not reach the partnering service.";
+            }
+        }
+
+        private bool TryResolvePresentAvatar(LSL_Key key, out UUID avatarId)
+        {
+            if (!UUID.TryParse(key, out avatarId))
+                return false;
+
+            return World.TryGetScenePresence(avatarId, out ScenePresence sp)
+                    && sp is not null && !sp.IsChildAgent && !sp.IsDeleted && !sp.IsNPC;
+        }
+
+        public LSL_String osProposePartnership(LSL_Key proposer, LSL_Key target)
+        {
+            CheckThreatLevel(ThreatLevel.Moderate, "osProposePartnership");
+
+            if (!TryResolvePresentAvatar(proposer, out UUID proposerId))
+                return "Proposer is not a real, present avatar.";
+            if (!TryResolvePresentAvatar(target, out UUID targetId))
+                return "Target is not a real, present avatar.";
+
+            return PostPartnerAction("propose", proposerId, targetId);
+        }
+
+        public LSL_String osRespondToPartnershipProposal(LSL_Key responder, LSL_Integer accept)
+        {
+            CheckThreatLevel(ThreatLevel.Moderate, "osRespondToPartnershipProposal");
+
+            if (!TryResolvePresentAvatar(responder, out UUID responderId))
+                return "Responder is not a real, present avatar.";
+
+            return PostPartnerAction(accept != 0 ? "accept" : "decline", responderId, UUID.Zero);
+        }
+
+        public LSL_String osCancelPartnershipProposal(LSL_Key caller)
+        {
+            CheckThreatLevel(ThreatLevel.Low, "osCancelPartnershipProposal");
+
+            if (!TryResolvePresentAvatar(caller, out UUID callerId))
+                return "Caller is not a real, present avatar.";
+
+            return PostPartnerAction("cancel", callerId, UUID.Zero);
+        }
+
+        public LSL_String osEndPartnership(LSL_Key caller)
+        {
+            CheckThreatLevel(ThreatLevel.Low, "osEndPartnership");
+
+            if (!TryResolvePresentAvatar(caller, out UUID callerId))
+                return "Caller is not a real, present avatar.";
+
+            return PostPartnerAction("breakup", callerId, UUID.Zero);
+        }
+
+        public LSL_Key osGetPartnerId(LSL_Key avatar)
+        {
+            CheckThreatLevel(ThreatLevel.None, "osGetPartnerId");
+
+            // Region-side code has no working IUserProfilesService module
+            // interface (LocalUserProfilesServicesConnector never registers
+            // one for RequestModuleInterface - Robust-only in practice), so
+            // this goes through the same HTTP connector as every other
+            // partner action rather than a direct in-process call.
+            if (!UUID.TryParse(avatar, out UUID avatarId))
+                return UUID.Zero.ToString();
+
+            string result = PostPartnerAction("get", avatarId, UUID.Zero);
+            return UUID.TryParse(result, out UUID partnerId) ? partnerId.ToString() : UUID.Zero.ToString();
+        }
+
         public void osSetRot(LSL_Key target, LSL_Rotation rotation)
         {
             // if enabled It can be used to destroy
