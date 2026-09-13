@@ -977,11 +977,13 @@ namespace OpenSim.Region.CoreModules.World.LegacyMap
                 (part.Shape.SculptType & 0x07) != (byte)SculptType.None;
         }
 
+        // Real avatars only - see the matching fix/note on Scene.cs's own
+        // AnyRootAgentsInInstance for why NPCs must be excluded here too.
         private static bool AnyRootAgentsInInstance()
         {
             foreach (Scene scene in SceneManager.Instance.Scenes)
             {
-                if (scene != null && scene.GetRootAgentCount() > 0)
+                if (scene != null && scene.GetRootAgentCount() - scene.GetRootNPCCount() > 0)
                     return true;
             }
 

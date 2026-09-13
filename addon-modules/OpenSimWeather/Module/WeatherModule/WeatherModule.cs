@@ -26,6 +26,7 @@
  */
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
@@ -79,16 +80,24 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             public float CloudScrollY;
             public Vector4 Horizon;
             public Vector4 BlueDensity;
-            public Vector4 Ambient;
-            public Vector4 SunMoonColor;
+            // Multipliers applied to the CURRENT environment's own values,
+            // not absolute replacements - real weather darkens/brightens
+            // whatever daylight already exists, it doesn't replace day with
+            // night or erase the admin's own tuned look and the region's
+            // real day/night cycle. Cloud*/Horizon/BlueDensity/Haze*/
+            // Density/DistanceMultiplier/SunGlow* stay absolute below since
+            // those genuinely ARE what the weather is, not a brightness
+            // question. StarBrightness is deliberately left out entirely -
+            // weather never touches it, so night stars are never erased.
+            public float AmbientMultiplier = 1f;
+            public float SunMoonColorMultiplier = 1f;
+            public float SceneGammaMultiplier = 1f;
             public float HazeHorizon;
             public float HazeDensity;
             public float DensityMultiplier;
             public float DistanceMultiplier;
             public float SunGlowFocus;
             public float SunGlowSize;
-            public float SceneGamma;
-            public float StarBrightness;
             public bool DrawClassicClouds = true;
             public bool CloudScrollXLock;
             public bool CloudScrollYLock;
@@ -218,6 +227,18 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private bool m_thunderEnabled;
         private UUID m_thunderSound = UUID.Zero;
         private float m_thunderVolume;
+
+        // Safety net for lightning flashes: each flash's own delete is scheduled via
+        // Util.FireAndForget(..., dotimeout: false), which is exempt from the thread-pool
+        // watchdog's usual timeout recovery. If that delete thread ever fails to run (or the
+        // scene it targets is gone), the flash would otherwise sit rezzed forever. This
+        // dictionary tracks every currently-rezzed flash so a periodic sweep can force-remove
+        // any that outlive their expected ~1 second lifetime.
+        private readonly ConcurrentDictionary<UUID, DateTime> m_activeLightningFlashes = new ConcurrentDictionary<UUID, DateTime>();
+        private static readonly TimeSpan LightningStuckAge = TimeSpan.FromSeconds(5);
+        private const int LightningSweepIntervalMS = 3000;
+        private Timer m_lightningSweepTimer;
+        private int m_lightningSweepBusy;
 
         // Aurora is deliberately independent of the WeatherKind cycle - a real
         // aurora can happen on a clear night regardless of rain/snow/storm
@@ -355,7 +376,11 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             m_wanderingRefreshSeconds = Clamp(config.GetInt("WanderingRefreshSeconds", 20), 2, 3600);
             m_wanderingChurnFraction = Clamp(config.GetFloat("WanderingChurnFraction", 0.25f), 0.02f, 1f);
             m_emitterRadiusScale = Clamp(config.GetFloat("EmitterRadiusScale", 0.62f), 0.1f, 1.25f);
-            m_emitterHeight = Clamp(config.GetFloat("EmitterHeight", 18f), 4f, 4096f);
+            // Meters above TerrainFloor (max of water height and local
+            // ground - see TerrainFloor), not meters above local dirt.
+            // Raised from 18f so weather clears real multi-story buildings
+            // sim-wide instead of only clearing bare terrain.
+            m_emitterHeight = Clamp(config.GetFloat("EmitterHeight", 80f), 4f, 4096f);
             m_intensity = Clamp(config.GetFloat("Intensity", 1f), 0.1f, 20f);
             m_rainTexture = ReadTexture(config, "RainTexture", Util.BLANK_TEXTURE_UUID);
             m_stormTexture = ReadTexture(config, "StormTexture", m_rainTexture);
@@ -554,6 +579,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             StopWanderingRefresh();
             StopSurfaceTimer();
             StopAuroraTimer();
+            StopLightningSweepTimer();
             RemoveAuroraEmitters();
 
             Scene activeScene = m_scene;
@@ -612,6 +638,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             StartAutoCycle();
             StartSurfaceTimer();
             StartAuroraTimer();
+            StartLightningSweepTimer();
         }
 
         public void Close()
@@ -621,6 +648,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             StopWanderingRefresh();
             StopSurfaceTimer();
             StopAuroraTimer();
+            StopLightningSweepTimer();
             RemoveAuroraEmitters();
 
             lock (m_weatherChangeSync)
@@ -843,10 +871,9 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             {
                 for (int y = 0; y < countY; y++)
                 {
-                    float posX = JitteredCellPosition(x, spacingX, sizeX);
-                    float posY = JitteredCellPosition(y, spacingY, sizeY);
-                    float ground = scene.GetGroundHeight(posX, posY);
-                    Vector3 position = new Vector3(posX, posY, ground + JitterHeight());
+                    float posX = JitteredCellPosition(x, countX, spacingX, sizeX);
+                    float posY = JitteredCellPosition(y, countY, spacingY, sizeY);
+                    Vector3 position = new Vector3(posX, posY, EmitterBaseHeight(posX, posY));
                     float openSky = GetOpenSkyFraction(posX, posY, spacingX * 0.45f, spacingY * 0.45f, position.Z);
                     if (openSky < m_minOpenSkyFraction)
                         continue;
@@ -990,7 +1017,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 Vector3 avatarPosition = sp.AbsolutePosition;
                 float avatarGround = scene.GetGroundHeight(avatarPosition.X, avatarPosition.Y);
                 if (m_suppressAroundCoveredAvatars
-                    && IsCoveredFromSky(avatarPosition.X, avatarPosition.Y, avatarGround, Math.Max(avatarPosition.Z, avatarGround + m_emitterHeight)))
+                    && IsCoveredFromSky(avatarPosition.X, avatarPosition.Y, avatarGround, Math.Max(avatarPosition.Z, TerrainFloor(avatarPosition.X, avatarPosition.Y) + m_emitterHeight)))
                     return;
 
                 int minCellX = Math.Max(0, (int)Math.Floor((avatarPosition.X - m_activeAreaRadiusMeters) / spacing));
@@ -1044,8 +1071,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 DecodeCellKey(key, out int cellX, out int cellY);
                 float posX = Math.Min(sizeX - 1f, (cellX + 0.5f) * spacing);
                 float posY = Math.Min(sizeY - 1f, (cellY + 0.5f) * spacing);
-                float ground = scene.GetGroundHeight(posX, posY);
-                Vector3 position = new Vector3(posX, posY, ground + JitterHeight());
+                Vector3 position = new Vector3(posX, posY, EmitterBaseHeight(posX, posY));
                 float openSky = GetOpenSkyFraction(posX, posY, spacing * 0.45f, spacing * 0.45f, position.Z);
                 if (openSky < m_minOpenSkyFraction)
                     continue;
@@ -1161,8 +1187,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 {
                     float posX = RandomRange(1f, sizeX - 1f);
                     float posY = RandomRange(1f, sizeY - 1f);
-                    float ground = scene.GetGroundHeight(posX, posY);
-                    Vector3 position = new Vector3(posX, posY, ground + JitterHeight());
+                    Vector3 position = new Vector3(posX, posY, EmitterBaseHeight(posX, posY));
                     float openSky = GetOpenSkyFraction(posX, posY, probeHalfExtent, probeHalfExtent, position.Z);
                     if (openSky < m_minOpenSkyFraction)
                         continue;
@@ -1580,7 +1605,14 @@ namespace OpenSim.Region.OptionalModules.World.Weather
         private SceneObjectGroup CreateEmitter(UUID ownerId, WeatherKind weather, Vector3 position, float radius)
         {
             PrimitiveBaseShape shape = PrimitiveBaseShape.CreateSphere();
-            shape.Scale = new Vector3(0.1f, 0.1f, 0.1f);
+            // Was 0.1m - some viewers apply aggressive LOD/impostor simplification
+            // to objects that tiny, which can suppress correct particle-system
+            // rendering even though the particle data itself is fine (confirmed
+            // via reflection against the real compiled method, byte-identical to
+            // a working hand-built llParticleSystem() call using the same
+            // texture). 1.5m keeps a comfortable margin above any such threshold
+            // while still being invisible (alpha=0 own texture).
+            shape.Scale = new Vector3(1.5f, 1.5f, 1.5f);
             Primitive.TextureEntry textures = shape.Textures;
             textures.DefaultTexture.RGBA = new Color4(1f, 1f, 1f, 0f);
             shape.Textures = textures;
@@ -1628,17 +1660,23 @@ namespace OpenSim.Region.OptionalModules.World.Weather
 
                 particles.PartStartColor = new Color4(1f, 1f, 1f, blizzard ? 0.88f : 0.78f);
                 particles.PartEndColor = new Color4(0.95f, 0.98f, 1f, blizzard ? 0.14f : 0.08f);
-                particles.PartStartScaleX = blizzard ? 0.16f : 0.12f;
-                particles.PartStartScaleY = blizzard ? 0.16f : 0.12f;
-                particles.PartEndScaleX = blizzard ? 0.3f : 0.24f;
-                particles.PartEndScaleY = blizzard ? 0.3f : 0.24f;
+                particles.PartStartScaleX = blizzard ? 0.4f : 0.3f;
+                particles.PartStartScaleY = blizzard ? 0.4f : 0.3f;
+                particles.PartEndScaleX = blizzard ? 0.65f : 0.5f;
+                particles.PartEndScaleY = blizzard ? 0.65f : 0.5f;
                 particles.BurstSpeedMin = blizzard ? 0.35f : 0.05f;
                 particles.BurstSpeedMax = blizzard ? 1.4f : 0.22f;
                 particles.BurstRate = (blizzard ? RandomRange(0.03f, 0.055f) : RandomRange(0.045f, 0.085f)) * emitterVariance;
-                particles.PartMaxAge = blizzard ? 5.5f : 12.0f;
+                // PartMaxAge/AccelZ chosen together so a particle actually
+                // completes the fall from EmitterHeight (default 80m) before
+                // expiring: fallDistance ~= 0.5*|AccelZ|*PartMaxAge^2. Blizzard
+                // previously covered only ~13m over its own old 5.5s/-0.85
+                // values - short of even the old 18m default, a real
+                // pre-existing bug independent of this height rework.
+                particles.PartMaxAge = blizzard ? 9.2f : 15.0f;
                 particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.2f * snowIntensity * densityVariance), 1, blizzard ? 16 : 5);
                 Vector2 snowWind = WeatherWindVector(weather, driftVariance);
-                particles.PartAcceleration = new Vector3(snowWind.X, snowWind.Y, blizzard ? -0.85f : -0.55f);
+                particles.PartAcceleration = new Vector3(snowWind.X, snowWind.Y, blizzard ? -2.0f : -0.75f);
                 return particles;
             }
 
@@ -1658,10 +1696,13 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             particles.BurstSpeedMin = storm ? 0.65f : 0.38f;
             particles.BurstSpeedMax = storm ? 2.2f : 1.45f;
             particles.BurstRate = (storm ? RandomRange(0.024f, 0.045f) : RandomRange(0.032f, 0.06f)) * emitterVariance;
-            particles.PartMaxAge = storm ? 1.9f : 2.35f;
+            // See the snow/blizzard block above for the fall-distance formula
+            // this pair is solved against - same ~85m target from the new
+            // EmitterHeight default.
+            particles.PartMaxAge = storm ? 2.8f : 3.3f;
             particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.4f * rainIntensity * densityVariance), 1, storm ? 50 : 36);
             Vector2 rainWind = WeatherWindVector(weather, driftVariance);
-            particles.PartAcceleration = new Vector3(rainWind.X, rainWind.Y, storm ? -18f : -12f);
+            particles.PartAcceleration = new Vector3(rainWind.X, rainWind.Y, storm ? -22f : -16f);
 
             return particles;
         }
@@ -1713,16 +1754,56 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             }
         }
 
-        private float JitteredCellPosition(int cell, float spacing, int regionSize)
+        // The outermost row/column on each axis is biased from a full
+        // half-spacing inset (spacing*0.5, symmetric with every interior
+        // cell) down to a quarter-spacing inset - interior cells stay
+        // evenly spaced, but the two edge cells sit closer to the true
+        // region boundary. Confirmed live: at the old uniform half-spacing
+        // inset, a real uncovered strip was visible along region edges,
+        // worse on larger (2x2/3x3/4x4) regions where MaxEmitters forces
+        // wider spacing and the inset grows proportionally.
+        private float JitteredCellPosition(int cell, int count, float spacing, int regionSize)
         {
-            double jitter = (RandomUnit() - 0.5d) * spacing * 0.78d;
-            float position = (float)(spacing * (cell + 0.5d) + jitter);
+            double center = spacing * (cell + 0.5d);
+            if (count > 1 && (cell == 0 || cell == count - 1))
+                center = cell == 0 ? spacing * 0.25d : regionSize - spacing * 0.25d;
+
+            double jitter = (RandomUnit() - 0.5d) * spacing * 0.5d;
+            float position = (float)(center + jitter);
             return Clamp(position, 1f, regionSize - 1f);
         }
 
         private float JitterHeight()
         {
-            return m_emitterHeight + (float)((RandomUnit() - 0.5d) * m_emitterHeight * 0.35d);
+            // Was +/-35% - that much variance fought the whole point of a
+            // sim-wide-consistent height once EmitterHeight became a large
+            // absolute offset (~80m) instead of a small "how far above local
+            // dirt" jitter target. +/-10% still avoids a perfectly robotic
+            // look without meaningfully reopening the "too low near tall
+            // buildings" problem this height rework exists to fix.
+            return m_emitterHeight + (float)((RandomUnit() - 0.5d) * m_emitterHeight * 0.1d);
+        }
+
+        // Floored at water height (so deep water never leaves an emitter at/
+        // under the surface) and otherwise following terrain where terrain
+        // rises above water (hills/mountains), so a building on a hilltop
+        // can't defeat a flat water-relative ceiling.
+        private float TerrainFloor(float x, float y)
+        {
+            Scene scene = m_scene;
+            if (scene == null)
+                return 0f;
+
+            float waterHeight = (float)scene.RegionInfo.RegionSettings.WaterHeight;
+            return Math.Max(waterHeight, scene.GetGroundHeight(x, y));
+        }
+
+        // Sim-wide-consistent emitter altitude. EmitterHeight is meters
+        // above TerrainFloor, not meters above local dirt - see
+        // JitterHeight's own note.
+        private float EmitterBaseHeight(float x, float y)
+        {
+            return TerrainFloor(x, y) + JitterHeight();
         }
 
         private float RandomRange(float min, float max)
@@ -1882,10 +1963,11 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 }
 
                 float ground = scene.GetGroundHeight(x, y);
+                float floorZ = TerrainFloor(x, y);
                 // Flash center belongs well above ground (like a real bolt hanging
                 // in the sky), not at ground level - matches original behavior.
-                fallback = new Vector3(x, y, ground + m_emitterHeight + RandomRange(5f, 13f));
-                if (!IsCoveredFromSky(x, y, ground, ground + m_emitterHeight))
+                fallback = new Vector3(x, y, floorZ + m_emitterHeight + RandomRange(5f, 13f));
+                if (!IsCoveredFromSky(x, y, ground, floorZ + m_emitterHeight))
                     return fallback;
             }
 
@@ -1923,6 +2005,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             flash.RootPart.SendFullUpdateToAllClients();
             flash.ScheduleGroupForUpdate(PrimUpdateFlags.FullUpdate);
 
+            m_activeLightningFlashes[flash.UUID] = DateTime.UtcNow;
+
             Util.FireAndForget(
                 o =>
                 {
@@ -1936,6 +2020,9 @@ namespace OpenSim.Region.OptionalModules.World.Weather
 
         private void DeleteLightningFlash(SceneObjectGroup flash)
         {
+            if (flash != null)
+                m_activeLightningFlashes.TryRemove(flash.UUID, out _);
+
             if (m_scene == null || flash == null || flash.IsDeleted)
                 return;
 
@@ -1946,6 +2033,63 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             catch (Exception e)
             {
                 m_log.DebugFormat("[WEATHER]: Failed to delete lightning flash {0}: {1}", flash.UUID, e.Message);
+            }
+        }
+
+        private void StartLightningSweepTimer()
+        {
+            StopLightningSweepTimer();
+            m_lightningSweepTimer = new Timer(LightningSweepTimerElapsed, null, LightningSweepIntervalMS, LightningSweepIntervalMS);
+        }
+
+        private void StopLightningSweepTimer()
+        {
+            Timer timer = Interlocked.Exchange(ref m_lightningSweepTimer, null);
+            if (timer != null)
+                timer.Dispose();
+        }
+
+        private void LightningSweepTimerElapsed(object state)
+        {
+            if (Interlocked.Exchange(ref m_lightningSweepBusy, 1) != 0)
+                return;
+
+            try
+            {
+                Scene scene = m_scene;
+                if (scene == null || m_activeLightningFlashes.IsEmpty)
+                    return;
+
+                DateTime cutoff = DateTime.UtcNow - LightningStuckAge;
+                foreach (KeyValuePair<UUID, DateTime> entry in m_activeLightningFlashes)
+                {
+                    if (entry.Value > cutoff)
+                        continue;
+
+                    if (!m_activeLightningFlashes.TryRemove(entry.Key, out _))
+                        continue;
+
+                    SceneObjectGroup stuck = scene.GetSceneObjectGroup(entry.Key);
+                    if (stuck == null || stuck.IsDeleted)
+                        continue;
+
+                    m_log.WarnFormat(
+                        "[WEATHER]: Force-removing stuck lightning flash {0} in {1} (exceeded {2}s expected lifetime).",
+                        entry.Key, scene.RegionInfo.RegionName, LightningStuckAge.TotalSeconds);
+
+                    try
+                    {
+                        scene.DeleteSceneObject(stuck, false, false);
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.DebugFormat("[WEATHER]: Failed to force-remove stuck lightning flash {0}: {1}", entry.Key, e.Message);
+                    }
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref m_lightningSweepBusy, 0);
             }
         }
 
@@ -1973,8 +2117,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
 
         private void LoadEnvironmentProfiles(IConfigSource source)
         {
-            m_environmentProfiles[WeatherKind.Sunny] = LoadEnvironmentProfile(
-                source.Configs["Weather.Environment.Sunny"], CreateDefaultEnvironmentProfile(WeatherKind.Sunny));
+            // No Sunny entry - see CreateDefaultEnvironmentProfile's note;
+            // Sunny now behaves like Clear (no environment override at all).
             m_environmentProfiles[WeatherKind.Rain] = LoadEnvironmentProfile(
                 source.Configs["Weather.Environment.Rain"], CreateDefaultEnvironmentProfile(WeatherKind.Rain));
             m_environmentProfiles[WeatherKind.Storm] = LoadEnvironmentProfile(
@@ -2000,53 +2144,31 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             profile.CloudScrollY = config.GetFloat("CloudScrollY", profile.CloudScrollY);
             profile.Horizon = ReadVector4(config, "Horizon", profile.Horizon);
             profile.BlueDensity = ReadVector4(config, "BlueDensity", profile.BlueDensity);
-            profile.Ambient = ReadVector4(config, "Ambient", profile.Ambient);
-            profile.SunMoonColor = ReadVector4(config, "SunMoonColor", profile.SunMoonColor);
+            profile.AmbientMultiplier = Math.Max(0f, config.GetFloat("AmbientMultiplier", profile.AmbientMultiplier));
+            profile.SunMoonColorMultiplier = Math.Max(0f, config.GetFloat("SunMoonColorMultiplier", profile.SunMoonColorMultiplier));
             profile.HazeHorizon = Math.Max(0f, config.GetFloat("HazeHorizon", profile.HazeHorizon));
             profile.HazeDensity = Math.Max(0f, config.GetFloat("HazeDensity", profile.HazeDensity));
             profile.DensityMultiplier = Math.Max(0f, config.GetFloat("DensityMultiplier", profile.DensityMultiplier));
             profile.DistanceMultiplier = Math.Max(0f, config.GetFloat("DistanceMultiplier", profile.DistanceMultiplier));
             profile.SunGlowFocus = config.GetFloat("SunGlowFocus", profile.SunGlowFocus);
             profile.SunGlowSize = Math.Max(0f, config.GetFloat("SunGlowSize", profile.SunGlowSize));
-            profile.SceneGamma = Math.Max(0.01f, config.GetFloat("SceneGamma", profile.SceneGamma));
-            profile.StarBrightness = Math.Max(0f, config.GetFloat("StarBrightness", profile.StarBrightness));
+            profile.SceneGammaMultiplier = Math.Max(0.01f, config.GetFloat("SceneGammaMultiplier", profile.SceneGammaMultiplier));
             profile.DrawClassicClouds = config.GetBoolean("DrawClassicClouds", profile.DrawClassicClouds);
             profile.CloudScrollXLock = config.GetBoolean("CloudScrollXLock", profile.CloudScrollXLock);
             profile.CloudScrollYLock = config.GetBoolean("CloudScrollYLock", profile.CloudScrollYLock);
             return profile;
         }
 
+        // No WeatherKind.Sunny branch: "Sunny" was a separate hardcoded
+        // bright-daytime override, which is redundant with Clear (which
+        // already restores the real, saved environment - correct on its
+        // own during the day, and the only correct choice at night, which
+        // a hardcoded "sunny" look can never be). Sunny is no longer
+        // registered in m_environmentProfiles at all, so it now behaves
+        // exactly like Clear for environment purposes (see ApplyClouds's
+        // early-return on a missing profile).
         private static EnvironmentProfile CreateDefaultEnvironmentProfile(WeatherKind weather)
         {
-            if (weather == WeatherKind.Sunny)
-            {
-                return new EnvironmentProfile
-                {
-                    CloudCoverage = 0.05f,
-                    CloudScale = 0.28f,
-                    CloudColor = new Vector4(1.0f, 0.98f, 0.9f, 1f),
-                    CloudXYDensity = new Vector3(0.38f, 0.18f, 0.28f),
-                    CloudDetailXYDensity = new Vector3(0.34f, 0.16f, 0.04f),
-                    CloudScrollX = 0.06f,
-                    CloudScrollY = 0.012f,
-                    Horizon = new Vector4(0.58f, 0.72f, 0.95f, 1f),
-                    BlueDensity = new Vector4(0.16f, 0.32f, 0.68f, 1f),
-                    // ViewerEnvironment.FromLightShare multiplies legacy ambient by
-                    // 3x when converting to EEP, so this value is 1/3 of the
-                    // intended final brightness (targets ~0.45,0.45,0.39 rendered).
-                    Ambient = new Vector4(0.15f, 0.15f, 0.13f, 1f),
-                    SunMoonColor = new Vector4(1.0f, 0.88f, 0.52f, 1f),
-                    HazeHorizon = 0.15f,
-                    HazeDensity = 0.55f,
-                    DensityMultiplier = 0.16f,
-                    DistanceMultiplier = 0.95f,
-                    SunGlowFocus = 0.14f,
-                    SunGlowSize = 1.6f,
-                    SceneGamma = 1.0f,
-                    StarBrightness = 0f,
-                };
-            }
-
             if (weather == WeatherKind.Storm)
             {
                 return new EnvironmentProfile
@@ -2060,16 +2182,15 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     CloudScrollY = 0.1f,
                     Horizon = new Vector4(0.08f, 0.09f, 0.11f, 1f),
                     BlueDensity = new Vector4(0.04f, 0.055f, 0.08f, 1f),
-                    Ambient = new Vector4(0.08f, 0.085f, 0.095f, 1f),
-                    SunMoonColor = new Vector4(0.12f, 0.13f, 0.15f, 1f),
+                    AmbientMultiplier = 0.55f,
+                    SunMoonColorMultiplier = 0.5f,
                     HazeHorizon = 0.45f,
                     HazeDensity = 0.78f,
                     DensityMultiplier = 0.32f,
                     DistanceMultiplier = 0.8f,
                     SunGlowFocus = 0.05f,
                     SunGlowSize = 1.2f,
-                    SceneGamma = 0.8f,
-                    StarBrightness = 0.02f,
+                    SceneGammaMultiplier = 0.8f,
                 };
             }
 
@@ -2086,16 +2207,15 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     CloudScrollY = 0.035f,
                     Horizon = new Vector4(0.26f, 0.28f, 0.32f, 1f),
                     BlueDensity = new Vector4(0.13f, 0.15f, 0.2f, 1f),
-                    Ambient = new Vector4(0.22f, 0.23f, 0.25f, 1f),
-                    SunMoonColor = new Vector4(0.3f, 0.31f, 0.34f, 1f),
+                    AmbientMultiplier = 0.75f,
+                    SunMoonColorMultiplier = 0.75f,
                     HazeHorizon = 0.36f,
                     HazeDensity = 0.6f,
                     DensityMultiplier = 0.24f,
                     DistanceMultiplier = 0.95f,
                     SunGlowFocus = 0.1f,
                     SunGlowSize = 1.6f,
-                    SceneGamma = 0.92f,
-                    StarBrightness = 0.02f,
+                    SceneGammaMultiplier = 0.92f,
                 };
             }
 
@@ -2112,19 +2232,20 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     CloudScrollY = 0.12f,
                     Horizon = new Vector4(0.22f, 0.23f, 0.26f, 1f),
                     BlueDensity = new Vector4(0.1f, 0.12f, 0.16f, 1f),
-                    Ambient = new Vector4(0.17f, 0.18f, 0.2f, 1f),
-                    SunMoonColor = new Vector4(0.22f, 0.23f, 0.26f, 1f),
+                    AmbientMultiplier = 0.55f,
+                    SunMoonColorMultiplier = 0.55f,
                     HazeHorizon = 0.5f,
                     HazeDensity = 0.85f,
                     DensityMultiplier = 0.34f,
                     DistanceMultiplier = 0.7f,
                     SunGlowFocus = 0.05f,
                     SunGlowSize = 1.2f,
-                    SceneGamma = 0.85f,
-                    StarBrightness = 0.01f,
+                    SceneGammaMultiplier = 0.85f,
                 };
             }
 
+            // Rain (the only remaining fall-through case now that Sunny is
+            // gone and Clear never reaches this function at all).
             return new EnvironmentProfile
             {
                 CloudCoverage = 0.75f,
@@ -2136,16 +2257,15 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 CloudScrollY = 0.05f,
                 Horizon = new Vector4(0.15f, 0.17f, 0.2f, 1f),
                 BlueDensity = new Vector4(0.07f, 0.09f, 0.13f, 1f),
-                Ambient = new Vector4(0.14f, 0.15f, 0.17f, 1f),
-                SunMoonColor = new Vector4(0.2f, 0.21f, 0.24f, 1f),
+                AmbientMultiplier = 0.85f,
+                SunMoonColorMultiplier = 0.85f,
                 HazeHorizon = 0.4f,
                 HazeDensity = 0.62f,
                 DensityMultiplier = 0.28f,
                 DistanceMultiplier = 0.9f,
                 SunGlowFocus = 0.08f,
                 SunGlowSize = 1.4f,
-                SceneGamma = 0.88f,
-                StarBrightness = 0.03f,
+                SceneGammaMultiplier = 0.88f,
             };
         }
 
@@ -2943,16 +3063,29 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             environment.cloudScrollY = profile.CloudScrollY;
             environment.horizon = profile.Horizon;
             environment.blueDensity = profile.BlueDensity;
-            environment.ambient = profile.Ambient;
-            environment.sunMoonColor = profile.SunMoonColor;
+            // Multiplicative, not absolute - real weather darkens/brightens
+            // whatever daylight currently exists, it doesn't replace day
+            // with night or erase the admin's own tuned look. starBrightness
+            // is deliberately not touched at all (stays whatever `current`
+            // already had, via CloneLightShare) - weather never erases night
+            // stars or forces them visible during the day.
+            environment.ambient = new Vector4(
+                current.ambient.X * profile.AmbientMultiplier,
+                current.ambient.Y * profile.AmbientMultiplier,
+                current.ambient.Z * profile.AmbientMultiplier,
+                current.ambient.W);
+            environment.sunMoonColor = new Vector4(
+                current.sunMoonColor.X * profile.SunMoonColorMultiplier,
+                current.sunMoonColor.Y * profile.SunMoonColorMultiplier,
+                current.sunMoonColor.Z * profile.SunMoonColorMultiplier,
+                current.sunMoonColor.W);
             environment.hazeHorizon = profile.HazeHorizon;
             environment.hazeDensity = profile.HazeDensity;
             environment.densityMultiplier = profile.DensityMultiplier;
             environment.distanceMultiplier = profile.DistanceMultiplier;
             environment.sunGlowFocus = profile.SunGlowFocus;
             environment.sunGlowSize = profile.SunGlowSize;
-            environment.sceneGamma = profile.SceneGamma;
-            environment.starBrightness = profile.StarBrightness;
+            environment.sceneGamma = current.sceneGamma * profile.SceneGammaMultiplier;
             // sunMoonPosition/eastAngle/maxAltitude intentionally left untouched
             // (already copied from `current` via CloneLightShare) so weather
             // never overrides the region's day/night cycle.

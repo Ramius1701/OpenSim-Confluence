@@ -48,7 +48,13 @@
     CoverageMode = Region
     EmitterGrid = 0
     EmitterSpacingMeters = 24
-    EmitterHeight = 18.0
+    ;; Meters above TerrainFloor (the higher of water height and local
+    ;; ground, so deep water never leaves an emitter at/under the surface,
+    ;; and terrain that rises above water - hills/mountains - still gets
+    ;; followed so a building on a hilltop can't defeat a flat ceiling).
+    ;; Raised from 18.0 so weather clears real multi-story buildings
+    ;; sim-wide instead of only clearing bare terrain.
+    EmitterHeight = 80.0
     ;; Scales particle burst counts. Range 0.1-20; rain/storm/snow/blizzard
     ;; each have their own hardcoded ceiling above which raising this further
     ;; has no visible effect. 1.0 is intentionally subtle; most operators who

@@ -6284,11 +6284,17 @@ Environment.Exit(1);
                 m_backgroundMaptileThreadStackSizeKB * 1024, false);
         }
 
+        // Real avatars only - GetRootAgentCount() counts NPCs too, which
+        // meant a region running a persistent NPC (common on this grid)
+        // could never satisfy the "wait until the sim is empty" callers
+        // below: RegenerateMaptileAndReregisterInBackground's wait loop
+        // never exits, permanently blocking background maptile generation
+        // on any such region.
         private static bool AnyRootAgentsInInstance()
         {
             foreach (Scene scene in SceneManager.Instance.Scenes)
             {
-                if (scene != null && scene.GetRootAgentCount() > 0)
+                if (scene != null && scene.GetRootAgentCount() - scene.GetRootNPCCount() > 0)
                     return true;
             }
 

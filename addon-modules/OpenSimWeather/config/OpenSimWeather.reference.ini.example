@@ -272,32 +272,15 @@
 ;; is the LightShare atmosphere altitude. Clear restores the saved region
 ;; environment when RestoreCloudsOnClear=true.
 
-[Weather.Environment.Sunny]
-    CloudCoverage = 0.05
-    CloudScale = 0.28
-    CloudColor = 1.0,0.98,0.9,1.0
-    CloudXYDensity = 0.38,0.18,0.28
-    CloudDetailXYDensity = 0.34,0.16,0.04
-    CloudScrollX = 0.06
-    CloudScrollY = 0.012
-    Horizon = 0.58,0.72,0.95,1.0
-    BlueDensity = 0.16,0.32,0.68,1.0
-    Ambient = 0.48,0.48,0.42,1.0
-    SunMoonColor = 1.0,0.88,0.52,1.0
-    SunMoonPosition = 0.317
-    EastAngle = 0.0
-    MaxAltitude = 1605
-    HazeHorizon = 0.10
-    HazeDensity = 0.18
-    DensityMultiplier = 0.08
-    DistanceMultiplier = 1.15
-    SunGlowFocus = 0.22
-    SunGlowSize = 2.40
-    SceneGamma = 1.16
-    StarBrightness = 0.00
-    DrawClassicClouds = true
-    CloudScrollXLock = false
-    CloudScrollYLock = false
+;; AmbientMultiplier/SunMoonColorMultiplier/SceneGammaMultiplier are
+;; MULTIPLIERS applied to whatever the region's environment currently
+;; already is, not absolute replacements - real weather darkens/brightens
+;; existing daylight, it never replaces day with night or erases the
+;; admin's own tuned look and the region's real day/night cycle. There is
+;; no Sunny profile - a hardcoded "always bright" override made no sense
+;; next to Clear (which already restores the real, saved environment) and
+;; was actively wrong at night. StarBrightness is never touched by weather
+;; at all, by design - it always stays whatever the region already has.
 
 [Weather.Environment.Rain]
     CloudCoverage = 0.82
@@ -309,19 +292,15 @@
     CloudScrollY = 0.05
     Horizon = 0.15,0.17,0.20,1.0
     BlueDensity = 0.07,0.09,0.13,1.0
-    Ambient = 0.14,0.15,0.17,1.0
-    SunMoonColor = 0.20,0.21,0.24,1.0
-    SunMoonPosition = 0.317
-    EastAngle = 0.0
-    MaxAltitude = 1605
+    AmbientMultiplier = 0.85
+    SunMoonColorMultiplier = 0.85
     HazeHorizon = 0.40
     HazeDensity = 0.82
     DensityMultiplier = 0.28
     DistanceMultiplier = 0.90
     SunGlowFocus = 0.08
     SunGlowSize = 1.40
-    SceneGamma = 0.78
-    StarBrightness = 0.03
+    SceneGammaMultiplier = 0.88
     DrawClassicClouds = true
     CloudScrollXLock = false
     CloudScrollYLock = false
@@ -336,19 +315,15 @@
     CloudScrollY = 0.10
     Horizon = 0.08,0.09,0.11,1.0
     BlueDensity = 0.04,0.055,0.08,1.0
-    Ambient = 0.08,0.085,0.095,1.0
-    SunMoonColor = 0.12,0.13,0.15,1.0
-    SunMoonPosition = 0.317
-    EastAngle = 0.0
-    MaxAltitude = 1605
+    AmbientMultiplier = 0.55
+    SunMoonColorMultiplier = 0.5
     HazeHorizon = 0.45
     HazeDensity = 0.92
     DensityMultiplier = 0.32
     DistanceMultiplier = 0.80
     SunGlowFocus = 0.05
     SunGlowSize = 1.20
-    SceneGamma = 0.72
-    StarBrightness = 0.02
+    SceneGammaMultiplier = 0.8
     DrawClassicClouds = true
     CloudScrollXLock = false
     CloudScrollYLock = false
@@ -363,19 +338,15 @@
     CloudScrollY = 0.035
     Horizon = 0.26,0.28,0.32,1.0
     BlueDensity = 0.13,0.15,0.20,1.0
-    Ambient = 0.22,0.23,0.25,1.0
-    SunMoonColor = 0.30,0.31,0.34,1.0
-    SunMoonPosition = 0.317
-    EastAngle = 0.0
-    MaxAltitude = 1605
+    AmbientMultiplier = 0.75
+    SunMoonColorMultiplier = 0.75
     HazeHorizon = 0.36
     HazeDensity = 0.72
     DensityMultiplier = 0.24
     DistanceMultiplier = 0.95
     SunGlowFocus = 0.10
     SunGlowSize = 1.60
-    SceneGamma = 0.86
-    StarBrightness = 0.02
+    SceneGammaMultiplier = 0.92
     DrawClassicClouds = true
     CloudScrollXLock = false
     CloudScrollYLock = false

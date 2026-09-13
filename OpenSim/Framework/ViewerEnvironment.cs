@@ -277,8 +277,31 @@ namespace OpenSim.Framework
 
             if (Cycle.skyTrack0.Count > 0)
             {
-                te = Cycle.skyTrack0[0];
-                if (Cycle.skyframes.TryGetValue(te.frameName, out SkyData sky))
+                // Was always Cycle.skyTrack0[0] - the FIRST keyframe,
+                // regardless of what time it actually is in the region.
+                // That's a real bug for every caller of ToLightShare(): the
+                // legacy LightShare snapshot it returns never tracked the
+                // real, live, currently-interpolated day cycle at all, only
+                // ever a single fixed frame. Use the same FindTrack/
+                // FindSkies day-fraction lookup already proven correct
+                // elsewhere (LSL_Api.cs's llGetEnvironment-family functions)
+                // to pick the keyframe that's actually active right now,
+                // falling back to the first frame only if there's no real
+                // day cycle to compute a fraction from.
+                SkyData sky = null;
+                if (DayLength > 0)
+                {
+                    double daySeconds = (Util.UnixTimeSinceEpochSecs() + DayOffset) % DayLength;
+                    if (daySeconds < 0)
+                        daySeconds += DayLength;
+                    float dayFraction = (float)(daySeconds / DayLength);
+                    FindSkies(Cycle.skyTrack0, dayFraction, out _, out sky, out _);
+                }
+
+                if (sky == null)
+                    Cycle.skyframes.TryGetValue(Cycle.skyTrack0[0].frameName, out sky);
+
+                if (sky != null)
                 {
                     convertToAngles(sky, out ls.sunMoonPosition, out ls.eastAngle, out Vector4 _);
                     ls.sunMoonPosition *= 0.5f / MathF.PI;
