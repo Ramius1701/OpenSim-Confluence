@@ -8619,14 +8619,85 @@ namespace OpenSim.Server.Handlers.WebInterface
         // before relaunching - see SyncRegionBinaries.
         private void RealRestartRegion(string simulatorFolder, UUID regionId, string regionName)
         {
+            // Fetched ONCE and reused for the entire function - deliberately
+            // never re-fetched from GridService again below. A fresh
+            // m_GridService.GetRegionByUUID lookup momentarily returns null
+            // during ANY reload of this same region (the one this very
+            // function triggers via the warning below, principally) - such
+            // a reload briefly deregisters then reregisters the region, and
+            // re-deriving `region` at just the wrong instant made
+            // TryStopRegion/RunRegionConsoleCommand fail with "isn't
+            // currently registered." The region's actual port never
+            // changes across a same-process reload (only a real process
+            // exit/relaunch could change it, and TryStartRegionProcess
+            // below launches the same configured port again regardless) -
+            // so there's no need to ever re-derive it. Confirmed live,
+            // 2026-09-14, via Starbase Andromeda.
             GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
             if (region == null || string.IsNullOrEmpty(region.ServerURI))
                 return;
 
-            RunRegionConsoleCommand(region, "region restart 120");
+            // This call's result used to be discarded entirely (fire and
+            // forget). Genuine HTTP-level delivery failures are rare but
+            // real (a network blip, the region briefly unreachable for an
+            // unrelated reason) - retry a few times before trusting the
+            // countdown has actually started. Safe to retry: "region
+            // restart 120" is idempotent (each call just (re)starts the
+            // same countdown), unlike retrying the real stop further down
+            // would be.
+            //
+            // NOT a defense against RestartModule's own former
+            // empty-region short-circuit - that's a different, now-removed
+            // behavior (see RestartModule.cs's own comment) that used to
+            // make this exact call sometimes trigger an immediate restart
+            // instead of a warning, with no way to tell which from here.
+            // Fixed at the source instead of worked around here: every
+            // "region restart <seconds>" call now always runs the full
+            // staged countdown, so this function's own fixed-duration
+            // assumptions below are reliable again.
+            string warnResult = string.Empty;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                warnResult = RunRegionConsoleCommand(region, "region restart 120");
+                if (warnResult != null && !warnResult.StartsWith("Region responded with HTTP") && !warnResult.StartsWith("Could not reach "))
+                    break;
+
+                System.Threading.Thread.Sleep(5000);
+            }
+
+            if (warnResult != null && (warnResult.StartsWith("Region responded with HTTP") || warnResult.StartsWith("Could not reach ")))
+            {
+                m_log.WarnFormat("[WEB INTERFACE]: Giving up warning {0} before restart - could not confirm delivery after 3 attempts: {1}", regionName, warnResult);
+                return;
+            }
+
             System.Threading.Thread.Sleep(125000);
 
-            bool stopped = TryStopRegion(regionId, regionName, out _);
+            // "region restart <seconds>" isn't a passive warning broadcast -
+            // RestartModule's own console command performs a full in-place
+            // scene reload itself once its countdown reaches zero (same
+            // process, no exit - confirmed live, 2026-09-14, via Starbase
+            // Andromeda's own log: a complete close-scene/reopen-scene
+            // sequence starting right after "will restart in 15 seconds").
+            // The fixed 125s sleep above assumed that reload would always
+            // be done well within it, but a heavier region's own reload
+            // (Andromeda: 1946 objects/16149 prims, ~17s of physics load
+            // alone) can still be finishing past that. Poll for the SAME
+            // genuine readiness this function already waits for after a
+            // real relaunch below, just here to confirm the WARNING's own
+            // reload has genuinely finished before attempting the real stop
+            // that follows it.
+            DateTime warningReloadDeadline = DateTime.UtcNow.AddMinutes(5);
+            while (DateTime.UtcNow < warningReloadDeadline)
+            {
+                string readyResult = RunRegionConsoleCommand(region, "ready-status " + regionId);
+                if (readyResult != null && readyResult.Contains("LOGINS_ENABLED: True"))
+                    break;
+
+                System.Threading.Thread.Sleep(5000);
+            }
+
+            bool stopped = TryStopRegion(region, regionName, out string stopMessage);
             if (!stopped)
             {
                 // TryStopRegion already fails closed for the cases it
@@ -8634,7 +8705,11 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // a replacement process anyway would just crash it against
                 // the still-running old one (see the port-wait comment
                 // below for exactly what that looks like). Leave this
-                // region on its current build rather than force it.
+                // region on its current build rather than force it - but
+                // log why, so a real, non-transient refusal (unlike the
+                // now-eliminated registration race above) is at least
+                // diagnosable instead of silently no-op'ing.
+                m_log.WarnFormat("[WEB INTERFACE]: Could not restart {0}: {1}", regionName, stopMessage);
                 return;
             }
 
@@ -8657,15 +8732,11 @@ namespace OpenSim.Server.Handlers.WebInterface
             // the cap is hit, proceed anyway rather than leave the region
             // stopped forever; TryStartRegionProcess's own crash-detection
             // will report a failure through its normal path.
-            region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
-            if (region != null)
+            DateTime portDeadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < portDeadline
+                    && Util.IsHostAlive("http://127.0.0.1:" + region.InternalEndPoint.Port + "/", 1000))
             {
-                DateTime portDeadline = DateTime.UtcNow.AddSeconds(60);
-                while (DateTime.UtcNow < portDeadline
-                        && Util.IsHostAlive("http://127.0.0.1:" + region.InternalEndPoint.Port + "/", 1000))
-                {
-                    System.Threading.Thread.Sleep(2000);
-                }
+                System.Threading.Thread.Sleep(2000);
             }
 
             TryStartRegionProcess(simulatorFolder, out _, out _);
@@ -8688,10 +8759,6 @@ namespace OpenSim.Server.Handlers.WebInterface
             DateTime readyDeadline = DateTime.UtcNow.AddMinutes(5);
             while (DateTime.UtcNow < readyDeadline)
             {
-                region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
-                if (region == null || string.IsNullOrEmpty(region.ServerURI))
-                    break;
-
                 string result = RunRegionConsoleCommand(region, "ready-status " + regionId);
                 if (result != null && result.Contains("LOGINS_ENABLED: True"))
                     break;
@@ -16804,7 +16871,28 @@ namespace OpenSim.Server.Handlers.WebInterface
         // exactly that happened live during earlier testing (see
         // PROJECT_LOG.md's Start Region entries) - graceful shutdown avoids
         // reproducing that on the way down, not just on the way up.
+        // Re-derives a fresh GridRegion from regionId first - only safe for
+        // callers that don't already hold one (the Stop button, Stop All,
+        // Store order suspension), since that lookup can momentarily return
+        // null during ANY concurrent reload of this same region (its own
+        // "no avatars, restarting now" idle cycle, a warned admin restart,
+        // etc. - all cause a brief deregister/reregister blip, not just
+        // this call's own actions). RealRestartRegion below deliberately
+        // uses the GridRegion overload with its own already-known region
+        // instead, precisely to avoid that race - see its own comment.
         private bool TryStopRegion(UUID regionId, string displayName, out string message)
+        {
+            GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
+            if (region == null || string.IsNullOrEmpty(region.ServerURI))
+            {
+                message = displayName + " isn't currently registered with the grid - it may already be stopped.";
+                return false;
+            }
+
+            return TryStopRegion(region, displayName, out message);
+        }
+
+        private bool TryStopRegion(GridRegion region, string displayName, out string message)
         {
             if (string.IsNullOrEmpty(m_webConsoleSecret))
             {
@@ -16812,12 +16900,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return false;
             }
 
-            GridRegion region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
-            if (region == null || string.IsNullOrEmpty(region.ServerURI))
-            {
-                message = displayName + " isn't currently registered with the grid - it may already be stopped.";
-                return false;
-            }
+            UUID regionId = region.RegionID;
 
             // Refuse rather than risk it - the shutdown sequence's own
             // "final backup" step (Scene.Close -> Backup(true)) silently

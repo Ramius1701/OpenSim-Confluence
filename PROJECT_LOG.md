@@ -24348,3 +24348,113 @@ legitimate reason to delete a report, only the admin WebUI does).
 **Live-verified** after deploy (build 594): the operator opened the
 same report that had shown a broken-image icon and confirmed the
 actual screenshot now renders correctly in the admin page.
+
+---
+
+## Weather: lightning floating above the ground, particles far sparser than their own caps (2026-09-15)
+
+A live tester (Sailor V) reported storm/blizzard particles felt like
+they "could be quadrupled" and plain rain was barely visible at all -
+"brief glimpses now and then." Checked the actual math rather than
+guess at a multiplier: rain's burst-particle-count formula (`1.4 *
+Intensity * densityVariance`, clamped 1-36) was landing at only 1-2
+particles per burst at the default `Intensity=1` - nowhere near its
+own 36-particle cap. Storm/blizzard came out to about 3, also far
+under their 50/16 caps. The caps were never the limiting factor; the
+multiplier constants themselves were just tuned far too low. Raised
+all four (rain/storm/snow/blizzard) 4x, matching the tester's own
+"quadrupled" framing, and raised the one cap (non-blizzard snow) that
+a 4x increase would otherwise have clipped.
+
+**Separately, lightning had a real, unrelated bug**: the bolt (a
+vertical cylinder prim) had a fixed 26-46m length, tuned back when
+`EmitterHeight` defaulted to ~18m - centered a couple meters above
+that, it read as a real strike reaching the ground. Once an earlier
+session raised `EmitterHeight` to a sim-wide-consistent ~80m, nobody
+updated the bolt to match - it had been floating entirely between
+roughly 60-120m up, never visibly reaching the ground at all. Fixed
+by scaling the bolt's length with `EmitterHeight` itself and
+centering it so it spans from near the ground up to near cloud
+height, instead of a fixed length nobody had revisited.
+
+---
+
+## Rolling restart, round three: the real root cause was OpenSim's own restart code (2026-09-15)
+
+The two fixes from the entry above (sequential priority regions, real
+down-then-up port waits) were live-verified working - but re-testing
+kept surfacing what looked like fresh, unrelated failures on a
+different region each time (first Starbase Andromeda, then Sandbox),
+which is what actually forced this deeper dig rather than declaring
+victory after the first clean run.
+
+**First layer - a real race, fixed properly this time.** `TryStopRegion`
+re-derived a fresh `GridRegion` from `GridService` on every call. That
+lookup momentarily returns null during ANY reload of the same region -
+including the reload `RealRestartRegion`'s own warning triggers -
+because a reload briefly deregisters then reregisters it. Landing a
+lookup in that window failed with "isn't currently registered," which
+is what silently no-op'd Andromeda's restart the first time (diagnosed
+as a possible AutoBackupModule collision and initially "fixed" with a
+5-attempt retry loop). The operator pushed back hard on that retry -
+correctly: "We shouldn't have to retry at all, thats just a work
+around." The real fix: fetch the `GridRegion` exactly ONCE at the top
+of `RealRestartRegion` and reuse that same reference for every call
+inside it (the warning, both readiness polls, the stop) - the
+region's actual port never changes across a same-process reload, so
+there was never a real need to re-derive it. `TryStopRegion` got a
+matching `GridRegion`-accepting overload so `RealRestartRegion` could
+pass its own already-known reference straight through instead of
+racing a fresh lookup. The retry loop was deleted entirely, not
+tuned down - once the actual bug is gone, retrying is dead code.
+
+**Second layer - the real root cause, found by actually reading
+`RestartModule.cs`.** Sandbox then hard-restarted with literally zero
+"will restart in ..." lines anywhere in its own log - a genuine safety
+gap, since that means whoever might have been there got no warning at
+all. Root cause: vanilla OpenSim's `RestartModule.ScheduleRestart` -
+the exact function every `"region restart <seconds>"` call runs
+through, including this admin tool's own warning - has always
+short-circuited straight to an immediate, unwarned restart whenever
+`GetScenePresences().Count == 0` at the moment it's called, completely
+unconditionally (not even gated by a config flag). This was
+mis-diagnosed at first as colliding with some *separate* "no avatars
+auto-restart" feature - there is no such separate feature. It's the
+exact same call, just behaving two different ways depending purely on
+who happens to be online at that instant. That's what made every
+timing assumption in this admin tool unreliable all night: the
+identical `"region restart 120"` call could take ~0 seconds or the
+full ~125+ seconds depending on occupancy alone, and worse, a region
+that was occupied when the click happened but emptied out before the
+countdown reached zero could still restart with no warning ever having
+been *needed* by the short-circuit's own logic, even though someone
+had genuinely been there moments before.
+
+**Fixed at the actual source, per the operator's explicit direction**
+("Only one message/shake is sent regardless of who is in sim... The
+just countdown and at the end restarts" - restart Modules's job is to
+warn and count down, full stop, not to decide on occupancy grounds
+whether a warning is worth sending): removed the short-circuit
+entirely from `RestartModule.ScheduleRestart`. Every restart now
+always runs the identical staged countdown regardless of who is or
+isn't in the region at the time. This is a region-side change
+(`OpenSim.Region.CoreModules.dll`), so - unlike the Robust-side fixes
+above - a region only actually gets the fix on its OWN next restart,
+which is delivered by the very rolling restart that tests it; the
+restart that *delivers* the fix is necessarily still decided by the
+old code (confirmed live: the delivering restart for Sandbox and
+Welcome Center still hit the old instant-restart path), but every
+restart after that ran the corrected, unconditional countdown.
+
+Also added (defensive, not a workaround for the bug above - kept
+because genuine HTTP-level delivery failures over the console channel
+are still real and rare): the initial warning call's result is no
+longer discarded outright, retrying up to 3 times before giving up
+and logging why, since "region restart 120" is idempotent and safe to
+retry, unlike retrying the real stop would be.
+
+**Live-verified end to end**: a full Restart All across all 7 running
+regions (Welcome Center, Sandbox, Starbase Andromeda, Section 31, SVC,
+UFPGC, Ranchero) completed cleanly, hub regions first and sequential,
+every region's `CoreModules.dll` confirmed matching the fixed master
+copy after its own restart.

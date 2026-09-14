@@ -1674,7 +1674,17 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                 // values - short of even the old 18m default, a real
                 // pre-existing bug independent of this height rework.
                 particles.PartMaxAge = blizzard ? 9.2f : 15.0f;
-                particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.2f * snowIntensity * densityVariance), 1, blizzard ? 16 : 5);
+                // Density multiplier (1.2/1.4 below for rain) was tuned so
+                // conservatively that with Intensity at its own default
+                // (1.0) and densityVariance averaging ~1.0, a burst produced
+                // only 1-3 particles - nowhere near the 5-50 caps this same
+                // formula is clamped against. Confirmed by a live tester,
+                // 2026-09-14: storm/blizzard "could be quadrupled" and plain
+                // rain was barely visible at all. Raised 4x to actually use
+                // the headroom the caps already allowed; the one cap that
+                // 4x would otherwise clip (non-blizzard snow) raised to
+                // match.
+                particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(4.8f * snowIntensity * densityVariance), 1, blizzard ? 16 : 8);
                 Vector2 snowWind = WeatherWindVector(weather, driftVariance);
                 particles.PartAcceleration = new Vector3(snowWind.X, snowWind.Y, blizzard ? -2.0f : -0.75f);
                 return particles;
@@ -1700,7 +1710,9 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             // this pair is solved against - same ~85m target from the new
             // EmitterHeight default.
             particles.PartMaxAge = storm ? 2.8f : 3.3f;
-            particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(1.4f * rainIntensity * densityVariance), 1, storm ? 50 : 36);
+            // See the snow/blizzard block above - same under-used-headroom
+            // fix, same 4x raise.
+            particles.BurstPartCount = (byte)Clamp((int)Math.Ceiling(5.6f * rainIntensity * densityVariance), 1, storm ? 50 : 36);
             Vector2 rainWind = WeatherWindVector(weather, driftVariance);
             particles.PartAcceleration = new Vector3(rainWind.X, rainWind.Y, storm ? -22f : -16f);
 
@@ -1906,10 +1918,10 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     return;
                 }
 
-                Vector3 position = GetLightningPosition();
+                Vector3 position = GetLightningPosition(out float flashHeight);
 
                 if (m_lightningEnabled)
-                    CreateLightningFlash(ownerId, position);
+                    CreateLightningFlash(ownerId, position, flashHeight);
 
                 if (m_thunderEnabled && !m_thunderSound.IsZero())
                 {
@@ -1930,7 +1942,7 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             }
         }
 
-        private Vector3 GetLightningPosition()
+        private Vector3 GetLightningPosition(out float flashHeight)
         {
             Scene scene = m_scene;
             int sizeX = Math.Max(1, (int)scene.RegionInfo.RegionSizeX);
@@ -1945,7 +1957,17 @@ namespace OpenSim.Region.OptionalModules.World.Weather
                     avatars.Add(sp);
             });
 
-            Vector3 fallback = new Vector3(sizeX * 0.5f, sizeY * 0.5f, 0f);
+            // Bolt length used to be a fixed 26-46m, tuned back when
+            // EmitterHeight defaulted to ~18m - centered a couple meters
+            // above that, it reached close enough to the ground to read as
+            // a real strike. Once EmitterHeight became a sim-wide-consistent
+            // ~80m (see JitterHeight's own note), that same fixed length
+            // left the bolt floating entirely between roughly 60-120m up,
+            // never visibly reaching the ground at all. Scale the length
+            // with EmitterHeight instead so it keeps reaching down to near
+            // the ground at any configured height - found live, 2026-09-14.
+            flashHeight = Math.Max(12f, (m_emitterHeight - 3f) * RandomRange(0.8f, 1f));
+            Vector3 fallback = new Vector3(sizeX * 0.5f, sizeY * 0.5f, flashHeight * 0.5f);
             for (int attempt = 0; attempt < 12; attempt++)
             {
                 float x;
@@ -1964,9 +1986,11 @@ namespace OpenSim.Region.OptionalModules.World.Weather
 
                 float ground = scene.GetGroundHeight(x, y);
                 float floorZ = TerrainFloor(x, y);
-                // Flash center belongs well above ground (like a real bolt hanging
-                // in the sky), not at ground level - matches original behavior.
-                fallback = new Vector3(x, y, floorZ + m_emitterHeight + RandomRange(5f, 13f));
+                // Center the bolt so its bottom sits a couple meters above
+                // the ground (visual clearance, no terrain clipping) and its
+                // top reaches up toward cloud height - a real strike
+                // spanning the two, not a segment floating in between.
+                fallback = new Vector3(x, y, floorZ + 2f + flashHeight * 0.5f);
                 if (!IsCoveredFromSky(x, y, ground, floorZ + m_emitterHeight))
                     return fallback;
             }
@@ -1974,10 +1998,8 @@ namespace OpenSim.Region.OptionalModules.World.Weather
             return fallback;
         }
 
-        private void CreateLightningFlash(UUID ownerId, Vector3 position)
+        private void CreateLightningFlash(UUID ownerId, Vector3 position, float flashHeight)
         {
-            float flashHeight = RandomRange(26f, 46f);
-
             PrimitiveBaseShape shape = PrimitiveBaseShape.CreateCylinder();
             shape.Scale = new Vector3(0.55f, 0.55f, flashHeight);
 

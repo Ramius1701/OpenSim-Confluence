@@ -141,15 +141,20 @@ namespace OpenSim.Region.CoreModules.World.Region
                 return;
             }
 
-            if (m_Scene.GetScenePresences().Count == 0)
-            {
-                m_log.InfoFormat("No avatars in region {0}, restarting now...", m_Scene.Name);
-
-                CreateMarkerFile();
-                m_Scene.RestartNow();
-                return;
-            }
-
+            // Vanilla OpenSim used to short-circuit straight to an
+            // immediate restart here whenever the region happened to be
+            // empty at the moment this was called, skipping the whole
+            // staged countdown. Deliberately removed: it's not this
+            // module's job to decide whether anyone needs the courtesy of
+            // a warning - the countdown always runs the same way regardless
+            // of who is or isn't in the region right now, matching how a
+            // real SL simulator restart behaves. This also made this
+            // module's own behavior unpredictable from the outside: two
+            // identical "region restart 120" calls could take either ~0
+            // seconds or the full ~125+ depending purely on occupancy at
+            // the instant each one fired, which is exactly what made the
+            // rolling-restart admin tooling's own timing assumptions
+            // unreliable - confirmed live, 2026-09-15.
             List<int> times = new List<int>();
             while (seconds > 0)
             {

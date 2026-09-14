@@ -171,7 +171,18 @@ alongside the existing support-ticket system.
   real stop, so that poll saw the still-running OLD process as already
   "up" and let the rest of the grid start within seconds, live-verified
   more than once against real hub regions before landing on strictly
-  sequential, no-polling handoffs instead. Every Start/Restart
+  sequential, no-polling handoffs instead. The 120-second countdown
+  itself is now unconditional, too - vanilla OpenSim's own restart
+  code used to skip straight to an instant, unwarned restart whenever
+  a region happened to be empty at the moment the command fired,
+  which made every one of the timing fixes above unreliable in
+  practice (the same "region restart 120" call could take ~0 seconds
+  or the full ~125+ depending purely on who happened to be online),
+  and meant a region with someone in it could still restart with zero
+  warning if it emptied out between the click and the countdown.
+  Removed by design: every restart always warns and counts down the
+  same way regardless of occupancy, matching how a real SL simulator
+  restart behaves. Every Start/Restart
   also re-syncs that region's own `bin\` from the grid's shared master
   folder first (see README.md's "Updating a grid-mode deployment") -
   this is how a grid owner rolls out a new Confluence build too, not
@@ -532,6 +543,13 @@ not scientifically simulated weather.
 - Optional pressure-driven auto-cycle pacing — weather can build and
   ease via a simulated barometric trend instead of a flat random pick
   on a fixed timer.
+- Rain/storm/snow/blizzard particle density and lightning bolt length
+  both scale correctly off the current `EmitterHeight` - a live tester
+  found rain barely visible and lightning floating well above the
+  ground without reaching it, both left over from tuning done before
+  `EmitterHeight`'s default was raised to a sim-wide ~80m; density
+  raised 4x and the bolt's length now scales with `EmitterHeight`
+  itself instead of a fixed 26-46m range.
 
 ### Physics
 
