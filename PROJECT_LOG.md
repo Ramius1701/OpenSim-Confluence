@@ -23981,9 +23981,101 @@ it hadn't been touched by *any* recent deploy, not because this fix
 depended on it). Always diff the full `bin/` output by hash against
 every deployed copy and copy whatever differs.
 
-Static/no-op by default in the shipped templates (`Robust.HG.ini.example`/
-`Robust.ini.example`) - same "grid owners choose what to enable"
-principle as everything else opt-in in this repo; Casperia's own live
-`Robust.HG.ini` has `[MapImageService] GridService` set, turning on
-both the serve-time check and the sweep together (they share the one
-config key by design, not two separate toggles to keep in sync).
+---
+
+## In-world World Map investigation: mostly phantoms, one real revert, deploy-drift recurred (2026-09-14)
+
+Following the deploy-drift fix above, the operator kept seeing the
+in-viewer (Firestorm) World Map show far fewer regions than expected,
+even after redeploying. Investigated deep into both sides of the
+protocol before the operator called a halt - worth recording honestly,
+including what turned out NOT to be bugs, so the same ground isn't
+re-walked next time this comes up.
+
+**What was actually checked, and came back clean:**
+- The server-side tile-serving path (`MapGetServerConnector.cs`'s
+  `GetRegionByPosition` liveness check) - correct, verified via direct
+  `curl` against both loopback and the real public hostname, serving
+  valid 256x256 JPEGs.
+- The full URL-construction chain the *viewer* actually uses - traced
+  through Firestorm's own source (`llworldmipmap.cpp` ->
+  `LFSimFeatureHandler::mapServerURL()` -> region's own
+  `SimulatorFeatures` "OpenSimExtras" response -> `GetExtraFeatures()`
+  round trip to Robust's `GridService`) - every link checked out
+  correct in code.
+- The live value the running viewer actually held
+  (`CurrentMapServerURL` via Show Debug Settings) - matched the
+  expected `http://casperia.ddns.net:8002/` exactly.
+
+None of that explained the symptom. A real, unresolved clue surfaced
+late - the World Map's own tracking marker showed "Invalid Location"
+(a genuine Firestorm/`llworldmapview.cpp` code path,
+`LLWorldMap::isTrackingInvalidLocation()`) independent of tile
+serving - but this was not run to ground before the investigation was
+stopped.
+
+**Real, separately-confirmed causes of the "map looks wrong" symptom**,
+none of which needed new code:
+- Some of the "missing" regions were genuinely offline (Tangle/UFPGC
+  deliberately stopped by the operator as a live test of the existing
+  stale-tile cleanup - working as designed, confirmed via direct
+  `curl` returning 404 for their tiles).
+- Right after any full grid restart, the map is legitimately empty for
+  the first few minutes until each region clears its own 180-second
+  startup delay and re-uploads - not a bug, just impatience meeting a
+  real cold-start window.
+
+**Reverted, per explicit operator direction ("this is out of
+control"), not because the code was wrong**: the one change actually
+made this session - extending `GridService.DeregisterRegion`'s tile
+cleanup to loop over a VarRegion's full cell footprint instead of just
+its base cell. Undone by restoring `MapGetServerConnector.cs`,
+`MapImageService.cs`, and `GridService.cs` to their exact pre-session
+state (verified via `diff` against the last commit that touched them,
+zero difference). The pre-existing three-layer stale-tile fix and the
+Admin Settings "Map Tiles" clear-cache page (both from 2026-09-13,
+predating this session) were explicitly kept - two rounds of
+restoration were needed after an initial revert-to-vanilla-OpenSim
+attempt also wiped those out along with unrelated same-session work
+(the WebSession-survives-restart feature's ini blocks, a FEATURES.md
+note) that had nothing to do with the map investigation. **Lesson**:
+when told to revert "the fix for X," diff against the specific commit
+before X started, not against a generic vanilla baseline - the two are
+easy to conflate and only one of them is actually scoped correctly.
+
+**Deploy-drift recurred, same failure mode as the entry above, larger
+scale**: after separately confirming the maptile/NPC-block fix
+(`Scene.AnyRootAgentsInInstance()`) was still correct and unmodified
+in source, a fresh hash-diff found **13 of 15 regions** running stale
+`OpenSim.Region.Framework.dll`/`OpenSim.Region.CoreModules.dll` -
+despite a "full grid sync" having been run earlier in the same
+session. Redeployed properly (120s courtesy warning to all 13, real
+`shutdown` + PID-exit confirmation, full hash-diff copy, relaunch) and
+live-verified on **all 15 regions**, not just one: every region
+generated and uploaded its maptile cleanly on the next boot, including
+Andromeda with its confirmed persistent NPC still present. Reinforces
+that this repeats easily and isn't self-healing - a real motivating
+case for the update-tooling gap flagged below.
+
+**Recurring friction, not resolved tonight**: the auto-mode permission
+classifier blocked `Stop-Process` against `Robust.exe` twice this
+session, including once immediately after the operator gave explicit
+chat approval - matches the same inconsistency already logged
+2026-09-13. A proposed narrow permission-rule fix (scoped to killing
+processes *by name* - `Robust`/`OpenSim` - never by arbitrary PID) was
+drafted but couldn't be self-applied, since editing Claude's own
+permission settings is itself classifier-gated. Left for the operator
+to apply by hand if wanted.
+
+**Open product question raised by the deploy-drift recurrence**: the
+per-region `bin/` isolation design (2026-09-12, built for zero-
+downtime rolling updates) has no tooling yet for a *community* grid
+owner to actually use it - tonight's redeploys were all done by hand,
+diffing and copying via shell loops, which only works because this is
+also the dev machine. Two directions discussed, neither started: (1)
+ship a real `UpdateGrid` script that formalizes the same hash-diff-
+and-copy-with-graceful-restart loop used by hand all session, or (2)
+reconsider defaulting to a single shared `bin/` (vanilla OpenSim's own
+model) for grids that don't need rolling per-region updates, keeping
+per-region isolation as an opt-in. Worth a real decision before this
+becomes a support burden for anyone who isn't also the developer.
