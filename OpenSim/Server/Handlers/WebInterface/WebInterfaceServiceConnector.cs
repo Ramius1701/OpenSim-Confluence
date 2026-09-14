@@ -16524,6 +16524,21 @@ namespace OpenSim.Server.Handlers.WebInterface
             string message = "Nothing to do.";
             if (request.HttpMethod == "POST")
             {
+                // DefaultRegion/DefaultHGRegion-flagged regions restart
+                // first, not in whatever order DiscoverSimulators happened
+                // to return - these are the grid's own landing/hub
+                // simulators (new-resident rez, HG teleport-in), so
+                // getting them back up before the rest of the rolling
+                // sequence gives residents on a region about to go down a
+                // real, already-live place to wait out their own 120s
+                // window instead of sitting disconnected. Matches how
+                // Second Life itself staggers a rolling simulator update -
+                // mainland/infohub sims first, per the operator's own
+                // explicit design call (2026-09-14).
+                HashSet<UUID> priorityRegionIds = new HashSet<UUID>(
+                        (m_GridService?.GetDefaultRegions(UUID.Zero) ?? new List<GridRegion>())
+                        .Select(r => r.RegionID));
+
                 List<(string SimulatorFolder, string RegionName, UUID RegionID)> toRestart = DiscoverSimulators()
                         .AsParallel()
                         .Where(s =>
@@ -16531,6 +16546,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                             int? port = GetSimulatorPort(s.SimulatorFolder);
                             return port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000);
                         })
+                        .ToList()
+                        .OrderByDescending(s => priorityRegionIds.Contains(s.RegionID))
                         .ToList();
 
                 if (toRestart.Count == 0)

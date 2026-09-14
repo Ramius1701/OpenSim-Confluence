@@ -77,7 +77,14 @@ namespace OpenSim
 
         public static string GetVersionString(string versionNumber, Flavour flavour)
         {
-            string versionString = $"OpenSim-Confluence {versionNumber} (Build {GitVersionInfo.CommitsAheadOfMaster}) {flavour}";
+            // Matches how Second Life itself reports a simulator's version
+            // to residents (Region/Estate floater's "Version:" field, via
+            // RegionHandshake's ChannelVersion) - just the product name and
+            // build number, not the internal numeric version/flavour, which
+            // is what a resident/estate manager actually wants to see when
+            // checking whether a given simulator has picked up a rolling
+            // update yet.
+            string versionString = $"Confluence (Build {GitVersionInfo.CommitsAheadOfMaster})";
             return versionString.PadRight(VERSIONINFO_VERSION_LENGTH);
         }
 
