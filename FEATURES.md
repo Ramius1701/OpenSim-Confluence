@@ -154,7 +154,13 @@ alongside the existing support-ticket system.
   a Restart All that's a real rolling restart: every currently-running
   region gets the same 120-second in-world countdown warning a single
   region's own Restart button sends, staggered 30 seconds apart so the
-  whole grid is never dark at the same moment. All three bulk actions
+  whole grid is never dark at the same moment. Every Start/Restart
+  also re-syncs that region's own `bin\` from the grid's shared master
+  folder first (see README.md's "Updating a grid-mode deployment") -
+  this is how a grid owner rolls out a new Confluence build too, not
+  just a special case for provisioning: overwrite the master folder,
+  then Restart (or Restart All) to pick it up, no manual per-region
+  file copying ever needed. All three bulk actions
   run in the background so they can't time out a reverse proxy sitting
   in front of the WebUI. Remove works the
   same way for any region, self-service Store order or originally

@@ -197,6 +197,39 @@ live, public grid with real residents and currency, used throughout
 this project's development as the actual proving ground for every
 grid-mode feature.
 
+### Updating a grid-mode deployment
+
+Updating to a newer Confluence build never requires taking the whole
+grid offline — this is the same rolling-restart property described
+above, just applied to an already-running deployment instead of a
+fresh one. There's no separate updater tool; it's a normal deploy step
+using the WebUI you already have:
+
+1. Build the new version and copy the output into the **same** folder
+   as `RegionOrderGridRoot` from step 2 above, overwriting the
+   `Robust.exe`/`OpenSim.exe`/DLLs already there. This is the only
+   place you ever copy files by hand — every region's own private
+   `Simulators\<name>\bin\` copy stays exactly as it is for now.
+2. Work out the blast radius before restarting anything: a change
+   confined to `OpenSim/Server/Handlers/**` (the WebUI itself and
+   other Robust-side services) only needs **Robust** restarted — no
+   region needs to come down for it. A change touching a region-loaded
+   assembly (`OpenSim/Region/**`, `OpenSim/Addons/**`, or any shared
+   library a region loads in-process) needs every affected region's
+   own copy refreshed too.
+3. For region-loaded changes, use the Simulators page instead of
+   touching any region's files directly — a single region's own
+   **Restart** button, or **Restart All** for the whole grid. Both
+   already do the real work for you: a graceful in-world countdown
+   warning, a real stop, a fresh sync of that region's own `bin\` from
+   the folder you updated in step 1, then relaunch. Restart All
+   staggers this across every region so the grid is never dark all at
+   once — the same rolling-restart approach Second Life's own grid
+   operators use for simulator updates.
+4. Confirm each region actually came back on the new build (the
+   Simulators page's live Running/Stopped status is enough for most
+   changes) before considering the update finished.
+
 ### Standalone mode
 
 A single `OpenSim.exe`, no Robust process, everything in one deployment
