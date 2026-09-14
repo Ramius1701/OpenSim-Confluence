@@ -959,7 +959,14 @@ namespace OpenSim.Region.Framework.Scenes
 
             PhysicsEnabled = !RegionInfo.RegionSettings.DisablePhysics;
 
-            m_simulatorVersion = simulatorVersion + " (" + Util.RuntimeInformationStr + ")";
+            // No OS/architecture suffix here - this feeds the viewer-facing
+            // Region/Estate floater's "Version:" field (via
+            // GetSimulatorVersion -> LLClientView), which residents/estate
+            // managers actually read. Real SL doesn't show runtime platform
+            // info there either, and every Casperia region happens to run
+            // on the same machine anyway, so it was pure noise, not
+            // per-region signal.
+            m_simulatorVersion = simulatorVersion;
 
             #region Region Config
 
