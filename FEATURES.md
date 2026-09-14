@@ -153,13 +153,25 @@ alongside the existing support-ticket system.
   Remove actions — plus Start All/Stop All for everything at once, and
   a Restart All that's a real rolling restart: every currently-running
   region gets the same 120-second in-world countdown warning a single
-  region's own Restart button sends, staggered 30 seconds apart so the
-  whole grid is never dark at the same moment. Regions flagged
-  DefaultRegion/DefaultHGRegion (a grid's own landing/hub simulators)
-  restart first in that sequence, same as how Second Life itself
-  stages a rolling update - so residents on a region about to go down
-  have somewhere already-live to wait out its own countdown instead of
-  getting disconnected outright. Every Start/Restart
+  region's own Restart button sends. Regions flagged DefaultRegion/
+  DefaultHGRegion (a grid's own landing/hub simulators, set durably via
+  `Region_<Name> = "DefaultRegion"` in Robust's own `[GridService]`
+  config - not a one-off DB edit, which gets silently recomputed away
+  the next time that region itself restarts) restart first, one at a
+  time - each one's full warn-then-stop-then-start cycle finishes, and
+  it's confirmed genuinely ready again (the same login-enabled check
+  the status pill above uses), before the next hub region or the rest
+  of the grid begins. Only once every hub region is a real, live
+  refuge does the remaining rolling sequence start, staggered 30
+  seconds apart, so the whole grid is never dark at the same moment.
+  This two-phase design exists because the more obvious version -
+  firing every hub region on its own thread and polling "is it back up
+  yet" - looked right but wasn't: a region's own port stays alive and
+  answering through its entire warning countdown right up until the
+  real stop, so that poll saw the still-running OLD process as already
+  "up" and let the rest of the grid start within seconds, live-verified
+  more than once against real hub regions before landing on strictly
+  sequential, no-polling handoffs instead. Every Start/Restart
   also re-syncs that region's own `bin\` from the grid's shared master
   folder first (see README.md's "Updating a grid-mode deployment") -
   this is how a grid owner rolls out a new Confluence build too, not

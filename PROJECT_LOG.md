@@ -24207,3 +24207,88 @@ PID/boot timestamp; every other region, including Andromeda,
 unaffected. Exactly the rolling-update behavior this whole session's
 per-region isolation design exists for, confirmed with a real,
 deliberate build mismatch rather than assumed from reading the code.
+
+## Restart All: two real bugs found live, both from the same wrong assumption (2026-09-14)
+
+The first Restart All shipped this session (2026-09-11) staggered
+every region 30 seconds apart with hub regions (DefaultRegion/
+DefaultHGRegion) sorted first. Confirmed broken by a real live
+incident: the operator fled Andromeda mid-restart-warning to Welcome
+Center expecting a safe harbor, and got disconnected anyway - Welcome
+Center's own restart, fired only 30 seconds earlier in the stagger,
+hadn't actually finished yet. Hub regions going first in the queue
+isn't the same as hub regions being genuinely *done* restarting before
+anyone relies on them.
+
+**First fix attempt, also confirmed broken live the same day.** Split
+hub and non-hub regions into two phases: fire every hub region on its
+own background thread (still staggered 30s among themselves), then
+poll each one's port with `Util.IsHostAlive` until all respond, before
+starting the non-hub sequence. Looked right, wasn't: a region's own
+HTTP port stays alive and answering through its ENTIRE 120-second
+warning countdown right up until the real stop happens - the poll saw
+the OLD, not-yet-stopped process as already "up" and considered the
+wait satisfied almost immediately. Live process-creation-timestamp
+evidence made this unambiguous: Welcome Center's restart fired at
+15:01:42, but three ordinary regions (Farm, GFC, Ranchero) had already
+restarted by 15:02:04-15:03:10 - before Sandbox, the second hub
+region, had even finished its own cycle at 15:03:38.
+
+**Real fix: stop polling for "up" entirely.** `RealRestartRegion` (the
+shared warn->stop->start implementation already used by both the
+single-region Restart button and Restart All) is now called directly,
+not backgrounded, for each hub region in turn - the loop physically
+cannot advance to the next hub region, let alone the rest of the grid,
+until the current one's own call has returned. No polling, no race:
+a region can't still be mid-restart once the function that restarts it
+has returned.
+
+**That surfaced a second, worse bug once actually tested live.**
+Welcome Center's re-test showed its PID never changing at all across
+an entire rolling restart - `start.log` showed why: the replacement
+process crashed instantly with `SocketException (10048): Only one
+usage of each socket address...`, because the OLD process's port was
+still bound. `TryStopRegion` returning success only means the
+`shutdown` console command was accepted - its own existing comment
+already warned that a genuine shutdown can make the process exit
+*after* the HTTP response is sent - but `RealRestartRegion` followed
+it with only a fixed 5-second sleep before launching the replacement.
+Welcome Center (757 objects, 442 scripts) needed longer than that to
+actually finish tearing down. Worse: since `RealRestartRegion` never
+checked `TryStartRegionProcess`'s outcome, this failure was completely
+silent - the ready-status poll immediately saw the STALE, never-
+actually-stopped process as "ready" and reported the whole restart a
+success, while the deployed build silently never took effect.
+
+**Fix**: poll for the OLD process's port to genuinely go quiet (not
+just "is currently alive") before launching the replacement, capped at
+60 seconds; and bail out entirely - leaving the region on its current
+build - if `TryStopRegion` itself fails, rather than launch a doomed
+process against a still-running one. Also added a real readiness wait
+after `TryStartRegionProcess` (the same `ready-status`/`LOGINS_ENABLED`
+console check the Simulators page's own status pill already uses)
+instead of assuming a fixed load time, since a heavier region
+legitimately takes longer to finish loading before it's a genuine
+refuge for residents fleeing another region's own restart.
+
+**Live-verified end to end** after both fixes: Welcome Center's real
+process actually cycled (fresh PID, clean port bind, `RegionReady`
+triggered, no crash), and its full cycle completed before any other
+region - hub or not - began its own warning.
+
+**Third, unrelated finding along the way**: Sandbox's hub-region status
+(originally set via a one-off `UPDATE regions SET flags = flags | 1`
+earlier this session) had silently reverted to a plain region by the
+time of this test. Root cause: `GridService.RegisterRegion` recomputes
+a region's `flags` column from the DB plus grid-side `[GridService]`
+config overrides on every single registration - a raw SQL edit has
+nothing telling it to persist, so the next time that region's own
+process restarts, the manually-added bit is simply never reasserted.
+The correct, durable mechanism already existed and was already fully
+documented in `Robust.ini.example`, just unused:
+`Region_<Name> = "DefaultRegion"` in Robust's own `[GridService]`
+section (spaces in the region name become underscores). Added
+`Region_Sandbox = "DefaultRegion"` to Casperia's live `Robust.HG.ini`
+and re-applied the DB flag once for immediate effect - going forward
+it's reasserted automatically on every Sandbox registration, the same
+way Welcome Center's own flags already were.
