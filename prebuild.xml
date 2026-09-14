@@ -1580,6 +1580,12 @@
       <Reference name="Mono.Addins"/>
       <Reference name="MailKit"/>
       <Reference name="MimeKit"/>
+      <!-- Abuse report screenshots arrive from the viewer as raw JPEG2000
+           (J2C) texture bytes, not JPEG - same OpenMetaverse.Imaging.OpenJPEG
+           decode-then-re-encode path GetTextureHandler.cs already uses for
+           the same reason, just needed here too so the admin WebUI can
+           actually display them in a browser. -->
+      <Reference name="System.Drawing.Common"/>
 
       <Files>
         <Match pattern="*.cs" recurse="true">

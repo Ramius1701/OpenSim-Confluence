@@ -322,7 +322,14 @@ Treated as core, not an optional add-on:
 - Local and remote service connectors, Robust handlers.
 - MySQL, PostgreSQL, and SQLite storage.
 - Region-side submission support.
-- Admin review queue in the Web UI.
+- Admin review queue in the Web UI, with real attached screenshots -
+  the viewer uploads these as raw JPEG2000 (the same format every
+  ordinary texture asset uses, confirmed against real Firestorm
+  source), which the admin page now decodes and re-encodes as JPEG so
+  it actually renders in a browser instead of a broken-image icon.
+  Closed reports (marked not-open and saved) can be permanently
+  deleted; an open report can't be, so evidence of something
+  unresolved can't be removed by accident.
 
 ## Scripting: LSL and OSSL
 

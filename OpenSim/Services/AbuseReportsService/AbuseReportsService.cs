@@ -66,5 +66,10 @@ namespace OpenSim.Services.AbuseReportsService
         {
             return m_Database.Update(report);
         }
+
+        public bool DeleteAbuseReport(int reportID)
+        {
+            return m_Database.Delete("ReportID", reportID.ToString());
+        }
     }
 }

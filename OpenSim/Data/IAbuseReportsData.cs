@@ -26,5 +26,13 @@ namespace OpenSim.Data
         /// again on an existing report is not a portable way to update one.
         /// </summary>
         bool Update(AbuseReportData data);
+
+        /// <summary>
+        /// Already provided by MySQLGenericTableHandler&lt;AbuseReportData&gt;
+        /// (and its PGSQL/SQLite equivalents) for any implementation that
+        /// derives from it - declared here, same as Get above, so the
+        /// service layer can call it through the interface.
+        /// </summary>
+        bool Delete(string field, string key);
     }
 }

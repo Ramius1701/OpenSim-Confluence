@@ -11,11 +11,14 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Timers;
+using System.Drawing;
+using System.Drawing.Imaging;
 using MailKit.Net.Smtp;
 using MimeKit;
 using Nini.Config;
 using Nwc.XmlRpc;
 using OpenMetaverse;
+using OpenMetaverse.Imaging;
 using OpenMetaverse.StructuredData;
 using OpenSim.Data;
 using OpenSim.Framework;
@@ -984,6 +987,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/admin/abuse-reports/save":
                         HandleAdminAbuseReportsSave(request, response);
+                        break;
+                    case BasePath + "/admin/abuse-reports/delete":
+                        HandleAdminAbuseReportsDelete(request, response);
                         break;
                     case BasePath + "/admin/abuse-reports/image":
                         HandleAdminAbuseReportImage(request, response);
@@ -8938,7 +8944,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                             + "<label>Assigned to<br/><select name=\"assigned_to\">" + assignedToOptions + "</select></label><br/>"
                             + "<label>Notes<br/><textarea name=\"notes\" rows=\"4\">" + Html(report.Notes) + "</textarea></label><br/>"
                             + "<button type=\"submit\">Save</button>"
-                            + "</form>";
+                            + "</form>"
+                            + (report.Active
+                                ? string.Empty
+                                : "<form method=\"post\" action=\"" + BasePath + "/admin/abuse-reports/delete\" style=\"margin-top:8px\""
+                                    + " onsubmit=\"return confirm('Permanently delete report #" + report.ReportID + "? This cannot be undone.');\">"
+                                    + "<input type=\"hidden\" name=\"id\" value=\"" + report.ReportID + "\">"
+                                    + "<button type=\"submit\">Delete</button>"
+                                    + "</form>");
                 }
             }
             else
@@ -9020,6 +9033,48 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_AbuseReportsService.UpdateAbuseReport(report);
 
             response.Redirect(BasePath + "/admin/abuse-reports?id=" + reportID + "&message=" + Uri.EscapeDataString("Changes saved."), HttpStatusCode.Redirect);
+        }
+
+        // Deliberately restricted to already-closed reports - an open
+        // report is still evidence of something unresolved, so this
+        // refuses rather than deletes if the checkbox above hasn't been
+        // unchecked first (uncheck + Save to close, then Delete becomes
+        // available). Matches TryStopRegion's own fail-closed pattern
+        // elsewhere on this page: when in doubt, refuse the destructive
+        // action rather than silently allow it.
+        private void HandleAdminAbuseReportsDelete(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_AbuseReportsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            if (!int.TryParse(FormValue(form, "id"), out int reportID))
+            {
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+
+            AbuseReportData report = m_AbuseReportsService.GetAbuseReport(reportID);
+            if (report == null)
+            {
+                response.Redirect(BasePath + "/admin/abuse-reports?message=" + Uri.EscapeDataString("Report not found."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            if (report.Active)
+            {
+                response.Redirect(BasePath + "/admin/abuse-reports?id=" + reportID + "&message="
+                        + Uri.EscapeDataString("Still open - close it first (uncheck \"Still open\" and Save), then Delete."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            bool deleted = m_AbuseReportsService.DeleteAbuseReport(reportID);
+            response.Redirect(BasePath + "/admin/abuse-reports?message="
+                    + Uri.EscapeDataString(deleted ? "Report #" + reportID + " deleted." : "Failed to delete report #" + reportID + "."), HttpStatusCode.Redirect);
         }
 
         // /admin/starter-looks - CRUD for the /register carousel's tiles.
@@ -9185,9 +9240,19 @@ namespace OpenSim.Server.Handlers.WebInterface
         }
 
         // Abuse report screenshots arrive over the viewer's
-        // SendUserReportWithScreenshot cap as raw JPEG bytes (see
-        // AbuseReportsModule.cs) - same assumption real SL viewers make about
-        // this specific upload.
+        // SendUserReportWithScreenshot cap as raw JPEG2000 (J2C) bytes, not
+        // JPEG - confirmed both empirically (a live report's ImageData
+        // starts with FF 4F FF 51, the J2C codestream SOC/SIZ markers, not
+        // JPEG's FF D8 FF) and in the real Firestorm source
+        // (LLFloaterReporter::takeScreenshot uses
+        // LLViewerTextureList::convertToUploadFile, the same J2C encode
+        // every ordinary texture upload uses - the screenshot really is
+        // uploaded as a genuine AT_TEXTURE asset, per its own comment).
+        // Browsers can't render a bare J2C codestream, so a naive
+        // image/jpeg passthrough here just showed a broken-image icon in
+        // the admin page - decode then re-encode as a real JPEG first,
+        // same OpenMetaverse.Imaging.OpenJPEG round trip
+        // GetTextureHandler.cs already uses for exactly this reason.
         private void HandleAdminAbuseReportImage(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -9210,9 +9275,47 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            byte[] jpegData = ConvertJ2CToJpeg(report.ImageData, reportID);
+            if (jpegData == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
             response.ContentType = "image/jpeg";
-            response.RawBuffer = report.ImageData;
+            response.RawBuffer = jpegData;
             response.StatusCode = (int)HttpStatusCode.OK;
+        }
+
+        private byte[] ConvertJ2CToJpeg(byte[] j2cData, int reportID)
+        {
+            Bitmap bitmap = null;
+            Image image = null;
+            try
+            {
+                if (!OpenJPEG.DecodeToImage(j2cData, out ManagedImage _, out image) || image == null)
+                {
+                    m_log.WarnFormat("[WEB INTERFACE]: Couldn't decode abuse report {0}'s screenshot as J2C", reportID);
+                    return null;
+                }
+
+                bitmap = new Bitmap(image);
+                using (MemoryStream stream = new MemoryStream())
+                {
+                    bitmap.Save(stream, ImageFormat.Jpeg);
+                    return stream.ToArray();
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[WEB INTERFACE]: Failed converting abuse report {0}'s screenshot to JPEG: {1}", reportID, e.Message);
+                return null;
+            }
+            finally
+            {
+                bitmap?.Dispose();
+                image?.Dispose();
+            }
         }
 
         // Grid-wide financial reporting - two tabs (currency transfers,

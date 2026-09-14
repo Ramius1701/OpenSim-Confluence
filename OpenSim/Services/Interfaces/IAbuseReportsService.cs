@@ -23,5 +23,14 @@ namespace OpenSim.Services.Interfaces
         /// call this either.
         /// </summary>
         bool UpdateAbuseReport(AbuseReportData report);
+
+        /// <summary>
+        /// Admin-tool deletion, deliberately restricted by the caller to
+        /// already-closed (Active == false) reports only - an open report
+        /// is still evidence of something unresolved and shouldn't be
+        /// removable by accident. Same admin-only reasoning as
+        /// GetAbuseReports/UpdateAbuseReport above.
+        /// </summary>
+        bool DeleteAbuseReport(int reportID);
     }
 }

@@ -101,6 +101,14 @@ namespace OpenSim.Services.Connectors
             return false;
         }
 
+        // Same reasoning as GetAbuseReports/GetAbuseReport/UpdateAbuseReport
+        // above - an admin-tool concern the WebUI reaches through its own
+        // direct AbuseReportsService instance, not through this connector.
+        public bool DeleteAbuseReport(int reportID)
+        {
+            return false;
+        }
+
         #endregion IAbuseReportsService
 
         private bool doSimplePost(string reqString, string meth)

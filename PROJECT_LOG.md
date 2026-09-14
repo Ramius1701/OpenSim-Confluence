@@ -24292,3 +24292,55 @@ section (spaces in the region name become underscores). Added
 and re-applied the DB flag once for immediate effect - going forward
 it's reasserted automatically on every Sandbox registration, the same
 way Welcome Center's own flags already were.
+
+---
+
+## Abuse report screenshots: wrong format assumption, not a broken upload (2026-09-14)
+
+A tester reported an abuse report's attached screenshot showing as a
+tiny broken-image icon in the admin page instead of the actual
+picture. Confirmed directly by reading the stored bytes for a real
+report (`ImageData` in the `abusereports` table): they start `FF 4F
+FF 51` - the JPEG2000 (J2C) codestream SOC/SIZ markers, not JPEG's `FF
+D8 FF`. The handler serving them (`HandleAdminAbuseReportImage`,
+`WebInterfaceServiceConnector.cs`) had a comment claiming the viewer
+sends "raw JPEG bytes... same assumption real SL viewers make" and
+served the bytes as-is with `Content-Type: image/jpeg` - browsers
+can't render a bare J2C codestream, hence the broken-image icon.
+
+Checked the real Firestorm source to confirm what the viewer actually
+sends rather than guess again:
+`LLFloaterReporter::takeScreenshot` (`llfloaterreporter.cpp:888`)
+calls `LLViewerTextureList::convertToUploadFile`, returning an
+`LLImageJ2C` - the exact same J2C encode every ordinary texture
+upload uses, because the screenshot really is uploaded as a genuine
+`AT_TEXTURE` inventory asset, not a special-cased JPEG blob. The
+original comment's assumption was simply wrong.
+
+**Fix**: decode-then-re-encode, the same round trip
+`GetTextureHandler.cs` already uses for exactly this reason
+(`OpenMetaverse.Imaging.OpenJPEG.DecodeToImage` -> `System.Drawing.
+Bitmap` -> re-saved as a real JPEG) before serving it to the browser.
+Needed a new `System.Drawing.Common` reference on
+`OpenSim.Server.Handlers` (added in both the live `.csproj` and the
+tracked `prebuild.xml`, matching this repo's established dual-edit
+convention for anything `.csproj`-only wouldn't survive) -
+`OpenMetaverse.Imaging` itself needed no new reference, since it lives
+inside the `OpenMetaverse` assembly this project already references.
+
+**Also added, per the operator's own request while looking at this
+page**: a Delete button for abuse reports, deliberately restricted to
+already-closed ones - `HandleAdminAbuseReportsDelete` refuses if
+`report.Active` is still true, same fail-closed pattern already used
+elsewhere on this page (`TryStopRegion`'s backup-in-progress check).
+No delete primitive existed anywhere in the abuse-reports stack before
+this - added `IAbuseReportsData.Delete(field, key)` (trivial: every
+backend's `MySqlAbuseReportsData`/`PGSqlAbuseReportsData`/
+`SQLiteAbuseReportsData` already inherits a working `Delete(string,
+string)` from its own generic table handler base, just never exposed
+through the interface) and `IAbuseReportsService.DeleteAbuseReport`
+(implemented for real in the Local `AbuseReportsService`; honest
+stubs in both the region-side Local/Remote scene connectors and the
+region-to-Robust `AbuseReportsServicesConnector`, matching the
+existing Get/Update stub pattern - no region-side code has a
+legitimate reason to delete a report, only the admin WebUI does).
