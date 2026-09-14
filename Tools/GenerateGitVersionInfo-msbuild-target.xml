@@ -42,8 +42,28 @@
   item values on a literal ";" as an MSBuild list separator, so a real
   semicolon in the generated C# has to be escaped this way or it gets
   silently dropped.
+
+  2026-09-14: added explicit Inputs/Outputs - without them, this
+  target (and the git commands inside it) only actually runs when
+  MSBuild has already decided OpenSim.Framework needs recompiling for
+  some OTHER reason (one of its own .cs files changed). A commit that
+  touches anything else - which is most commits: region modules, the
+  WebUI, addon-modules, docs - left the previous build's
+  GitVersionInfo.g.cs untouched and silently stale, several real
+  commits behind, with no warning. Confirmed live: CommitsAheadOfMaster
+  stayed pinned at a build from days earlier through several real
+  commits until a source file inside this specific project happened to
+  change again. Using .git/logs/HEAD (the reflog, appended on every
+  commit/checkout) as the Inputs file gives MSBuild's own timestamp
+  check a real reason to re-run this target - and once it does,
+  WriteOnlyWhenDifferent gives GitVersionInfo.g.cs a fresh timestamp
+  whenever the content actually changed, which in turn makes the real
+  CoreCompile step correctly see a newer input and actually recompile,
+  not just regenerate-and-ignore.
 -->
-<Target Name="GenerateGitVersionInfo" BeforeTargets="BeforeCompile;CoreCompile">
+<Target Name="GenerateGitVersionInfo" BeforeTargets="BeforeCompile;CoreCompile"
+        Inputs="$(MSBuildProjectDirectory)\..\..\.git\logs\HEAD"
+        Outputs="$(IntermediateOutputPath)GitVersionInfo.g.cs">
   <Exec Command="git rev-list --count origin/master..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
     <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitsAheadRaw" />
     <Output TaskParameter="ExitCode" PropertyName="GitCommitsAheadExitCode" />
