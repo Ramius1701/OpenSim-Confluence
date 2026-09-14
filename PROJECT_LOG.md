@@ -24079,3 +24079,50 @@ reconsider defaulting to a single shared `bin/` (vanilla OpenSim's own
 model) for grids that don't need rolling per-region updates, keeping
 per-region isolation as an opt-in. Worth a real decision before this
 becomes a support burden for anyone who isn't also the developer.
+
+---
+
+## Grid-update tooling gap closed - it already existed, just wasn't documented (2026-09-14)
+
+Directly resolves the open product question above. The operator
+pushed back on the deploy-drift pattern this whole session: manually
+diff-copying builds into every region's own `bin\` and batch-restarting
+everyone via raw PowerShell defeats the entire point of the per-region
+binary isolation feature (2026-09-12), which was deliberately designed
+to mimic how Second Life itself rolls out simulator updates -
+individual sims cycle onto new code while the rest of the grid stays
+live, never a fleet-wide outage.
+
+**Checked the actual code rather than assuming a new tool was
+needed**: `TryStartRegionProcess` already calls `SyncRegionBinaries`
+on every launch, which copies fresh binaries from a config-driven
+master folder (`[StoreService] RegionOrderGridRoot`, not a hardcoded
+Casperia path) into that region's own `bin\` automatically. The
+WebUI's single-region Restart and the rolling Restart All already do
+a real warn -> stop -> sync -> start cycle, one region at a time. This
+is genuinely generic, already-shipped code in
+`WebInterfaceServiceConnector.cs` - not something Casperia-specific
+that needed building or porting. It's also already documented for
+initial setup in README.md's "Grid mode" section and the shipped
+`Robust.HG.ini.example`.
+
+**The actual gap**: this only covered *initial* grid setup, not the
+*updating an already-running grid* workflow - nothing spelled out
+"here's how you push a new build to a grid that's already live,"
+which is exactly the step this session kept doing by hand instead.
+
+**Fix**: no new code. Added a dedicated "Updating a grid-mode
+deployment" section to README.md (build -> overwrite the master
+`RegionOrderGridRoot` folder -> work out blast radius -> use
+Restart/Restart All, never hand-copy into a region's own folder), and
+tied FEATURES.md's existing Simulators-page description explicitly to
+this use case, not just to provisioning new regions.
+
+**Why no ROADMAP.md entry**: per the established ROADMAP/FEATURES
+split (ROADMAP = unshipped capabilities only), this doesn't qualify -
+the capability already existed and already worked for every Confluence
+grid owner, not just Casperia. This closes the "open product question"
+from the entry above outright rather than scheduling new work; the two
+directions floated there (a dedicated `UpdateGrid` script, or
+reconsidering shared-vs-per-region `bin\`) are both moot now that the
+existing WebUI mechanism is confirmed to already cover this generically.
