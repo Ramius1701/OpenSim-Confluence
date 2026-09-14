@@ -24344,3 +24344,7 @@ stubs in both the region-side Local/Remote scene connectors and the
 region-to-Robust `AbuseReportsServicesConnector`, matching the
 existing Get/Update stub pattern - no region-side code has a
 legitimate reason to delete a report, only the admin WebUI does).
+
+**Live-verified** after deploy (build 594): the operator opened the
+same report that had shown a broken-image icon and confirmed the
+actual screenshot now renders correctly in the admin page.
