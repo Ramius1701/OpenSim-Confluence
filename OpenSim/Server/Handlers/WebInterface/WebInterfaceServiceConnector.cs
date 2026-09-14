@@ -16556,14 +16556,31 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 else
                 {
+                    // Priority regions merely going FIRST in the stagger
+                    // order isn't enough on its own - confirmed live,
+                    // 2026-09-14: the operator fled a region mid-warning to
+                    // Welcome Center expecting a safe harbor, and got
+                    // disconnected anyway because Welcome Center's own
+                    // restart (fired only 30s earlier) hadn't actually
+                    // finished yet. Split into two phases instead: restart
+                    // every priority region (still staggered 30s among
+                    // themselves so they're not ALL dark at once either),
+                    // then WAIT for all of them to actually respond again
+                    // before starting the rolling sequence for everyone
+                    // else - only then are they a genuinely stable refuge
+                    // for the rest of the restart's duration.
+                    List<(string SimulatorFolder, string RegionName, UUID RegionID)> priorityRegions =
+                            toRestart.Where(s => priorityRegionIds.Contains(s.RegionID)).ToList();
+                    List<(string SimulatorFolder, string RegionName, UUID RegionID)> remainingRegions =
+                            toRestart.Where(s => !priorityRegionIds.Contains(s.RegionID)).ToList();
+
                     // Same background-thread rationale as Start All/Stop
                     // All above - this takes several minutes end to end,
                     // well past what the shared Apache reverse proxy would
                     // tolerate for a single blocking request.
-                    List<(string SimulatorFolder, string RegionName, UUID RegionID)> toRestartCaptured = toRestart;
                     System.Threading.Thread worker = new System.Threading.Thread(() =>
                     {
-                        foreach (var s in toRestartCaptured)
+                        foreach (var s in priorityRegions)
                         {
                             // Each region's own full warn->wait->stop->start
                             // sequence (RealRestartRegion) runs on its own
@@ -16584,12 +16601,51 @@ namespace OpenSim.Server.Handlers.WebInterface
                             // click rather than 30 seconds late.
                             System.Threading.Thread.Sleep(30000);
                         }
+
+                        // Poll rather than a fixed sleep, since
+                        // RealRestartRegion's real duration varies (120s
+                        // warning + real stop + sync + start, plus however
+                        // long that specific region takes to actually
+                        // finish loading). Capped so one genuinely stuck
+                        // region (crashed on relaunch, port never comes
+                        // back) can't hang the entire rolling restart
+                        // forever - falls through to the rest of the grid
+                        // regardless once the cap is hit.
+                        if (priorityRegions.Count > 0)
+                        {
+                            DateTime deadline = DateTime.UtcNow.AddMinutes(5);
+                            HashSet<string> stillDown = new HashSet<string>(priorityRegions.Select(p => p.SimulatorFolder));
+                            while (stillDown.Count > 0 && DateTime.UtcNow < deadline)
+                            {
+                                foreach (string folder in stillDown.ToList())
+                                {
+                                    int? port = GetSimulatorPort(folder);
+                                    if (port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000))
+                                        stillDown.Remove(folder);
+                                }
+                                if (stillDown.Count > 0)
+                                    System.Threading.Thread.Sleep(5000);
+                            }
+                        }
+
+                        foreach (var s in remainingRegions)
+                        {
+                            var captured = s;
+                            System.Threading.Thread regionThread = new System.Threading.Thread(
+                                () => RealRestartRegion(captured.SimulatorFolder, captured.RegionID, captured.RegionName))
+                            { IsBackground = true };
+                            regionThread.Start();
+                            System.Threading.Thread.Sleep(30000);
+                        }
                     })
                     { IsBackground = true };
                     worker.Start();
 
                     message = "Rolling restart started for " + toRestart.Count
-                            + " simulator(s), 30 seconds apart - each gets the 120s in-world warning, then a real stop+start to pick up any deployed code. Refresh this page over the next several minutes to watch status.";
+                            + " simulator(s) - grid landing/hub simulators first, confirmed back up before the rest "
+                            + "begins their own 30-seconds-apart sequence. Each gets the 120s in-world warning, then "
+                            + "a real stop+start to pick up any deployed code. Refresh this page over the next "
+                            + "several minutes to watch status.";
                 }
             }
 
