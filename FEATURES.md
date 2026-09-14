@@ -461,7 +461,18 @@ simulator's channel and build to residents/estate managers. Since each
 region runs its own independent binary copy, this is always that
 specific simulator's own real build number, not a grid-wide constant -
 directly useful for spotting which regions have and haven't picked up
-a rolling update yet.
+a rolling update yet. Live-verified with a real build mismatch: after
+restarting one region onto a newer build than the rest of the grid,
+crossing back into an older-build region correctly showed the
+resident's viewer's own "different simulator version" notice.
+
+Off by default (`[ClientStack.LindenUDP] ViewerSimulatorVersionOverride`
+commented out in `OpenSimDefaults.ini`) so this real per-region number
+actually reaches residents. A grid owner can set it to a fixed string
+instead if they'd rather have quiet region crossings than build-number
+visibility - some viewers pop a "different simulator version" notice
+on every crossing where two regions' version strings differ, which a
+grid running mixed builds mid-rolling-restart hits by design.
 
 ### Map tiles
 

@@ -24126,3 +24126,84 @@ from the entry above outright rather than scheduling new work; the two
 directions floated there (a dedicated `UpdateGrid` script, or
 reconsidering shared-vs-per-region `bin\`) are both moot now that the
 existing WebUI mechanism is confirmed to already cover this generically.
+
+---
+
+## Simulator version string: a hidden override, and a silently stale build number (2026-09-14)
+
+Two genuinely separate bugs found while making the in-viewer
+Region/Estate floater's "Version:" field readable, both surfaced only
+because the operator insisted on live-testing with a real,
+deliberately-mismatched build rather than accepting "the code looks
+right" as good enough.
+
+**Bug 1 - a hidden config override defeated the fix entirely.**
+`VersionInfo.GetVersionString()` was changed to produce `"Confluence
+(Build N)"` instead of the noisy internal `"OpenSim-Confluence 0.9.3.1
+(Build N) Dev"` string, matching how Second Life itself reports a
+simulator's channel/build to residents. Built, deployed, restarted,
+even a full relog - the viewer kept showing the old string with no
+build number at all. Server-side logging (`ServerBase`'s own startup
+"OpenSimulator version:" line) confirmed the fix WAS active and
+correct at the source. The actual cause, found by tracing the full
+send path (`Scene.GetSimulatorVersion()` ->
+`LLClientView.GetViewerSimulatorVersion()` -> the `AgentMovementComplete`
+packet's `SimData.ChannelVersion` field -> Firestorm's
+`gLastVersionChannel`): `OpenSimDefaults.ini`'s
+`[ClientStack.LindenUDP] ViewerSimulatorVersionOverride =
+"OpenSim-Confluence"` unconditionally short-circuits that whole path,
+always sending the fixed string regardless of what
+`GetSimulatorVersion()` would have produced. Not a stale leftover -
+a deliberate, documented fix for a real, different problem: some
+viewers (Firestorm's `FSShowServerVersionChangeNotice`, on by default)
+pop a "different simulator version" notice on every region crossing
+where the two regions' version strings differ, which a real grid
+running mixed builds during a rolling restart hits constantly.
+**Fix**: commented the override out by default (in both the shipped
+`bin/OpenSimDefaults.ini` and Casperia's live copy) so the real
+per-region build number shows through, with the trade-off documented
+inline for a grid owner who'd rather have quiet crossings back.
+Live-verified the trade-off is real, not theoretical: once Sandbox was
+individually restarted onto a newer build than the rest of the grid,
+the operator's own viewer showed exactly that "different simulator
+version" notice crossing back into an older-build region - confirming
+both that the override removal works and that the popup it used to
+suppress is a genuine, expected side effect, not a bug.
+
+**Bug 2 - the build number itself was silently unreliable.** Testing
+this live required deliberately putting one region on a newer build
+than the rest - and the very first attempt showed EVERY region,
+freshly rebuilt and redeployed, reporting the identical build number
+still. `git rev-list --count origin/master..HEAD` run directly gave
+587; the compiled `GitVersionInfo.g.cs` said 380 - a number from days
+earlier. Cause: `OpenSim.Framework.csproj`'s hand-maintained
+`GenerateGitVersionInfo` MSBuild target had no `Inputs`/`Outputs`
+declared, so it only actually ran when MSBuild had ALREADY decided
+`OpenSim.Framework` needed recompiling for some unrelated reason (one
+of its own `.cs` files changed). Any commit that touched something
+else - region modules, the WebUI, addon-modules, docs, which is most
+commits - left the previous build's embedded number untouched and
+silently stale, with no error or warning anywhere. Confirmed by
+forcing a clean rebuild of just that project: the correct 587
+immediately appeared. **Fix**: gave the target explicit `Inputs`
+(`.git/logs/HEAD`, the reflog, which updates on every commit) and
+`Outputs` (`GitVersionInfo.g.cs` itself), so MSBuild's own timestamp
+comparison now has a real, correct reason to re-run it every time HEAD
+moves - verified via a normal incremental build (no manual `obj/`
+cleanup) correctly producing 587 on the first try afterward. Since
+`.csproj` files are gitignored in this repo (`prebuild.xml` is the
+real source, per this project's own established convention -
+`Tools/GenerateGitVersionInfo-msbuild-target.xml` is the tracked
+paste-back copy of this exact custom Target, since prebuild.xml's
+schema can't express one), the fix was made in both the live `.csproj`
+and that tracked source file, or it would have been silently lost the
+next time `.csproj`s get regenerated.
+
+**Live end-to-end verification**: with master deliberately built to
+587 and left un-synced to any region, all 15 regions confirmed still
+reporting 583; Sandbox alone restarted via the real WebUI Restart
+button (not scripted); came back up reporting 587 with a fresh
+PID/boot timestamp; every other region, including Andromeda,
+unaffected. Exactly the rolling-update behavior this whole session's
+per-region isolation design exists for, confirmed with a real,
+deliberate build mismatch rather than assumed from reading the code.
