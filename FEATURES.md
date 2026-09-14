@@ -154,7 +154,12 @@ alongside the existing support-ticket system.
   a Restart All that's a real rolling restart: every currently-running
   region gets the same 120-second in-world countdown warning a single
   region's own Restart button sends, staggered 30 seconds apart so the
-  whole grid is never dark at the same moment. Every Start/Restart
+  whole grid is never dark at the same moment. Regions flagged
+  DefaultRegion/DefaultHGRegion (a grid's own landing/hub simulators)
+  restart first in that sequence, same as how Second Life itself
+  stages a rolling update - so residents on a region about to go down
+  have somewhere already-live to wait out its own countdown instead of
+  getting disconnected outright. Every Start/Restart
   also re-syncs that region's own `bin\` from the grid's shared master
   folder first (see README.md's "Updating a grid-mode deployment") -
   this is how a grid owner rolls out a new Confluence build too, not
@@ -446,6 +451,17 @@ also available via `osNpc`.
   near-avatar placement a normal rez uses.
 
 ## World and Environment
+
+### Region info
+
+The Region/Estate floater's "Version:" field (and the console's `show
+version`) reads `Confluence (Build N)` rather than an internal numeric
+version/flavour string - matching how Second Life itself reports a
+simulator's channel and build to residents/estate managers. Since each
+region runs its own independent binary copy, this is always that
+specific simulator's own real build number, not a grid-wide constant -
+directly useful for spotting which regions have and haven't picked up
+a rolling update yet.
 
 ### Map tiles
 
