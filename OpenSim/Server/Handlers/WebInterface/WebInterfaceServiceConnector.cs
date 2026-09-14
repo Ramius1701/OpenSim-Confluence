@@ -8620,9 +8620,78 @@ namespace OpenSim.Server.Handlers.WebInterface
             RunRegionConsoleCommand(region, "region restart 120");
             System.Threading.Thread.Sleep(125000);
 
-            TryStopRegion(regionId, regionName, out _);
-            System.Threading.Thread.Sleep(5000);
+            bool stopped = TryStopRegion(regionId, regionName, out _);
+            if (!stopped)
+            {
+                // TryStopRegion already fails closed for the cases it
+                // knows about (backup in progress, unreachable) - launching
+                // a replacement process anyway would just crash it against
+                // the still-running old one (see the port-wait comment
+                // below for exactly what that looks like). Leave this
+                // region on its current build rather than force it.
+                return;
+            }
+
+            // TryStopRegion returning true only means the "shutdown"
+            // command was accepted - its own comment above already notes
+            // a genuine graceful shutdown can make the process exit AFTER
+            // the HTTP response is sent, so the old process may still be
+            // mid-teardown (saving objects, closing scripts) here. A fixed
+            // short sleep isn't reliable for every region size - confirmed
+            // live, 2026-09-14: Welcome Center (757 objects/442 scripts)
+            // was still shutting down when the old fixed 5s delay fired
+            // the replacement process anyway, which crashed immediately on
+            // a "port already in use" bind error - leaving the STALE
+            // pre-restart process as the only thing actually serving the
+            // region, silently never picking up the deployed build. Poll
+            // for the port to genuinely go quiet instead of guessing a
+            // duration, same principle as the ready-poll below just for
+            // the opposite transition (down, not up). Capped so a region
+            // whose process hangs on shutdown doesn't block forever - if
+            // the cap is hit, proceed anyway rather than leave the region
+            // stopped forever; TryStartRegionProcess's own crash-detection
+            // will report a failure through its normal path.
+            region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
+            if (region != null)
+            {
+                DateTime portDeadline = DateTime.UtcNow.AddSeconds(60);
+                while (DateTime.UtcNow < portDeadline
+                        && Util.IsHostAlive("http://127.0.0.1:" + region.InternalEndPoint.Port + "/", 1000))
+                {
+                    System.Threading.Thread.Sleep(2000);
+                }
+            }
+
             TryStartRegionProcess(simulatorFolder, out _, out _);
+
+            // TryStartRegionProcess only confirms the process didn't crash
+            // in its first 3 seconds - the port being open just means
+            // RegionReadyModule has started, not that it's finished loading
+            // this region's own prims/objects/mesh. Observed live,
+            // 2026-09-14: heavier regions take noticeably longer to
+            // actually finish loading than lighter ones, so a caller
+            // relying on RealRestartRegion having returned as "this region
+            // is a genuinely usable refuge now" (the whole point of the
+            // priority-region-first ordering in Restart All) needs the
+            // real per-region load time, not a fixed guess. Poll the same
+            // "ready-status" console command/LOGINS_ENABLED signal the
+            // Simulators page already uses for its own status pill, capped
+            // so one region that never finishes loading (or crashes after
+            // the initial 3s check) can't hang the whole rolling sequence
+            // forever.
+            DateTime readyDeadline = DateTime.UtcNow.AddMinutes(5);
+            while (DateTime.UtcNow < readyDeadline)
+            {
+                region = m_GridService?.GetRegionByUUID(UUID.Zero, regionId);
+                if (region == null || string.IsNullOrEmpty(region.ServerURI))
+                    break;
+
+                string result = RunRegionConsoleCommand(region, "ready-status " + regionId);
+                if (result != null && result.Contains("LOGINS_ENABLED: True"))
+                    break;
+
+                System.Threading.Thread.Sleep(5000);
+            }
         }
 
         // Same RunRegionConsoleCommand/shared-secret mechanism as Restart
@@ -16561,14 +16630,27 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // 2026-09-14: the operator fled a region mid-warning to
                     // Welcome Center expecting a safe harbor, and got
                     // disconnected anyway because Welcome Center's own
-                    // restart (fired only 30s earlier) hadn't actually
-                    // finished yet. Split into two phases instead: restart
-                    // every priority region (still staggered 30s among
-                    // themselves so they're not ALL dark at once either),
-                    // then WAIT for all of them to actually respond again
-                    // before starting the rolling sequence for everyone
-                    // else - only then are they a genuinely stable refuge
-                    // for the rest of the restart's duration.
+                    // restart hadn't actually finished yet. A first fix
+                    // attempt (fire both priority regions on background
+                    // threads staggered 30s apart, then poll
+                    // Util.IsHostAlive until both respond) was ALSO
+                    // confirmed broken live the same day: a region's own
+                    // port stays alive and responding for the entire 120s
+                    // warning countdown right up until the real stop
+                    // happens, so the poll saw the OLD pre-restart process
+                    // as "already up" and let the rolling sequence for
+                    // every other region start within seconds - three
+                    // regular regions (Farm, GFC, Ranchero) restarted
+                    // before Sandbox's own restart had even completed.
+                    // Fixed properly by not polling for "up" at all -
+                    // RealRestartRegion is called directly (not on its own
+                    // background thread) for each priority region here, so
+                    // this loop naturally blocks through that region's
+                    // real warn->stop->start cycle end to end before even
+                    // starting the next priority region, let alone
+                    // anything in remainingRegions. No race possible: a
+                    // region literally cannot still be restarting once its
+                    // own RealRestartRegion call has returned.
                     List<(string SimulatorFolder, string RegionName, UUID RegionID)> priorityRegions =
                             toRestart.Where(s => priorityRegionIds.Contains(s.RegionID)).ToList();
                     List<(string SimulatorFolder, string RegionName, UUID RegionID)> remainingRegions =
@@ -16582,50 +16664,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     {
                         foreach (var s in priorityRegions)
                         {
-                            // Each region's own full warn->wait->stop->start
-                            // sequence (RealRestartRegion) runs on its own
-                            // thread so this outer loop doesn't block for
-                            // ~2 minutes per region before staggering the
-                            // next one - the 30s gap is between each
-                            // region's warning STARTING, matching the
-                            // original rolling-restart design, not between
-                            // full completions.
-                            var captured = s;
-                            System.Threading.Thread regionThread = new System.Threading.Thread(
-                                () => RealRestartRegion(captured.SimulatorFolder, captured.RegionID, captured.RegionName))
-                            { IsBackground = true };
-                            regionThread.Start();
-
-                            // Sleep AFTER firing, not before - the first
-                            // region's countdown starts immediately on
-                            // click rather than 30 seconds late.
-                            System.Threading.Thread.Sleep(30000);
-                        }
-
-                        // Poll rather than a fixed sleep, since
-                        // RealRestartRegion's real duration varies (120s
-                        // warning + real stop + sync + start, plus however
-                        // long that specific region takes to actually
-                        // finish loading). Capped so one genuinely stuck
-                        // region (crashed on relaunch, port never comes
-                        // back) can't hang the entire rolling restart
-                        // forever - falls through to the rest of the grid
-                        // regardless once the cap is hit.
-                        if (priorityRegions.Count > 0)
-                        {
-                            DateTime deadline = DateTime.UtcNow.AddMinutes(5);
-                            HashSet<string> stillDown = new HashSet<string>(priorityRegions.Select(p => p.SimulatorFolder));
-                            while (stillDown.Count > 0 && DateTime.UtcNow < deadline)
-                            {
-                                foreach (string folder in stillDown.ToList())
-                                {
-                                    int? port = GetSimulatorPort(folder);
-                                    if (port.HasValue && Util.IsHostAlive("http://127.0.0.1:" + port.Value + "/", 1000))
-                                        stillDown.Remove(folder);
-                                }
-                                if (stillDown.Count > 0)
-                                    System.Threading.Thread.Sleep(5000);
-                            }
+                            RealRestartRegion(s.SimulatorFolder, s.RegionID, s.RegionName);
                         }
 
                         foreach (var s in remainingRegions)
@@ -16642,10 +16681,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                     worker.Start();
 
                     message = "Rolling restart started for " + toRestart.Count
-                            + " simulator(s) - grid landing/hub simulators first, confirmed back up before the rest "
-                            + "begins their own 30-seconds-apart sequence. Each gets the 120s in-world warning, then "
-                            + "a real stop+start to pick up any deployed code. Refresh this page over the next "
-                            + "several minutes to watch status.";
+                            + " simulator(s) - grid landing/hub simulators restart first, one at a time, each "
+                            + "fully back up before the next hub region (or the rest of the grid) begins its own "
+                            + "cycle. Each gets the 120s in-world warning, then a real stop+start to pick up any "
+                            + "deployed code. Refresh this page over the next several minutes to watch status.";
                 }
             }
 
