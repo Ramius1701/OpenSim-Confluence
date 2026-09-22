@@ -29,6 +29,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Nini.Config;
+using OpenMetaverse;
 using OpenSim.Framework.Servers.HttpServer;
 
 namespace OpenSim.Server.Base
@@ -86,13 +87,53 @@ namespace OpenSim.Server.Base
                 return false;
             }
 
-            IPAddress address = NormalizeAddress(request.RemoteIPEndPoint.Address);
-            if (IPAddress.IsLoopback(address) || m_trustedHosts.Contains(address))
+            if (IsTrustedAddress(request.RemoteIPEndPoint.Address))
                 return true;
 
             response.StatusCode = (int)blockedStatus;
             return false;
         }
+
+        public bool IsTrustedAddress(IPAddress address)
+        {
+            address = NormalizeAddress(address);
+            return IPAddress.IsLoopback(address) || m_trustedHosts.Contains(address);
+        }
+
+        // Privileged IM dialogs (a god's forced/silent teleport, and the
+        // Confluence-specific dialog 250 - see IsPrivilegedInstantMessageDialog)
+        // carry no authentication of their own beyond the sender's claimed
+        // caller identity - only ever trust one of these when it actually
+        // arrives from another of this grid's own trusted hosts, otherwise
+        // any caller could force-teleport or otherwise abuse a target
+        // resident by simply crafting the right IM dialog byte. Ordinary
+        // IMs (chat, friendship offers, etc.) aren't gated at all here -
+        // this only protects the small set of dialogs that carry real
+        // privileged side effects.
+        public bool AuthorizePrivilegedInstantMessage(byte dialog, IPEndPoint remoteClient)
+        {
+            if (!IsPrivilegedInstantMessageDialog(dialog))
+                return true;
+
+            return remoteClient != null && IsTrustedAddress(remoteClient.Address);
+        }
+
+        public static bool IsPrivilegedInstantMessageDialog(byte dialog)
+        {
+            return dialog == 250 || dialog == (byte)InstantMessageDialog.GodLikeRequestTeleport;
+        }
+
+        // Deliberately no AuthorizeJsonRpc here: the disclosure's profile
+        // JSON-RPC gate would need to apply only to the two read methods
+        // that expose email/private prefs (AvatarNotesRequest,
+        // UserPreferencesRequest), not the classifieds/picks/notes/
+        // properties/interests/preferences/appdata UPDATE methods - those
+        // are called directly by residents' own viewers against the
+        // region's public port (confirmed via
+        // LocalUserProfilesServiceConnector.cs's MainServer.Instance
+        // registration), so gating them to trusted-hosts-only would break
+        // ordinary profile editing grid-wide. Left as an open item
+        // pending a narrower fix - see PROJECT_LOG.md, 2026-09-23.
 
         private static string GetConfiguredHosts(IConfigSource config)
         {

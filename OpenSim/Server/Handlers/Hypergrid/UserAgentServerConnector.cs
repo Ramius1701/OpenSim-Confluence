@@ -52,6 +52,7 @@ namespace OpenSim.Server.Handlers.Hypergrid
 //                MethodBase.GetCurrentMethod().DeclaringType);
 
         private IUserAgentService m_HomeUsersService;
+        private readonly ControlPlaneAccess m_ControlPlaneAccess;
         public IUserAgentService HomeUsersService
         {
             get { return m_HomeUsersService; }
@@ -74,6 +75,8 @@ namespace OpenSim.Server.Handlers.Hypergrid
         public UserAgentServerConnector(IConfigSource config, IHttpServer server, IFriendsSimConnector friendsConnector) :
                 base(config, server, String.Empty)
         {
+            m_ControlPlaneAccess = new ControlPlaneAccess(config);
+
             IConfig gridConfig = config.Configs["UserAgentService"];
             if (gridConfig != null)
             {
@@ -221,6 +224,24 @@ namespace OpenSim.Server.Handlers.Hypergrid
             string userID_str = (string)requestData["userID"];
             UUID userID = UUID.Zero;
             UUID.TryParse(userID_str, out userID);
+
+            // A caller from outside this grid's own trusted hosts has no
+            // way to prove (userID, sessionID) is a real session it's
+            // entitled to log out - a forged call here could silently
+            // sever a resident's active traveling session. Trusted hosts
+            // are still allowed through unconditionally (this endpoint is
+            // legitimately called cross-grid); anyone else must prove the
+            // session is real via the actual tracked traveling-agent
+            // record. See PROJECT_LOG.md, 2026-09-23.
+            bool trustedCaller = remoteClient != null && m_ControlPlaneAccess.IsTrustedAddress(remoteClient.Address);
+            if (!trustedCaller && !m_HomeUsersService.IsKnownTravelingAgent(userID, sessionID))
+            {
+                Hashtable failHash = new Hashtable();
+                failHash["result"] = "false";
+                XmlRpcResponse failResponse = new XmlRpcResponse();
+                failResponse.Value = failHash;
+                return failResponse;
+            }
 
             m_HomeUsersService.LogoutAgent(userID, sessionID);
 

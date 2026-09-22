@@ -50,6 +50,7 @@ namespace OpenSim.Server.Handlers.Hypergrid
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private IInstantMessage m_IMService;
+        private readonly ControlPlaneAccess m_ControlPlaneAccess;
 
         public InstantMessageServerConnector(IConfigSource config, IHttpServer server) :
             this(config, server, (IInstantMessageSimConnector)null)
@@ -64,6 +65,8 @@ namespace OpenSim.Server.Handlers.Hypergrid
         public InstantMessageServerConnector(IConfigSource config, IHttpServer server, IInstantMessageSimConnector simConnector) :
                 base(config, server, String.Empty)
         {
+            m_ControlPlaneAccess = new ControlPlaneAccess(config);
+
             IConfig gridConfig = config.Configs["HGInstantMessageService"];
             if (gridConfig != null)
             {
@@ -159,6 +162,13 @@ namespace OpenSim.Server.Handlers.Hypergrid
                         dialog = dialogdata[0];
                     }
 
+                    // Same privileged-dialog gate as MessageTransferModule.cs's
+                    // region-local equivalent - this is the cross-grid HG
+                    // Robust-hosted IM endpoint, an even more exposed
+                    // surface for the same forced/silent-teleport abuse.
+                    if (!m_ControlPlaneAccess.AuthorizePrivilegedInstantMessage(dialog, remoteClient))
+                        return InstantMessageResponse(false);
+
                     if ((string)requestData["from_group"] == "TRUE")
                         fromGroup = true;
 
@@ -231,6 +241,11 @@ namespace OpenSim.Server.Handlers.Hypergrid
 
             //Send response back to region calling if it was successful
             // calling region uses this to know when to look up a user's location again.
+            return InstantMessageResponse(successful);
+        }
+
+        private static XmlRpcResponse InstantMessageResponse(bool successful)
+        {
             XmlRpcResponse resp = new XmlRpcResponse();
             Hashtable respdata = new Hashtable();
             respdata["success"] = successful ? "TRUE" : "FALSE";
@@ -238,6 +253,5 @@ namespace OpenSim.Server.Handlers.Hypergrid
 
             return resp;
         }
-
     }
 }

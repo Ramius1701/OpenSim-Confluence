@@ -36,6 +36,7 @@ using Nwc.XmlRpc;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Framework.Servers;
+using OpenSim.Server.Base;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using GridRegion = OpenSim.Services.Interfaces.GridRegion;
@@ -54,6 +55,7 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
         protected string m_MessageKey = string.Empty;
         protected List<Scene> m_Scenes = new List<Scene>();
         protected Dictionary<UUID, UUID> m_UserRegionMap = new();
+        private ControlPlaneAccess m_ControlPlaneAccess;
 
         public event UndeliveredMessage OnUndeliveredMessage;
 
@@ -71,6 +73,8 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
         public virtual void Initialise(IConfigSource config)
         {
+            m_ControlPlaneAccess = new ControlPlaneAccess(config);
+
             IConfig cnf = config.Configs["Messaging"];
             if (cnf != null)
             {
@@ -293,6 +297,15 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
                         dialog = dialogdata[0];
                     }
 
+                    // Dialog 250 and GodLikeRequestTeleport carry real
+                    // privileged side effects (forced/silent teleport) with
+                    // no authentication of their own beyond this claimed
+                    // sender - only trust one of these when it actually
+                    // arrives from another of this grid's own trusted
+                    // hosts. See PROJECT_LOG.md, 2026-09-23.
+                    if (!m_ControlPlaneAccess.AuthorizePrivilegedInstantMessage(dialog, remoteClient))
+                        return InstantMessageResponse(false);
+
                     if ((string)requestData["from_group"] == "TRUE")
                         fromGroup = true;
 
@@ -420,12 +433,14 @@ namespace OpenSim.Region.CoreModules.Avatar.InstantMessage
 
             //Send response back to region calling if it was successful
             // calling region uses this to know when to look up a user's location again.
+            return InstantMessageResponse(successful);
+        }
+
+        private static XmlRpcResponse InstantMessageResponse(bool successful)
+        {
             XmlRpcResponse resp = new XmlRpcResponse();
             Hashtable respdata = new Hashtable();
-            if (successful)
-                respdata["success"] = "TRUE";
-            else
-                respdata["success"] = "FALSE";
+            respdata["success"] = successful ? "TRUE" : "FALSE";
             resp.Value = respdata;
 
             return resp;

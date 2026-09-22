@@ -95,7 +95,7 @@ namespace OpenSim.Groups
 
             m_GroupsService = new HGGroupsService(config, im, users, homeURI);
 
-            server.AddStreamHandler(new HGGroupsServicePostHandler(m_GroupsService));
+            server.AddStreamHandler(new HGGroupsServicePostHandler(m_GroupsService, new ControlPlaneAccess(config)));
         }
 
     }
@@ -105,11 +105,13 @@ namespace OpenSim.Groups
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private HGGroupsService m_GroupsService;
+        private readonly ControlPlaneAccess m_ControlPlaneAccess;
 
-        public HGGroupsServicePostHandler(HGGroupsService service) :
+        public HGGroupsServicePostHandler(HGGroupsService service, ControlPlaneAccess controlPlaneAccess) :
             base("POST", "/hg-groups")
         {
             m_GroupsService = service;
+            m_ControlPlaneAccess = controlPlaneAccess;
         }
 
         protected override byte[] ProcessRequest(string path, Stream requestData,
@@ -137,12 +139,25 @@ namespace OpenSim.Groups
                 switch (method)
                 {
                     case "POSTGROUP":
+                        // Proxies a foreign grid's own group into this
+                        // grid's local group record - only ever
+                        // legitimately called by another grid's own HG
+                        // groups connector, never a viewer. Gate both
+                        // this and ADDNOTICE (the disclosure's group-
+                        // notice-injection item) to trusted hosts;
+                        // REMOVEAGENTFROMGROUP/GETGROUP/VERIFYNOTICE/reads
+                        // below stay open per Tranquillity's own scope.
+                        // See PROJECT_LOG.md, 2026-09-23.
+                        if (!m_ControlPlaneAccess.Authorize(httpRequest, httpResponse))
+                            return Array.Empty<byte>();
                         return HandleAddGroupProxy(request);
                     case "REMOVEAGENTFROMGROUP":
                         return HandleRemoveAgentFromGroup(request);
                     case "GETGROUP":
                         return HandleGetGroup(request);
                     case "ADDNOTICE":
+                        if (!m_ControlPlaneAccess.Authorize(httpRequest, httpResponse))
+                            return Array.Empty<byte>();
                         return HandleAddNotice(request);
                     case "VERIFYNOTICE":
                         return HandleVerifyNotice(request);

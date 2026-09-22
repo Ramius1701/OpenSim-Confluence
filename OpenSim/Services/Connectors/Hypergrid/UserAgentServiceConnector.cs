@@ -344,6 +344,16 @@ namespace OpenSim.Services.Connectors.Hypergrid
             GetBoolResponse(request, out reason);
         }
 
+        // This connector calls a REMOTE grid's UserAgentService over
+        // HTTP - it has no local session store of its own to check, so it
+        // can never truthfully confirm a traveling-agent claim. False is
+        // the safe default: only the real UserAgentService implementation
+        // (which does track sessions) can answer this.
+        public bool IsKnownTravelingAgent(UUID userID, UUID sessionID)
+        {
+            return false;
+        }
+
         [Obsolete]
         public List<UUID> StatusNotification(List<string> friends, UUID userID, bool online)
         {

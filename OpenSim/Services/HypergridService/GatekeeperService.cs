@@ -521,6 +521,24 @@ namespace OpenSim.Services.HypergridService
                     {
                         if (guinfo.Online && !guinfo.LastRegionID.IsZero())
                         {
+                            // For a foreign (non-local-account) caller,
+                            // claiming "I'm already logged in, kill my old
+                            // session" is unverified unless the claimed
+                            // HomeURI actually matches the stored session's
+                            // real home - otherwise any HG caller could
+                            // spoof this to force-kill an unrelated
+                            // resident's genuinely active session just by
+                            // presenting the same UUID. See
+                            // PROJECT_LOG.md, 2026-09-23.
+                            if (account is null && !ForeignSessionHomeMatches(guinfo, authURL))
+                            {
+                                reason = "You appear to be already logged in on the destination grid";
+                                m_log.InfoFormat(
+                                    "[GATEKEEPER SERVICE]: Refusing duplicate foreign login for {0}; stored home does not match claimed home {1}",
+                                    aCircuit.AgentID, authURL);
+                                return false;
+                            }
+
                             if (SendAgentGodKillToRegion(UUID.Zero, agentID, uui, guinfo))
                             {
                                 if (account is not null)
@@ -670,6 +688,17 @@ namespace OpenSim.Services.HypergridService
             }
             else
             {
+                // userURL is the caller-claimed HomeURI - refuse to make
+                // this outbound verification call at all if it resolves
+                // to a non-routable address (SSRF). See
+                // HypergridEgressPolicy's own comment and
+                // PROJECT_LOG.md, 2026-09-23.
+                if (!HypergridEgressPolicy.IsAllowedTarget(userURL, m_gatekeeperURL))
+                {
+                    m_log.DebugFormat("[GATEKEEPER SERVICE]: Refusing verification callback to disallowed HomeURI {0}", userURL);
+                    return false;
+                }
+
                 IUserAgentService userAgentService = new UserAgentServiceConnector(userURL);
 
                 try
@@ -712,6 +741,17 @@ namespace OpenSim.Services.HypergridService
 
 
         #region Misc
+
+        public static bool ForeignSessionHomeMatches(GridUserInfo existingSession, string claimedHomeURI)
+        {
+            if (existingSession is null || string.IsNullOrWhiteSpace(existingSession.UserID) || string.IsNullOrWhiteSpace(claimedHomeURI))
+                return false;
+
+            if (!Util.ParseUniversalUserIdentifier(existingSession.UserID, out UUID _, out string storedHomeURI))
+                return false;
+
+            return UserAgentService.IsLocalGridURI(storedHomeURI, claimedHomeURI);
+        }
 
         private bool IsException(AgentCircuitData aCircuit, List<string> exceptions)
         {

@@ -63,6 +63,14 @@ namespace OpenSim.Services.Interfaces
         void LogoutAgent(UUID userID, UUID sessionID);
 
         /// <summary>
+        /// Verifies that (userID, sessionID) is a real, currently-tracked
+        /// outbound-traveling session, not just a caller-supplied claim -
+        /// used to gate the cross-grid logout endpoint against forged
+        /// logout requests for sessions that were never actually minted.
+        /// </summary>
+        bool IsKnownTravelingAgent(UUID userID, UUID sessionID);
+
+        /// <summary>
         /// Returns the home region of a remote user.
         /// </summary>
         /// <returns>On success: the user's home region. If the user doesn't exist: null.</returns>

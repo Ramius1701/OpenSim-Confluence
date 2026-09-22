@@ -625,9 +625,9 @@ surface every grid runs, historically with no caller authentication
 of its own.
 
 - **`ControlPlaneAccess` trusted-host allowlist** — the region
-  agent-create, region object-create, neighbour-hello, and inter-region
-  friends-messaging endpoints now refuse any caller that isn't
-  loopback or an explicitly configured trusted host
+  agent-create, region object-create, neighbour-hello, inter-region
+  friends-messaging, and HG groups write endpoints now refuse any
+  caller that isn't loopback or an explicitly configured trusted host
   (`[Network]`/`[Security]` `ControlPlaneTrustedHosts`), and reject any
   request carrying an `X-SecondLife-Shard` header before checking the
   caller's address at all — closing a bypass where an in-world script
@@ -647,6 +647,22 @@ of its own.
   permanently leak an internal lock, wedging every subsequent map-tile
   request behind a 5-second timeout forever; now released
   unconditionally via try/finally.
+- **Privileged instant-message gating** — a forced/silent-teleport IM
+  dialog now requires the sender to be one of this grid's own trusted
+  hosts, in both the region-local and cross-grid Hypergrid delivery
+  paths; ordinary IMs are unaffected.
+- **Hypergrid session hardening** — returning home to this grid now
+  always requires a fresh login rather than accepting a replayed/forged
+  travel request; a "you're already logged in, kill the old session"
+  claim from a foreign caller must have its claimed home actually match
+  the stored session before the old session is killed; the cross-grid
+  logout endpoint now requires either a trusted caller or a real,
+  currently-tracked session record rather than trusting a bare claim.
+- **Hypergrid SSRF egress filtering** — outbound Hypergrid travel and
+  verification callbacks refuse any target that resolves to a
+  loopback/private/link-local/cloud-metadata address, closing a path
+  where a crafted destination URL could turn this grid into a proxy
+  into its own internal network.
 - Plaintext login-key logging removed; OpenID's connector now ships
   commented-out by default in the example configs (a grid owner who
   wants it can still enable it explicitly).

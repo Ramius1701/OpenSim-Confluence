@@ -24705,13 +24705,120 @@ same file - same substring-secret bug, different consequence
 out by name in the disclosure but the same flaw class, so fixed at the
 same time rather than left for a future pass. Build clean.
 
-**Not yet touched, remaining from the disclosure's second commit**
-(`74c4f0a954`, ~800 lines across 20+ files in Tranquillity's tree): HG
-return-home session minting block, foreign-duplicate-session
-validation, privileged-IM gating, profile JSON-RPC per-method gate, HG
-groups writes gating, logout control-path gating, Hypergrid egress/SSRF
-filtering (`HypergridEgressPolicy`, new class in Tranquillity's tree),
-and the broader `UserAgentService`/`GatekeeperService` changes those
-depend on. None of the 4 ControlPlaneAccess-gated fixes above, nor any
-of tonight's other fixes, have been deployed to live Casperia yet -
-still pending a deploy/restart pass.
+Batch 1 committed and pushed as commit `77bc6713b8`. Not yet deployed to
+live Casperia - all of it is region-side code, so it needs region
+restarts, not a Robust stop.
+
+---
+
+## ICan security disclosure remediation, batch 2 (2026-09-23)
+
+Continued straight into the disclosure's second Tranquillity commit
+(`74c4f0a954`, ~800 lines across 20+ files in their tree). Same
+discipline as batch 1: pull the real diff for each item, verify it
+against Confluence's actual current code, adapt rather than
+copy-paste where the shape differs.
+
+**Privileged instant-message gating.** Dialog 250 and
+`GodLikeRequestTeleport` carry real privileged side effects (a forced/
+silent teleport) with no authentication of their own beyond the
+claimed sender - the disclosure's grid-wide kick/force-teleport item.
+Added `ControlPlaneAccess.AuthorizePrivilegedInstantMessage(dialog,
+remoteClient)` and wired it into both IM delivery paths: the
+region-local `MessageTransferModule.cs` and the cross-grid HG
+`InstantMessageServerConnector.cs`. Ordinary IMs (chat, friendship
+offers, etc.) aren't gated at all - only these two specific dialogs.
+
+**Hypergrid return-home session minting - blocked.** `UserAgentService
+.LoginAgentToGrid` now refuses any non-fresh-login call asking to send
+an agent back to THIS grid's own gatekeeper (`!fromLogin &&
+IsLocalGridURI(m_GridName, gridName)`) - returning home always
+requires a real login now, closing the path where a foreign grid could
+replay/forge a travel request to mint a session for someone without
+them re-authenticating. Reused the existing `NormalizeServiceURL`
+helper (already in this file, doing the same trim+trailing-slash
+normalization Tranquillity's version duplicated as `NormalizeGridURI`)
+rather than adding a second implementation of the same thing.
+
+**Foreign-duplicate-session validation.** `GatekeeperService.cs`'s
+"you're already logged in, kill the old session" path used to kill
+any existing online session purely because the caller supplied a
+matching UUID - a foreign HG caller could spoof this to force-kill an
+unrelated resident's genuinely active session. Now, for a foreign
+(non-local-account) caller, the claimed HomeURI must actually match
+the stored session's real home (new `ForeignSessionHomeMatches`
+helper, parses the stored `GridUserInfo.UserID`'s universal-identifier
+HomeURI component and compares) before the old session gets killed.
+
+**Logout gating.** `UserAgentServerConnector.cs`'s `logout_agent`
+XML-RPC endpoint used to log out any (userID, sessionID) pair a caller
+claimed, no proof required. Added `IUserAgentService
+.IsKnownTravelingAgent(userID, sessionID)` - checks the real, currently
+-tracked traveling-agent record - and require either a trusted caller
+IP or a real matching record before the logout proceeds. The interface
+addition needed both implementers updated: the real
+`UserAgentService` (checks the actual `HGTravelingData` record - a
+simpler, more type-safe check here than Tranquillity's version, since
+Confluence's `HGTravelingData` already has real `SessionID`/`UserID`
+UUID fields rather than storing them inside a string dictionary) and
+`UserAgentServiceConnector` (the remote HTTP client stub, which always
+returns false - it has no local session store of its own to check
+truthfully, so false is the safe default).
+
+**Hypergrid SSRF egress filtering - new class.** Both outbound HG
+agent transfer and the verification callback take a caller-influenced
+destination/HomeURI and make an outbound HTTP call to it - a caller
+who controls that URL could point it at this grid's own internal-only
+services (loopback, LAN, link-local, cloud-metadata addresses) and use
+Casperia as an SSRF proxy into its own network. New
+`HypergridEgressPolicy.cs` (`OpenSim/Services/HypergridService/`)
+blocks any target resolving to a non-routable address, with one
+exception: a target that resolves back to this grid's own gatekeeper
+is always allowed (that's "stay home," not an egress). Wired into
+`UserAgentService.LoginAgentToGrid`'s outbound transfer and
+`GatekeeperService.Authenticate`'s verification callback. Genuine
+Hypergrid travel is always to a real, publicly-routable grid by
+definition, so this costs nothing for legitimate use - not yet
+live-tested against Casperia's actual configured hyperlinks, though,
+since nothing in tonight's session touches a live HG connection to
+verify against.
+
+**HG groups writes gated.** `HGGroupsServiceRobustConnector.cs`'s
+`/hg-groups` endpoint (server-to-server only, never called by a
+viewer) had `POSTGROUP` (proxying a foreign group into this grid's own
+record) and `ADDNOTICE` (the disclosure's group-notice-injection item)
+open to any caller. Both now require a trusted host; reads and
+`REMOVEAGENTFROMGROUP` stay open, matching Tranquillity's own scope.
+
+**Profile JSON-RPC gating - deliberately skipped, not a port
+failure.** Tranquillity's fix gates 9 profile JSON-RPC methods
+(classifieds/picks/notes/properties/interests/preferences/appdata,
+both reads and writes) to trusted-hosts-only. Checked
+`LocalUserProfilesServiceConnector.cs` before attempting this and
+found these handlers registered on `MainServer.Instance` - the
+region's own **public** HTTP server. Residents' own viewers call the
+UPDATE methods (classified_update, picks_update, avatar_notes_update,
+avatar_properties_update, avatar_interests_update,
+user_preferences_update, user_data_update) **directly** over the
+internet to edit their own profile - gating them to trusted-host-only
+would silently break profile editing for every resident, grid-wide.
+Asked the user directly; chose to skip this item entirely rather than
+apply a fix that breaks a working feature, or a half-measure gating
+only the two reads that expose email
+(`AvatarNotesRequest`/`UserPreferencesRequest`). The real fix needs
+verifying the caller actually owns/is authenticated as the AgentID
+they're claiming to read/write - genuine design work, not something to
+improvise mid-session. Left as a real, open, documented gap.
+
+**OpenID - repo template fixed, live Casperia deliberately
+untouched.** Commented out `OpenIdServerConnector` in both
+`bin\Robust.ini.example` and `bin\Robust.HG.ini.example` earlier this
+session. Checked live Casperia's actual `Robust.HG.ini` and found it
+still enabled there. Asked the user whether to also disable it live;
+told explicitly to leave it enabled for now, no reason given. This is
+a deliberate standing exception, not an oversight - noted in memory so
+a future session doesn't "fix" it without asking again.
+
+This closes every item in the ICan disclosure except the two explicit
+exceptions above. Build clean throughout. Nothing from batch 2 has
+been committed, pushed, or deployed yet.

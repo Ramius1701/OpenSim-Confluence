@@ -249,6 +249,21 @@ namespace OpenSim.Services.HypergridService
 
             string gridName = gatekeeper.ServerURI.ToLowerInvariant();
 
+            // A server-to-server (non-fresh-login) call asking to send an
+            // agent back to THIS grid's own gatekeeper is exactly the
+            // return-home session-minting path the disclosure flags -
+            // nothing here proves the caller is the real user rather than
+            // a foreign grid replaying/forging a travel request to mint a
+            // session for them. Returning home must always go through a
+            // fresh login instead. See PROJECT_LOG.md, 2026-09-23.
+            if (!fromLogin && IsLocalGridURI(m_GridName, gridName))
+            {
+                reason = "Please log in again to return home";
+                m_log.InfoFormat("[USER AGENT SERVICE]: Refusing Hypergrid return-home login for user {0} {1}; return-home requires a fresh login.",
+                    agentCircuit.firstname, agentCircuit.lastname);
+                return false;
+            }
+
             UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, agentCircuit.AgentID);
             if (account is null)
             {
@@ -312,6 +327,20 @@ namespace OpenSim.Services.HypergridService
             {
                 success = m_GatekeeperService.LoginAgent(source, agentCircuit, finalDestination, out reason);
             }
+            else if (!HypergridEgressPolicy.IsAllowedTarget(region.ServerURI, m_GridName))
+            {
+                // region.ServerURI ultimately came from the requested
+                // destination grid's own gatekeeper record - refuse to
+                // make this outbound call at all if it resolves to a
+                // non-routable address, closing the SSRF path the
+                // disclosure flags. Falls through to the existing
+                // !success cleanup below like any other failed transfer.
+                // See HypergridEgressPolicy's own comment and
+                // PROJECT_LOG.md, 2026-09-23.
+                success = false;
+                reason = "Destination is not allowed";
+                m_log.InfoFormat("[USER AGENT SERVICE]: Refusing outbound Hypergrid agent transfer to disallowed target {0}", region.ServerURI);
+            }
             else
             {
                 //TODO: Should there not be a call to QueryAccess here?
@@ -337,6 +366,26 @@ namespace OpenSim.Services.HypergridService
             StoreTravelInfo(travel);
 
             return true;
+        }
+
+        // Compares two grid gatekeeper URIs the same normalized way this
+        // class already reconciles HomeURI/GatekeeperURI in
+        // ApplyCanonicalHomeURI - trim + trailing slash, case-insensitive.
+        public static bool IsLocalGridURI(string localGridURI, string requestedGridURI)
+        {
+            string local = NormalizeServiceURL(localGridURI);
+            string requested = NormalizeServiceURL(requestedGridURI);
+
+            if (string.IsNullOrEmpty(local) || string.IsNullOrEmpty(requested))
+                return false;
+
+            return local.Equals(requested, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public bool IsKnownTravelingAgent(UUID userID, UUID sessionID)
+        {
+            HGTravelingData hgt = m_Database.Get(sessionID);
+            return hgt is not null && hgt.SessionID == sessionID && hgt.UserID == userID;
         }
 
         public bool LoginAgentToGrid(GridRegion source, AgentCircuitData agentCircuit, GridRegion gatekeeper, GridRegion finalDestination, out string reason)
