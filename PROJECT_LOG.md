@@ -24550,3 +24550,53 @@ scripting engine - previously discussed and explicitly tabled during
 an earlier fork-review pass, never actually added until now) all added
 as tracked git remotes, matching the existing sibling-fork-tracking
 convention.
+
+---
+
+## Cross-viewer check turns up two real LSL constants, and one correctly deferred (2026-09-23)
+
+Fetching Cool VL Viewer's own changelog (not currently tracked as a
+git remote - it's distributed as source tarballs, not commits, so
+checked via its official site directly) for the jump from the locally-
+archived v1.32.5.17 snapshot to the new v1.32.5.18 turned up three
+LSL-adjacent script-editor additions: syntax highlighting for
+`OBJECT_LOCKED`/`OBJECT_VOLUME_DETECT`, and for the whole "Game
+Control" function family (`llGetGameControlMode()` and friends).
+Firestorm is this project's preferred viewer, but per standing
+practice a finding from any real viewer still gets the same
+bi-directional check against Confluence's own code before being
+built or dismissed - it doesn't matter which viewer surfaced it first.
+
+**Game Control - checked and correctly NOT built.** Confirmed via the
+real LSL wiki that this is explicitly still a beta feature at the LL/
+official level (the page itself references an "LSL Game Control Beta"
+article), requires new wire-protocol messages (`GameControlData`) and
+a new permission (`PERMISSION_GAME_CONTROL`) rather than just LSL
+stubs, and - checked directly - has zero implementation anywhere in
+Firestorm's own source, the viewer actually used on Casperia. Nothing
+to build against and nothing residents could exercise even if built.
+Worth revisiting once it leaves beta and Firestorm picks it up, not
+before.
+
+**`OBJECT_LOCKED`/`OBJECT_VOLUME_DETECT` - real, low-risk, built.**
+Both are read-only accessors for state Confluence already tracks
+internally, not new simulator behavior:
+- `OBJECT_VOLUME_DETECT` reads `SceneObjectPart.VolumeDetectActive`,
+  the same field `llVolumeDetect` already sets - already fully
+  implemented, just never exposed through this function.
+- `OBJECT_LOCKED` needed one real check before implementing: confirmed
+  against Firestorm's own `llpanelobject.cpp` that the Edit floater's
+  "Locked" checkbox works by calling `selectionSetObjectPermissions
+  (PERM_OWNER, !locked, PERM_MOVE | PERM_MODIFY)` - i.e. "locked" is
+  the owner's current Move permission being cleared, not a separate
+  dedicated flag anywhere in the object. Implemented as
+  `(RootPart.OwnerMask & PermissionMask.Move) == 0`.
+
+Added both constants (55/56, matching the real LSL wiki's own
+numbering) to `ScriptBaseClass`/`LSL_Constants.cs`, and the
+corresponding cases to both branches of `llGetObjectDetails`'s switch
+(the real prim branch with the actual computation above; the avatar
+branch with a neutral zero, matching the existing pattern for
+concepts - like `OBJECT_TEMP_ATTACHED` - that don't apply to an
+avatar). No interface/stub registration needed since this extends an
+existing function rather than adding a new one. Build clean.

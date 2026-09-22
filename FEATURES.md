@@ -359,6 +359,11 @@ Treated as core, not an optional add-on:
 
 - `llSignRSA` / `llVerifyRSA` — RSA signing/verification over PEM keys.
 - `llGetRegionTimeOfDay`, `llTransferOwnership`, `llSitOnLink`.
+- `llGetObjectDetails`' `OBJECT_LOCKED` and `OBJECT_VOLUME_DETECT` -
+  `OBJECT_LOCKED` matches the real viewer's own Edit floater "Locked"
+  checkbox exactly (the owner's current Move permission is cleared,
+  not a separate dedicated flag); `OBJECT_VOLUME_DETECT` reads the
+  same internal state `llVolumeDetect` already sets.
 - `llSetLinkRenderMaterial`, `llSetLinkGLTFOverrides` — a full PBR
   material override pipeline. `PRIM_GLTF_BASE_COLOR` /`_NORMAL` /
   `_METALLIC_ROUGHNESS` / `_EMISSIVE` are wired into both

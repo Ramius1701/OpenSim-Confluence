@@ -17209,6 +17209,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                         case ScriptBaseClass.OBJECT_ATTACHED_SLOTS_AVAILABLE:
                             ret.Add(new LSL_Integer(Constants.MaxAgentAttachments - av.GetAttachmentsCount()));
                             break;
+                        case ScriptBaseClass.OBJECT_LOCKED:
+                        case ScriptBaseClass.OBJECT_VOLUME_DETECT:
+                            // Neither concept applies to an avatar - same
+                            // neutral-zero pattern already used above for
+                            // OBJECT_TEMP_ATTACHED.
+                            ret.Add(new LSL_Integer(0));
+                            break;
                         case ScriptBaseClass.OBJECT_CREATION_TIME:
                             ret.Add(new LSL_String(""));
                             break;
@@ -17485,6 +17492,19 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                             break;
                         case ScriptBaseClass.OBJECT_ATTACHED_SLOTS_AVAILABLE:
                             ret.Add(new LSL_Integer(0));
+                            break;
+                        case ScriptBaseClass.OBJECT_LOCKED:
+                            // Matches the real viewer's own Edit floater "Locked"
+                            // checkbox (confirmed against Firestorm's
+                            // llpanelobject.cpp: toggling it calls
+                            // selectionSetObjectPermissions(PERM_OWNER, ...,
+                            // PERM_MOVE | PERM_MODIFY) on the object) - locked
+                            // means the owner's own current Move permission has
+                            // been cleared, not a separate dedicated flag.
+                            ret.Add(new LSL_Integer((obj.ParentGroup.RootPart.OwnerMask & (uint)PermissionMask.Move) == 0 ? 1 : 0));
+                            break;
+                        case ScriptBaseClass.OBJECT_VOLUME_DETECT:
+                            ret.Add(new LSL_Integer(obj.ParentGroup.RootPart.VolumeDetectActive ? 1 : 0));
                             break;
                         case ScriptBaseClass.OBJECT_CREATION_TIME:
                             DateTime date = Util.ToDateTime(obj.ParentGroup.RootPart.CreationDate);
