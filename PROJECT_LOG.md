@@ -24458,3 +24458,85 @@ regions (Welcome Center, Sandbox, Starbase Andromeda, Section 31, SVC,
 UFPGC, Ranchero) completed cleanly, hub regions first and sequential,
 every region's `CoreModules.dll` confirmed matching the fixed master
 copy after its own restart.
+
+---
+
+## Real Gloebit currency vulnerabilities, found via a sibling fork's own disclosure (2026-09-23)
+
+Routine fetch of all tracked sibling-fork remotes turned up a new
+`security/control-plane-hardening` branch on Tranquillity/Sasquatch,
+carrying a full responsible-disclosure writeup (`Docs/security/ICan.md`)
+of unauthenticated attacks against **stock OpenSimulator** - account
+takeover, session-credential harvesting, forged object injection, SSRF,
+and more. Most of that list is genuinely stock-OpenSim-wide and a
+separate matter from this addon; the two items specific to the Gloebit
+money-module addon were checked directly against Confluence's own
+currently-running code, not assumed applicable from the disclosure
+alone - both confirmed real and live-exploitable here.
+
+**Confirmed real - transaction callback forgery.** `transactionState_
+func` (`GloebitAPIWrapper.cs`) authenticated an enact/consume/cancel
+callback using only the transaction ID from the request - no secret,
+no signature. `GloebitTransaction.ProcessStateRequest` passed that ID
+straight to the asset state machine with zero additional check. A
+transaction ID is not secret from Gloebit's own perspective (it's
+handed to their systems and echoed back through them), so anyone who
+obtained or guessed one could deliver or cancel someone else's
+in-flight purchase with no other credential.
+
+**Confirmed real - OAuth CSRF on account linking.** `BuildAuthCallbackURL`
+(`GloebitAPI.cs`) built the OAuth redirect with only `agentId={agentId}`
+in the query string - the code's own comment even said so: `// TODO -
+make use of 'state' param for XSRF protection`, followed by a
+commented-out stub that was never implemented. `authComplete_func`
+(`GloebitAPIWrapper.cs`) then linked whatever Gloebit account the
+returned authorization `code` belongs to onto whatever `agentId` the
+callback named, with nothing proving that specific agent actually
+initiated that specific authorization. An attacker who completed their
+OWN real Gloebit authorization could replay the completion against a
+victim's `agentId`, redirecting the victim's future Gloebit earnings to
+the attacker's account.
+
+Checked whether Gloebit's own real upstream (`gloebit/master`, now
+tracked as a remote here alongside `libremetaverse`, added the same
+session) had already fixed either issue before writing anything -
+confirmed no such fix exists there either (a scoped commit-log search
+turned up nothing addressing OAuth state or callback secrets), and
+Confluence's vendored copy is otherwise nearly identical to upstream
+(only 2 unrelated migration files differ). This is a real, currently
+unpatched gap in Gloebit's own published addon, not something
+introduced by vendoring it into Confluence.
+
+**Both fixed**, adapted from Tranquillity's own approach (used as a
+design reference, not copied blind - verified against Confluence's
+actual current code first):
+- `GloebitTransaction.CallbackKey`: a random secret minted per
+  transaction, appended to the enact/consume/cancel callback URLs
+  (`BuildEnactURI`/`BuildConsumeURI`/`BuildCancelURI`), and required
+  (constant-time comparison, `CryptographicOperations.FixedTimeEquals`)
+  before `ProcessStateRequest` touches any state. Refuses closed on any
+  mismatch or missing key.
+- `GloebitUser.PendingAuthState`: a random, one-shot OAuth2 `state`
+  value minted by the new `BeginAuthorization()` (called from
+  `GloebitAPI.BuildAuthorizationURI`, replacing the old TODO) and
+  required by the new `ConsumeAuthorizationState()` on the
+  `auth_complete` callback before `ExchangeAccessToken` ever runs -
+  same constant-time comparison, consumed (cleared) on first use so a
+  captured callback can't be replayed.
+
+Both use the same reflection-based `GenericTableHandler<T>` persistence
+this module already relies on - just a new public field each
+(`CallbackKey` on `GloebitTransaction`, `PendingAuthState` on
+`GloebitUser`), with a matching non-destructive `ALTER TABLE ADD COLUMN`
+added to all three backends' migrations (MySQL/PGSQL/SQLite, both
+tables) rather than any new persistence code. Build clean; not yet
+deployed to Casperia's live Gloebit-enabled regions (Welcome Center,
+Sandbox, Starbase Andromeda) - needs the same deploy discipline as any
+other change, plus the DB migrations to actually run against the live
+database on next start.
+
+**Also added this session**: `libremetaverse` (real upstream for the
+`OpenMetaverse*.dll` dependencies, already referenced twice before this
+session for source-level verification) and `gloebit` (real upstream for
+the vendored money-module addon) both added as tracked git remotes,
+matching the existing sibling-fork-tracking convention.

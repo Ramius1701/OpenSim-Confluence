@@ -161,9 +161,28 @@ namespace Gloebit.GloebitMoneyModule {
 
             string agentId = requestData["agentId"] as string;
             string code = requestData["code"] as string;
+            string state = requestData["state"] as string;
 
             UUID parsedAgentId = UUID.Parse(agentId);
             GloebitUser u = GloebitUser.Get(m_key, parsedAgentId);
+
+            // agentId above is caller-supplied and otherwise unauthenticated -
+            // nothing about this request proves the named agent is the one
+            // who actually clicked through Gloebit's own authorize dialog.
+            // Without this check, an attacker who completes their OWN real
+            // authorization could replay the completion against any victim's
+            // agentId and bind the attacker's payment account (and future
+            // earnings) to the victim's avatar. Refuse before ever touching
+            // ExchangeAccessToken if the one-shot state this user's own
+            // BeginAuthorization call minted doesn't match.
+            if (!u.ConsumeAuthorizationState(state)) {
+                m_log.WarnFormat("[GLOEBITMONEYMODULE] authComplete_func rejected - missing or mismatched OAuth state for agent {0}", agentId);
+                Hashtable rejectResponse = new Hashtable();
+                rejectResponse["int_response_code"] = 400;
+                rejectResponse["str_response_string"] = "<html><head><title>Gloebit authorization failed</title></head><body><h2>Authorization failed</h2>This authorization request could not be verified. Please try again from OpenSim.</body></html>";
+                rejectResponse["content_type"] = "text/html";
+                return rejectResponse;
+            }
 
             // Start async flow to exchange the code for a permanent token
             m_api.ExchangeAccessToken(u, code, m_platformAccessors.GetBaseURI());
@@ -694,9 +713,10 @@ namespace Gloebit.GloebitMoneyModule {
             // TODO: check that these exist in requestData.  If not, signal error and send response with false.
             string transactionIDstr = requestData["id"] as string;
             string stateRequested = requestData["state"] as string;
+            string callbackKey = requestData["key"] as string;
             string returnMsg = "";
 
-            bool success = GloebitTransaction.ProcessStateRequest(transactionIDstr, stateRequested, m_assetCallbacks, m_transactionAlerts, out returnMsg);
+            bool success = GloebitTransaction.ProcessStateRequest(transactionIDstr, stateRequested, callbackKey, m_assetCallbacks, m_transactionAlerts, out returnMsg);
 
             //JsonValue[] result;
             //JsonValue[0] = JsonValue.CreateBooleanValue(success);

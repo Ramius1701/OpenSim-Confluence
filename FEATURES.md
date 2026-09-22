@@ -614,7 +614,14 @@ NaN/Infinity before being applied.
 Under `addon-modules`. Generated into the solution but not necessarily
 enabled by default.
 
-- **Gloebit** — optional Gloebit economy integration.
+- **Gloebit** — optional Gloebit economy integration. Two security
+  hardening fixes beyond Gloebit's own published upstream: the
+  enact/consume/cancel transaction callbacks now require a random
+  per-transaction key (not just the transaction ID, which isn't
+  secret), and the OAuth account-linking callback now validates a
+  one-shot `state` value instead of trusting a caller-supplied agent
+  ID alone - closes a real CSRF gap that let an attacker bind their
+  own payment account to a victim's avatar.
 - **GroupAutoInvite** — configurable automatic group invitations on
   arrival.
 - **HoloPhysicsGuard** — reduces idle physics load when regions are

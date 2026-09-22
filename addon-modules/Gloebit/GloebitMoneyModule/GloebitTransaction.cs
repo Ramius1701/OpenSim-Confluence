@@ -27,6 +27,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using log4net;
 using OpenMetaverse;
 
@@ -62,6 +64,15 @@ namespace Gloebit.GloebitMoneyModule {
         public UUID CategoryID;     // Appears to be a folder id used when saleType is copy
         private uint? m_localID;    // Region specific ID of object.  Unclear why this is passed instead of UUID
         public int SaleType;        // object, copy, or contents
+
+        // Random, server-generated secret appended to the enact/consume/cancel
+        // callback URLs and required on every incoming callback before any
+        // state change runs - the transaction ID alone is not a secret (it's
+        // handed to Gloebit and echoed back through their own systems), so
+        // authenticating the callback with it alone lets anyone who knows or
+        // guesses a transaction ID drive the asset side of a sale (deliver or
+        // cancel it) with no other credential. See ProcessStateRequest.
+        public string CallbackKey;
 
         // Storage of submission/response from Gloebit
         public bool Submitted;
@@ -116,6 +127,11 @@ namespace Gloebit.GloebitMoneyModule {
             // Subscription info
             this.IsSubscriptionDebit = isSubscriptionDebit;
             this.SubscriptionID = subscriptionID;
+
+            // Random secret this transaction's own callbacks must present -
+            // see the field's own comment for why the transaction ID alone
+            // isn't sufficient.
+            this.CallbackKey = UUID.Random().ToString();
 
             // Storage of submission/response from Gloebit
             this.Submitted = false;
@@ -230,19 +246,19 @@ namespace Gloebit.GloebitMoneyModule {
         public Uri BuildEnactURI(Uri baseURI) {
             UriBuilder enact_uri = new UriBuilder(baseURI);
             enact_uri.Path = "gloebit/transaction";
-            enact_uri.Query = String.Format("id={0}&state={1}", this.TransactionID, "enact");
+            enact_uri.Query = String.Format("id={0}&state={1}&key={2}", this.TransactionID, "enact", Uri.EscapeDataString(this.CallbackKey));
             return enact_uri.Uri;
         }
         public Uri BuildConsumeURI(Uri baseURI) {
             UriBuilder consume_uri = new UriBuilder(baseURI);
             consume_uri.Path = "gloebit/transaction";
-            consume_uri.Query = String.Format("id={0}&state={1}", this.TransactionID, "consume");
+            consume_uri.Query = String.Format("id={0}&state={1}&key={2}", this.TransactionID, "consume", Uri.EscapeDataString(this.CallbackKey));
             return consume_uri.Uri;
         }
         public Uri BuildCancelURI(Uri baseURI) {
             UriBuilder cancel_uri = new UriBuilder(baseURI);
             cancel_uri.Path = "gloebit/transaction";
-            cancel_uri.Query = String.Format("id={0}&state={1}", this.TransactionID, "cancel");
+            cancel_uri.Query = String.Format("id={0}&state={1}&key={2}", this.TransactionID, "cancel", Uri.EscapeDataString(this.CallbackKey));
             return cancel_uri.Uri;
         }
 
@@ -250,7 +266,7 @@ namespace Gloebit.GloebitMoneyModule {
         /******* ASSET STATE MACHINE **********************/
         /**************************************************/
 
-        public static bool ProcessStateRequest(string transactionIDstr, string stateRequested, IAssetCallback assetCallbacks, GloebitAPIWrapper.ITransactionAlert transactionAlerts, out string returnMsg)
+        public static bool ProcessStateRequest(string transactionIDstr, string stateRequested, string callbackKey, IAssetCallback assetCallbacks, GloebitAPIWrapper.ITransactionAlert transactionAlerts, out string returnMsg)
         {
             bool result = false;
 
@@ -261,6 +277,17 @@ namespace Gloebit.GloebitMoneyModule {
             // TODO: is this what we want to return?
             if (myTxn == null) {
                 returnMsg = "No matching transaction found.";
+                return false;
+            }
+
+            // The transaction ID alone is not a secret - see CallbackKey's
+            // own comment. Refuse before touching any state (or even the
+            // race-condition map below) if the caller can't present the key
+            // this specific transaction's own enact/consume/cancel URLs were
+            // built with.
+            if (!FixedTimeEquals(myTxn.CallbackKey, callbackKey)) {
+                m_log.WarnFormat("[GLOEBITMONEYMODULE] GloebitTransaction.ProcessStateRequest rejected - callback key mismatch for transaction {0}", transactionIDstr);
+                returnMsg = "Invalid callback key.";
                 return false;
             }
 
@@ -311,6 +338,17 @@ namespace Gloebit.GloebitMoneyModule {
                 s_pendingTransactionMap.Remove(transactionIDstr);
             }
             return result;
+        }
+
+        // Constant-time comparison so a mismatched key can't be brute-forced
+        // via response-timing differences. Length is compared first (which
+        // does leak length), matching CryptographicOperations.FixedTimeEquals'
+        // own documented contract - the keys here are always the same
+        // fixed-length UUID string, so this leaks nothing in practice.
+        private static bool FixedTimeEquals(string expected, string actual) {
+            byte[] expectedBytes = Encoding.UTF8.GetBytes(expected ?? string.Empty);
+            byte[] actualBytes = Encoding.UTF8.GetBytes(actual ?? string.Empty);
+            return expectedBytes.Length == actualBytes.Length && CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
         }
 
         private bool enactHold(IAssetCallback assetCallbacks, GloebitAPIWrapper.ITransactionAlert transactionAlerts, out string returnMsg)

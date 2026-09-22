@@ -91,3 +91,12 @@ CREATE INDEX IF NOT EXISTS ix_pid ON GloebitTransactions(PartID);
 CREATE INDEX IF NOT EXISTS ix_cts ON GloebitTransactions(cTime);
 
 COMMIT;
+
+
+:VERSION 3
+
+BEGIN TRANSACTION;
+
+ALTER TABLE GloebitTransactions ADD COLUMN CallbackKey CHAR(36);
+
+COMMIT;

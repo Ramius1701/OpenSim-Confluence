@@ -62,3 +62,11 @@ ALTER TABLE `GloebitTransactions`
 	MODIFY COLUMN `PartDescription` VARCHAR(128) CHARACTER SET utf8mb4 DEFAULT NULL;
 
 COMMIT;
+
+:VERSION 4		#----- CallbackKey: random secret required on enact/consume/cancel callbacks
+
+BEGIN;
+
+ALTER TABLE `GloebitTransactions` ADD COLUMN `CallbackKey` CHAR(36) NULL;
+
+COMMIT;

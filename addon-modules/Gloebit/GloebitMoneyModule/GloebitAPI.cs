@@ -145,8 +145,12 @@ namespace Gloebit.GloebitMoneyModule {
             auth_params["response_type"] = "code";
             auth_params["user"] = userName;
             auth_params["uid"] = user.PrincipalID;
-            // TODO - make use of 'state' param for XSRF protection
-            // auth_params["state"] = ???;
+            // Random, one-shot value minted and stored against this user;
+            // Gloebit echoes it back on the auth_complete callback, where
+            // GloebitUser.ConsumeAuthorizationState requires it to match
+            // before linking any account - closes the OAuth CSRF gap this
+            // TODO used to flag.
+            auth_params["state"] = user.BeginAuthorization();
 
             string query_string = BuildURLEncodedParamString(auth_params);
 

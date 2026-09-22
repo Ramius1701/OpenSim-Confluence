@@ -39,6 +39,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using log4net;
 using OpenMetaverse;
 
@@ -54,6 +56,16 @@ namespace Gloebit.GloebitMoneyModule {
         public string GloebitToken;
         public string LastSessionID;
 
+        // Random, one-shot OAuth2 "state" value minted when this user is
+        // sent to Gloebit's authorize dialog and consumed on the completion
+        // callback - see BeginAuthorization/ConsumeAuthorizationState. The
+        // agentId on that callback is caller-supplied and otherwise
+        // unverified, so without this an attacker who completes their OWN
+        // real Gloebit authorization can replay the completion against a
+        // victim's agentId and bind the attacker's payment account to the
+        // victim's avatar, redirecting the victim's future Gloebit earnings.
+        public string PendingAuthState;
+
         // TODO - update userMap to be a proper LRU Cache
         private static Dictionary<string, GloebitUser> s_userMap = new Dictionary<string, GloebitUser>();
 
@@ -68,6 +80,7 @@ namespace Gloebit.GloebitMoneyModule {
             this.GloebitID = gloebitID;
             this.GloebitToken = token;
             this.LastSessionID = sessionID;
+            this.PendingAuthState = String.Empty;
         }
 
         private GloebitUser(GloebitUser copyFrom) {
@@ -76,12 +89,14 @@ namespace Gloebit.GloebitMoneyModule {
             this.GloebitID = copyFrom.GloebitID;
             this.GloebitToken = copyFrom.GloebitToken;
             this.LastSessionID = copyFrom.LastSessionID;
+            this.PendingAuthState = copyFrom.PendingAuthState ?? String.Empty;
         }
 
         private void UpdateFrom(GloebitUser updateFrom) {
             this.GloebitID = updateFrom.GloebitID;
             this.GloebitToken = updateFrom.GloebitToken;
             this.LastSessionID = updateFrom.LastSessionID;
+            this.PendingAuthState = updateFrom.PendingAuthState ?? String.Empty;
         }
 
         public static GloebitUser Get(UUID appKey, UUID agentID) {
@@ -202,6 +217,80 @@ namespace Gloebit.GloebitMoneyModule {
 
         public bool IsAuthed() {
             return !String.IsNullOrEmpty(this.GloebitToken);
+        }
+
+        // Mints a fresh, random OAuth2 "state" value, stores it against this
+        // user, and returns it for the caller to embed in the authorize
+        // request sent to Gloebit. Gloebit's own OAuth server echoes this
+        // back verbatim as a query parameter on the auth_complete callback -
+        // see ConsumeAuthorizationState for the other half.
+        public string BeginAuthorization() {
+            string state = UUID.Random().ToString();
+
+            GloebitUser u;
+            lock (s_userMap) {
+                s_userMap.TryGetValue(PrincipalID, out u);
+            }
+            if (u == null) {
+                u = this;   // Not currently cached (e.g. logged out) - still want to store the pending state.
+            }
+            lock (u.userLock) {
+                u.PendingAuthState = state;
+                bool stored = GloebitUserData.Instance.Store(u);
+                if (!stored) {
+                    throw new Exception(String.Format("[GLOEBITMONEYMODULE] GloebitUser.BeginAuthorization Failed to store user {0}", PrincipalID));
+                }
+                this.UpdateFrom(u);
+            }
+
+            return state;
+        }
+
+        // Validates and one-shot-consumes the "state" value returned on an
+        // auth_complete callback against the one this user's own
+        // BeginAuthorization call minted. The callback's agentId is
+        // otherwise unauthenticated (caller-supplied, no proof the named
+        // agent is the one who actually clicked through Gloebit's authorize
+        // dialog), so this is what stops an attacker who completed their OWN
+        // real authorization from replaying that completion against a
+        // victim's agentId to bind the attacker's payment account to the
+        // victim. Returns false (and leaves the pending state untouched) on
+        // any mismatch or empty state, so a forged/absent state never
+        // succeeds by accident.
+        public bool ConsumeAuthorizationState(string state) {
+            if (String.IsNullOrEmpty(state) || String.IsNullOrEmpty(this.PendingAuthState)) {
+                return false;
+            }
+
+            GloebitUser u;
+            lock (s_userMap) {
+                s_userMap.TryGetValue(PrincipalID, out u);
+            }
+            if (u == null) {
+                u = this;
+            }
+            lock (u.userLock) {
+                if (!FixedTimeEquals(u.PendingAuthState, state)) {
+                    return false;
+                }
+
+                u.PendingAuthState = String.Empty;
+                bool stored = GloebitUserData.Instance.Store(u);
+                if (!stored) {
+                    throw new Exception(String.Format("[GLOEBITMONEYMODULE] GloebitUser.ConsumeAuthorizationState Failed to store user {0}", PrincipalID));
+                }
+                this.UpdateFrom(u);
+            }
+
+            return true;
+        }
+
+        // See GloebitTransaction's identical helper for why this needs to be
+        // constant-time rather than a plain string comparison.
+        private static bool FixedTimeEquals(string expected, string actual) {
+            byte[] expectedBytes = Encoding.UTF8.GetBytes(expected ?? String.Empty);
+            byte[] actualBytes = Encoding.UTF8.GetBytes(actual ?? String.Empty);
+            return expectedBytes.Length == actualBytes.Length && CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
         }
 
         // TODO: Why is this static?

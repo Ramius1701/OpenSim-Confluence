@@ -37,3 +37,11 @@ CREATE TABLE IF NOT EXISTS `GloebitUsers` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 COMMIT;
+
+:VERSION 4     # ----- PendingAuthState: one-shot OAuth2 state value for CSRF protection
+
+BEGIN;
+
+ALTER TABLE `GloebitUsers` ADD COLUMN `PendingAuthState` CHAR(36) NOT NULL DEFAULT '';
+
+COMMIT;
