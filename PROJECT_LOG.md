@@ -24529,14 +24529,24 @@ this module already relies on - just a new public field each
 (`CallbackKey` on `GloebitTransaction`, `PendingAuthState` on
 `GloebitUser`), with a matching non-destructive `ALTER TABLE ADD COLUMN`
 added to all three backends' migrations (MySQL/PGSQL/SQLite, both
-tables) rather than any new persistence code. Build clean; not yet
-deployed to Casperia's live Gloebit-enabled regions (Welcome Center,
-Sandbox, Starbase Andromeda) - needs the same deploy discipline as any
-other change, plus the DB migrations to actually run against the live
-database on next start.
+tables) rather than any new persistence code.
+
+**Live-verified**: deployed `Gloebit.dll` to the master folder (region-
+side addon, no Robust restart needed) and restarted the three regions
+that actually have Gloebit enabled per the live `Gloebit.ini`'s own
+`GLBEnabledOnlyInRegions` list - checked directly rather than assumed
+from memory, which turned out to matter: it's Welcome Center, SVC, and
+Starbase Andromeda, not Sandbox as an earlier note in this same entry
+first guessed. All three came up clean: `GloebitUsersMySQL`/
+`GloebitTransactionsMySQL` both show the migration advancing from
+revision 3 to revision 4 in each region's own log, no errors before or
+after. Both fixes are live on Casperia's real currency.
 
 **Also added this session**: `libremetaverse` (real upstream for the
 `OpenMetaverse*.dll` dependencies, already referenced twice before this
-session for source-level verification) and `gloebit` (real upstream for
-the vendored money-module addon) both added as tracked git remotes,
-matching the existing sibling-fork-tracking convention.
+session for source-level verification), `gloebit` (real upstream for
+the vendored money-module addon), and `slua` (Second Life's own Lua
+scripting engine - previously discussed and explicitly tabled during
+an earlier fork-review pass, never actually added until now) all added
+as tracked git remotes, matching the existing sibling-fork-tracking
+convention.
