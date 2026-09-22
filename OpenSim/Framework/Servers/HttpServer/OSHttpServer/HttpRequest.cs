@@ -286,17 +286,34 @@ namespace OSHttpServer
             {
                 if(m_remoteIPEndPoint == null)
                 {
-                    string addr = m_headers["x-forwarded-for"];
-                    if(!string.IsNullOrEmpty(addr))
+                    // m_context.LocalIPEndPoint (despite its name - see
+                    // HttpClientContext, where it's assigned straight from
+                    // the accepted socket's own remoteEndPoint) is the real,
+                    // non-spoofable TCP peer for this connection. Only honour
+                    // a caller-supplied X-Forwarded-For when that real peer
+                    // is loopback - i.e. only from our own reverse proxy
+                    // (Casperia's shared Apache frontend runs on the same
+                    // host as Robust/every region). From any other peer, an
+                    // X-Forwarded-For header is just an unverified claim -
+                    // trusting it unconditionally let an attacker forge
+                    // their apparent source IP to any of the grid's public
+                    // HTTP services, defeating every IP-based ban/allowlist
+                    // check downstream. Found via a sibling fork's own
+                    // responsible-disclosure writeup, 2026-09-23.
+                    IPEndPoint directPeer = m_context.LocalIPEndPoint;
+                    if (directPeer != null && IPAddress.IsLoopback(directPeer.Address))
                     {
-                        int port = m_context.LocalIPEndPoint.Port;
-                        try
+                        string addr = m_headers["x-forwarded-for"];
+                        if (!string.IsNullOrEmpty(addr))
                         {
-                            m_remoteIPEndPoint = new IPEndPoint(IPAddress.Parse(addr), port);
-                        }
-                        catch
-                        {
-                            m_remoteIPEndPoint = null;
+                            try
+                            {
+                                m_remoteIPEndPoint = new IPEndPoint(IPAddress.Parse(addr), directPeer.Port);
+                            }
+                            catch
+                            {
+                                m_remoteIPEndPoint = null;
+                            }
                         }
                     }
                 }

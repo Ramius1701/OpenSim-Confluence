@@ -119,91 +119,103 @@ namespace OpenSim.Server.Handlers.MapImage
                 return Array.Empty<byte>();
             }
 
-            byte[] result = Array.Empty<byte>();
-            string format = string.Empty;
-
-            //UUID scopeID = new UUID("07f8d88e-cd5e-4239-a0ed-843f75d09992");
-            UUID scopeID = UUID.Zero;
-
-            // This will be map/tilefile.ext, but on multitenancy it will be
-            // map/scope/teilefile.ext
-            path = path.Trim('/');
-            string[] bits = path.Split(new char[] {'/'});
-            if (bits.Length > 2)
+            // Every exit below used to be a bare return with a single
+            // Monitor.Exit(ev) only on the success path - any exception,
+            // or either of the early bad-input returns, leaked the lock
+            // forever, wedging every subsequent map-tile request behind
+            // TryEnter's 5s timeout (a real, disclosed single-request DoS,
+            // see PROJECT_LOG.md 2026-09-23). One try/finally now covers
+            // every path, including the two Confluence-specific early
+            // returns added by later fixes below.
+            try
             {
-                try
-                {
-                    scopeID = new UUID(bits[1]);
-                }
-                catch
-                {
-                    return new byte[9];
-                }
-                path = bits[2];
+                byte[] result = Array.Empty<byte>();
+                string format = string.Empty;
+
+                //UUID scopeID = new UUID("07f8d88e-cd5e-4239-a0ed-843f75d09992");
+                UUID scopeID = UUID.Zero;
+
+                // This will be map/tilefile.ext, but on multitenancy it will be
+                // map/scope/teilefile.ext
                 path = path.Trim('/');
-            }
-            // BUG FIX: the common no-scope case (bits.Length == 2, e.g. the
-            // real request path "map/map-1-1000-1000-objects.jpg") never
-            // reduced path down to just the filename - it stayed as the
-            // full "map/map-1-1000-1000-objects.jpg" string, which
-            // MapImageService.GetMapTile then Path.Combine'd onto the tile
-            // storage folder, producing a bogus nested "map/" subdirectory
-            // that never existed on disk (confirmed: real tiles sit directly
-            // in maptiles/<scopeID>/map-1-X-Y-objects.jpg, one level up from
-            // where this bug was looking). Every tile request silently
-            // failed and fell back to the generic water-tile placeholder
-            // (or 404'd if that wasn't configured) - not a routing/config
-            // problem, a real path-construction bug in this handler.
-            else if (bits.Length == 2)
-            {
-                path = bits[1];
-            }
-
-            if(path.Length == 0)
-            {
-                httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
-                httpResponse.ContentType = "text/plain";
-                return Array.Empty<byte>();
-            }
-
-            if (m_GridService != null)
-            {
-                Match m = TileNameRegex.Match(path);
-                if (m.Success
-                        && int.TryParse(m.Groups[1].Value, out int tileZoom) && tileZoom == 1
-                        && int.TryParse(m.Groups[2].Value, out int tileX)
-                        && int.TryParse(m.Groups[3].Value, out int tileY))
+                string[] bits = path.Split(new char[] {'/'});
+                if (bits.Length > 2)
                 {
-                    GridRegion r = m_GridService.GetRegionByPosition(scopeID,
-                            (int)Util.RegionToWorldLoc((uint)tileX), (int)Util.RegionToWorldLoc((uint)tileY));
-                    if (r == null)
+                    try
                     {
-                        Monitor.Exit(ev);
-                        httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
-                        httpResponse.ContentType = "text/plain";
-                        return Array.Empty<byte>();
+                        scopeID = new UUID(bits[1]);
+                    }
+                    catch
+                    {
+                        return new byte[9];
+                    }
+                    path = bits[2];
+                    path = path.Trim('/');
+                }
+                // BUG FIX: the common no-scope case (bits.Length == 2, e.g. the
+                // real request path "map/map-1-1000-1000-objects.jpg") never
+                // reduced path down to just the filename - it stayed as the
+                // full "map/map-1-1000-1000-objects.jpg" string, which
+                // MapImageService.GetMapTile then Path.Combine'd onto the tile
+                // storage folder, producing a bogus nested "map/" subdirectory
+                // that never existed on disk (confirmed: real tiles sit directly
+                // in maptiles/<scopeID>/map-1-X-Y-objects.jpg, one level up from
+                // where this bug was looking). Every tile request silently
+                // failed and fell back to the generic water-tile placeholder
+                // (or 404'd if that wasn't configured) - not a routing/config
+                // problem, a real path-construction bug in this handler.
+                else if (bits.Length == 2)
+                {
+                    path = bits[1];
+                }
+
+                if(path.Length == 0)
+                {
+                    httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
+                    httpResponse.ContentType = "text/plain";
+                    return Array.Empty<byte>();
+                }
+
+                if (m_GridService != null)
+                {
+                    Match m = TileNameRegex.Match(path);
+                    if (m.Success
+                            && int.TryParse(m.Groups[1].Value, out int tileZoom) && tileZoom == 1
+                            && int.TryParse(m.Groups[2].Value, out int tileX)
+                            && int.TryParse(m.Groups[3].Value, out int tileY))
+                    {
+                        GridRegion r = m_GridService.GetRegionByPosition(scopeID,
+                                (int)Util.RegionToWorldLoc((uint)tileX), (int)Util.RegionToWorldLoc((uint)tileY));
+                        if (r == null)
+                        {
+                            httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
+                            httpResponse.ContentType = "text/plain";
+                            return Array.Empty<byte>();
+                        }
                     }
                 }
-            }
 
-            result = m_MapService.GetMapTile(path, scopeID, out format);
-            if (result.Length > 0)
+                result = m_MapService.GetMapTile(path, scopeID, out format);
+                if (result.Length > 0)
+                {
+                    httpResponse.StatusCode = (int)HttpStatusCode.OK;
+                    if (format.Equals(".png"))
+                        httpResponse.ContentType = "image/png";
+                    else if (format.Equals(".jpg") || format.Equals(".jpeg"))
+                        httpResponse.ContentType = "image/jpeg";
+                }
+                else
+                {
+                    httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
+                    httpResponse.ContentType = "text/plain";
+                }
+
+                return result;
+            }
+            finally
             {
-                httpResponse.StatusCode = (int)HttpStatusCode.OK;
-                if (format.Equals(".png"))
-                    httpResponse.ContentType = "image/png";
-                else if (format.Equals(".jpg") || format.Equals(".jpeg"))
-                    httpResponse.ContentType = "image/jpeg";
+                Monitor.Exit(ev);
             }
-            else
-            {
-                httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
-                httpResponse.ContentType = "text/plain";
-            }
-
-            Monitor.Exit(ev);
-
-            return result;
         }
     }
 }

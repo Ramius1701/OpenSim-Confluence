@@ -24600,3 +24600,118 @@ branch with a neutral zero, matching the existing pattern for
 concepts - like `OBJECT_TEMP_ATTACHED` - that don't apply to an
 avatar). No interface/stub registration needed since this extends an
 existing function rather than adding a new one. Build clean.
+
+---
+
+## ICan security disclosure remediation, batch 1 (2026-09-23)
+
+Started working through `Docs/security/ICan.md` - a full responsible-
+disclosure writeup against stock OpenSimulator, only present on
+Tranquillity/Sasquatch's `security/control-plane-hardening` branch
+(commits `179ad7cb53`/`74c4f0a954`), covering ~15 unauthenticated
+vulnerabilities across the control-plane HTTP surface. Earlier this
+session already fixed the two Gloebit-specific items (transaction
+callback forgery, OAuth CSRF) and the X-Forwarded-For trust foundation
+(`HttpRequest.cs`/`BaseHttpServer.cs`, both real fixes tailored to
+Casperia's own Apache-reverse-proxy topology rather than Tranquillity's
+blunter removal). This batch covers the rest of the disclosure's
+highest-leverage recommendation plus several smaller, self-contained
+items.
+
+**`ControlPlaneAccess` trusted-host allowlist - the disclosure's own
+top fix.** New class, `OpenSim/Server/Base/ControlPlaneAccess.cs`,
+ported/adapted from Tranquillity's own implementation (same shape,
+Confluence-specific comments): trusts loopback unconditionally plus
+any hosts configured under `[Network]`/`[Security]`
+`ControlPlaneTrustedHosts`/`TrustedControlPlaneHosts`, and rejects any
+request carrying an `X-SecondLife-Shard` header before even checking
+the caller's address - blocking the specific bypass where an in-world
+script running on one of this grid's own (therefore trusted-IP)
+regions could otherwise reach these endpoints "from inside." Wired
+into every control-plane POST handler the disclosure names:
+- Region agent-create (`AgentHandlers.cs`'s `AgentSimpleHandler`) - the
+  disclosure's most severe item, full unauthenticated account takeover
+  via a forged/harvested session against this endpoint.
+- Region object-create (`ObjectHandlers.cs`'s `ObjectSimpleHandler`) -
+  forged object injection with a spoofed owner.
+- Neighbour-hello (`NeighbourHandlers.cs`'s `NeighbourSimpleHandler`) -
+  session-credential harvesting; blocked responses use `NotFound`
+  rather than `Forbidden` here specifically, matching Tranquillity's
+  own choice, so an untrusted scanner can't even confirm the endpoint
+  exists.
+- Friends inter-region messaging (`FriendsRequestHandler.cs`'s
+  `FriendsSimpleRequestHandler`) - rights-self-grant and friendship
+  spoofing, since this endpoint trusted caller-supplied FromID/ToID at
+  face value with no caller authentication at all.
+
+Each handler's constructor now takes a `ControlPlaneAccess` instance,
+threaded through from the connector that instantiates it
+(`SimulationServiceInConnector.cs`, `NeighbourServiceInConnector.cs`,
+`FriendsModule.cs`) - one instance per connector, each reading the
+same config keys. `QUERYACCESS`/`PUT`/`DELETE` on the agent/object
+endpoints deliberately stay ungated, matching the disclosure's own
+note that those are legitimately called cross-grid during Hypergrid
+teleport handoff. Build clean.
+
+**Plaintext login-key logging removed.** `LLLoginHandlers.cs`'s
+`HandleXMLRPCLogin` was logging the actual derived password hash
+(`"$1$" + web_login_key`) at Info level on every web-login-key-based
+login attempt - a real credential-disclosure bug via the log file
+itself, not the network. Deleted the log line; nothing else needed
+this value logged.
+
+**OpenID disabled by default in the repo's own templates.** The
+disclosure flags OpenID as enabled-by-default with no rate limiting -
+a real unauthenticated credential brute-force surface. Commented out
+`OpenIdServerConnector` in `bin\Robust.ini.example` and
+`bin\Robust.HG.ini.example`, matching this project's own "ship secure/
+native by default" convention. **Live Casperia's own
+`Robust.HG.ini` still has it enabled** - flagged this to the user
+directly; explicitly told to leave it enabled for now, so this is a
+deliberate live exception, not an oversight (recorded in memory so a
+future session doesn't "fix" it without asking again).
+
+**Map-tile handler single-request DoS - real lock leak, now closed.**
+`MapGetServerConnector.cs`'s `MapServerGetHandler.ProcessRequest`
+takes a static lock (`Monitor.TryEnter(ev, 5000)`) shared across every
+map-tile request on this process, but only released it via a single
+`Monitor.Exit(ev)` on the normal success path - any exception thrown
+by `m_MapService.GetMapTile`, or either of two early-return paths
+already added by this codebase's own prior bug fixes (a malformed
+scopeID, or an empty resolved path), leaked the lock permanently,
+wedging every subsequent map-tile request behind the 5-second
+`TryEnter` timeout forever. Wrapped the whole handler body in a single
+try/finally so every exit path - including both of the
+Confluence-specific ones that predate this fix - releases the lock
+exactly once.
+
+**Friends-list-wipe prefix/suffix comparison bug - real, fixed in two
+places.** `HGFriendsService.cs`'s `DeleteFriendship` authorized a
+cross-grid friendship deletion using `finfo.Friend.StartsWith(friend.Friend)
+&& finfo.Friend.EndsWith(secret)` against the stored composite
+`UUID;url;firstname;lastname;secret` string - a substring match, not
+an anchored comparison of the actual UUID/secret fields, so a caller
+who could construct or guess a suffix-matching secret against an
+unintended stored record could silently delete the wrong friendship.
+Fixed by parsing the stored value properly (`Util.ParseUniversalUserIdentifier`'s
+6-out-param overload, already existed in this codebase, matching the
+6-arg pattern) and comparing the parsed UUID and secret for exact
+equality via a new shared `FriendshipDeleteMatches` helper. Found and
+fixed the *identical* vulnerable pattern a second time in
+`StatusNotification` (deciding which local friends get included in an
+online/offline presence broadcast to a foreign caller) while in the
+same file - same substring-secret bug, different consequence
+(presence-status leak/spoof rather than wrongful deletion), not called
+out by name in the disclosure but the same flaw class, so fixed at the
+same time rather than left for a future pass. Build clean.
+
+**Not yet touched, remaining from the disclosure's second commit**
+(`74c4f0a954`, ~800 lines across 20+ files in Tranquillity's tree): HG
+return-home session minting block, foreign-duplicate-session
+validation, privileged-IM gating, profile JSON-RPC per-method gate, HG
+groups writes gating, logout control-path gating, Hypergrid egress/SSRF
+filtering (`HypergridEgressPolicy`, new class in Tranquillity's tree),
+and the broader `UserAgentService`/`GatekeeperService` changes those
+depend on. None of the 4 ControlPlaneAccess-gated fixes above, nor any
+of tonight's other fixes, have been deployed to live Casperia yet -
+still pending a deploy/restart pass.

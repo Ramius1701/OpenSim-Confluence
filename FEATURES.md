@@ -11,6 +11,7 @@ planned or still missing, see `ROADMAP.md`.
 - [Scripting: LSL and OSSL](#scripting-lsl-and-ossl)
 - [World and Environment](#world-and-environment)
 - [Database](#database)
+- [Control-Plane Security Hardening](#control-plane-security-hardening)
 - [Included Add-on Modules](#included-add-on-modules)
 - [MoneyServer](#moneyserver)
 
@@ -613,6 +614,42 @@ NaN/Infinity before being applied.
   to match MySQL across all three backends.
 - Experience Tools has full PostgreSQL and SQLite implementations, not
   MySQL-only.
+
+## Control-Plane Security Hardening
+
+Remediation of a real responsible-disclosure writeup covering
+unauthenticated vulnerabilities in stock OpenSimulator's inter-server
+control plane — the region agent-create/object-create endpoints,
+neighbour-hello handshake, friends messaging, and related HTTP
+surface every grid runs, historically with no caller authentication
+of its own.
+
+- **`ControlPlaneAccess` trusted-host allowlist** — the region
+  agent-create, region object-create, neighbour-hello, and inter-region
+  friends-messaging endpoints now refuse any caller that isn't
+  loopback or an explicitly configured trusted host
+  (`[Network]`/`[Security]` `ControlPlaneTrustedHosts`), and reject any
+  request carrying an `X-SecondLife-Shard` header before checking the
+  caller's address at all — closing a bypass where an in-world script
+  running on the grid's own (and therefore trusted-IP) region could
+  otherwise reach these endpoints "from inside."
+- **X-Forwarded-For trust fixed at the source** — the header is now
+  only honored when the direct TCP peer is loopback, closing a
+  source-IP spoofing gap that undermined every IP-based trust
+  decision (including the allowlist above) without regressing
+  legitimate reverse-proxy deployments.
+- **Friends-list-wipe / presence-spoof bug fixed** — cross-grid
+  friendship deletion and online/offline presence-status matching
+  used to compare a caller-supplied secret against a stored value via
+  a raw substring check, not an exact match of the actual parsed
+  fields; both now parse and compare the real UUID/secret components.
+- **Map-tile handler DoS fixed** — a single failed request used to
+  permanently leak an internal lock, wedging every subsequent map-tile
+  request behind a 5-second timeout forever; now released
+  unconditionally via try/finally.
+- Plaintext login-key logging removed; OpenID's connector now ships
+  commented-out by default in the example configs (a grid owner who
+  wants it can still enable it explicitly).
 
 ## Included Add-on Modules
 

@@ -32,6 +32,7 @@ using OpenSim.Services.Interfaces;
 using GridRegion = OpenSim.Services.Interfaces.GridRegion;
 using OpenSim.Framework;
 using OpenSim.Framework.Servers.HttpServer;
+using OpenSim.Server.Base;
 
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
@@ -45,11 +46,13 @@ namespace OpenSim.Server.Handlers.Simulation
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private ISimulationService m_SimulationService;
+        private readonly ControlPlaneAccess m_ControlPlaneAccess;
         protected bool m_Proxy = false;
 
-        public ObjectSimpleHandler(ISimulationService service) : base("/object")
+        public ObjectSimpleHandler(ISimulationService service, ControlPlaneAccess controlPlaneAccess) : base("/object")
         {
             m_SimulationService = service;
+            m_ControlPlaneAccess = controlPlaneAccess;
         }
 
         protected override void ProcessRequest(IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
@@ -74,6 +77,13 @@ namespace OpenSim.Server.Handlers.Simulation
             {
                 case "POST":
                 {
+                    // Object creation with a caller-supplied owner - the
+                    // disclosure's forged-object-injection path. Same
+                    // trusted-caller gate as AgentHandlers.cs's POST case;
+                    // DELETE stays open per Tranquillity's own scope here.
+                    if (!m_ControlPlaneAccess.Authorize(httpRequest, httpResponse))
+                        return;
+
                     OSDMap args = Utils.DeserializeJSONOSMap(httpRequest);
                     if (args == null)
                     {

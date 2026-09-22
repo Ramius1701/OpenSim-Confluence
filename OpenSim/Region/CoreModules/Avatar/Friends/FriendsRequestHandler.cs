@@ -50,6 +50,7 @@ namespace OpenSim.Region.CoreModules.Avatar.Friends
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private FriendsModule m_FriendsModule;
+        private readonly ControlPlaneAccess m_ControlPlaneAccess;
         /*
         public FriendsRequestHandler(FriendsModule fmodule)
                 : base("POST", "/friends", new BasicDosProtectorOptions()
@@ -62,9 +63,10 @@ namespace OpenSim.Region.CoreModules.Avatar.Friends
                                                 ThrottledAction = BasicDOSProtector.ThrottleAction.DoThrottledMethod
                                             })
         */
-        public FriendsSimpleRequestHandler(FriendsModule fmodule) : base("/friends")
+        public FriendsSimpleRequestHandler(FriendsModule fmodule, ControlPlaneAccess controlPlaneAccess) : base("/friends")
         {
             m_FriendsModule = fmodule;
+            m_ControlPlaneAccess = controlPlaneAccess;
         }
 
         protected override void ProcessRequest(IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
@@ -80,6 +82,14 @@ namespace OpenSim.Region.CoreModules.Avatar.Friends
                 httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
                 return;
             }
+
+            // This inter-region endpoint delivers friendship offers,
+            // approvals, rights grants, and status notifications with the
+            // caller-supplied FromID/ToID trusted at face value - the
+            // disclosure's rights-self-grant and friendship-spoofing path.
+            // Gate it the same as every other control-plane POST handler.
+            if (!m_ControlPlaneAccess.Authorize(httpRequest, httpResponse))
+                return;
 
             httpResponse.KeepAlive = false;
             httpResponse.StatusCode = (int)HttpStatusCode.OK;

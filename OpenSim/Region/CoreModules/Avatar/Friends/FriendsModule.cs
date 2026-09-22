@@ -184,7 +184,7 @@ namespace OpenSim.Region.CoreModules.Avatar.Friends
                 // Instantiate the request handler
                 IHttpServer server = MainServer.GetHttpServer((uint)mPort);
 
-                server?.AddSimpleStreamHandler(new FriendsSimpleRequestHandler(this));
+                server?.AddSimpleStreamHandler(new FriendsSimpleRequestHandler(this, new ControlPlaneAccess(config)));
             }
 
             if (m_FriendsService is null)

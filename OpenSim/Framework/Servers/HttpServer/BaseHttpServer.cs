@@ -1226,17 +1226,33 @@ namespace OpenSim.Framework.Servers.HttpServer
                 xmlRprcRequest.Params.Add(request.RemoteIPEndPoint); // Param[1]
                 xmlRprcRequest.Params.Add(request.Url); // Param[2]
 
-                string xff = "X-Forwarded-For";
-                string xfflower = xff.ToLower();
-                foreach (string s in request.Headers.AllKeys)
+                // Only ever hand a caller-supplied X-Forwarded-For value
+                // downstream (to method handlers like the login handler,
+                // and to XmlRpcBasicDOSProtector) when the real, direct TCP
+                // peer for this connection is loopback - i.e. our own
+                // reverse proxy. Otherwise it's just an unverified claim,
+                // and handlers that blindly trusted it (the login handler
+                // did) let an attacker forge their apparent source IP.
+                // Same trust condition as HttpRequest.RemoteIPEndPoint's
+                // own fix - see its comment. Found via a sibling fork's own
+                // responsible-disclosure writeup, 2026-09-23.
+                string xffValue = null;
+                IPEndPoint directPeer = request.IHttpClientContext?.LocalIPEndPoint;
+                if (directPeer != null && IPAddress.IsLoopback(directPeer.Address))
                 {
-                    if (s is not null && s.Equals(xfflower))
+                    string xff = "X-Forwarded-For";
+                    string xfflower = xff.ToLower();
+                    foreach (string s in request.Headers.AllKeys)
                     {
-                        xff = xfflower;
-                        break;
+                        if (s is not null && s.Equals(xfflower))
+                        {
+                            xff = xfflower;
+                            break;
+                        }
                     }
+                    xffValue = request.Headers.Get(xff);
                 }
-                xmlRprcRequest.Params.Add(request.Headers.Get(xff)); // Param[3]
+                xmlRprcRequest.Params.Add(xffValue); // Param[3]
 
                 // reserve this for
                 // ... by Fumi.Iseki for DTLNSLMoneyServer
@@ -1364,14 +1380,26 @@ namespace OpenSim.Framework.Servers.HttpServer
                 xmlRprcRequest.Params.Add(request.RemoteIPEndPoint); // Param[1]
                 xmlRprcRequest.Params.Add(request.Url); // Param[2]
 
-                foreach (string s in request.Headers.AllKeys)
+                // Same trust condition as the other XML-RPC dispatch path
+                // above and HttpRequest.RemoteIPEndPoint's own fix - see
+                // their comments. Always add Param[3] (defaulting to null)
+                // rather than only when the header is present, so a caller
+                // checking Params.Count for its presence isn't misled by
+                // this path's own absence of it.
+                string xffValue2 = null;
+                IPEndPoint directPeer2 = request.IHttpClientContext?.LocalIPEndPoint;
+                if (directPeer2 != null && IPAddress.IsLoopback(directPeer2.Address))
                 {
-                    if (s is not null && s.Equals("x-forwarded-for", StringComparison.OrdinalIgnoreCase))
+                    foreach (string s in request.Headers.AllKeys)
                     {
-                        xmlRprcRequest.Params.Add(request.Headers.Get(s)); // Param[3]
-                        break;
+                        if (s is not null && s.Equals("x-forwarded-for", StringComparison.OrdinalIgnoreCase))
+                        {
+                            xffValue2 = request.Headers.Get(s);
+                            break;
+                        }
                     }
                 }
+                xmlRprcRequest.Params.Add(xffValue2); // Param[3]
 
                 // reserve this for
                 // ... by Fumi.Iseki for DTLNSLMoneyServer

@@ -181,11 +181,22 @@ namespace OpenSim.Services.HypergridService
 
         public bool DeleteFriendship(FriendInfo friend, string secret)
         {
+            // StartsWith/EndsWith on the raw composite "UUID;url;fn;ln;secret"
+            // string used to be the whole check here - a caller who could
+            // guess or brute-force a short trailing substring of another
+            // friend's stored secret (or exploit two records that happen to
+            // share a suffix) could silently delete a friendship that wasn't
+            // theirs to delete. Parse the stored value's actual UUID/secret
+            // fields and compare those exactly instead of substring-matching
+            // the whole string. See PROJECT_LOG.md, 2026-09-23.
+            if (string.IsNullOrEmpty(secret) || !UUID.TryParse(friend.Friend, out UUID requestedFriendID))
+                return false;
+
             FriendInfo[] finfos = m_FriendsService.GetFriends(friend.PrincipalID);
             foreach (FriendInfo finfo in finfos)
             {
                 // We check the secret here. Or if the friendship request was initiated here, and was declined
-                if (finfo.Friend.StartsWith(friend.Friend) && finfo.Friend.EndsWith(secret))
+                if (FriendshipDeleteMatches(finfo.Friend, requestedFriendID, secret))
                 {
                     m_log.DebugFormat("[HGFRIENDS SERVICE]: Delete friendship {0} {1}", friend.PrincipalID, friend.Friend);
                     m_FriendsService.Delete(friend.PrincipalID, finfo.Friend);
@@ -196,6 +207,17 @@ namespace OpenSim.Services.HypergridService
             }
 
             return false;
+        }
+
+        public static bool FriendshipDeleteMatches(string storedFriend, UUID requestedFriendID, string secret)
+        {
+            if (requestedFriendID.IsZero() || string.IsNullOrEmpty(secret))
+                return false;
+
+            if (!Util.ParseUniversalUserIdentifier(storedFriend, out UUID storedFriendID, out _, out _, out _, out string storedSecret))
+                return false;
+
+            return storedFriendID.Equals(requestedFriendID) && storedSecret == secret;
         }
 
         public bool FriendshipOffered(UUID fromID, string fromName, UUID toID, string message)
@@ -243,7 +265,6 @@ namespace OpenSim.Services.HypergridService
             // First, let's double check that the reported friends are, indeed, friends of that user
             // And let's check that the secret matches
             List<string> usersToBeNotified = new List<string>();
-            string foreignUserIDToString = foreignUserID.ToString();
             foreach (string uui in friends)
             {
                 if (Util.ParseUniversalUserIdentifier(uui, out UUID localUserID, out _, out _, out _, out string secret))
@@ -251,7 +272,12 @@ namespace OpenSim.Services.HypergridService
                     FriendInfo[] friendInfos = m_FriendsService.GetFriends(localUserID);
                     foreach (FriendInfo finfo in friendInfos)
                     {
-                        if (finfo.Friend.StartsWith(foreignUserIDToString) && finfo.Friend.EndsWith(secret))
+                        // Same exact-match fix as DeleteFriendship's - see
+                        // FriendshipDeleteMatches's own comment. Here a
+                        // substring false-match would leak/spoof presence
+                        // status to a party who isn't actually the matching
+                        // friend, not just authorize a wrongful delete.
+                        if (FriendshipDeleteMatches(finfo.Friend, foreignUserID, secret))
                         {
                             // great!
                             usersToBeNotified.Add(localUserID.ToString());
