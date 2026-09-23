@@ -28,6 +28,8 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework.Servers.HttpServer;
@@ -60,6 +62,22 @@ namespace OpenSim.Server.Base
     // operator finds more natural). Hostnames are resolved once, at
     // startup - if a trusted region's own address changes, this process
     // needs restarting to pick it up.
+    //
+    // Manual config above is optional, not required - by design. Robust's
+    // own SimulationServiceConnector (and the other service-to-service
+    // callers this class gates) call a region's *public* ServerURI for
+    // ordinary login/teleport traffic, not loopback - most small/hobbyist
+    // grids run every process on one machine behind NAT with no purely
+    // internal path at all, so a loopback-only default would silently
+    // 403 every login the first time this gate is enabled (found and
+    // fixed live on Casperia, 2026-09-23 - see PROJECT_LOG.md). Every
+    // grid owner already sets [Const] BaseHostname (the one truly
+    // required setting for any grid), so its resolved address(es) are
+    // auto-trusted below, together with this machine's own local network
+    // identity (its interfaces' addresses and default gateways) to cover
+    // whatever a home router's NAT hairpin/loopback rewrites a same-box
+    // call's source to. This needs zero new configuration from any grid
+    // owner to work correctly out of the box.
     public class ControlPlaneAccess
     {
         private readonly HashSet<IPAddress> m_trustedHosts = new HashSet<IPAddress>();
@@ -69,9 +87,56 @@ namespace OpenSim.Server.Base
             AddTrustedAddress(IPAddress.Loopback);
             AddTrustedAddress(IPAddress.IPv6Loopback);
 
+            AddLocalMachineAddresses();
+
+            string baseHostname = config?.Configs["Const"]?.GetString("BaseHostname", string.Empty);
+            if (!string.IsNullOrWhiteSpace(baseHostname))
+                AddTrustedHost(baseHostname.Trim());
+
             string hosts = GetConfiguredHosts(config);
             foreach (string host in hosts.Split(new[] { ',', ';', '|', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                 AddTrustedHost(host.Trim());
+        }
+
+        // Trusts this machine's own identity on its local network(s) -
+        // every address any of its interfaces actually holds, plus each
+        // interface's own default gateway. Covers the common cases where
+        // a home/small-office router's NAT hairpin either preserves the
+        // original LAN sender's address or rewrites it to the gateway's
+        // own address when a box calls back into its own public-facing
+        // hostname. Best-effort: a machine with no usable NICs (unlikely)
+        // just falls back to whatever BaseHostname/manual config adds.
+        private void AddLocalMachineAddresses()
+        {
+            try
+            {
+                foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up)
+                        continue;
+
+                    IPInterfaceProperties props;
+                    try
+                    {
+                        props = nic.GetIPProperties();
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    foreach (UnicastIPAddressInformation addr in props.UnicastAddresses)
+                        AddTrustedAddress(addr.Address);
+
+                    foreach (GatewayIPAddressInformation gw in props.GatewayAddresses)
+                        AddTrustedAddress(gw.Address);
+                }
+            }
+            catch
+            {
+                // Best-effort discovery only - never let this stop the
+                // process from starting.
+            }
         }
 
         // Reject the in-world-script HTTP marker header on top of the

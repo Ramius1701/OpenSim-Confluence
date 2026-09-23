@@ -627,12 +627,17 @@ of its own.
 - **`ControlPlaneAccess` trusted-host allowlist** — the region
   agent-create, region object-create, neighbour-hello, inter-region
   friends-messaging, and HG groups write endpoints now refuse any
-  caller that isn't loopback or an explicitly configured trusted host
-  (`[Network]`/`[Security]` `ControlPlaneTrustedHosts`), and reject any
-  request carrying an `X-SecondLife-Shard` header before checking the
-  caller's address at all — closing a bypass where an in-world script
-  running on the grid's own (and therefore trusted-IP) region could
-  otherwise reach these endpoints "from inside."
+  untrusted caller, and reject any request carrying an
+  `X-SecondLife-Shard` header before checking the caller's address at
+  all — closing a bypass where an in-world script running on the
+  grid's own (and therefore trusted) region could otherwise reach
+  these endpoints "from inside." Trust is auto-discovered with zero
+  configuration required: loopback, this machine's own network
+  interfaces and their default gateways (covers same-box deployments
+  behind NAT, the common case for a single-server grid), and the
+  resolved address of `[Const] BaseHostname` — every grid owner
+  already sets that. `[Network]`/`[Security]` `ControlPlaneTrustedHosts`
+  remains available for the genuine multi-box case.
 - **X-Forwarded-For trust fixed at the source** — the header is now
   only honored when the direct TCP peer is loopback, closing a
   source-IP spoofing gap that undermined every IP-based trust

@@ -24820,5 +24820,201 @@ a deliberate standing exception, not an oversight - noted in memory so
 a future session doesn't "fix" it without asking again.
 
 This closes every item in the ICan disclosure except the two explicit
-exceptions above. Build clean throughout. Nothing from batch 2 has
-been committed, pushed, or deployed yet.
+exceptions above. Build clean throughout. Batch 2 committed and pushed
+as commit `ae313d90b7`.
+
+---
+
+## OpenID confirmed unused, then disabled live on Casperia (2026-09-23)
+
+Reconsidered the "leave OpenID enabled live" exception from earlier
+tonight after being asked directly whether Confluence actually uses
+OpenID for anything. Investigation, not assumption:
+`OpenIdServerHandler.cs`/`OpenIdServerConnector.cs` are unmodified
+vanilla-OpenSim code implementing an OpenID 2.0 *identity provider*
+(lets a resident prove "I am this avatar" to a third-party OpenID
+*consumer* site, like an old phpBB forum plugin - a 2008-era web-SSO
+pattern, not viewer login). Live Casperia's `[OpenIdService]` section
+was configured (matching stock defaults) so the connector genuinely
+loaded and `/openid/server`+`/users/<name>` were reachable - but
+`[LoginService] OpenIDServerURL` was unset/empty, so the viewer's own
+login response never advertised this feature to residents at all.
+Confluence's native WebUI uses its own cookie/session login, not
+OpenID, and nothing in FEATURES.md/README.md/ROADMAP.md ever
+documented OpenID as an intentional feature. Genuinely dead weight,
+not a possible integration point worth protecting.
+
+Disabled it: commented out `OpenIdServerConnector` in live
+`Robust.HG.ini` (matching the already-fixed template), then restarted
+Robust to pick up the connector-registration change - a config edit
+alone doesn't take effect, since connectors register once at process
+startup. Robust has no REST/remote console configured for itself
+(unlike regions, which have `[WebConsole]`), so the graceful stop was
+done manually - typed `shutdown` directly into Robust's own console
+window - then relaunched via the same invocation
+`CasperiaControl.bat`'s `:launch_service` helper uses (`Robust.exe
+-inifile=Robust.HG.ini` from the grid root).
+
+Live-verified: `Robust.log`'s new startup has no `OpenIdServerConnector`
+line at all (the last one logged is from 2026-09-21, a prior restart);
+`curl http://127.0.0.1:8002/openid/server` now returns 404; `/helo` and
+`/get_grid_info` both respond normally with no errors anywhere in the
+new startup sequence - Robust came back up completely clean.
+
+---
+
+## ICan remediation deployed live, plus a real 91-DLL drift discovery (2026-09-23)
+
+Deployed both ICan batches to live Casperia. Mapped every changed
+source file to its actual assembly first (via `prebuild.xml` plus
+tonight's own `Robust.log`, which directly confirmed which connectors
+Robust itself loads) - the honest picture turned out bigger than
+originally described: `OpenSim.Services.HypergridService.dll`
+(`UserAgentService`/`GatekeeperService`/`HypergridEgressPolicy`/
+`HGFriendsService`), `OpenSim.Services.Connectors.dll`
+(`UserAgentServiceConnector`), `LLLoginHandlers.cs`, and
+`MapGetServerConnector.cs` are all Robust-hosted, not region-side as
+first assumed - a real correction made and flagged before touching
+anything live, not silently absorbed.
+
+Copied the 8 directly-changed DLLs+PDBs to the master folder
+(`S:\Opensim\Casperia\`), restarted Robust (no REST console configured
+for Robust itself, so the graceful stop was done by hand - typing
+`shutdown` in its own console window - each time this session needed
+one), and hit a real, unrelated problem on the very first relaunch: a
+`ReflectionTypeLoadException` on `OpenSim.Services.AbuseReportsService.dll`
+("Method 'DeleteAbuseReport' ... does not have an implementation").
+`ServerUtils.LoadPlugin` swallows this and returns null, and
+`AbuseReportsServiceConnector`'s own constructor never null-checks the
+result before logging "loaded successfully" - so this failure was
+completely silent in the log's own success/failure signal. Confirmed
+via `ServerUtils.cs` reading, not guessing.
+
+This had nothing to do with tonight's changes - a full MD5 sweep (not
+just size, which gave a false negative on this exact file since it
+coincidentally matched size while differing in content) found **92 of
+149 DLLs on live Casperia were stale** against the repo's current
+build, including foundational ones like `Robust.dll`, `OpenSim.dll`,
+and `OpenSim.Framework.dll` - a real, pre-existing deploy-drift gap
+built up across many prior sessions' narrower/selective deploys,
+completely independent of tonight's security work. `AbuseReportsService`
+was simply the one that happened to have a genuine, breaking interface
+mismatch; the other 91 hadn't shown symptoms yet, but nothing ruled
+out another one doing the same thing.
+
+Flagged this to the user rather than quietly redeploying past it; asked
+directly, and was told to do the full sweep now while already mid-deploy
+rather than leave it as a separate future risk. Copied all 91 stale
+DLLs+PDBs (fixing `AbuseReportsService` in the same pass), verified
+every one byte-for-byte via MD5 before restarting, then restarted
+Robust one more time - clean startup, 31 connectors loaded
+successfully, zero errors anywhere in the log, `AbuseReportsService`
+now genuinely initializes instead of silently no-op'ing.
+
+Finished with the region side: since region processes only re-sync
+their own `bin\` from the master folder at their own next restart, used
+the already-built WebUI "Restart All" (rolling, 120s courtesy window,
+staggered 30s) - triggered by the user directly rather than by me,
+since it's an admin-session-gated action I won't touch credentials
+for. All 7 currently-running regions (Sandbox, Welcome Center,
+Ranchero, SVC, Section 31, Starbase Andromeda, UFPGC) completed their
+full rolling-restart cycle cleanly, each reaching `TriggerRegionReady`,
+confirmed synced to the fresh master binaries via MD5 (checked
+`OpenSim.Server.Handlers.dll` in each region's own `bin\` against the
+master copy). A handful of errors appeared in region logs during the
+Robust-down window (connection failures to `casperia.ddns.net:8003`) -
+expected and transient, not new bugs; the rest of the log noise was
+pre-existing content decay (missing script assets, degenerate meshes),
+unrelated to tonight's work.
+
+Both ICan remediation batches (`77bc6713b8`, `ae313d90b7`) are now
+fully live and verified on Casperia, on top of fixing a real,
+previously-silent AbuseReportsService break and closing a 92-DLL
+deploy-drift gap that had nothing to do with security but was a real
+find in its own right.
+
+---
+
+## Real self-inflicted grid-wide login outage from the ControlPlaneAccess deploy, and its actual fix (2026-09-23)
+
+Shortly after the ICan deploy above finished, a resident (Ramius
+Easterwood) reported total login failure - Firestorm's login dialog
+showed "Service request failed: [403] Response status code does not
+indicate success: 403 (Forbidden)." This was a real, grid-wide outage,
+not a one-off, and it was caused directly by tonight's own
+`ControlPlaneAccess` deploy.
+
+**Root cause.** `Robust.log` traced it exactly: Robust's
+`SimulationServiceConnector` calls a destination region's **public**
+`ServerURI` (`http://casperia.ddns.net:<port>/agent/...`) for ordinary
+login/teleport agent creation - there is no purely-internal loopback
+path for this call anywhere in this grid's config (`PrivURL` is
+literally defined as `= ${Const|BaseURL}`, the same public hostname,
+throughout `GridCommon.ini`). `ControlPlaneAccess.Authorize()` only
+trusted loopback by default, with nothing configured in
+`ControlPlaneTrustedHosts` - so it rejected Robust's own legitimate
+agent-creation calls to every single region, blocking every login
+grid-wide the moment the fix went live. A quick empirical test
+confirmed the mechanics: this machine's own outbound connection to its
+own public hostname round-trips through the router's NAT hairpin and
+comes back in as a call the region's listener can't distinguish from
+an outside caller.
+
+**Immediate question, and the right call.** Proposed a fast fix -
+hardcode this machine's own LAN IP/gateway/public IP into
+`GridCommon.ini`'s `ControlPlaneTrustedHosts` - but the user asked the
+right question first: "This will fix it for me, what about other grid
+owners?" Correct answer: it wouldn't help anyone else at all. Every
+other Confluence grid owner behind NAT (the overwhelming majority of
+small/hobbyist grids, run on one box like this one) would hit this
+exact same silent, no-clue-why, total-login-outage the moment they
+picked up this code - a real gap against this project's own stated
+"easy setup for any grid owner" mission, not just a Casperia
+misconfiguration.
+
+**The actual fix, in `ControlPlaneAccess.cs`'s constructor**: auto-
+discover trust from information every grid owner already has to
+configure, instead of requiring any of them to independently diagnose
+NAT hairpin behavior the way this session just did:
+- Resolve `[Const] BaseHostname` (the one setting every grid, HG or
+  not, is already required to set) and trust its resolved address(es).
+- Enumerate this machine's own network interfaces and trust every
+  address they hold, plus each interface's own default gateway -
+  covers whichever way a home/small-office router's NAT hairpin
+  rewrites a same-box call's source (preserving the original LAN
+  sender, or masquerading as the gateway - both are common, router-
+  dependent behaviors, so both are covered rather than guessed at).
+
+This needs zero new configuration from any grid owner - it's a true
+default fix, not a Casperia-specific workaround. The manual
+`ControlPlaneTrustedHosts` config option from earlier tonight still
+works too, for the genuine edge case of a real multi-box deployment
+where Robust and a region aren't on the same physical machine.
+
+**Deploy sequence** (same graceful-restart discipline as the rest of
+tonight, twice over since this was found *after* the first full
+deploy): copied the single changed `OpenSim.Server.Base.dll`+pdb,
+graceful Robust shutdown+relaunch (user-driven, since Robust has no
+remote console of its own), confirmed clean startup, then a **second**
+full rolling restart (WebUI's Restart All) across all 7 running
+regions - required because the region-side `AgentSimpleHandler` is
+what was actually rejecting the calls, and a DLL replaced on disk
+doesn't affect a process that already has the old version loaded in
+memory. Verified directly rather than just asserting it: a test POST
+to a freshly-restarted region's own `/agent/` endpoint moved from 403
+to 400 (rejected for a bad test payload, not for being untrusted) -
+real, checkable evidence, not just "should work now." Confirmed via
+`Robust.log` that multiple real residents (Ramius Easterwood - the
+original reporter - Jessica Starlight, Jeffery Biedermann, the latter
+from a completely different IP/session) logged in successfully once
+the fix was fully rolled out.
+
+**The lesson, worth remembering for any future control-plane-style
+gate on this project**: an IP-allowlist security control that defaults
+to "loopback only" is fine for a maintainer's own single-box test
+setup, but silently wrong for this project's actual target audience
+(any grid owner, mostly single-box, mostly behind home NAT) - always
+design the default to auto-discover trust from config every owner
+already has to set, rather than shipping something that "works for me
+locally" and asking every downstream operator to rediscover the gap
+the hard way, potentially during a real outage of their own.
