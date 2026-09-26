@@ -349,9 +349,9 @@ Web & Admin UI section rather than here.)*
   every feature on SQLite, MySQL/MariaDB and PostgreSQL, in standalone and grid mode. Status, measured by
   `Tools/fresh-clone-matrix.py` (the list lives in `Tools/fresh-clone-matrix-expected.json`; it is now
   empty): PostgreSQL and SQLite load every service (Marketplace, RegionHGService, Offline IM and Groups
-  now have SQLite backends; Marketplace and RegionHGService have PostgreSQL ones). Still open: the
-  optional FSAssets disk asset store has no SQLite backend (the default asset service works there), and
-  MySQL/MariaDB is not yet in a matrix run (needs a scoped test login).
+  now have SQLite backends; Marketplace and RegionHGService have PostgreSQL ones). MySQL/MariaDB
+  now passes the matrix too (2026-09-27, all six database x mode combinations). Still open: the optional
+  FSAssets disk asset store has no SQLite backend (the default asset service works there).
 - **Server-side appearance baking (SSB) - from Tranquillity #207; scoped
   2026-09-26, not started.** The region composes each avatar's bake itself
   instead of relaying the viewer's, so "the viewer and region disagree

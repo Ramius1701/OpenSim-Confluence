@@ -25519,3 +25519,15 @@ SQLite/PostgreSQL x standalone/grid combinations with an EMPTY known-gaps list; 
 harness README are updated. Remaining: the optional FSAssets store has no SQLite backend, and MySQL/
 MariaDB has never had a matrix run. Not yet exercised: creating and joining a group in-world through the
 Groups service on SQLite/PostgreSQL (the data layer is proven; the service loads cleanly).
+
+**First full six-way fresh-clone matrix, 2026-09-27: all PASS.** With a scoped MySQL test account
+(`cfxtest`, restricted to databases named `cfx_%`; it cannot see or create anything else, checked before
+the run) `Tools/fresh-clone-matrix.py --dbs sqlite,mysql,pgsql` cloned commit `3e7f8c309f`, built it by the
+README steps and passed all six combinations - SQLite, MySQL/MariaDB and PostgreSQL, each standalone and
+grid - with an empty known-gaps list: Robust and the WebUI answer, the bootstrap admin is created, the
+Concierge endpoint serves the built-in welcome, the profile gate refuses script-marked calls, the region
+reaches "Startup complete" and loads Concierge, and no service fails to load. The script dropped every
+`cfx_*` database it made (verified afterwards). This is the first fresh-clone verification of
+MySQL/MariaDB, the database Casperia itself runs. Not covered: the data-backend harness
+(`Tools/data-backend-check`) still tests only SQLite and PostgreSQL; the MySQL classes are the original
+ones and have not been put through the same method-by-method checks.
