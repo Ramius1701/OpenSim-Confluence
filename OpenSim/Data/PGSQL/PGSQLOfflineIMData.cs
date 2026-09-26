@@ -42,6 +42,26 @@ namespace OpenSim.Data.PGSQL
         {
         }
 
+        // Every offline message is a new row. The generic Store first tries an UPDATE keyed on the
+        // row's fields (recipient and sender), which for this table meant a second message from
+        // the same sender to the same offline recipient silently overwrote the first, so only the
+        // last message per sender was ever delivered. MySQL always inserts; so does this.
+        public override bool Store(OfflineIMData row)
+        {
+            string message = row.Data != null && row.Data.TryGetValue("Message", out string m) ? m : string.Empty;
+
+            using (NpgsqlConnection conn = new NpgsqlConnection(m_ConnectionString))
+            using (NpgsqlCommand cmd = new NpgsqlCommand(
+                String.Format("INSERT INTO {0} (\"PrincipalID\", \"FromID\", \"Message\") VALUES (:PrincipalID, :FromID, :Message)", m_Realm), conn))
+            {
+                cmd.Parameters.Add(new NpgsqlParameter(":PrincipalID", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = row.PrincipalID.Guid });
+                cmd.Parameters.Add(new NpgsqlParameter(":FromID", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = row.FromID.Guid });
+                cmd.Parameters.Add(new NpgsqlParameter(":Message", NpgsqlTypes.NpgsqlDbType.Text) { Value = message });
+                conn.Open();
+                return cmd.ExecuteNonQuery() > 0;
+            }
+        }
+
         public void DeleteOld()
         {
             using (NpgsqlCommand cmd = new NpgsqlCommand())

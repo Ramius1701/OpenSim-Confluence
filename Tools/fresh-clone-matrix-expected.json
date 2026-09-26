@@ -4,7 +4,6 @@
     "mysql": [],
     "pgsql": [],
     "sqlite": [
-      "OpenSim.Addons.OfflineIM",
       "OpenSim.Addons.Groups"
     ]
   }

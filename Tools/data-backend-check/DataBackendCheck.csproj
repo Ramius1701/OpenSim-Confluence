@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Exercises the data-layer backends directly against real databases. See README.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Reference Include="OpenMetaverseTypes"><HintPath>..\..\bin\OpenMetaverseTypes.dll</HintPath></Reference>
+    <Reference Include="OpenSim.Data"><HintPath>..\..\bin\OpenSim.Data.dll</HintPath></Reference>
+    <Reference Include="OpenSim.Data.SQLite"><HintPath>..\..\bin\OpenSim.Data.SQLite.dll</HintPath></Reference>
+    <Reference Include="OpenSim.Data.PGSQL"><HintPath>..\..\bin\OpenSim.Data.PGSQL.dll</HintPath></Reference>
+    <Reference Include="System.Data.SQLite"><HintPath>..\..\bin\System.Data.SQLite.dll</HintPath></Reference>
+    <Reference Include="Npgsql"><HintPath>..\..\bin\Npgsql.dll</HintPath></Reference>
+    <Reference Include="OpenSim.Framework"><HintPath>..\..\bin\OpenSim.Framework.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

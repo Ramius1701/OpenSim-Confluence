@@ -155,7 +155,7 @@ and the goal is to empty it.
 |---|---|---|---|
 | Native Marketplace | works | works | works |
 | Region Hypergrid records (RegionHGService) | works | works | works |
-| Offline instant messages | not yet | works | works |
+| Offline instant messages | works | works | works |
 | Groups (data and search) | not yet | works | works |
 | Disk asset store (FSAssets, optional) | not yet | works | works |
 

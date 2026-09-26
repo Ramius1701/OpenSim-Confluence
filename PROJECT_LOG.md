@@ -25483,3 +25483,21 @@ Groups and Offline IM left; `Tools/fresh-clone-matrix-expected.json`, `SETUP.md`
 roadmap are updated. Not yet exercised: the Marketplace WebUI pages and an actual purchase on SQLite /
 PostgreSQL (the data layer is proven, the service/WebUI layer only by loading cleanly), and MySQL /
 MariaDB in a matrix run.
+
+**Offline IM on SQLite, and a PostgreSQL data-loss bug found on the way, 2026-09-27 (built, verified,
+uncommitted).** New `SQLiteOfflineIMData` (on the generic SQLite table handler, adding the two members
+that handler lacks - `GetCount` with an identifier check on the column name, and `DeleteOld` for the
+two-week clean-up) plus an `IM_Store.migrations` for SQLite. Testing the PostgreSQL backend alongside it
+exposed an existing bug: `PGSQLGenericTableHandler.Store` does an `UPDATE` keyed on the row's
+recipient and sender first and only inserts when nothing matched, so a second offline message from the
+same sender to the same offline recipient **overwrote the first** - only the last message per sender
+was ever delivered on PostgreSQL (MySQL and SQLite insert every message). `PGSQLOfflineIMData` now
+overrides `Store` with a plain insert. Verified against real databases with the data-backend harness
+(now kept in the repo as `Tools/data-backend-check/`, with a README): 182 checks, 0 failures across
+SQLite and PostgreSQL - messages from the same sender all kept, unicode/quotes/emoji round trip, delete
+one by id scoped to its owner (a wrong owner deletes nothing), DeleteOld removes a 20-day-old message and
+keeps recent ones. The fresh-clone matrix passes all four SQLite/PostgreSQL x standalone/grid
+combinations: PostgreSQL loads every service, SQLite is left with only Groups. Noted, not changed: the
+generic PostgreSQL `GetCount` splices the column name into SQL and assumes uuid keys (callers only pass
+constants, so it is not reachable from user input); the SQLite class refuses non-identifier column names.
+Not yet exercised: an actual offline message end to end through the Robust service and a real login.

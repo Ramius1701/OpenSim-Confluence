@@ -349,8 +349,8 @@ Web & Admin UI section rather than here.)*
   every feature on SQLite, MySQL/MariaDB and PostgreSQL, in standalone and grid mode. Status, measured by
   `Tools/fresh-clone-matrix.py` (the list lives in `Tools/fresh-clone-matrix-expected.json`; the goal is
   to empty it): **PostgreSQL has no gaps** and Marketplace and RegionHGService now work on SQLite too.
-  Still missing on SQLite: Offline IM data (`OpenSim.Addons.OfflineIM`), and the Groups data/search
-  provider (`OpenSim.Addons.Groups`); FSAssets is also SQLite-less but optional (the legacy asset service
+  Offline IM now works on SQLite too. Still missing on SQLite: the Groups data/search provider
+  (`OpenSim.Addons.Groups`); FSAssets is also SQLite-less but optional (the legacy asset service
   works there). MySQL/MariaDB is not yet in a matrix run (needs a scoped test login).
 - **Server-side appearance baking (SSB) - from Tranquillity #207; scoped
   2026-09-26, not started.** The region composes each avatar's bake itself

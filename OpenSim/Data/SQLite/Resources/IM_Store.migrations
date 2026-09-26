@@ -1,0 +1,15 @@
+:VERSION 1 # -----------------
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS im_offline (
+	ID INTEGER PRIMARY KEY AUTOINCREMENT,
+	PrincipalID char(36) NOT NULL DEFAULT '',
+	FromID char(36) NOT NULL DEFAULT '',
+	Message text NOT NULL,
+	TMStamp datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS im_offline_principal ON im_offline (PrincipalID);
+CREATE INDEX IF NOT EXISTS im_offline_from ON im_offline (FromID);
+
+COMMIT;
