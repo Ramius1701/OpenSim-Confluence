@@ -283,7 +283,7 @@ Web & Admin UI section rather than here.)*
 ## Planned, not started
 
 - **Profile JSON-RPC gate (part of the control-plane hardening) —
-  decision needed (2026-09-25).** The sensitive profile methods (private
+  APPROVED 2026-09-26, to be built after the Concierge in-world testing.** The sensitive profile methods (private
   notes, preferences/email, profile writes, picks/classifieds/interests/
   user-data writes) are still open to any caller; the rest of the
   disclosure is deployed (see `HARDENING.md`). An earlier note here
@@ -295,8 +295,9 @@ Web & Admin UI section rather than here.)*
   keep working. The one real cost: a resident visiting *another* grid
   could no longer edit or sync notes/preferences/profile writes through
   that foreign region (public profile viewing is unaffected). Upstream
-  Tranquillity accepted that cost. Build is straightforward once the
-  tradeoff is approved.
+  Tranquillity accepted that cost; the owner has approved taking it too.
+  Port per Tranquillity's design, then verify with a real profile edit
+  after deploy (not just a build).
 - **Tranquillity feature scoping.** Not yet assessed against Confluence:
   AIS Inventory v3 + server-side appearance baking (their #207), Trusted
   Hypergrid (#200), and the new `feature/schema_sync` branch.

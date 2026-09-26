@@ -25225,3 +25225,14 @@ save actually wrote a `concierge.welcome.default` row to `GridSettings` (save ha
 `ConciergeSettingKeys.Resolve` reads, and the 60-second region cache. Next step when picked up:
 read the `GridSettings` table for `concierge.*` keys, save again from the page, re-query the
 endpoint, then `/4242 welcome`. The user will retest.
+
+**Donor sync, Tranquillity, 2026-09-26.** Fetched again: `develop` moved by two commits only
+(add then remove of a `Docs/security/ICan.md` disclosure write-up plus a `.gitignore` line) on top
+of the already-merged hardening PR (#210 appears twice, `cc3e9420ee` and `86d25c665b`, same
+content); nothing to merge. `feature/schema_sync` gained two real commits (`66284efa6e` "Sync
+BackOffice EF Core changes with the EF Core schema", `713e8cf9d7` "Synchronize estate experience
+models") that only touch Tranquillity's `OpenSim.Data.Model` EF Core layer (Core/Economy/Identity
+contexts, PartnerRequest and PaymentOrder models), which Confluence does not have; not applicable.
+Seven stale Tranquillity branches (`dev-future`, `feature/fix-lslhttp`, `feature/robust-di`,
+`helper/xinv`, `moneyservice_di`, both release branches) were deleted upstream and pruned locally.
+Profile JSON-RPC gate approved by the owner 2026-09-26 for porting after Concierge testing.
