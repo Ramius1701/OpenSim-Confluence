@@ -1,0 +1,51 @@
+<Project>
+  <!--
+    Build-number stamping for OpenSim.Framework (VersionInfo.cs reads the
+    generated GitVersionInfo class). This lives here, in a file MSBuild picks
+    up automatically and that runprebuild never touches, because
+    OpenSim.Framework.csproj is generated from prebuild.xml (which cannot
+    express a custom Target) and is overwritten on every regeneration. The
+    old arrangement - paste the block back by hand after each prebuild run -
+    left a fresh clone unable to build following only the README.
+
+    The history and reasoning for the target's Inputs/Outputs and its
+    exit-code fallbacks are kept in
+    Tools/GenerateGitVersionInfo-msbuild-target.xml.
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'OpenSim.Framework'">
+    <ConfluenceGenerateGitVersion>true</ConfluenceGenerateGitVersion>
+  </PropertyGroup>
+
+  <Target Name="GenerateGitVersionInfo" Condition="'$(ConfluenceGenerateGitVersion)' == 'true'" BeforeTargets="BeforeCompile;CoreCompile"
+          Inputs="$(MSBuildProjectDirectory)\..\..\.git\logs\HEAD"
+          Outputs="$(IntermediateOutputPath)GitVersionInfo.g.cs">
+    <Exec Command="git rev-list --count origin/master..HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitsAheadRaw" />
+      <Output TaskParameter="ExitCode" PropertyName="GitCommitsAheadExitCode" />
+    </Exec>
+    <Exec Command="git rev-parse --short=10 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitShortHashRaw" />
+      <Output TaskParameter="ExitCode" PropertyName="GitShortHashExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <GitCommitsAhead>0</GitCommitsAhead>
+      <GitCommitsAhead Condition="'$(GitCommitsAheadExitCode)' == '0' AND '$(GitCommitsAheadRaw)' != ''">$(GitCommitsAheadRaw)</GitCommitsAhead>
+      <GitShortHash>unknown</GitShortHash>
+      <GitShortHash Condition="'$(GitShortHashExitCode)' == '0' AND '$(GitShortHashRaw)' != ''">$(GitShortHashRaw)</GitShortHash>
+    </PropertyGroup>
+    <ItemGroup>
+      <GitVersionInfoLines Include="namespace OpenSim" />
+      <GitVersionInfoLines Include="{" />
+      <GitVersionInfoLines Include="public static class GitVersionInfo" />
+      <GitVersionInfoLines Include="{" />
+      <GitVersionInfoLines Include="public const string CommitsAheadOfMaster = &quot;$(GitCommitsAhead)&quot;%3B" />
+      <GitVersionInfoLines Include="public const string ShortHash = &quot;$(GitShortHash)&quot;%3B" />
+      <GitVersionInfoLines Include="}" />
+      <GitVersionInfoLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)GitVersionInfo.g.cs" Lines="@(GitVersionInfoLines)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)GitVersionInfo.g.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

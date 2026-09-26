@@ -25377,3 +25377,41 @@ resident, which is not in notify_audiences`. Verified: welcome, rules and /4242 
 default, built-in defaults, `{people}`, announcements, audience section fallback, manager IM. Not yet
 exercised live: the `[hg]` section (needs a Hypergrid visitor), a per-region portal override, and the
 per-region "notices off" switch.
+
+**Fresh-clone test, 2026-09-26 (repeat pass after the Concierge / profile-gate / asset-fix work).**
+Cloned the pushed `merge-experiment` (`f9795c182c`) into `S:\Github\ConfluenceFreshTest`, followed the
+README (`runprebuild.bat`, `dotnet build`), then deployed the build to an isolated `S:\FreshTestDeploy`
+(Robust ports 18002/18003, region 19000, SQLite, own database; live Casperia untouched). Results:
+
+Bugs found and fixed:
+1. **The README build failed on a fresh clone** (`GitVersionInfo` not found). prebuild regenerates
+   `OpenSim.Framework.csproj` and drops the hand-added `GenerateGitVersionInfo` target; the repo only
+   documented pasting it back by hand. The target now lives in a new repo-root `Directory.Build.targets`
+   (MSBuild imports it; prebuild never touches it), verified: fresh clone builds, stamp reads the real
+   commit hash, the dev checkout (which still has the old hand-added copy) also builds.
+2. **My own Robust template bug from earlier today:** the `[GridSettingsService]` section I added
+   hard-coded MySQL with placeholder credentials, so on SQLite/PostgreSQL the whole settings backend
+   (Concierge text, admin settings) failed to load.
+3. **Ten more Robust template sections had the same MySQL-with-placeholder-credentials problem**
+   (StaticPage, SupportTicket, WebAccount, Suggestion, Store, Currency, Marketplace, RecoveryCode,
+   WebSession, plus AbuseReports and StarterLook naming MySQL directly), so on any non-MySQL install
+   the WebUI's account/session backends never loaded, and on MySQL each needed its own hand edit. All
+   now inherit `[DatabaseService]` (one place to configure) with the explicit lines commented as an
+   opt-in for a separate database; same for six sections in `OpenSim.ini.example` (Currency,
+   Marketplace, Auction, Search, Events, UserProfiles). Verified on SQLite: the WebUI serves, the
+   bootstrap admin is created, Robust connectors load; remaining failures are only features with no
+   SQLite backend (RegionHGService, Marketplace, OfflineIM, Groups search provider - the known
+   limitation class).
+
+Verified working on the fresh install: Concierge Robust connector loads and serves the built-in
+welcome/rules; the region loads the Concierge module from `[Concierge] enabled = true` and logs
+`initialized for <region>`; the profile JSON-RPC gate: a trusted (loopback) call succeeds, every
+call carrying the in-world-script header is refused "Method not found" (reads of public profile
+data stay open), and forged `__opensim_*` keys in the request body are ignored. Not exercised: a
+foreign-address refusal (needs a non-local caller) and a viewer login.
+
+Noted, not fixed: a fresh region warns about missing `config-include/osslEnable.ini` and
+`FlotsamCache.ini` (they ship only as `.example`, an operator must copy them); a brand-new region
+started with no viewer stops waiting for an estate to be chosen (the WebUI Create Region flow handles
+this). `Tools/GenerateGitVersionInfo-msbuild-target.xml` was never well-formed XML (a comment
+contains a double hyphen); it is documentation only, so left as is.

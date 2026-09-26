@@ -1,5 +1,9 @@
 <!--
-  Paste-back block for OpenSim/Framework/OpenSim.Framework.csproj.
+  NO LONGER NEEDS PASTING BACK (2026-09-26): this exact target now lives in the
+  repo-root Directory.Build.targets, which MSBuild imports automatically and
+  runprebuild never overwrites. This file is kept as the history/rationale.
+
+  Old description - paste-back block for OpenSim/Framework/OpenSim.Framework.csproj.
 
   prebuild.xml has no way to express a custom MSBuild <Target>, so this
   block does not survive a runprebuild.bat/.sh regeneration and must be

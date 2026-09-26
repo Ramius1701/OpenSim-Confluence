@@ -719,7 +719,8 @@
 
 [AbuseReportsService]
     LocalServiceModule = "OpenSim.Services.AbuseReportsService.dll:AbuseReportsService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAbuseReportsData"
+    ;; Uses the [DatabaseService] storage above (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAbuseReportsData"
 
     ;; Separate secret gating report *retrieval* (getreports/getreport, an
     ;; admin-tool concern) from whatever auth gates report submission above.
@@ -735,7 +736,8 @@
     ;; Each configured look just points at an ordinary account an admin has
     ;; dressed up in-world, managed from /admin/starter-looks.
     LocalServiceModule = "OpenSim.Services.StarterLookService.dll:StarterLookService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlStarterLookData"
+    ;; Uses the [DatabaseService] storage above (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlStarterLookData"
 
     UserAccountService = "OpenSim.Services.UserAccountService.dll:UserAccountService"
 
@@ -751,5 +753,6 @@
 ;; message, access toggles, concierge defaults...) edit live, without a restart.
 [GridSettingsService]
     LocalServiceModule = "OpenSim.Services.GridSettingsService.dll:GridSettingsService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlGridSettingsData"
-    ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+    ;; Uses the [DatabaseService] storage above (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlGridSettingsData"
+    ;ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"

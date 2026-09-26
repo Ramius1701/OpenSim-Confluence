@@ -1189,10 +1189,11 @@
     ;; Backs ConfluenceCurrencyModule (see [Economy]/[Modules] above).
     ;; Only needed if [Modules] CurrencyService is LocalCurrencyServiceConnector.
     LocalServiceModule = "OpenSim.Services.CurrencyService.dll:CurrencyService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlCurrencyData"
+    ;; Uses the [DatabaseService] storage (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlCurrencyData"
     ;; Edit this for your own database - this module talks directly to
     ;; MySQL rather than through ROBUST, so it needs its own connection.
-    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+    ;ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
     ;; Highest balance an account can ever hold - clamps rather than rejects
     ;; in Transfer()/SetBalance(). Must match Robust.HG.ini's own
@@ -1234,10 +1235,11 @@
     ;; (DirectDeliveryModule's caps - see FEATURES.md). Only needed if
     ;; [Modules] MarketplaceService is LocalMarketplaceListingsServiceConnector.
     LocalServiceModule = "OpenSim.Services.MarketplaceService.dll:MarketplaceListingsService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlMarketplaceListingsData"
+    ;; Uses the [DatabaseService] storage (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlMarketplaceListingsData"
     ;; Edit this for your own database - this module talks directly to
     ;; MySQL rather than through ROBUST, same as [CurrencyService] above.
-    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+    ;ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
     ;; Must match Robust.HG.ini's own [MarketplaceService] ServiceAccountUUID
     ;; exactly - both sides manipulate the same custodian account's
@@ -1253,8 +1255,9 @@
     ;; Backs land-parcel web-bidding auctions.
     ;; Only needed if [Modules] AuctionService is LocalAuctionServiceConnector.
     LocalServiceModule = "OpenSim.Services.AuctionService.dll:AuctionService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAuctionData"
-    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+    ;; Uses the [DatabaseService] storage (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAuctionData"
+    ;ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
 
 [BulletSim]
@@ -1419,22 +1422,25 @@
     ;; "Can't load search service" and every search category returns
     ;; nothing, even though Module above is correctly set).
     LocalServiceModule = "OpenSim.Services.SearchService.dll:SearchService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlSearchData"
-    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+    ;; Uses the [DatabaseService] storage (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlSearchData"
+    ;ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
 [EventsService]
     ;; Backs ConfluenceSearchModule's Events tab.
     LocalServiceModule = "OpenSim.Services.EventsService.dll:EventsService"
-    StorageProvider = "OpenSim.Data.MySQL.dll:MySqlEventsData"
-    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+    ;; Uses the [DatabaseService] storage (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlEventsData"
+    ;ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
 [UserProfilesService]
     ;; Region-local connector (bypasses ROBUST) backing profile picks/
     ;; classifieds surfaced through ConfluenceSearchModule.
     LocalServiceModule = "OpenSim.Services.UserProfilesService.dll:UserProfilesService"
     Enabled = true
-    StorageProvider = "OpenSim.Data.MySQL.dll:UserProfilesData"
-    ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+    ;; Uses the [DatabaseService] storage (MySQL, PostgreSQL or SQLite, where this feature has a backend). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:UserProfilesData"
+    ;ConnectionString = "Data Source=localhost;Database=opensim;User ID=opensim;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
 [GroupsSearchService]
     ;; Backs ConfluenceSearchModule's Groups tab - reuses the same groups
