@@ -39,6 +39,34 @@ gap today. For what already exists, see `FEATURES.md`.
   unremarkable activity right up until it went quiet for the resident's
   session specifically.
 
+  **Correction, 2026-09-26 - the "bake UUIDs" premise above was wrong.**
+  The `avatars` table's `_ap_N` rows are *attachment points* (values are
+  attached inventory item IDs - `IAvatarService.cs:191/317`), not baked
+  textures, so "they aren't in the assets table" never said anything
+  about bakes. Assets also live in FSAssets (`fsassets` table +
+  `./fsassets/data`), not the old `assets` table. Re-checked properly:
+  no appearance row references an empty asset, and a persisted
+  appearance does not store bake IDs at all (the regions' `[XBakes] URL`
+  is unset, so the bake cache is per-region memory plus whatever the
+  viewer re-sends). The cloud remains **unexplained**. What is known: the
+  server already has a cloud safety net (`ScenePresence.CompleteMovement`
+  -> `ValidateBakedTextureCache` -> temporary-default-appearance fallback)
+  that fires on most arrivals and restores within ~1.5 s, and it only
+  checks the server's own bake record, not whether the viewer can fetch
+  the bake image. Next step is still live capture the next time it
+  happens, now also noting whether `[GETASSET]` 404s appear for that
+  avatar's session.
+- **1,536 texture assets stored with zero bytes of data (found 2026-09-26
+  while chasing the cloud bug).** `fsassets` rows whose hash is the
+  SHA-256 of empty data. Viewers get a 404 (`[GETASSET]: asset with empty
+  data`, 10-20 new log lines a day). Names show where they came from:
+  696 "From IAR" (mostly created 2025-08/09), and ~800 named like mesh
+  uploads (`*.dae`, `prim0-mesh`), created 2026-04 and 2026-06. None since
+  July. Textures on that content show grey/blank. Not yet known whether
+  the IAR/mesh-upload code stored empty data or the source had none;
+  they cannot be recovered from the server, only re-uploaded. To do:
+  find the writer (IAR load path and the mesh-upload texture path), and
+  give operators a way to list affected assets.
   **To actually catch this next time**: reproduce live - when it
   happens again, tail the affected region's log and check CAPS/circuit
   registration state in real time, before rebaking clears the

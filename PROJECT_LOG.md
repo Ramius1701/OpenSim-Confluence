@@ -25274,3 +25274,16 @@ avatar saved and reloaded, so the regions' own calls to Robust pass the gate. Ze
 `Refusing JSON-RPC` lines in Robust or any region log after the restart. The refusal side (a
 foreign address) is covered by the unit checks, not exercised live; the visiting-another-grid
 trade-off is by design and documented in `HARDENING.md`.
+
+**Cloud-avatar investigation resumed, 2026-09-26 (findings, no code change).** (1) The
+earlier "saved bake UUIDs missing from the assets table" check was invalid: the `avatars` `_ap_N`
+rows are attachment points (item IDs), assets are in FSAssets, and a persisted appearance holds no
+bake IDs. Corrected in ROADMAP. (2) New real defect found on the way: `[GETASSET]: asset with empty
+data` warnings = 202 distinct textures seen in logs; a read-only query showed 1,536 `fsassets`
+rows with the empty-data hash (`e3b0c442...b855`): 696 named "From IAR", ~800 mesh-upload
+textures (`*.dae`), created 2025-08/09, 2026-04, 2026-06, none since July. No avatar appearance row
+references any of them, so they are not the cloud cause; they are a separate content problem (grey
+textures), now its own ROADMAP item. (3) Cloud cause still unknown; the region already has a
+cloud safety net that fires on most arrivals. Method note: a full `find` over `fsassets` (205,748
+files, 15 GB) took over 10 minutes on the VHDX - avoid; a read-only DB query used a temporary
+option file so no credentials reach the transcript (file deleted afterwards).
