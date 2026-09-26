@@ -25315,3 +25315,14 @@ to do after a deploy: upload a small textured mesh in Firestorm (texture upload 
 new empty-hash rows; load an IAR containing an empty file and confirm the warning; re-store real
 data over one existing empty row and confirm it serves. Existing empty rows cannot be recovered
 from the server. Data method: read-only queries via a temporary mysql option file (deleted after).
+
+**Meshmerizer audit revisited, 2026-09-26 (findings, no code change).** All fixes from the
+2026-09-09/13 audit are live (master mesher assemblies dated 2026-09-23, per-region copies match).
+Real live config confirmed from each region's `OpenSim.ini` (an early grep of mine matched
+commented lines and briefly suggested BulletSim was everywhere; it is not): grid default ubODE +
+ubODEMeshmerizer, Sector_001 ubODE + generic Meshmerizer, Ranchero/Tangle/UFPGC BulletSim + generic
+Meshmerizer. Mesher errors in the logs reduce to one content problem on GFC: ~800 `GFC WindowFrame`
+prims reference asset `6ea0c70b-...` which is a J2C texture, not a mesh (1,608 error lines per
+boot). The structural generic-Meshmerizer gaps only reach 3 regions and BulletSim there uses
+asset hulls / Bullet HACD rather than the mesher's local hulls. Open small items: dedupe the log
+per asset, and decide what to do with the mis-typed GFC prims (content fix, not a code fix).

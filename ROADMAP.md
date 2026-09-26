@@ -134,9 +134,11 @@ gap today. For what already exists, see `FEATURES.md`.
   porting), matching ubMeshmerizer and mattering because generic's own
   `Mesh` welds vertices via exact-value dictionary lookup. Verified:
   full solution builds clean, an isolated scratch region (BulletSim +
-  Meshmerizer) boots clean and reaches RegionReady. **Not yet deployed
-  to live Casperia** - affects the 3 regions currently running
-  BulletSim (Ranchero, Tangle, UFPGC) plus any future Jolt use.
+  Meshmerizer) boots clean and reaches RegionReady. **Deployed
+  (checked 2026-09-26):** the live master `Meshing` and `ubOdeMeshing`
+  assemblies are dated 2026-09-23, after these commits, and every region's
+  own copy matches. Affects the 3 regions running BulletSim (Ranchero,
+  Tangle, UFPGC) plus any future Jolt use.
 
   **One finding from the same list turned out NOT to be a real bug,
   on closer inspection**: the "corrupt prim guard logs but doesn't
@@ -165,6 +167,25 @@ gap today. For what already exists, see `FEATURES.md`.
   current `Dictionary<Vertex,int>`-based representation isn't built
   for - same category as the already-documented disk-cache idea
   above, not a quick change.
+
+  **Live check, 2026-09-26 (no code change).** Actual live config: grid
+  default is `ubODE` + `ubODEMeshmerizer` (11 regions plus Andromeda);
+  Sector_001 runs ubODE with the generic `Meshmerizer` as its HQ-Arch
+  workaround; Ranchero, Tangle and UFPGC run BulletSim + `Meshmerizer`. So
+  the generic mesher's structural gaps below touch only 3 regions, and
+  BulletSim there does not depend on the mesher's local hulls (it uses
+  asset hulls, `ShouldUseAssetHulls = true`, then Bullet's own HACD).
+  Mesher log noise across all 15 regions is one content problem: on GFC,
+  `GFC WindowFrame` (~800 prims, mesh shape) points at asset
+  `6ea0c70b-919b-4261-a8d8-47101add4cdd`, which is a 600-byte JPEG2000
+  *texture* (type 0, created 2026-06-07), not a mesh, so every boot logs
+  `Error deserializing mesh asset header` about 800 times and those prims
+  fall back to no mesh collision. Older GFC `asset provider returned null
+  asset for mesh` floods (23k lines, 2026-09-12..14) came from missing
+  mesh assets under ubODE and have not recurred except a handful on
+  Sol_Sector and Welcome_Center. Low-cost improvements available if wanted:
+  log once per bad asset instead of once per prim, and name the wrong asset
+  type in the message.
 
   **Structural items: not started** - held pending a priority call,
   same as the other Jolt/Meshmerizer items in this file. Everything
