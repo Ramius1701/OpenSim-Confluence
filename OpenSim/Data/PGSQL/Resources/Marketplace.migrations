@@ -1,0 +1,36 @@
+:VERSION 1 # -----------------
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS marketplace_listings (
+	"ID" serial NOT NULL PRIMARY KEY,
+	"SellerID" varchar(36) NOT NULL,
+	"Title" varchar(255) NOT NULL,
+	"Description" text NOT NULL,
+	"Price" int NOT NULL DEFAULT 0,
+	"CountOnHand" int NULL,
+	"IsListed" boolean NOT NULL DEFAULT false,
+	"SnapshotFolderID" varchar(36) NOT NULL,
+	"ListingFolderID" varchar(36) NOT NULL,
+	"VersionFolderID" varchar(36) NOT NULL,
+	"SnapshotFingerprint" varchar(64) NOT NULL DEFAULT '',
+	"Created" int NOT NULL,
+	"Updated" int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS marketplace_listings_seller ON marketplace_listings ("SellerID");
+CREATE INDEX IF NOT EXISTS marketplace_listings_listed_created ON marketplace_listings ("IsListed", "Created");
+
+CREATE TABLE IF NOT EXISTS marketplace_deliveries (
+	"DeliveryID" varchar(128) NOT NULL PRIMARY KEY,
+	"SellerID" varchar(36) NOT NULL,
+	"SnapshotFolderID" varchar(36) NOT NULL,
+	"RecipientID" varchar(36) NOT NULL,
+	"SnapshotFingerprint" varchar(64) NOT NULL,
+	"DestinationFolderID" varchar(36) NOT NULL,
+	"ItemCount" int NOT NULL DEFAULT 0,
+	"FolderCount" int NOT NULL DEFAULT 0,
+	"Created" int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS marketplace_deliveries_recipient ON marketplace_deliveries ("RecipientID");
+
+COMMIT;

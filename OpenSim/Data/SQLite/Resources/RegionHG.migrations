@@ -1,0 +1,10 @@
+:VERSION 1 # -----------------
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS region_hg_settings (
+	RegionID varchar(36) NOT NULL PRIMARY KEY,
+	IsOpen int NOT NULL DEFAULT 1
+);
+
+COMMIT;

@@ -25462,3 +25462,24 @@ that. Gaps confirmed by the matrix: SQLite standalone - Groups, Marketplace; SQL
 OfflineIM, Marketplace, RegionHGService; PostgreSQL standalone - Marketplace; PostgreSQL grid -
 Marketplace, RegionHGService. MySQL/MariaDB is not yet in a matrix run: it needs a scoped test login
 (`CFX_MYSQL_ADMIN`). Verified from the uncommitted tree; not yet committed.
+
+**Marketplace and RegionHGService on SQLite and PostgreSQL, 2026-09-27 (built, verified, uncommitted).**
+The two features that failed to load on every non-MySQL install now have real backends:
+`SQLiteMarketplaceListingsData` / `PGSQLMarketplaceListingsData` (listings, stock reservation,
+delivery receipts) and `SQLiteRegionHGData` / `PGSQLRegionHGData` (per-region Hypergrid open/closed
+flag), each with a `Marketplace.migrations` / `RegionHG.migrations` resource, mirroring the MySQL
+classes method for method. Points that needed care: PostgreSQL uses quoted mixed-case columns,
+`serial` + `RETURNING "ID"` for the insert id, a real `boolean` for `IsListed`, an explicitly typed
+NULL for `CountOnHand`, and `PostgresException` 23505 for the duplicate-delivery case; SQLite uses
+`AUTOINCREMENT` + `last_insert_rowid()`, one locked connection (single writer, so the conditional
+`UPDATE` in `TryReserveStock` stays atomic), and `SQLiteErrorCode.Constraint` for duplicates; the
+update leaves `Created` untouched exactly like MySQL. Verified with a scratch harness against real
+databases (temp SQLite file and a throwaway PostgreSQL database): 130 checks, 0 failures - every
+method round-tripped including unicode/quotes, null vs finite stock, paging, unlisted/missing cases,
+duplicate delivery ids, upsert of the region flag, migration idempotent on reopen, and a race of 60
+concurrent buyers for 5 units on each database (exactly 5 win, stock never negative). The fresh-clone
+matrix then passed all four combinations with PostgreSQL showing zero load failures and SQLite only
+Groups and Offline IM left; `Tools/fresh-clone-matrix-expected.json`, `SETUP.md`'s gaps table and the
+roadmap are updated. Not yet exercised: the Marketplace WebUI pages and an actual purchase on SQLite /
+PostgreSQL (the data layer is proven, the service/WebUI layer only by loading cleanly), and MySQL /
+MariaDB in a matrix run.

@@ -40,7 +40,7 @@ without `.example` and edited.
 | **MySQL / MariaDB** | works | works |
 | **PostgreSQL** | works | works |
 
-Every feature works on MySQL / MariaDB. A few optional features do not have a SQLite or PostgreSQL
+Every feature works on MySQL / MariaDB and PostgreSQL. A few optional features do not have a SQLite
 backend yet; they fail to load with a clear error and everything else keeps working. The current list is
 in [Known gaps](#known-gaps-by-database).
 
@@ -147,13 +147,14 @@ choose a real password before anything else. There is nothing to create by hand.
 
 ## Known gaps by database
 
-These optional features fail to load, with a clear error, on the databases shown; everything else works.
-The machine-readable list is `Tools/fresh-clone-matrix-expected.json`, and the goal is to empty it.
+A few optional features do not have a SQLite backend yet. They fail to load with a clear error and
+everything else keeps working. The machine-readable list is `Tools/fresh-clone-matrix-expected.json`,
+and the goal is to empty it.
 
 | Feature | SQLite | PostgreSQL | MySQL / MariaDB |
 |---|---|---|---|
-| Native Marketplace | not yet | not yet | works |
-| Region Hypergrid records (RegionHGService) | not yet | not yet | works |
+| Native Marketplace | works | works | works |
+| Region Hypergrid records (RegionHGService) | works | works | works |
 | Offline instant messages | not yet | works | works |
 | Groups (data and search) | not yet | works | works |
 | Disk asset store (FSAssets, optional) | not yet | works | works |
