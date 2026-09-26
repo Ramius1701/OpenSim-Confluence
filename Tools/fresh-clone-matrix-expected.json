@@ -1,0 +1,16 @@
+{
+  "_about": "Services that are KNOWN not to load per database, used by Tools/fresh-clone-matrix.py. A failure not listed here fails the run; a listed one that now loads is reported as 'gap closed - remove it from this list'. The goal is an empty list for every database: Confluence supports SQLite, MySQL/MariaDB and PostgreSQL in both standalone and grid mode. Names are the plugin assembly names as they appear in 'Error loading plugin <name>.dll'.",
+  "expected_load_failures": {
+    "mysql": [],
+    "pgsql": [
+      "OpenSim.Services.MarketplaceService",
+      "OpenSim.Services.RegionHGService"
+    ],
+    "sqlite": [
+      "OpenSim.Services.MarketplaceService",
+      "OpenSim.Services.RegionHGService",
+      "OpenSim.Addons.OfflineIM",
+      "OpenSim.Addons.Groups"
+    ]
+  }
+}

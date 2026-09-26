@@ -566,8 +566,11 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             try
             {
+                // Robust creates a system "GRID SERVICES" god account on its first start
+                // (UserAccountService), so "no accounts" means no account other than that
+                // one. Counting it left a fresh PostgreSQL/MySQL grid with no admin login.
                 List<UserAccount> existing = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "1=1");
-                if (existing != null && existing.Count > 0)
+                if (existing != null && existing.Any(a => a.PrincipalID != Constants.servicesGodAgentID))
                     return;
 
                 string tempPassword = GenerateBootstrapPassword();

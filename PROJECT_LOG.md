@@ -25415,3 +25415,50 @@ Noted, not fixed: a fresh region warns about missing `config-include/osslEnable.
 started with no viewer stops waiting for an estate to be chosen (the WebUI Create Region flow handles
 this). `Tools/GenerateGitVersionInfo-msbuild-target.xml` was never well-formed XML (a comment
 contains a double hyphen); it is documentation only, so left as is.
+
+**Support matrix requirement and the fresh-clone matrix script, 2026-09-27 (in progress).**
+Owner's standing requirements, recorded here because they drive all setup work: Confluence is built
+for ANY grid owner (Casperia is only the live test bed), it must run on SQLite, MySQL/MariaDB and
+PostgreSQL, in standalone and in grid mode, and a fresh-clone build/deploy check comes before
+anything counts as done (see memory `casperia-fresh-clone-check-before-done`). Measured data-layer
+gaps against that standard (a MySQL data class with no equivalent): MarketplaceListingsData
+(SQLite, PostgreSQL), RegionHGData (SQLite, PostgreSQL), OfflineIMData (SQLite), Groups data/search
+provider (SQLite), FSAssetData (SQLite; optional - the legacy asset service works on SQLite). These
+are open work, not accepted limitations.
+New: `Tools/fresh-clone-matrix.py` (+ `Tools/fresh-clone-matrix-expected.json`). One command clones the
+repository, builds it by the README steps, then for every database x mode combination generates a
+deployment from the SHIPPED templates only (own ports, throwaway database), starts it, and checks:
+Robust answers, WebUI serves and the bootstrap admin is created, the Concierge endpoint serves, the
+profile gate refuses script-marked calls, the region reaches "Startup complete" and loads Concierge,
+and no service fails to load beyond the known gaps in the expected-failures file (a new failure
+fails the run; a closed gap is called out so it can be removed). It stops only its own processes and
+drops only the databases it created. MySQL/PostgreSQL administrator logins come from environment
+variables (`CFX_MYSQL_ADMIN`, `CFX_PGSQL_ADMIN`); a combination without one is reported as skipped.
+Setup documentation: the README's configuration section only listed files to "review". A tested,
+step-by-step setup guide per database and mode is being written from what this script generates
+(so the documentation is exactly what was verified).
+
+**Fresh-clone matrix script built and first results, 2026-09-27.** `Tools/fresh-clone-matrix.py`
+(`--dbs`, `--modes`, `--include-uncommitted` to test the working tree before committing, `--keep`,
+`--skip-build`) plus `Tools/fresh-clone-matrix-expected.json` (known load failures per database) and
+the new tested `SETUP.md` (README now points to it). First runs, SQLite and PostgreSQL x standalone and
+grid, all four PASS with only the expected gaps. Building and running it found three more real bugs,
+all fixed:
+1. **Robust crashed at startup when launched without a console** (service launcher, Docker, scheduled
+   task, or any redirected-I/O launch): `-background=true` only skipped the command loop; the local
+   console was still constructed and threw `IOException: The handle is invalid`. `ServicesServerBase`
+   now falls back to the basic console when the local one cannot be created (the normal console is
+   still used whenever one exists, so a Robust with a window behaves as before).
+2. **A fresh MySQL/PostgreSQL grid got no admin login.** The WebUI's first-run bootstrap creates "Grid
+   Admin" only when zero accounts exist, but Robust now creates a system "GRID SERVICES" god account on
+   first start, so the check always saw one and skipped it (SQLite happened to win the race, which hid
+   it). The check now ignores that system account. The README's "an admin account is created for you"
+   promise was false on those databases until this.
+3. **The build/README bug** (drops the version-stamp target) fixed earlier the same day (`Directory.
+   Build.targets`, commit `6850ca2605`); the matrix script proves it on every run.
+Harness notes: a standalone region only starts unattended with `DefaultEstateOwnerUUID` set as well as
+name/email/password (otherwise it prompts on the console); the script generates a default estate for
+that. Gaps confirmed by the matrix: SQLite standalone - Groups, Marketplace; SQLite grid - Groups,
+OfflineIM, Marketplace, RegionHGService; PostgreSQL standalone - Marketplace; PostgreSQL grid -
+Marketplace, RegionHGService. MySQL/MariaDB is not yet in a matrix run: it needs a scoped test login
+(`CFX_MYSQL_ADMIN`). Verified from the uncommitted tree; not yet committed.

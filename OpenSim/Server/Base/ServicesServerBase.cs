@@ -163,7 +163,22 @@ namespace OpenSim.Server.Base
             else if (consoleType == "mock")
                 MainConsole.Instance = new MockConsole();
             else if (consoleType == "local")
-                MainConsole.Instance = new LocalConsole(prompt, startupConfig);
+            {
+                try
+                {
+                    MainConsole.Instance = new LocalConsole(prompt, startupConfig);
+                }
+                catch (IOException)
+                {
+                    // No console handle at all: started by a service launcher, a
+                    // scheduled task or Docker with input/output redirected. The
+                    // local console cannot exist there, so fall back to the basic
+                    // console (it touches no console handle until something reads
+                    // from it, which -background=true never does) instead of
+                    // crashing on startup.
+                    MainConsole.Instance = new CommandConsole(prompt);
+                }
+            }
 
             MainConsole.Instance.ReadConfig(Config);
             m_console = MainConsole.Instance;

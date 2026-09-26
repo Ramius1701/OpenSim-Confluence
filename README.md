@@ -145,6 +145,10 @@ half-finished work on the integration branch.
 
 ## Deployment
 
+**New here? Start with [`SETUP.md`](SETUP.md)** - the tested, step-by-step guide for SQLite,
+MySQL/MariaDB and PostgreSQL, standalone or grid. The sections below describe how the two modes work and
+how a running grid is operated and updated.
+
 Confluence supports both of OpenSim's standard deployment shapes —
 **grid mode** (a separate Robust process, one or more regions) and
 **standalone mode** (a single self-contained `OpenSim.exe`, no Robust
@@ -267,6 +271,7 @@ feature described in this README, not just a demo.
 | `ROADMAP.md` | What's planned, deferred, or a known limitation |
 | `WEBUI_PARITY_CHECKLIST.md` | Working audit tracking the Web UI's page-by-page structural parity against WhiteCore-Dev |
 | `INWORLD_COMMANDS.md` | Every in-world chat command available to avatars/estate managers |
+| `SETUP.md` | Step-by-step setup for every database (SQLite, MySQL/MariaDB, PostgreSQL) in standalone and grid mode - each step tested from a fresh clone |
 | `BUILDING.md` | Official base build requirements |
 | `PROJECT_LOG.md` | Full narrative development history — every change, why, and how it was verified |
 

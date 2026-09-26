@@ -345,6 +345,14 @@ Web & Admin UI section rather than here.)*
 
 ## Planned, not started
 
+- **Database support matrix - close every gap (owner requirement, 2026-09-27).** Confluence must run
+  every feature on SQLite, MySQL/MariaDB and PostgreSQL, in standalone and grid mode. What is still
+  missing, measured by `Tools/fresh-clone-matrix.py` (the list lives in
+  `Tools/fresh-clone-matrix-expected.json`, and the goal is to empty it): native Marketplace data
+  (SQLite, PostgreSQL); RegionHGService data (SQLite, PostgreSQL); Offline IM data (SQLite); Groups
+  data and search provider (SQLite); FSAssets (SQLite; optional, the legacy asset service works there).
+  MySQL/MariaDB is not yet in a matrix run (needs a scoped test login).
+
 - **Server-side appearance baking (SSB) - from Tranquillity #207; scoped
   2026-09-26, not started.** The region composes each avatar's bake itself
   instead of relaying the viewer's, so "the viewer and region disagree
