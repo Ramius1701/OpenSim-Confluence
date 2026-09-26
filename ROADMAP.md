@@ -224,7 +224,12 @@ gap today. For what already exists, see `FEATURES.md`.
   real viewer floater), which keeps working unchanged as a legacy/
   external-integration path.
 - **Vehicle and prim region crossings — real scoping done, not just a
-  guess (2026-09-07).** Avatar crossings are already smooth (see
+  guess (2026-09-07).** **Deprioritised by the owner, 2026-09-26:** grid
+  owners who want smooth vehicles normally choose a var (large) region,
+  which removes crossings altogether, so a crossing fix would help few of
+  them, and the freeze is a deliberate server safety measure, so changing
+  it carries real risk. Not scheduled; the scoping below stays for if that
+  changes. Avatar crossings are already smooth (see
   `FEATURES.md`). Vehicles and other physical objects still freeze in
   place for the duration of a crossing — a deliberate server-side
   safety measure, not a bug, but one that's noticeable on a moving
