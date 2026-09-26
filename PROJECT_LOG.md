@@ -25264,3 +25264,13 @@ HttpServer`, `OpenSim.Server.Base`, `OpenSim.Server.Handlers`, `OpenSim.Region.C
 because the HTTP server assembly is shared, Robust plus every region restart. Verify after deploy
 with a real profile edit (about text, a note on another avatar) and check for no
 `Refusing JSON-RPC` lines from own regions. ROADMAP entry removed (shipped once deployed).
+
+**Profile JSON-RPC gate deployed and live-verified, 2026-09-26.** Four assemblies
+(`OpenSim.Framework.Servers.HttpServer`, `OpenSim.Server.Base`, `OpenSim.Server.Handlers`,
+`OpenSim.Region.CoreModules`) copied to the master folder and MD5-verified; Robust relaunched
+(clean start, 9 trusted addresses, no plugin errors), then Restart All - all 15 regions came back on
+the new HttpServer assembly. In-world: an About-text edit saved and persisted, and a note on another
+avatar saved and reloaded, so the regions' own calls to Robust pass the gate. Zero
+`Refusing JSON-RPC` lines in Robust or any region log after the restart. The refusal side (a
+foreign address) is covered by the unit checks, not exercised live; the visiting-another-grid
+trade-off is by design and documented in `HARDENING.md`.
