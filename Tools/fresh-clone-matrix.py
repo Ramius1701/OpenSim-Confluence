@@ -454,6 +454,11 @@ def run_combo(idx, db_kind, mode, db, src_bin, work, expected, keep):
             check("Robust starts and answers", up and r.alive())
             robust_text = r.text()
             if up:
+                # Robust answers HTTP before every service connector is registered (database
+                # migrations can take a while); wait until the ones tested below have loaded.
+                wait_for(lambda: "ConciergeServiceConnector loaded successfully" in r.text()
+                         and "UserProfilesConnector loaded successfully" in r.text()
+                         and "Running in background" in r.text(), 120, r)
                 bootstrapped = wait_for(lambda: "Username: Grid Admin" in r.text(), 30, r)
                 check("WebUI bootstrap admin created", bootstrapped)
                 st, _ = http("http://127.0.0.1:%d/" % ports[0])
