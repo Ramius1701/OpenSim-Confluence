@@ -40,9 +40,8 @@ without `.example` and edited.
 | **MySQL / MariaDB** | works | works |
 | **PostgreSQL** | works | works |
 
-Every feature works on MySQL / MariaDB and PostgreSQL. A few optional features do not have a SQLite
-backend yet; they fail to load with a clear error and everything else keeps working. The current list is
-in [Known gaps](#known-gaps-by-database).
+Every feature works on all three. The one exception is the optional FSAssets disk asset store, which has
+no SQLite backend yet; see [Known gaps](#known-gaps-by-database).
 
 Database connection settings, in the one place you set them:
 
@@ -147,17 +146,20 @@ choose a real password before anything else. There is nothing to create by hand.
 
 ## Known gaps by database
 
-A few optional features do not have a SQLite backend yet. They fail to load with a clear error and
-everything else keeps working. The machine-readable list is `Tools/fresh-clone-matrix-expected.json`,
-and the goal is to empty it.
+None for the databases below: every feature that ships with Confluence has a backend on SQLite, MySQL /
+MariaDB and PostgreSQL, apart from one optional one.
 
 | Feature | SQLite | PostgreSQL | MySQL / MariaDB |
 |---|---|---|---|
 | Native Marketplace | works | works | works |
 | Region Hypergrid records (RegionHGService) | works | works | works |
 | Offline instant messages | works | works | works |
-| Groups (data and search) | not yet | works | works |
+| Groups (data and search) | works | works | works |
 | Disk asset store (FSAssets, optional) | not yet | works | works |
+
+FSAssets is an alternative to the default asset service; the default one works on every database. The
+machine-readable list of anything that fails to load is `Tools/fresh-clone-matrix-expected.json`, and the
+goal is to keep it empty.
 
 ## How this guide is tested
 

@@ -234,6 +234,177 @@ static class Program
         Eq(label + " im: delete when none left reports false", false, d.Delete("PrincipalID", me.ToString()));
     }
 
+    static Dictionary<string, string> Dict(params string[] kv)
+    {
+        Dictionary<string, string> m = new Dictionary<string, string>();
+        for (int i = 0; i + 1 < kv.Length; i += 2)
+            m[kv[i]] = kv[i + 1];
+        return m;
+    }
+
+    // ageInvite makes one invitation look 20 days old (raw SQL, per database).
+    static void Groups(string label, IGroupsData d, Action<string> ageInvite)
+    {
+        string tag = Guid.NewGuid().ToString("N").Substring(0, 8);
+        UUID gid = UUID.Random(), gid2 = UUID.Random(), ownerRole = UUID.Random(), memberRole = UUID.Random();
+        UUID founder = UUID.Random();
+        string alice = UUID.Random().ToString(), bob = UUID.Random().ToString();
+        string tokenBob = UUID.Random().ToString(); // the access token is a UUID string (a uuid column on PostgreSQL)
+        string name = "Explorers " + tag;
+        string charter = "We explore é中 'quotes' \"double\" \U0001F600 and more";
+
+        Eq(label + " grp: unknown group is null", null, d.RetrieveGroup(UUID.Random()));
+
+        Eq(label + " grp: store group", true, d.StoreGroup(new GroupData
+        {
+            GroupID = gid,
+            Data = Dict("Location", "", "Name", name, "Charter", charter, "InsigniaID", UUID.Random().ToString(),
+                        "FounderID", founder.ToString(), "MembershipFee", "25", "OpenEnrollment", "1", "ShowInList", "1",
+                        "AllowPublish", "1", "MaturePublish", "0", "OwnerRoleID", ownerRole.ToString())
+        }));
+        Eq(label + " grp: store hidden group", true, d.StoreGroup(new GroupData
+        {
+            GroupID = gid2,
+            Data = Dict("Location", "", "Name", "Hidden " + tag, "Charter", "secret", "InsigniaID", UUID.Zero.ToString(),
+                        "FounderID", founder.ToString(), "MembershipFee", "0", "OpenEnrollment", "0", "ShowInList", "0",
+                        "AllowPublish", "0", "MaturePublish", "0", "OwnerRoleID", UUID.Random().ToString())
+        }));
+
+        GroupData g = d.RetrieveGroup(gid);
+        Eq(label + " grp: by id name", name, g.Data["Name"]);
+        Eq(label + " grp: charter (unicode, quotes, emoji)", charter, g.Data["Charter"]);
+        Eq(label + " grp: fee", "25", g.Data["MembershipFee"]);
+        Eq(label + " grp: founder", founder.ToString(), g.Data["FounderID"]);
+        Eq(label + " grp: owner role", ownerRole.ToString(), g.Data["OwnerRoleID"]);
+        Eq(label + " grp: by name", gid, d.RetrieveGroup(name).GroupID);
+        Eq(label + " grp: unknown name is null", null, d.RetrieveGroup("No such group " + tag));
+
+        Eq(label + " grp: search by substring finds it", true, Contains(d.RetrieveGroups("plorers " + tag), gid));
+        Eq(label + " grp: search hides ShowInList=0", false, Contains(d.RetrieveGroups("Hidden " + tag), gid2));
+        Eq(label + " grp: search with an apostrophe does not break", 0, d.RetrieveGroups("O'Brien " + tag + "'; drop table x; --").Length);
+        Eq(label + " grp: injection attempt matches nothing extra", 0, d.RetrieveGroups("zzz%' OR '1'='1").Length);
+        Eq(label + " grp: table survived the injection attempts", true, Contains(d.RetrieveGroups("plorers " + tag), gid));
+        Eq(label + " grp: empty search returns listed groups", true, Contains(d.RetrieveGroups(""), gid));
+        Eq(label + " grp: count includes both", true, d.GroupsCount() >= 2);
+
+        // update group (replace)
+        g.Data["Charter"] = "New charter";
+        Eq(label + " grp: update", true, d.StoreGroup(g));
+        Eq(label + " grp: update stored", "New charter", d.RetrieveGroup(gid).Data["Charter"]);
+
+        // roles (powers as a big flag set)
+        string powers = "9223372036854775807";
+        Eq(label + " role: store owner", true, d.StoreRole(new RoleData { GroupID = gid, RoleID = ownerRole,
+            Data = Dict("Name", "Owners", "Description", "The owners é", "Title", "Owner", "Powers", powers) }));
+        Eq(label + " role: store member", true, d.StoreRole(new RoleData { GroupID = gid, RoleID = memberRole,
+            Data = Dict("Name", "Members", "Description", "", "Title", "Member", "Powers", "1234") }));
+        Eq(label + " role: retrieve keeps exact powers", powers, d.RetrieveRole(gid, ownerRole).Data["Powers"]);
+        Eq(label + " role: retrieve description unicode", "The owners é", d.RetrieveRole(gid, ownerRole).Data["Description"]);
+        Eq(label + " role: unknown role null", null, d.RetrieveRole(gid, UUID.Random()));
+        Eq(label + " role: list", 2, d.RetrieveRoles(gid).Length);
+        Eq(label + " role: count", 2, d.RoleCount(gid));
+
+        // membership
+        Eq(label + " mem: store alice", true, d.StoreMember(new MembershipData { GroupID = gid, PrincipalID = alice,
+            Data = Dict("SelectedRoleID", ownerRole.ToString(), "Contribution", "5", "ListInProfile", "1", "AcceptNotices", "1", "AccessToken", "") }));
+        Eq(label + " mem: store bob", true, d.StoreMember(new MembershipData { GroupID = gid, PrincipalID = bob,
+            Data = Dict("SelectedRoleID", memberRole.ToString(), "Contribution", "0", "ListInProfile", "0", "AcceptNotices", "0", "AccessToken", tokenBob) }));
+        Eq(label + " mem: members", 2, d.RetrieveMembers(gid).Length);
+        Eq(label + " mem: count", 2, d.MemberCount(gid));
+        MembershipData ma = d.RetrieveMember(gid, alice);
+        Eq(label + " mem: alice contribution", "5", ma.Data["Contribution"]);
+        Eq(label + " mem: alice selected role", ownerRole.ToString(), ma.Data["SelectedRoleID"]);
+        Eq(label + " mem: bob accept notices off", "0", d.RetrieveMember(gid, bob).Data["AcceptNotices"]);
+        Eq(label + " mem: bob token", tokenBob, d.RetrieveMember(gid, bob).Data["AccessToken"]);
+        Eq(label + " mem: memberships of alice", 1, d.RetrieveMemberships(alice).Length);
+        Eq(label + " mem: unknown member null", null, d.RetrieveMember(gid, UUID.Random().ToString()));
+
+        // role membership
+        Eq(label + " rm: store alice owner", true, d.StoreRoleMember(new RoleMembershipData { GroupID = gid, RoleID = ownerRole, PrincipalID = alice }));
+        Eq(label + " rm: store alice member", true, d.StoreRoleMember(new RoleMembershipData { GroupID = gid, RoleID = memberRole, PrincipalID = alice }));
+        Eq(label + " rm: store bob member", true, d.StoreRoleMember(new RoleMembershipData { GroupID = gid, RoleID = memberRole, PrincipalID = bob }));
+        Eq(label + " rm: all in group", 3, d.RetrieveRolesMembers(gid).Length);
+        Eq(label + " rm: members of member role", 2, d.RetrieveRoleMembers(gid, memberRole).Length);
+        Eq(label + " rm: count of member role", 2, d.RoleMemberCount(gid, memberRole));
+        Eq(label + " rm: roles of alice", 2, d.RetrieveMemberRoles(gid, alice).Length);
+        Eq(label + " rm: one specific", true, d.RetrieveRoleMember(gid, ownerRole, alice) != null);
+        Eq(label + " rm: specific missing is null", null, d.RetrieveRoleMember(gid, ownerRole, bob));
+        Eq(label + " rm: delete one", true, d.DeleteRoleMember(new RoleMembershipData { GroupID = gid, RoleID = memberRole, PrincipalID = bob }));
+        Eq(label + " rm: delete all roles of alice", true, d.DeleteMemberAllRoles(gid, alice));
+        Eq(label + " rm: none left", 0, d.RetrieveRolesMembers(gid).Length);
+
+        // principals (active group)
+        Eq(label + " pr: store", true, d.StorePrincipal(new PrincipalData { PrincipalID = alice, ActiveGroupID = gid }));
+        Eq(label + " pr: retrieve", gid, d.RetrievePrincipal(alice).ActiveGroupID);
+        Eq(label + " pr: unknown null", null, d.RetrievePrincipal(UUID.Random().ToString()));
+        d.StorePrincipal(new PrincipalData { PrincipalID = bob, ActiveGroupID = gid2 });
+
+        // invites
+        UUID inv1 = UUID.Random(), inv2 = UUID.Random();
+        string carol = UUID.Random().ToString(), dave = UUID.Random().ToString();
+        Eq(label + " inv: store", true, d.StoreInvitation(new InvitationData { InviteID = inv1, GroupID = gid, RoleID = memberRole, PrincipalID = carol, Data = new Dictionary<string, string>() }));
+        Eq(label + " inv: store second", true, d.StoreInvitation(new InvitationData { InviteID = inv2, GroupID = gid, RoleID = memberRole, PrincipalID = dave, Data = new Dictionary<string, string>() }));
+        Eq(label + " inv: by id", carol, d.RetrieveInvitation(inv1).PrincipalID);
+        Eq(label + " inv: by group and principal", inv2, d.RetrieveInvitation(gid, dave).InviteID);
+        Eq(label + " inv: unknown null", null, d.RetrieveInvitation(UUID.Random()));
+        ageInvite(inv1.ToString());
+        d.DeleteOldInvites();
+        Eq(label + " inv: DeleteOld removed the 20-day-old invite", null, d.RetrieveInvitation(inv1));
+        Eq(label + " inv: DeleteOld kept the fresh one", true, d.RetrieveInvitation(inv2) != null);
+        Eq(label + " inv: delete", true, d.DeleteInvite(inv2));
+        Eq(label + " inv: gone", null, d.RetrieveInvitation(inv2));
+
+        // notices
+        UUID n1 = UUID.Random(), n2 = UUID.Random();
+        int now = (int)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
+        Eq(label + " ntc: store recent", true, d.StoreNotice(new NoticeData { GroupID = gid, NoticeID = n1,
+            Data = Dict("TMStamp", now.ToString(), "FromName", "Alice é", "Subject", "Meeting 中", "Message", "See you 'there' \U0001F600",
+                        "HasAttachment", "0", "AttachmentType", "0", "AttachmentName", "", "AttachmentItemID", UUID.Zero.ToString(), "AttachmentOwnerID", "") }));
+        Eq(label + " ntc: store 20-day-old", true, d.StoreNotice(new NoticeData { GroupID = gid, NoticeID = n2,
+            Data = Dict("TMStamp", (now - 20 * 86400).ToString(), "FromName", "Old", "Subject", "Old news", "Message", "old",
+                        "HasAttachment", "1", "AttachmentType", "6", "AttachmentName", "thing", "AttachmentItemID", UUID.Random().ToString(), "AttachmentOwnerID", alice) }));
+        Eq(label + " ntc: two notices", 2, d.RetrieveNotices(gid).Length);
+        NoticeData nn = d.RetrieveNotice(n1);
+        Eq(label + " ntc: subject unicode", "Meeting 中", nn.Data["Subject"]);
+        Eq(label + " ntc: message quotes and emoji", "See you 'there' \U0001F600", nn.Data["Message"]);
+        Eq(label + " ntc: timestamp kept", now.ToString(), nn.Data["TMStamp"]);
+        Eq(label + " ntc: attachment fields", "6", d.RetrieveNotice(n2).Data["AttachmentType"]);
+        d.DeleteOldNotices();
+        Eq(label + " ntc: DeleteOld dropped the old one", null, d.RetrieveNotice(n2));
+        Eq(label + " ntc: DeleteOld kept the recent one", true, d.RetrieveNotice(n1) != null);
+
+        // bans
+        Eq(label + " ban: store", true, d.StoreBan(new BanData { GroupID = gid, BannedID = carol, BanDate = 1790000000 }));
+        Eq(label + " ban: retrieve", 1790000000, d.RetrieveBan(gid, carol).BanDate);
+        Eq(label + " ban: list", 1, d.RetrieveBans(gid).Length);
+        Eq(label + " ban: unknown null", null, d.RetrieveBan(gid, dave));
+        Eq(label + " ban: delete", true, d.DeleteBan(gid, carol));
+        Eq(label + " ban: none left", 0, d.RetrieveBans(gid).Length);
+
+        // delete role and member, then cascade-delete the group
+        Eq(label + " role: delete one", true, d.DeleteRole(gid, memberRole));
+        Eq(label + " role: one left", 1, d.RoleCount(gid));
+        Eq(label + " mem: delete bob", true, d.DeleteMember(gid, bob));
+        Eq(label + " mem: one left", 1, d.MemberCount(gid));
+
+        Eq(label + " grp: delete group", true, d.DeleteGroup(gid));
+        Eq(label + " grp: group gone", null, d.RetrieveGroup(gid));
+        Eq(label + " cascade: members gone", 0, d.RetrieveMembers(gid).Length);
+        Eq(label + " cascade: roles gone", 0, d.RetrieveRoles(gid).Length);
+        Eq(label + " cascade: notices gone", 0, d.RetrieveNotices(gid).Length);
+        Eq(label + " cascade: alice's active group cleared", null, d.RetrievePrincipal(alice));
+        Eq(label + " cascade: bob (other group) untouched", gid2, d.RetrievePrincipal(bob).ActiveGroupID);
+        Eq(label + " grp: other group still there", true, d.RetrieveGroup(gid2) != null);
+    }
+
+    static bool Contains(GroupData[] list, UUID id)
+    {
+        foreach (GroupData g in list)
+            if (g.GroupID == id)
+                return true;
+        return false;
+    }
+
     static void RegionHG(string label, IRegionHGData d)
     {
         UUID a = UUID.Random(), b = UUID.Random();
@@ -258,6 +429,15 @@ static class Program
         Market("sqlite", new OpenSim.Data.SQLite.SQLiteMarketplaceListingsData(sq));
         Race("sqlite", new OpenSim.Data.SQLite.SQLiteMarketplaceListingsData(sq));
         RegionHG("sqlite", new OpenSim.Data.SQLite.SQLiteRegionHGData(sq));
+        Groups("sqlite", new OpenSim.Data.SQLite.SQLiteGroupsData(sq, "os_groups"), id =>
+        {
+            using (var c = new System.Data.SQLite.SQLiteConnection(sq))
+            {
+                c.Open();
+                using (var cmd = new System.Data.SQLite.SQLiteCommand("update os_groups_invites set TMStamp = datetime('now','-20 days') where InviteID = '" + id + "'", c))
+                    cmd.ExecuteNonQuery();
+            }
+        });
         OfflineIM("sqlite", new OpenSim.Data.SQLite.SQLiteOfflineIMData(sq, "im_offline"), id =>
         {
             using (var c = new System.Data.SQLite.SQLiteConnection(sq))
@@ -275,6 +455,15 @@ static class Program
             Market("pgsql", new OpenSim.Data.PGSQL.PGSQLMarketplaceListingsData(pg));
             Race("pgsql", new OpenSim.Data.PGSQL.PGSQLMarketplaceListingsData(pg));
             RegionHG("pgsql", new OpenSim.Data.PGSQL.PGSQLRegionHGData(pg));
+            Groups("pgsql", new OpenSim.Data.PGSQL.PGSQLGroupsData(pg, "os_groups"), id =>
+            {
+                using (var c = new Npgsql.NpgsqlConnection(pg))
+                {
+                    c.Open();
+                    using (var cmd = new Npgsql.NpgsqlCommand("update os_groups_invites set \"TMStamp\" = now() - interval '20 days' where \"InviteID\"::text = '" + id + "'", c))
+                        cmd.ExecuteNonQuery();
+                }
+            });
             OfflineIM("pgsql", new OpenSim.Data.PGSQL.PGSQLOfflineIMData(pg, "im_offline"), id =>
             {
                 using (var c = new Npgsql.NpgsqlConnection(pg))

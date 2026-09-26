@@ -139,6 +139,20 @@ call your profile server, from an address you do not trust. Their private notes 
 preferences are unavailable, and profile edits made there do not save, until they are
 back on a trusted region. This matches upstream Tranquillity's choice.
 
+## PostgreSQL group search injection
+
+On PostgreSQL, the in-world group search pasted the resident's search text directly into its SQL
+(`PGSQLGroupsData.RetrieveGroups`), so anyone able to search for groups could run their own SQL against
+the groups database. The MySQL backend escaped the text; PostgreSQL did not, and the "parameter" it
+passed was the finished query. The text is now a real bound parameter. The SQLite backend (new) does the
+same. If you ran Confluence or stock OpenSimulator on PostgreSQL with Groups enabled, update; nothing in
+your configuration changes.
+
+Two related PostgreSQL group bugs were fixed at the same time: an empty group search (and the admin
+groups overview built on it) failed with a SQL error, and the two-week clean-up of old group invitations
+and notices never ran on PostgreSQL 12 or newer (it used a column type that release removed), so they
+accumulated without limit.
+
 ## Deployment checklist
 
 1. Back up the database (Gloebit migrations).

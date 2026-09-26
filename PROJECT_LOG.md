@@ -25501,3 +25501,21 @@ combinations: PostgreSQL loads every service, SQLite is left with only Groups. N
 generic PostgreSQL `GetCount` splices the column name into SQL and assumes uuid keys (callers only pass
 constants, so it is not reachable from user input); the SQLite class refuses non-identifier column names.
 Not yet exercised: an actual offline message end to end through the Robust service and a real login.
+
+**Groups on SQLite, and four PostgreSQL group bugs (one a SQL injection), 2026-09-27 (built, verified,
+uncommitted).** New `SQLiteGroupsData` (all eight tables behind the generic SQLite handler, plus the row
+counts and bound-parameter search that handler lacks) and an `os_groups_Store` migration; role powers are
+stored as text so a 64-bit flag set is never rounded, and the group name is unique case-insensitively like
+MySQL. Extending the data-backend harness to Groups (now 356 checks across SQLite and PostgreSQL) exposed
+four defects in the EXISTING PostgreSQL Groups backend, all fixed: (1) **SQL injection in the in-world
+group search** - `RetrieveGroups` concatenated the resident's search text into the SQL and passed the
+finished query as its "parameter"; now a bound parameter (documented in `HARDENING.md`); (2) an empty
+search ran `WHERE 1`, which PostgreSQL rejects, so listing groups and the admin overview failed - it now
+lists ShowInList groups like MySQL; (3) `GroupsCount()` used `Location = ""`, an invalid empty identifier
+in PostgreSQL; (4) the two-week clean-up of old invitations and notices used the `abstime` type, removed
+in PostgreSQL 12, so on any current server it failed silently and they accumulated forever. Also fixed my
+own SQLite search to bind the search text instead of escaping it. The fresh-clone matrix passes all four
+SQLite/PostgreSQL x standalone/grid combinations with an EMPTY known-gaps list; SETUP.md, ROADMAP and the
+harness README are updated. Remaining: the optional FSAssets store has no SQLite backend, and MySQL/
+MariaDB has never had a matrix run. Not yet exercised: creating and joining a group in-world through the
+Groups service on SQLite/PostgreSQL (the data layer is proven; the service loads cleanly).

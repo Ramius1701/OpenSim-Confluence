@@ -10,6 +10,9 @@ and PostgreSQL:
 - **RegionHG** - the per-region Hypergrid open/closed flag and its upsert.
 - **Offline IM** - store several messages from the same sender, get / count, delete exactly one message
   by id scoped to its owner, the two-week clean-up, and delete all for a principal.
+- **Groups** - groups, roles (exact 64-bit powers), membership, role membership, active group, invitations
+  and notices with their two-week clean-ups, bans, search (including hostile search text), counts, and the
+  cascade when a group is deleted.
 
 When a backend is added or changed (the remaining gaps are listed in
 `Tools/fresh-clone-matrix-expected.json`), add its checks here first.

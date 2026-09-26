@@ -1,0 +1,89 @@
+:VERSION 1 # -----------------
+
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS os_groups_groups (
+	GroupID char(36) NOT NULL DEFAULT '' PRIMARY KEY,
+	Location varchar(255) NOT NULL DEFAULT '',
+	Name varchar(255) NOT NULL DEFAULT '' UNIQUE COLLATE NOCASE,
+	Charter text NOT NULL DEFAULT '',
+	InsigniaID char(36) NOT NULL DEFAULT '',
+	FounderID char(36) NOT NULL DEFAULT '',
+	MembershipFee int NOT NULL DEFAULT 0,
+	OpenEnrollment varchar(255) NOT NULL DEFAULT '',
+	ShowInList int NOT NULL DEFAULT 0,
+	AllowPublish int NOT NULL DEFAULT 0,
+	MaturePublish int NOT NULL DEFAULT 0,
+	OwnerRoleID char(36) NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS os_groups_membership (
+	GroupID char(36) NOT NULL DEFAULT '',
+	PrincipalID varchar(255) NOT NULL DEFAULT '',
+	SelectedRoleID char(36) NOT NULL DEFAULT '',
+	Contribution int NOT NULL DEFAULT 0,
+	ListInProfile int NOT NULL DEFAULT 1,
+	AcceptNotices int NOT NULL DEFAULT 1,
+	AccessToken char(36) NOT NULL DEFAULT '',
+	PRIMARY KEY (GroupID, PrincipalID)
+);
+CREATE INDEX IF NOT EXISTS os_groups_membership_principal ON os_groups_membership (PrincipalID);
+
+-- Powers is a 64-bit flag set; it is kept as text so a value above the signed 64-bit range can
+-- never be silently rounded (the service reads and writes it as a decimal string).
+CREATE TABLE IF NOT EXISTS os_groups_roles (
+	GroupID char(36) NOT NULL DEFAULT '',
+	RoleID char(36) NOT NULL DEFAULT '',
+	Name varchar(255) NOT NULL DEFAULT '',
+	Description varchar(255) NOT NULL DEFAULT '',
+	Title varchar(255) NOT NULL DEFAULT '',
+	Powers varchar(20) NOT NULL DEFAULT '0',
+	PRIMARY KEY (GroupID, RoleID)
+);
+
+CREATE TABLE IF NOT EXISTS os_groups_rolemembership (
+	GroupID char(36) NOT NULL DEFAULT '',
+	RoleID char(36) NOT NULL DEFAULT '',
+	PrincipalID varchar(255) NOT NULL DEFAULT '',
+	PRIMARY KEY (GroupID, RoleID, PrincipalID)
+);
+CREATE INDEX IF NOT EXISTS os_groups_rolemembership_principal ON os_groups_rolemembership (PrincipalID);
+
+CREATE TABLE IF NOT EXISTS os_groups_invites (
+	InviteID char(36) NOT NULL DEFAULT '' PRIMARY KEY,
+	GroupID char(36) NOT NULL DEFAULT '',
+	RoleID char(36) NOT NULL DEFAULT '',
+	PrincipalID varchar(255) NOT NULL DEFAULT '',
+	TMStamp datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE (GroupID, PrincipalID)
+);
+
+CREATE TABLE IF NOT EXISTS os_groups_notices (
+	GroupID char(36) NOT NULL DEFAULT '',
+	NoticeID char(36) NOT NULL DEFAULT '' PRIMARY KEY,
+	TMStamp int NOT NULL DEFAULT 0,
+	FromName varchar(255) NOT NULL DEFAULT '',
+	Subject varchar(255) NOT NULL DEFAULT '',
+	Message text NOT NULL DEFAULT '',
+	HasAttachment int NOT NULL DEFAULT 0,
+	AttachmentType int NOT NULL DEFAULT 0,
+	AttachmentName varchar(128) NOT NULL DEFAULT '',
+	AttachmentItemID char(36) NOT NULL DEFAULT '',
+	AttachmentOwnerID varchar(255) NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS os_groups_notices_group ON os_groups_notices (GroupID);
+CREATE INDEX IF NOT EXISTS os_groups_notices_tmstamp ON os_groups_notices (TMStamp);
+
+CREATE TABLE IF NOT EXISTS os_groups_principals (
+	PrincipalID varchar(255) NOT NULL DEFAULT '' PRIMARY KEY,
+	ActiveGroupID char(36) NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS os_groups_bans (
+	GroupID char(36) NOT NULL DEFAULT '',
+	BannedID varchar(255) NOT NULL DEFAULT '',
+	BanDate int NOT NULL DEFAULT 0,
+	PRIMARY KEY (GroupID, BannedID)
+);
+
+COMMIT;

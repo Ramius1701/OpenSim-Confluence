@@ -1,62 +1,39 @@
-/*
- * Copyright (c) Contributors, http://opensimulator.org/
- * See CONTRIBUTORS.TXT for a full list of copyright holders.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the OpenSimulator Project nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE DEVELOPERS ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE CONTRIBUTORS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-
 using System;
-using System.Collections;
 using System.Collections.Generic;
+using System.Data;
+using System.Data.SQLite;
 using System.Reflection;
-using OpenSim.Framework;
+using System.Text.RegularExpressions;
 using OpenMetaverse;
-using log4net;
-using Npgsql;
+using OpenSim.Framework;
 
-namespace OpenSim.Data.PGSQL
+namespace OpenSim.Data.SQLite
 {
-    public class PGSQLGroupsData : IGroupsData
+    // SQLite backend for Groups, equivalent to MySQLGroupsData / PGSQLGroupsData: one table per
+    // concern (groups, membership, roles, role membership, invites, notices, principals, bans),
+    // each behind the generic SQLite table handler.
+    public class SQLiteGroupsData : IGroupsData
     {
-        private PGSqlGroupsGroupsHandler m_Groups;
-        private PGSqlGroupsMembershipHandler m_Membership;
-        private PGSqlGroupsRolesHandler m_Roles;
-        private PGSqlGroupsRoleMembershipHandler m_RoleMembership;
-        private PGSqlGroupsInvitesHandler m_Invites;
-        private PGSqlGroupsNoticesHandler m_Notices;
-        private PGSqlGroupsPrincipalsHandler m_Principals;
-        private PGSqlGroupsBansHandler m_Bans;
+        private SQLiteGroupsGroupsHandler m_Groups;
+        private SQLiteGroupsMembershipHandler m_Membership;
+        private SQLiteGroupsRolesHandler m_Roles;
+        private SQLiteGroupsRoleMembershipHandler m_RoleMembership;
+        private SQLiteGroupsInvitesHandler m_Invites;
+        private SQLiteGroupsNoticesHandler m_Notices;
+        private SQLiteGroupsPrincipalsHandler m_Principals;
+        private SQLiteGroupsBansHandler m_Bans;
 
-        public PGSQLGroupsData(string connectionString, string realm)
+        public SQLiteGroupsData(string connectionString, string realm)
         {
-            m_Groups = new PGSqlGroupsGroupsHandler(connectionString, realm + "_groups", realm + "_Store");
-            m_Membership = new PGSqlGroupsMembershipHandler(connectionString, realm + "_membership");
-            m_Roles = new PGSqlGroupsRolesHandler(connectionString, realm + "_roles");
-            m_RoleMembership = new PGSqlGroupsRoleMembershipHandler(connectionString, realm + "_rolemembership");
-            m_Invites = new PGSqlGroupsInvitesHandler(connectionString, realm + "_invites");
-            m_Notices = new PGSqlGroupsNoticesHandler(connectionString, realm + "_notices");
-            m_Principals = new PGSqlGroupsPrincipalsHandler(connectionString, realm + "_principals");
-            m_Bans = new PGSqlGroupsBansHandler(connectionString, realm + "_bans");
+            // The groups handler runs the migration that creates every table, so it goes first.
+            m_Groups = new SQLiteGroupsGroupsHandler(connectionString, realm + "_groups", realm + "_Store");
+            m_Membership = new SQLiteGroupsMembershipHandler(connectionString, realm + "_membership");
+            m_Roles = new SQLiteGroupsRolesHandler(connectionString, realm + "_roles");
+            m_RoleMembership = new SQLiteGroupsRoleMembershipHandler(connectionString, realm + "_rolemembership");
+            m_Invites = new SQLiteGroupsInvitesHandler(connectionString, realm + "_invites");
+            m_Notices = new SQLiteGroupsNoticesHandler(connectionString, realm + "_notices");
+            m_Principals = new SQLiteGroupsPrincipalsHandler(connectionString, realm + "_principals");
+            m_Bans = new SQLiteGroupsBansHandler(connectionString, realm + "_bans");
         }
 
         #region groups table
@@ -85,30 +62,16 @@ namespace OpenSim.Data.PGSQL
 
         public GroupData[] RetrieveGroups(string pattern)
         {
-
             if (string.IsNullOrEmpty(pattern))
-            {
-                // An empty search lists every group that is shown in the directory, as on MySQL.
-                // (This used to run "WHERE 1", which PostgreSQL rejects - an integer is not a
-                // boolean - so an empty search, and the admin groups overview built on it, failed.)
-                return m_Groups.Get("\"ShowInList\" = 1");
-            }
-            else
-            {
-                // The search text comes from a resident (in-world group search), so it must
-                // only ever travel as a bound parameter. It used to be concatenated into the
-                // SQL, which made the search an injection point on PostgreSQL.
-                return m_Groups.Get(
-                    "\"ShowInList\" = 1 AND lower(\"Name\") LIKE lower(:pattern)",
-                    new NpgsqlParameter(":pattern", "%" + pattern + "%"));
-            }
+                return m_Groups.Get("ShowInList=1");
+
+            // The search text comes from a resident, so it only ever travels as a bound parameter.
+            return m_Groups.GetWhere("ShowInList=1 AND Name LIKE :pattern", new SQLiteParameter(":pattern", "%" + pattern + "%"));
         }
 
-        // See the matching comment in MySQLGroupsData.cs - DeleteGroup used
-        // to only remove the os_groups_groups row, leaving orphaned
-        // membership/role/rolemembership rows and a dangling
-        // ActiveGroupID in os_groups_principals. Same cascade fix here to
-        // keep the two real backends consistent.
+        // Deleting a group removes its rows from every groups table (membership, roles, role
+        // membership, invites, notices) and clears it as anyone's active group, not just the
+        // groups row - the same cascade as the MySQL backend.
         public bool DeleteGroup(UUID groupID)
         {
             string groupIdStr = groupID.ToString();
@@ -124,10 +87,8 @@ namespace OpenSim.Data.PGSQL
 
         public int GroupsCount()
         {
-            // '' is the empty string; "" would be a (zero-length, invalid) identifier in PostgreSQL.
-            return (int)m_Groups.GetCount(" \"Location\" = ''");
+            return (int)m_Groups.GetCount("Location = ''");
         }
-
         #endregion
 
         #region membership table
@@ -187,7 +148,6 @@ namespace OpenSim.Data.PGSQL
 
         public RoleData[] RetrieveRoles(UUID groupID)
         {
-            //return m_Roles.RetrieveRoles(groupID);
             return m_Roles.Get("GroupID", groupID.ToString());
         }
 
@@ -201,32 +161,24 @@ namespace OpenSim.Data.PGSQL
         {
             return (int)m_Roles.GetCount("GroupID", groupID.ToString());
         }
-
-
         #endregion
 
-        #region rolememberhip table
+        #region rolemembership table
         public RoleMembershipData[] RetrieveRolesMembers(UUID groupID)
         {
-            RoleMembershipData[] data = m_RoleMembership.Get("GroupID", groupID.ToString());
-
-            return data;
+            return m_RoleMembership.Get("GroupID", groupID.ToString());
         }
 
         public RoleMembershipData[] RetrieveRoleMembers(UUID groupID, UUID roleID)
         {
-            RoleMembershipData[] data = m_RoleMembership.Get(new string[] { "GroupID", "RoleID" },
-                                                             new string[] { groupID.ToString(), roleID.ToString() });
-
-            return data;
+            return m_RoleMembership.Get(new string[] { "GroupID", "RoleID" },
+                                        new string[] { groupID.ToString(), roleID.ToString() });
         }
 
         public RoleMembershipData[] RetrieveMemberRoles(UUID groupID, string principalID)
         {
-            RoleMembershipData[] data = m_RoleMembership.Get(new string[] { "GroupID", "PrincipalID" },
-                                                             new string[] { groupID.ToString(), principalID.ToString() });
-
-            return data;
+            return m_RoleMembership.Get(new string[] { "GroupID", "PrincipalID" },
+                                        new string[] { groupID.ToString(), principalID });
         }
 
         public RoleMembershipData RetrieveRoleMember(UUID groupID, UUID roleID, string principalID)
@@ -253,7 +205,7 @@ namespace OpenSim.Data.PGSQL
 
         public bool DeleteRoleMember(RoleMembershipData data)
         {
-            return m_RoleMembership.Delete(new string[] { "GroupID", "RoleID", "PrincipalID"},
+            return m_RoleMembership.Delete(new string[] { "GroupID", "RoleID", "PrincipalID" },
                                            new string[] { data.GroupID.ToString(), data.RoleID.ToString(), data.PrincipalID });
         }
 
@@ -262,7 +214,6 @@ namespace OpenSim.Data.PGSQL
             return m_RoleMembership.Delete(new string[] { "GroupID", "PrincipalID" },
                                            new string[] { groupID.ToString(), principalID });
         }
-
         #endregion
 
         #region principals table
@@ -287,7 +238,6 @@ namespace OpenSim.Data.PGSQL
         #endregion
 
         #region invites table
-
         public bool StoreInvitation(InvitationData data)
         {
             return m_Invites.Store(data);
@@ -323,11 +273,9 @@ namespace OpenSim.Data.PGSQL
         {
             m_Invites.DeleteOld();
         }
-
         #endregion
 
         #region notices table
-
         public bool StoreNotice(NoticeData data)
         {
             return m_Notices.Store(data);
@@ -345,9 +293,7 @@ namespace OpenSim.Data.PGSQL
 
         public NoticeData[] RetrieveNotices(UUID groupID)
         {
-            NoticeData[] notices = m_Notices.Get("GroupID", groupID.ToString());
-
-            return notices;
+            return m_Notices.Get("GroupID", groupID.ToString());
         }
 
         public bool DeleteNotice(UUID noticeID)
@@ -359,11 +305,9 @@ namespace OpenSim.Data.PGSQL
         {
             m_Notices.DeleteOld();
         }
-
         #endregion
 
         #region bans table
-
         public bool StoreBan(BanData data)
         {
             return m_Bans.Store(data);
@@ -389,166 +333,170 @@ namespace OpenSim.Data.PGSQL
             return m_Bans.Delete(new string[] { "GroupID", "BannedID" },
                                  new string[] { groupID.ToString(), bannedID });
         }
-
         #endregion
 
-        #region combinations
+        #region combinations (not implemented by any backend)
         public MembershipData RetrievePrincipalGroupMembership(string principalID, UUID groupID)
         {
-            // TODO
-            return null;
-        }
-        public MembershipData[] RetrievePrincipalGroupMemberships(string principalID)
-        {
-            // TODO
             return null;
         }
 
+        public MembershipData[] RetrievePrincipalGroupMemberships(string principalID)
+        {
+            return null;
+        }
         #endregion
     }
 
-    public class PGSqlGroupsGroupsHandler : PGSQLGenericTableHandler<GroupData>
+    // The generic SQLite table handler has no row counts; the groups tables need them.
+    public class SQLiteGroupsTableHandler<T> : SQLiteGenericTableHandler<T> where T : class, new()
     {
-        protected override Assembly Assembly
-        {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
-        }
+        private static readonly Regex s_identifier = new Regex("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
 
-        public PGSqlGroupsGroupsHandler(string connectionString, string realm, string store)
+        protected SQLiteGroupsTableHandler(string connectionString, string realm, string store)
             : base(connectionString, realm, store)
         {
         }
 
-    }
-
-    public class PGSqlGroupsMembershipHandler : PGSQLGenericTableHandler<MembershipData>
-    {
-        protected override Assembly Assembly
+        // A where clause with one bound parameter (the generic handler's Get(where) has none).
+        public T[] GetWhere(string where, SQLiteParameter parameter)
         {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
+            using (SQLiteCommand cmd = new SQLiteCommand())
+            {
+                cmd.CommandText = String.Format("select * from {0} where {1}", m_Realm, where);
+                cmd.Parameters.Add(parameter);
+                return DoQuery(cmd);
+            }
         }
 
-        public PGSqlGroupsMembershipHandler(string connectionString, string realm)
+        public long GetCount(string field, string key)
+        {
+            return GetCount(new string[] { field }, new string[] { key });
+        }
+
+        public long GetCount(string[] fields, string[] keys)
+        {
+            if (fields.Length == 0 || fields.Length != keys.Length)
+                return 0;
+
+            using (SQLiteCommand cmd = new SQLiteCommand())
+            {
+                List<string> terms = new List<string>();
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    if (!s_identifier.IsMatch(fields[i]))
+                        return 0;
+
+                    cmd.Parameters.Add(new SQLiteParameter(":p" + i, keys[i]));
+                    terms.Add("`" + fields[i] + "` = :p" + i);
+                }
+
+                cmd.CommandText = String.Format("select count(*) from {0} where {1}", m_Realm, String.Join(" and ", terms.ToArray()));
+                return Scalar(cmd);
+            }
+        }
+
+        // The where clause is built by this assembly's own code, never from user input.
+        public long GetCount(string where)
+        {
+            using (SQLiteCommand cmd = new SQLiteCommand())
+            {
+                cmd.CommandText = String.Format("select count(*) from {0} where {1}", m_Realm, where);
+                return Scalar(cmd);
+            }
+        }
+
+        private long Scalar(SQLiteCommand cmd)
+        {
+            using (IDataReader reader = ExecuteReader(cmd, m_Connection))
+            {
+                return reader.Read() ? Convert.ToInt64(reader[0]) : 0;
+            }
+        }
+    }
+
+    public class SQLiteGroupsGroupsHandler : SQLiteGroupsTableHandler<GroupData>
+    {
+        public SQLiteGroupsGroupsHandler(string connectionString, string realm, string store)
+            : base(connectionString, realm, store)
+        {
+        }
+    }
+
+    public class SQLiteGroupsMembershipHandler : SQLiteGroupsTableHandler<MembershipData>
+    {
+        public SQLiteGroupsMembershipHandler(string connectionString, string realm)
+            : base(connectionString, realm, string.Empty)
+        {
+        }
+    }
+
+    public class SQLiteGroupsRolesHandler : SQLiteGroupsTableHandler<RoleData>
+    {
+        public SQLiteGroupsRolesHandler(string connectionString, string realm)
+            : base(connectionString, realm, string.Empty)
+        {
+        }
+    }
+
+    public class SQLiteGroupsRoleMembershipHandler : SQLiteGroupsTableHandler<RoleMembershipData>
+    {
+        public SQLiteGroupsRoleMembershipHandler(string connectionString, string realm)
+            : base(connectionString, realm, string.Empty)
+        {
+        }
+    }
+
+    public class SQLiteGroupsInvitesHandler : SQLiteGroupsTableHandler<InvitationData>
+    {
+        public SQLiteGroupsInvitesHandler(string connectionString, string realm)
             : base(connectionString, realm, string.Empty)
         {
         }
 
-    }
-
-    public class PGSqlGroupsRolesHandler : PGSQLGenericTableHandler<RoleData>
-    {
-        protected override Assembly Assembly
-        {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
-        }
-
-        public PGSqlGroupsRolesHandler(string connectionString, string realm)
-            : base(connectionString, realm, string.Empty)
-        {
-        }
-
-    }
-
-    public class PGSqlGroupsRoleMembershipHandler : PGSQLGenericTableHandler<RoleMembershipData>
-    {
-        protected override Assembly Assembly
-        {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
-        }
-
-        public PGSqlGroupsRoleMembershipHandler(string connectionString, string realm)
-            : base(connectionString, realm, string.Empty)
-        {
-        }
-
-    }
-
-    public class PGSqlGroupsInvitesHandler : PGSQLGenericTableHandler<InvitationData>
-    {
-        protected override Assembly Assembly
-        {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
-        }
-
-        public PGSqlGroupsInvitesHandler(string connectionString, string realm)
-            : base(connectionString, realm, string.Empty)
-        {
-        }
-
+        // Invitations older than two weeks are dropped (the timestamp column is a SQLite datetime).
         public void DeleteOld()
         {
-
-            using (NpgsqlCommand cmd = new NpgsqlCommand())
+            using (SQLiteCommand cmd = new SQLiteCommand())
             {
-                // TMStamp is a timestamp column here. (The old "::abstime::timestamp" cast used a
-                // type PostgreSQL removed in version 12, so on any current server this statement
-                // failed and old invitations were never cleaned up.)
-                cmd.CommandText = String.Format("delete from {0} where \"TMStamp\" < now() - INTERVAL '2 week'", m_Realm);
-
-                ExecuteNonQuery(cmd);
+                cmd.CommandText = String.Format("delete from {0} where TMStamp < datetime('now', '-14 days')", m_Realm);
+                ExecuteNonQuery(cmd, m_Connection);
             }
-
         }
     }
 
-    public class PGSqlGroupsNoticesHandler : PGSQLGenericTableHandler<NoticeData>
+    public class SQLiteGroupsNoticesHandler : SQLiteGroupsTableHandler<NoticeData>
     {
-        protected override Assembly Assembly
-        {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
-        }
-
-        public PGSqlGroupsNoticesHandler(string connectionString, string realm)
+        public SQLiteGroupsNoticesHandler(string connectionString, string realm)
             : base(connectionString, realm, string.Empty)
         {
         }
 
+        // Notices carry a unix timestamp; drop those more than two weeks old.
         public void DeleteOld()
         {
+            uint now = (uint)Util.UnixTimeSinceEpoch();
 
-            using (NpgsqlCommand cmd = new NpgsqlCommand())
+            using (SQLiteCommand cmd = new SQLiteCommand())
             {
-                // TMStamp is a unix time in an integer column. (The old "::abstime::timestamp" cast
-                // used a type PostgreSQL removed in version 12, so on any current server this
-                // statement failed and old notices were never cleaned up.)
-                cmd.CommandText = String.Format("delete from {0} where \"TMStamp\" < :cutoff", m_Realm);
-                cmd.Parameters.AddWithValue(":cutoff", (int)(Util.UnixTimeSinceEpoch() - 14 * 24 * 60 * 60));
-
-                ExecuteNonQuery(cmd);
+                cmd.CommandText = String.Format("delete from {0} where TMStamp < :tstamp", m_Realm);
+                cmd.Parameters.Add(new SQLiteParameter(":tstamp", (long)now - 14L * 24 * 60 * 60));
+                ExecuteNonQuery(cmd, m_Connection);
             }
-
         }
     }
 
-    public class PGSqlGroupsPrincipalsHandler : PGSQLGenericTableHandler<PrincipalData>
+    public class SQLiteGroupsPrincipalsHandler : SQLiteGroupsTableHandler<PrincipalData>
     {
-        protected override Assembly Assembly
-        {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
-        }
-
-        public PGSqlGroupsPrincipalsHandler(string connectionString, string realm)
+        public SQLiteGroupsPrincipalsHandler(string connectionString, string realm)
             : base(connectionString, realm, string.Empty)
         {
         }
     }
 
-    public class PGSqlGroupsBansHandler : PGSQLGenericTableHandler<BanData>
+    public class SQLiteGroupsBansHandler : SQLiteGroupsTableHandler<BanData>
     {
-        protected override Assembly Assembly
-        {
-            // WARNING! Moving migrations to this assembly!!!
-            get { return GetType().Assembly; }
-        }
-
-        public PGSqlGroupsBansHandler(string connectionString, string realm)
+        public SQLiteGroupsBansHandler(string connectionString, string realm)
             : base(connectionString, realm, string.Empty)
         {
         }
