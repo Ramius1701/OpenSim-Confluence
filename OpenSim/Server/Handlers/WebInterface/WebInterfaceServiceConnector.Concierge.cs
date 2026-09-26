@@ -52,6 +52,13 @@ namespace OpenSim.Server.Handlers.WebInterface
         // A three-way switch: blank means "not set here - use the next level
         // down" (for a region the grid default, for the grid default the
         // module's own ini setting).
+        // For the grid-defaults page: a default that was never saved shows the
+        // built-in text (so it can be read and edited); one saved empty stays empty.
+        private string ConciergeDefaultText(string kind, string scope)
+        {
+            return m_GridSettingsService.Get(ConciergeSettingKeys.Key(kind, scope)) ?? ConciergeSettingKeys.BuiltIn(kind);
+        }
+
         private static string ConciergeFlagSelect(string name, string current, string inheritLabel)
         {
             current = ConciergeSettingKeys.NormalizeFlag(current);
@@ -295,16 +302,18 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<p><a href=\"").Append(BasePath).Append("/admin/settings\">Back to settings</a></p>")
               .Append(SettingsMessageBanner(request))
               .Append("<p>What every region uses until its estate owner sets their own in My Regions. The module itself is turned on ")
-              .Append("in each region's configuration (<code>[Concierge] enabled = true</code>).</p>");
+              .Append("in each region's configuration (<code>[Concierge] enabled = true</code>).</p>")
+              .Append("<p>Until you save something here the grid uses the built-in text shown below. Edit and save to change it; ")
+              .Append("saving an empty box turns that message off for regions that don't set their own.</p>");
 
             sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/settings/concierge/save\">");
 
             sb.Append("<h2>Welcome message</h2>").Append(ConciergeTextHelp);
             sb.Append("<textarea name=\"welcome\" rows=\"8\" maxlength=\"").Append(ConciergeTextMax).Append("\">")
-              .Append(Html(ConciergeSetting(ConciergeSettingKeys.KindWelcome, scope))).Append("</textarea>");
+              .Append(Html(ConciergeDefaultText(ConciergeSettingKeys.KindWelcome, scope))).Append("</textarea>");
 
             sb.Append("<h2>Region rules</h2><textarea name=\"rules\" rows=\"6\" maxlength=\"").Append(ConciergeTextMax).Append("\">")
-              .Append(Html(ConciergeSetting(ConciergeSettingKeys.KindRules, scope))).Append("</textarea>");
+              .Append(Html(ConciergeDefaultText(ConciergeSettingKeys.KindRules, scope))).Append("</textarea>");
 
             sb.Append("<h2>Switches</h2><table>");
             foreach ((string kind, string label) in new[]

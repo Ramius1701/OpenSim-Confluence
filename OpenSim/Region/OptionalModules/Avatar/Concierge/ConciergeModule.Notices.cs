@@ -156,13 +156,20 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
         private void NotifyManagers(Scene scene, ScenePresence agent, ConciergeAudience audience)
         {
             if (!m_notifyAudiences.Contains(audience))
+            {
+                m_log.DebugFormat("[Concierge]: not notifying managers of {0} in {1}: they count as a {2}, which is not in notify_audiences",
+                    agent.Name, scene.RegionInfo.RegionName, AudienceLabel(audience));
                 return;
+            }
 
             long now = Environment.TickCount64;
             lock (m_lastNotifiedMs)
             {
                 if (m_lastNotifiedMs.TryGetValue(agent.UUID, out long last) && now - last < NotifyIntervalMs)
+                {
+                    m_log.DebugFormat("[Concierge]: not notifying managers of {0} in {1}: already told within the last 10 minutes", agent.Name, scene.RegionInfo.RegionName);
                     return;
+                }
 
                 if (m_lastNotifiedMs.Count > 512)
                     m_lastNotifiedMs.Clear();
@@ -172,11 +179,17 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
 
             IMessageTransferModule transfer = scene.RequestModuleInterface<IMessageTransferModule>();
             if (transfer == null)
+            {
+                m_log.WarnFormat("[Concierge]: cannot notify managers of {0} in {1}: no instant message transfer module", agent.Name, scene.RegionInfo.RegionName);
                 return;
+            }
 
             List<(UUID id, string place)> staff = OnlineStaff(scene);
             if (staff.Count == 0)
+            {
+                m_log.DebugFormat("[Concierge]: no estate owner or manager is online to tell about {0} in {1}", agent.Name, scene.RegionInfo.RegionName);
                 return;
+            }
 
             RegionInfo ri = scene.RegionInfo;
             Vector3 pos = agent.AbsolutePosition;
@@ -209,6 +222,7 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
                     binaryBucket = Util.StringToBytes256($"{ri.RegionName}/{(int)pos.X}/{(int)pos.Y}/{(int)pos.Z}")
                 };
 
+                m_log.DebugFormat("[Concierge]: telling {0} that {1} ({2}) arrived in {3}", id, agent.Name, AudienceLabel(audience), ri.RegionName);
                 transfer.SendInstantMessage(msg, delegate (bool success) { });
             }
         }

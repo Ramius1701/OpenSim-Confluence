@@ -451,6 +451,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
 
                 if (content.Notify ?? m_notifyManagers)
                     NotifyManagers(scene, agent, audience);
+                else
+                    m_log.DebugFormat("[Concierge]: not notifying managers of {0} in {1}: notices are switched off for this region", agent.Name, scene.RegionInfo.RegionName);
 
                 UpdateBroker(scene);
             }

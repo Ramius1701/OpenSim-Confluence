@@ -82,6 +82,47 @@ namespace OpenSim.Server.Handlers.Concierge
             return settings.Get(Key(kind, Default)) ?? string.Empty;
         }
 
+        // What a grid says until its owner writes something else, so that
+        // turning the concierge on greets people straight away. Both are
+        // ordinary templates (see the welcome text help in the web portal).
+        public const string BuiltInWelcome =
+            "Welcome to {grid}, {displayname}! You are in {region} with {count} people here.\n" +
+            "Type /4242 help to see what I can do.\n" +
+            "\n" +
+            "[new]\n" +
+            "Welcome to {grid}, {firstname}! You're new here, so take a look around. Type /4242 rules to see the house rules.\n" +
+            "\n" +
+            "[hg]\n" +
+            "Welcome to {grid}, {displayname}, visiting from another grid! Type /4242 info to learn about this region.";
+
+        public const string BuiltInRules =
+            "Be respectful to everyone: no harassment, griefing or spam.\n" +
+            "Keep behavior and content within this region's maturity rating.\n" +
+            "Ask {owner} if you are unsure about anything here.";
+
+        /// <summary>The built-in text for a text kind (welcome or rules), else empty.</summary>
+        public static string BuiltIn(string kind)
+        {
+            if (kind == KindWelcome) return BuiltInWelcome;
+            if (kind == KindRules) return BuiltInRules;
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Text for a region: its own value if it has one, else the grid-wide
+        /// default. A grid default that was never saved means the built-in
+        /// text; one that was saved empty means "none" on purpose.
+        /// </summary>
+        public static string ResolveText(IGridSettingsService settings, string kind, UUID regionID)
+        {
+            string own = settings.Get(Key(kind, regionID));
+            if (!string.IsNullOrEmpty(own))
+                return own;
+
+            string gridWide = settings.Get(Key(kind, Default));
+            return gridWide ?? BuiltIn(kind);
+        }
+
         /// <summary>The switches are stored as "true"/"false"; anything else is unset.</summary>
         public static string NormalizeFlag(string value)
         {
@@ -161,8 +202,8 @@ namespace OpenSim.Server.Handlers.Concierge
         public OSDMap Build(UUID regionID)
         {
             var map = new OSDMap();
-            map["welcome"] = OSD.FromString(ConciergeSettingKeys.Resolve(m_settings, ConciergeSettingKeys.KindWelcome, regionID));
-            map["rules"] = OSD.FromString(ConciergeSettingKeys.Resolve(m_settings, ConciergeSettingKeys.KindRules, regionID));
+            map["welcome"] = OSD.FromString(ConciergeSettingKeys.ResolveText(m_settings, ConciergeSettingKeys.KindWelcome, regionID));
+            map["rules"] = OSD.FromString(ConciergeSettingKeys.ResolveText(m_settings, ConciergeSettingKeys.KindRules, regionID));
 
             // The name people know the grid by, so {grid} in a greeting needs
             // no extra setting on any region.

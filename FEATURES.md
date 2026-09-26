@@ -624,6 +624,12 @@ The password-protected XML-RPC welcome upload from the original module only
 works with a private password set (the shipped `SECRET` is refused), and the
 old flat welcome files still work when the portal has no text for a region.
 
+A grid that has not written its own text still greets people: a built-in
+welcome (with `[new]` and `[hg]` variants) and a short set of house rules are
+used until the grid default is saved in the portal, where they are shown ready
+to edit. Saving an empty grid default turns that message off on purpose;
+a region's own text always wins.
+
 ### Region stability
 
 Sim FPS auto-mitigation and stuck-region auto-restart (`SimProtection`)

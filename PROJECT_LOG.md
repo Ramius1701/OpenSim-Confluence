@@ -25326,3 +25326,23 @@ prims reference asset `6ea0c70b-...` which is a J2C texture, not a mesh (1,608 e
 boot). The structural generic-Meshmerizer gaps only reach 3 regions and BulletSim there uses
 asset hulls / Bullet HACD rather than the mesher's local hulls. Open small items: dedupe the log
 per asset, and decide what to do with the mis-typed GFC prims (content fix, not a code fix).
+
+**Concierge built-in welcome and rules, 2026-09-26 (built, checked, NOT deployed).** Live test
+showed Jessica Starlight entering Sandbox got `no welcome message for region Sandbox`, and Robust's
+`/concierge/<region-uuid>` returned no welcome for any region: nothing was stored (or the grid
+default had been saved empty), and the module had no text of its own, so it was silent - poor for a
+new grid owner. Now `ConciergeSettingKeys.BuiltInWelcome`/`BuiltInRules` (Robust side) apply when the
+grid default was never saved; a default saved empty means "none" on purpose (`grid_settings` Get
+returns null for absent vs empty string); a region's own non-empty text still wins. The admin
+defaults page shows the built-in text pre-filled with a note. Robust-only change
+(`OpenSim.Server.Handlers`): regions fetch the text from Robust, so deploying needs a Robust
+restart, no region restart. Harness 68/68 (nothing saved -> built-in; saved empty -> none; region
+wins). Still unexplained: why the earlier grid-wide text vanished; the `grid_settings` table
+(`SettingKey` like `concierge.%`) would show it. Manager IMs also still untested (Jessica's arrival
+logged no notice line, and the notice path logs nothing when it skips - worth adding a debug line
+saying why).
+Follow-up in the same change set: the manager-notice path now logs why it did not send (notices off
+for the region, audience not in `notify_audiences`, already told within 10 minutes, no transfer
+module, nobody online) and who it told, at Debug level with the `[Concierge]` tag, so a missing IM can
+be diagnosed from the region log. This part is region-side (`OpenSim.Region.OptionalModules`), so
+deploying it needs Restart All in addition to the Robust restart for the built-in text.
