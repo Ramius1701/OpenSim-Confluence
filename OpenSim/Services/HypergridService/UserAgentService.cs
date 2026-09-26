@@ -472,15 +472,22 @@ namespace OpenSim.Services.HypergridService
         public bool VerifyAgent(UUID sessionID, string token)
         {
             HGTravelingData hgt = m_Database.Get(sessionID);
-            if (hgt is null)
+            if (hgt is null || hgt.Data is null)
             {
                 m_log.DebugFormat("[USER AGENT SERVICE]: Token verification for session {0}: no such session", sessionID);
                 return false;
             }
 
-            TravelingAgentInfo travel = new TravelingAgentInfo(hgt);
-            m_log.DebugFormat("[USER AGENT SERVICE]: Verifying agent token {0} against {1}", token, travel.ServiceToken);
-            return travel.ServiceToken == token;
+            // The service token is the credential this check exists to
+            // protect - never write either side of the comparison to the
+            // log (it used to be logged in full at Debug level, so anyone
+            // with read access to Robust.log could replay a live HG
+            // session). Same hardening vanilla OpenSim applied
+            // 2026-09-24. See PROJECT_LOG.md, 2026-09-25.
+            if (!hgt.Data.TryGetValue("ServiceToken", out string storedToken) || token is null)
+                return false;
+
+            return storedToken == token;
         }
 
         [Obsolete]
@@ -692,8 +699,11 @@ namespace OpenSim.Services.HypergridService
                 return string.Empty;
 
             foreach (HGTravelingData t in hgts)
-                if (t.Data.ContainsKey("GridExternalName") && !m_GridName.Equals(t.Data["GridExternalName"]))
-                    return t.Data["GridExternalName"];
+            {
+                if (t.Data is not null && t.Data.TryGetValue("GridExternalName", out string externalName) &&
+                        !m_GridName.Equals(externalName))
+                    return externalName;
+            }
 
             return string.Empty;
         }

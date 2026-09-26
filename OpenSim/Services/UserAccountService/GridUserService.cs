@@ -40,7 +40,7 @@ using log4net;
 
 namespace OpenSim.Services.UserAccountService
 {
-    public class GridUserService : GridUserServiceBase, IGridUserService
+    public class GridUserService : GridUserServiceBase, IGridUserService, IRegionVisitorQuery
     {
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private static bool m_Initialized;
@@ -179,6 +179,40 @@ namespace OpenSim.Services.UserAccountService
                         aliveRegionIDs.Contains(lastRegionID))
                     results.Add(ToInfo(gu));
             }
+
+            return results;
+        }
+
+        // Same scan-and-filter approach as the other bulk queries above (the
+        // table is one row per user, so this is small); callers that render it
+        // on a web page cache the result.
+        public List<GridUserInfo> GetRecentVisitors(UUID regionID, int days, int max)
+        {
+            var results = new List<GridUserInfo>();
+            if (regionID.IsZero() || days <= 0 || max <= 0)
+                return results;
+
+            string wanted = regionID.ToString();
+            DateTime now = DateTime.UtcNow;
+
+            foreach (GridUserData gu in m_Database.GetAll(""))
+            {
+                if (!gu.Data.TryGetValue("LastRegionID", out string lastRegionID) ||
+                        !string.Equals(lastRegionID, wanted, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!gu.Data.TryGetValue("Login", out string login) || !int.TryParse(login, out int unixLogin))
+                    continue;
+
+                if ((now - Util.ToDateTime(unixLogin)).TotalDays >= days)
+                    continue;
+
+                results.Add(ToInfo(gu));
+            }
+
+            results.Sort((a, b) => b.Login.CompareTo(a.Login));
+            if (results.Count > max)
+                results.RemoveRange(max, results.Count - max);
 
             return results;
         }

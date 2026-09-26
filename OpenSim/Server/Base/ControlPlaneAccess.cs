@@ -26,10 +26,14 @@
  */
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Reflection;
+using System.Threading;
+using log4net;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework.Servers.HttpServer;
@@ -80,6 +84,19 @@ namespace OpenSim.Server.Base
     // owner to work correctly out of the box.
     public class ControlPlaneAccess
     {
+        private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
+        // A refusal is worth telling the operator about - a silent 403 is
+        // exactly what made the first live deploy of this gate take real
+        // digging to diagnose (2026-09-23) - but these endpoints sit on
+        // internet-reachable ports, so an unauthenticated scanner must not
+        // be able to flood the log. One line per source address + endpoint
+        // family per minute.
+        private const long RefusalLogIntervalMs = 60_000;
+        private const int MaxRefusalLogKeys = 1024;
+        private static readonly ConcurrentDictionary<string, long> s_lastRefusalLogged = new ConcurrentDictionary<string, long>();
+        private static int s_startupLogged;
+
         private readonly HashSet<IPAddress> m_trustedHosts = new HashSet<IPAddress>();
 
         public ControlPlaneAccess(IConfigSource config)
@@ -96,6 +113,37 @@ namespace OpenSim.Server.Base
             string hosts = GetConfiguredHosts(config);
             foreach (string host in hosts.Split(new[] { ',', ';', '|', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                 AddTrustedHost(host.Trim());
+
+            // Many connectors each build their own instance - say this
+            // once per process, not once per connector.
+            if (Interlocked.Exchange(ref s_startupLogged, 1) == 0)
+            {
+                m_log.InfoFormat("[CONTROL PLANE ACCESS]: {0} trusted control-plane addresses (loopback, this machine's interfaces and gateways, [Const] BaseHostname, ControlPlaneTrustedHosts). Control-plane requests from any other address are refused.",
+                    m_trustedHosts.Count);
+                m_log.DebugFormat("[CONTROL PLANE ACCESS]: Trusted addresses: {0}", string.Join(", ", m_trustedHosts));
+            }
+        }
+
+        private static void LogRefusal(string key, string message)
+        {
+            long now = Environment.TickCount64;
+            if (s_lastRefusalLogged.TryGetValue(key, out long last) && now - last < RefusalLogIntervalMs)
+                return;
+
+            if (s_lastRefusalLogged.Count >= MaxRefusalLogKeys)
+                s_lastRefusalLogged.Clear();
+
+            s_lastRefusalLogged[key] = now;
+            m_log.Warn(message);
+        }
+
+        private static string EndpointFamily(string uriPath)
+        {
+            if (string.IsNullOrEmpty(uriPath))
+                return string.Empty;
+
+            int slash = uriPath.IndexOf('/', 1);
+            return slash > 0 ? uriPath.Substring(0, slash) : uriPath;
         }
 
         // Trusts this machine's own identity on its local network(s) -
@@ -146,15 +194,24 @@ namespace OpenSim.Server.Base
         // explicitly for every one of these handlers.
         public bool Authorize(IOSHttpRequest request, IOSHttpResponse response, HttpStatusCode blockedStatus = HttpStatusCode.Forbidden)
         {
+            IPEndPoint remote = request.RemoteIPEndPoint;
+            string family = EndpointFamily(request.UriPath);
+
             if (request.Headers["X-SecondLife-Shard"] != null)
             {
+                LogRefusal("script|" + remote + "|" + family,
+                    string.Format("[CONTROL PLANE ACCESS]: Refusing {0} {1} from {2}: in-world script HTTP requests are never allowed on control-plane endpoints.",
+                        request.HttpMethod, family, remote));
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
                 return false;
             }
 
-            if (IsTrustedAddress(request.RemoteIPEndPoint.Address))
+            if (IsTrustedAddress(remote.Address))
                 return true;
 
+            LogRefusal("addr|" + remote.Address + "|" + family,
+                string.Format("[CONTROL PLANE ACCESS]: Refusing {0} {1} from {2}: source address is not a trusted control-plane host. If this is one of your own servers (a region, or Robust), add its address to ControlPlaneTrustedHosts.",
+                    request.HttpMethod, family, remote.Address));
             response.StatusCode = (int)blockedStatus;
             return false;
         }
@@ -180,7 +237,13 @@ namespace OpenSim.Server.Base
             if (!IsPrivilegedInstantMessageDialog(dialog))
                 return true;
 
-            return remoteClient != null && IsTrustedAddress(remoteClient.Address);
+            if (remoteClient != null && IsTrustedAddress(remoteClient.Address))
+                return true;
+
+            LogRefusal("im|" + remoteClient?.Address + "|" + dialog,
+                string.Format("[CONTROL PLANE ACCESS]: Refusing privileged instant message (dialog {0}) from {1}: source address is not a trusted control-plane host.",
+                    dialog, remoteClient?.Address.ToString() ?? "unknown"));
+            return false;
         }
 
         public static bool IsPrivilegedInstantMessageDialog(byte dialog)

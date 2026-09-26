@@ -1,6 +1,6 @@
 # In-World Chat Commands — Index
 
-Every module in this repo that lets an avatar control something by typing
+Every module in this repo that lets an avatar control something or ask something by typing
 chat (not LSL scripts, not console commands). Compiled by auditing every
 `OnChatFromClient` subscription across `OpenSim/` and `addon-modules/`.
 
@@ -10,10 +10,12 @@ chat (not LSL scripts, not console commands). Compiled by auditing every
 |---|---|---|---|
 | **OpenSimWeather** | [`addon-modules/OpenSimWeather/COMMANDS.md`](addon-modules/OpenSimWeather/COMMANDS.md) | `89` (private; channel 0 explicitly rejected) | `EstateManagerOnly` (default `true`) |
 | **TextBuild** | [`OpenSim/Region/OptionalModules/World/TextBuild/COMMANDS.md`](OpenSim/Region/OptionalModules/World/TextBuild/COMMANDS.md) | `90` (private; channel 0 explicitly rejected, hardened from the original public-chat default) | `EstateManagerOnly` (default `true`); terrain commands additionally require a `build confirm`/`build cancel` step before anything is written |
+| **Concierge** | [`OpenSim/Region/OptionalModules/Avatar/Concierge/COMMANDS.md`](OpenSim/Region/OptionalModules/Avatar/Concierge/COMMANDS.md) | `4242` (private; channel 0 is not used) | None - read-only information, private replies, one command per avatar every two seconds |
 
 TextBuild is present in the codebase but has no `[TextBuild]` config section
 anywhere in the test deployment, so it's currently inactive (defaults to disabled
-with no config present). OpenSimWeather is active and configured.
+with no config present). OpenSimWeather is active and configured. Concierge
+is off unless `[Concierge] enabled = true`.
 
 ## Everything else checked, with zero avatar-typed commands found
 
@@ -24,8 +26,6 @@ LSL API backend, or simply don't listen to chat at all:
 
 - **Core relay/infrastructure** (not commands, just chat plumbing):
   `OpenSim/Region/CoreModules/Avatar/Chat/ChatModule.cs`,
-  `OpenSim/Region/OptionalModules/Avatar/Concierge/ConciergeModule.cs` (its
-  `concierge_channel` config key is read but never actually used),
   the IRC bridge (`RegionState.cs` / `IRCClientView.cs`).
 - **Automated non-typed protocols**: `DynamicFloaterModule.cs` (viewer
   floater-UI protocol, channel `427169570`), Gloebit's `GMMDialog.cs`

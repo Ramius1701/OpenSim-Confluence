@@ -163,4 +163,21 @@ namespace OpenSim.Services.Interfaces
         // set to mean "no regions are alive" (returns an empty list).
         List<GridUserInfo> GetOnlineUsers(HashSet<string> aliveRegionIDs);
     }
+
+    /// <summary>
+    /// Optional capability of a grid user service: who was last seen in a
+    /// region. Kept off IGridUserService itself so the remote connector and
+    /// any other implementer need no change; callers test for it with "as".
+    /// </summary>
+    public interface IRegionVisitorQuery
+    {
+        /// <summary>
+        /// Users whose last recorded region is <paramref name="regionID"/> and
+        /// who logged in within the last <paramref name="days"/> days, most
+        /// recent login first, at most <paramref name="max"/> of them. This is
+        /// "last seen here" - a person now elsewhere no longer appears - not a
+        /// full history of everyone who ever visited.
+        /// </summary>
+        List<GridUserInfo> GetRecentVisitors(UUID regionID, int days, int max);
+    }
 }

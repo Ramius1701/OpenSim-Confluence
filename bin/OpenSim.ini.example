@@ -869,6 +869,21 @@
     ;; the following option will allow you to bind this instance to a specific IP, for the HTTP portion of the instance.
     ; http_listener_address = <some ip assigned to this system>
 
+    ;; Servers allowed to call this process's control-plane endpoints: creating
+    ;; agents and objects on a region (this includes the grid login placing you
+    ;; into a region), neighbour hellos, friendship messages, Hypergrid group
+    ;; writes, privileged instant messages and Hypergrid logouts.
+    ;; Trusted automatically, with NO setting needed: loopback, this machine's own
+    ;; network interfaces and their gateways, and whatever [Const] BaseHostname
+    ;; resolves to. That covers a grid whose regions and Robust all run on one
+    ;; machine, even behind a home router.
+    ;; Only set this when Robust or other regions run on DIFFERENT machines: list
+    ;; those machines' real outbound addresses (or hostnames), comma/space
+    ;; separated. Never list public client networks or foreign grids.
+    ;; A refused request logs a "[CONTROL PLANE ACCESS] Refusing ..." warning
+    ;; naming the address to add. See HARDENING.md.
+    ; ControlPlaneTrustedHosts = "192.0.2.10, 192.0.2.11"
+
     ; optional main server secure http (ssl)
     ; to use ssl you need a ssl certificate in PKCS12 format that validates the ExternalHostnames
     ; or their domains

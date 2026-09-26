@@ -49,7 +49,7 @@ namespace OpenSim.Server.Handlers.WebInterface
     // To enable:
     //   [ServiceList] (or [Startup])
     //       WebInterfaceServiceConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:WebInterfaceServiceConnector"
-    public class WebInterfaceServiceConnector : ServiceConnector
+    public partial class WebInterfaceServiceConnector : ServiceConnector
     {
         private static readonly log4net.ILog m_log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -1139,6 +1139,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/settings/features/save":
                         HandleAdminSettingsFeaturesSave(request, response);
                         break;
+                    case BasePath + "/admin/settings/concierge":
+                        HandleAdminSettingsConcierge(request, response);
+                        break;
+                    case BasePath + "/admin/settings/concierge/save":
+                        HandleAdminSettingsConciergeSave(request, response);
+                        break;
                     case BasePath + "/admin/console":
                         HandleAdminConsole(request, response);
                         break;
@@ -1171,6 +1177,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                         break;
                     case BasePath + "/myregions/currency":
                         HandleMyRegionsCurrency(request, response);
+                        break;
+                    case BasePath + "/myregions/concierge":
+                        HandleMyRegionsConcierge(request, response);
+                        break;
+                    case BasePath + "/myregions/concierge/save":
+                        HandleMyRegionsConciergeSave(request, response);
                         break;
                     case BasePath + "/myland":
                         HandleMyLand(request, response);
@@ -8067,6 +8079,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(nav, BasePath + "/admin/settings/economy", "bi-cash-coin", "Economy: Banker Avatar", "Where currency fees and charges flow to");
             AppendDashboardLink(nav, BasePath + "/admin/settings/map-tiles", "bi-map", "Map Tiles", "Clear cached map tiles on Robust's next restart");
             AppendDashboardLink(nav, BasePath + "/admin/settings/features", "bi-stars", "Features Content", "Powered By list and Membership Perks");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/concierge", "bi-chat-dots", "Concierge", "Default welcome message, rules and switches for every region");
             nav.Append("</div>");
 
             string body = "<h1>Grid Settings</h1>"
@@ -11341,7 +11354,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     .Append("a public-facing reverse proxy has real, environment-dependent failure modes (body size limits, read timeouts) ")
                     .Append("that a self-service page can't fix on its own. Restore an OAR from the region's own console instead.</p>");
 
-                rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Currency</th><th>Actions</th><th>Group Auto-Invite</th></tr>");
+                rows.Append("<table><tr><th>Region</th><th>Status</th><th>Location</th><th>Currency</th><th>Actions</th><th>Group Auto-Invite</th><th>Concierge</th></tr>");
                 foreach (GridRegion region in ownedRegions)
                 {
                     string currentCurrency = GetRegionEconomyModule(region.RegionID);
@@ -11377,7 +11390,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     rows.Append("<input type=\"hidden\" name=\"region_id\" value=\"").Append(region.RegionID).Append("\">");
                     rows.Append("<input type=\"hidden\" name=\"action\" value=\"disable\">");
                     rows.Append("<button type=\"submit\">Disable</button></form>");
-                    rows.Append("</td></tr>");
+                    rows.Append("</td>");
+                    rows.Append("<td><a href=\"").Append(BasePath).Append("/myregions/concierge?region=").Append(region.RegionID).Append("\">Edit</a></td></tr>");
                 }
                 rows.Append("</table>");
             }

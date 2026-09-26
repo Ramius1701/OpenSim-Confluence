@@ -282,6 +282,24 @@ Web & Admin UI section rather than here.)*
 
 ## Planned, not started
 
+- **Profile JSON-RPC gate (part of the control-plane hardening) —
+  decision needed (2026-09-25).** The sensitive profile methods (private
+  notes, preferences/email, profile writes, picks/classifieds/interests/
+  user-data writes) are still open to any caller; the rest of the
+  disclosure is deployed (see `HARDENING.md`). An earlier note here
+  deferred it on the belief that viewers call these endpoints directly.
+  That was wrong: every call is made by a region's `UserProfileModule`
+  (to this grid's profile service for local avatars, or to the home
+  grid's for foreign ones), so on a single-machine grid the callers are
+  already covered by the auto-discovered trust and profile editing would
+  keep working. The one real cost: a resident visiting *another* grid
+  could no longer edit or sync notes/preferences/profile writes through
+  that foreign region (public profile viewing is unaffected). Upstream
+  Tranquillity accepted that cost. Build is straightforward once the
+  tradeoff is approved.
+- **Tranquillity feature scoping.** Not yet assessed against Confluence:
+  AIS Inventory v3 + server-side appearance baking (their #207), Trusted
+  Hypergrid (#200), and the new `feature/schema_sync` branch.
 - **RSA-key login authentication.** A protocol aimed at bot/proxy
   clients rather than mainstream viewers. No client in this project's
   own stack currently speaks it, so it isn't scheduled until there's a

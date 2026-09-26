@@ -589,6 +589,41 @@ hardcoded default:
   `/features` page's Platform Overview lists which engines are
   actually present on a given deployment.
 
+### Concierge (region greeter)
+
+An optional region module (`[Concierge] enabled = true`) that greets each
+avatar arriving in a region. The welcome is chosen for who they are: a
+returning resident, a brand-new resident (an account younger than
+`new_resident_days`), a Trial Member, or a Hypergrid visitor, using
+`[new]`, `[trial]` and `[hg]` sections in the text with everything else as
+the default, and it can name them by display name, say how many people are
+here, and mention the region, estate, owner and grid (`{displayname}`,
+`{count}`, `{region}`, `{estate}`, `{owner}`, `{grid}`...). Unknown or stray
+braces in a text are left as written, so a welcome can never fail to send.
+
+Arrivals and departures can be announced in local chat, a departure is only
+announced for someone whose arrival was, and estate owners and managers who are
+online can be sent an instant message (with a teleport link to the region) when
+a new resident, Trial Member or visitor arrives, at most once per avatar every
+ten minutes. Anyone in the region can type `/4242 help` for private answers to
+`who`, `info`, `rules`, `welcome` and `staff` (see `INWORLD_COMMANDS.md`).
+
+Texts and switches are edited in the web portal, not in files: estate owners
+under My Regions > Concierge (welcome, rules, and per-region on/off switches
+for the module, the chat announcements and the manager messages, plus the
+people last seen in that region over the past week), grid administrators under
+Admin > Grid Settings > Concierge (the defaults every region falls back to).
+They are stored with the other grid settings and read by each region from Robust
+through a small `ConciergeServiceConnector`, so an edit reaches the region
+within about a minute with no restart; if Robust can't be reached a region keeps
+its last copy and its ini defaults.
+
+The module can still replace the standard chat module to make say and shout
+region-wide (`[Chat] enabled = false`); that is off unless deliberately chosen.
+The password-protected XML-RPC welcome upload from the original module only
+works with a private password set (the shipped `SECRET` is refused), and the
+old flat welcome files still work when the portal has no text for a region.
+
 ### Region stability
 
 Sim FPS auto-mitigation and stuck-region auto-restart (`SimProtection`)
@@ -622,7 +657,8 @@ unauthenticated vulnerabilities in stock OpenSimulator's inter-server
 control plane — the region agent-create/object-create endpoints,
 neighbour-hello handshake, friends messaging, and related HTTP
 surface every grid runs, historically with no caller authentication
-of its own.
+of its own. Operator guidance (what's protected, how to read a refusal,
+multi-machine setup, deployment checklist) is in `HARDENING.md`.
 
 - **`ControlPlaneAccess` trusted-host allowlist** — the region
   agent-create, region object-create, neighbour-hello, inter-region
@@ -637,7 +673,10 @@ of its own.
   behind NAT, the common case for a single-server grid), and the
   resolved address of `[Const] BaseHostname` — every grid owner
   already sets that. `[Network]`/`[Security]` `ControlPlaneTrustedHosts`
-  remains available for the genuine multi-box case.
+  remains available for the genuine multi-box case. Every refusal logs a
+  warning naming the offending address (throttled to one line per source
+  and endpoint per minute so a scanner can't flood the log), and each
+  process logs its trusted-address count at startup.
 - **X-Forwarded-For trust fixed at the source** — the header is now
   only honored when the direct TCP peer is loopback, closing a
   source-IP spoofing gap that undermined every IP-based trust
@@ -668,7 +707,8 @@ of its own.
   loopback/private/link-local/cloud-metadata address, closing a path
   where a crafted destination URL could turn this grid into a proxy
   into its own internal network.
-- Plaintext login-key logging removed; OpenID's connector now ships
+- Plaintext login-key logging removed, and the Hypergrid service token
+  is no longer logged either; OpenID's connector now ships
   commented-out by default in the example configs (a grid owner who
   wants it can still enable it explicitly).
 

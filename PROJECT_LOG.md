@@ -25018,3 +25018,196 @@ design the default to auto-discover trust from config every owner
 already has to set, rather than shipping something that "works for me
 locally" and asking every downstream operator to rediscover the gap
 the hard way, potentially during a real outage of their own.
+
+---
+
+## Donor sync 2026-09-25: Tranquillity merged the disclosure work, and what we took from it
+
+Fetched all 23 remotes. Only four moved: vanilla `origin`, `homeworldz`,
+`tranquillity` and `sasquatch` (identical content). Nothing else had new
+commits.
+
+**Tranquillity/Sasquatch rewrote history.** Every branch was force-updated
+(all hashes changed; `develop` is 1606 vs 1605 commits, a net +1). The
+`security/control-plane-hardening` branch we ported from was deleted and
+merged into `develop` as PR #210 (squash `cc3e9420ee`, 2026-09-24). The
+hashes we cite in earlier entries (`179ad7cb53`, `74c4f0a954`, `7eeadf4ff2`)
+still exist in the local object database but are no longer on any ref, so
+future comparison against Tranquillity has to go by `git cherry` patch-id
+or by topic, never by remembered hash. (Their tree is `Source/OpenSim.*`,
+ours `OpenSim/*`, so patch-ids across the two never match anyway.) They also
+removed `Docs/security/ICan.md` from the repo; we never included it.
+
+**They hit the same login outage we did.** PR #210 contains changes made
+after the branch tip that we had ported from: an operator-doc section on
+"Grid login and child-agent 403 diagnosis", a neighbour-hello 404 diagnosis
+section, trusting the configured local `[Network] hostname`, and - the
+useful one - a log line for every refused control-plane request naming the
+caller's address plus a startup line with the trusted-address count. Our
+gate refused silently, which is why the 2026-09-23 outage needed a hunt
+through `Robust.log` and an empirical curl to diagnose. Their `[Network]
+hostname` key does not exist in our templates, so that piece is moot: our
+`[Const] BaseHostname` + local-NIC/gateway discovery already covers it.
+
+**Vanilla OpenSim independently disabled OpenID by default** (`56ca75dd81`,
+2026-09-24, both Robust ini examples) - the same fix we made. That commit is
+labeled "cosmetics" but also stopped `UserAgentService.VerifyAgent` logging
+the HG service token and made it null-safe.
+
+**Taken (this entry):**
+1. `ControlPlaneAccess` now logs each refusal (method, endpoint family,
+   source address, what to do), throttled to one line per source address +
+   endpoint per minute (bounded table) because these ports face the
+   internet, plus one startup line per process with the trusted-address
+   count (list at Debug). Covers the address check, the script-marker
+   check and privileged IMs.
+2. `ControlPlaneTrustedHosts` is now documented in `OpenSim.ini.example`,
+   `OpenSimDefaults.ini` and both Robust examples (it was undocumented), and
+   a new operator guide `HARDENING.md` covers what is protected, how to read
+   a refusal, multi-machine setup and a deployment checklist.
+3. `VerifyAgent` no longer logs either side of the token comparison (our
+   `Robust.log` printed the full token at Debug) and is null-safe;
+   `LocateUser` gets the same null guard.
+Build clean. Not deployed - a deploy needs Robust plus every region
+restarted, so batch it with anything else that comes up.
+
+**Checked and not taken:** LSL inf/nan parse and invariant culture (already
+present); vanilla PR #62 HGFriendsService (already ported, more completely);
+YEngine best-effort state restore (already ported); Tranquillity #201 J2K
+fix (specific to their CSJ2K encoder configuration - we use the native
+`OpenJPEG.EncodeFromImage`); both ConciergeModule commits (the module is
+compiled but enabled in no ini); vanilla's "cosmetics on avatar picks"
+(`f0084efb12`), which makes the server require `CreatorId`/`PickId` while the
+region-side sender in `UserProfileModule.cs` still sends `creatorId`/`pickId`
+- a key mismatch with no benefit. Homeworldz is a from-scratch C++ server
+(reference only).
+
+**A correction to the 2026-09-23 profile-gate decision.** We skipped
+Tranquillity's profile JSON-RPC gate because I said viewers call those
+endpoints directly. That was inferred from the handlers being registered on
+`MainServer.Instance` and never checked against the caller. Checked now: every
+`rpc.JsonRpcRequest(...)` in `UserProfileModule.cs` is issued by the region
+(to `ProfileServerUri` for local avatars, the home grid's `ProfileServerURI`
+for foreign ones). The viewer never sends it. On a single-machine grid the
+callers are same-box regions, which the auto-discovered trust covers, so
+resident profile editing would keep working. The real cost is narrower: a
+resident visiting another grid could not edit or sync private notes,
+preferences or profile writes through that foreign region. Left open pending
+that decision (now in `ROADMAP.md`).
+
+---
+
+## Concierge module: adopted, hardened and expanded (2026-09-26)
+
+Vanilla OpenSim's `ConciergeModule` (an optional region module, off by default,
+enabled nowhere on Casperia) is now a supported Confluence feature. Asked what
+to build on top of it, the answer was all four ideas offered - smarter
+greetings, web-portal-editable welcome text, working chat commands, and
+estate-manager visitor notices - enabled on every region.
+
+**What the original really was.** Reading it properly corrected something I
+had told the user: it does *not* answer chat commands. `concierge_channel` was
+parsed and never used. It greeted from a flat file, announced arrivals and
+departures in local chat, could POST an attendee list to a URL, and could (opt-in)
+replace the chat module to make say/shout region-wide. Bugs found in it: the
+`DEFAULT` welcome file was never read (a `return` inside the loop that ran after
+the first candidate whether or not it existed); a welcome line containing braces
+threw a `FormatException`; the password-protected XML-RPC welcome upload only
+checked the password *if one was set* and the shipped default was the public
+string `SECRET`; the broker XML was built unescaped. The two recent vanilla
+commits (`6f2bfad74d`, `c153869ab4`, "untested" by their author) were taken in
+spirit: the XML-RPC handler is registered once in `PostInitialise` rather than per
+region, say/shout range is advertised when replacing chat, and the chat handlers
+are null-safe.
+
+**Region side** (`OpenSim/Region/OptionalModules/Avatar/Concierge/`, now split into
+`ConciergeModule.cs`, `.Commands.cs`, `.Notices.cs`, `ConciergeTemplate.cs`,
+`ConciergeContentClient.cs`):
+- Greeting by audience - returning resident, new resident (account younger than
+  `new_resident_days`), Trial Member (the existing `AccountMembershipHelper`
+  badge), Hypergrid visitor - through `[new]`/`[trial]`/`[hg]` sections in the text
+  with a fallback chain, and named tokens (`{displayname}`, `{count}`, `{grid}`,
+  `{estate}`, `{owner}`...) alongside the original `{0}/{1}/{2}`. Unknown or stray
+  braces are left as written instead of throwing.
+- Arrival/departure announcements deduplicated (a departure is announced only for
+  an arrival that was), and the greeting runs off the region's event thread.
+- Chat commands on `concierge_channel` (default moved to 4242 so it does not
+  collide with common HUD channels): `help`, `who`, `info`, `rules`, `welcome`,
+  `staff`. Private replies, one command per avatar per two seconds.
+- Estate-manager notices: an object-style IM (the shape `llInstantMessage` sends,
+  with the region's SLURL in the binary bucket as a teleport link) to owner and
+  managers who are *online* (checked through the presence service, so nobody
+  gets an offline message), audiences configurable, once per avatar per ten
+  minutes. Checked against Firestorm's `IM_FROM_TASK` handling: it shows as an
+  object IM under the sender name, is muted by the session id (so a manager can
+  mute one region's notices), and is dropped in Do Not Disturb.
+- The XML-RPC upload now needs a real private password (empty or `SECRET` is
+  refused with a logged warning), compares it in constant time, and sanitizes the
+  region name used as a file name; broker XML is escaped and posted with
+  `HttpClient`.
+
+**Robust and portal side.** Regions cannot read the grid settings table, so a new
+`ConciergeServiceConnector` (`OpenSim/Server/Handlers/Concierge/`) serves
+`GET /concierge/<region-uuid>` from the private port: welcome, rules, grid name and
+three switches (module active, announce arrivals, notify managers), reading only
+`concierge.*` keys plus `GridName`, region value first, then the grid-wide default.
+The portal gets a per-region editor (My Regions > Concierge: welcome, rules,
+switches, and the people last seen in the region in the past week) and an admin
+defaults page (Admin > Grid Settings > Concierge). "Last seen here" comes from a
+new optional `IRegionVisitorQuery` implemented by `GridUserService` (kept off
+`IGridUserService` so no other implementer had to change - the lesson from the
+`IsKnownTravelingAgent` addition), using the same scan-and-filter pattern as the
+existing bulk queries. `WebInterfaceServiceConnector` became `partial` so this
+lives in its own file. Estate owners and grid admins only; a region's edit reaches
+it within `content_cache_seconds` (60) with no restart, and if Robust is
+unreachable a region keeps its last copy and its ini defaults.
+
+**Verified how.** A scratch harness compiled the pure logic and the Robust
+handler against the built assemblies with a fake settings store: 54 checks
+(section selection and fallbacks, brace safety, token casing, length limit, JSON
+round trip including newlines and unicode, region override vs default, unset flags
+omitted, only `concierge.*` and `GridName` ever read, every key fits the table's
+64-character column). Reading the code against the real callers also caught a bug
+that no unit test would have: viewer chat sets `OSChatMessage.Sender` but leaves
+`SenderUUID` empty (it is only filled for chat from the world), so the command
+handler, which first keyed on `SenderUUID`, would have ignored every command from a
+real viewer. **Not yet exercised in a running region or through a real browser** -
+that needs the deploy.
+
+**Things that bit, for next time:**
+- `OpenSim.Region.OptionalModules.csproj` and `OpenSim.Server.Handlers.csproj` list
+  their source files explicitly (generated from `prebuild.xml`, gitignored). A new
+  `.cs` file is invisible to a local build until it is added to that list or
+  `runprebuild` is re-run; a fresh clone regenerates it. The files use CRLF, so a
+  scripted edit must match that.
+- The Robust templates had no `[GridSettingsService]` section at all (only
+  Casperia's live ini did), so a fresh install had no admin settings pages. Added
+  to both `Robust.ini.example` and `Robust.HG.ini.example`, along with the
+  `ConciergeServiceConnector` line.
+- `OpenSimDefaults.ini`'s `[Concierge]` section is rewritten and documented (it
+  used to ship `password = SECRET`); `INWORLD_COMMANDS.md` lists the commands, with
+  a `COMMANDS.md` beside the module.
+
+**Deploy plan (not done).** Needs, in one batched restart with the pending
+control-plane changes: the new/changed assemblies (`OpenSim.Region.OptionalModules`,
+`OpenSim.Server.Handlers`, `OpenSim.Services.Interfaces`,
+`OpenSim.Services.UserAccountService`, plus the earlier `OpenSim.Server.Base` and
+`OpenSim.Services.HypergridService`); the `ConciergeServiceConnector` line in the
+live `Robust.HG.ini`; and a `[Concierge]` block in `config-include/GridCommon.ini`,
+which every region includes, so all regions - Ranchero too, whenever it is next
+started - pick it up on their next restart. Per-region behavior is then controlled
+live from the portal. Because a value in `GridCommon.ini` overrides the same key in
+a region's own ini, per-region control is deliberately done through the portal and
+the `regions` regex, not per-region ini overrides.
+
+**Deployed 2026-09-26.** Six assemblies copied to the master folder and MD5-verified
+(`OpenSim.Region.OptionalModules`, `OpenSim.Server.Handlers`, `OpenSim.Services.Interfaces`,
+`OpenSim.Services.UserAccountService`, `OpenSim.Server.Base`, `OpenSim.Services.HypergridService`);
+`ConciergeServiceConnector` added to the live `Robust.HG.ini` and a `[Concierge]` block
+(`enabled = true`, `grid_name = "Casperia Prime"`, channel 4242, manager notices for
+`hg,new,trial`) to `config-include/GridCommon.ini`. Robust relaunched (endpoint loaded on the
+private port, answers `{"grid":"Casperia Prime"}` for an unknown region), then Restart All. The
+rolling restart only covers running regions, so the 9 that were already down were brought up with
+Start All afterwards (which also started Ranchero); all 15 regions logged
+`[Concierge]: initialized for <region>` on the new binaries. **Still to verify in-world:** welcome,
+arrival announcement, `/4242` commands, manager IM, and a portal edit reaching a region.
