@@ -25287,3 +25287,14 @@ textures), now its own ROADMAP item. (3) Cloud cause still unknown; the region a
 cloud safety net that fires on most arrivals. Method note: a full `find` over `fsassets` (205,748
 files, 15 GB) took over 10 minutes on the VHDX - avoid; a read-only DB query used a temporary
 option file so no credentials reach the transcript (file deleted afterwards).
+
+**Donor sync and Tranquillity feature scoping, 2026-09-26.** Re-fetched all remotes. Tranquillity
+itself had no new commits since the earlier fetch (Sasquatch mirrors it). Moved: vanilla OpenSim
+`origin/master` by two commits (`d3673b5525` cosmetics, `476efb083a` "remove old confusing code",
+whose message says the code is possibly broken and to wait before pulling - not taken), and
+DreamGrid `V7` by ~10 commits, all PayPal/`dtl-paypal` submodule work (real-world money, out of
+scope). Scoped Tranquillity's three open items against the real code and viewer source; conclusions
+are in ROADMAP: SSB (#207) is the one with real value and is the natural answer to the cloud-avatar
+class of bug, staged plan recorded, not started; AIS v3 (#207) scoped as lower priority, independent
+of SSB; Trusted Hypergrid (#200) decided not to port (registry and signing only, nothing enforces,
+no partner grids); `feature/schema_sync` is EF-Core-only, not applicable.

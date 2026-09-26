@@ -310,9 +310,64 @@ Web & Admin UI section rather than here.)*
 
 ## Planned, not started
 
-- **Tranquillity feature scoping.** Not yet assessed against Confluence:
-  AIS Inventory v3 + server-side appearance baking (their #207), Trusted
-  Hypergrid (#200), and the new `feature/schema_sync` branch.
+- **Server-side appearance baking (SSB) - from Tranquillity #207; scoped
+  2026-09-26, not started.** The region composes each avatar's bake itself
+  instead of relaying the viewer's, so "the viewer and region disagree
+  about which bake is current" (the suspected shape of the tabled
+  cloud-avatar bug) stops being possible for viewers that support it.
+  Viewer side verified against Firestorm source: `mCentralBakeVersion =
+  region_protocols & 1` (`llviewerregion.cpp:3321`), the appearance
+  service URL comes from the login response's `agent_appearance_service`
+  (`llstartup.cpp:5178`), and the viewer POSTs `cof_version` to the
+  `UpdateAvatarAppearance` cap (`llappearancemgr.cpp`). AyaneStorm shares
+  the Firestorm code path; CoolVL (old SL-1.x base) has no central-bake
+  code, so must be confirmed to keep working with the region flag off/on.
+  Tranquillity's pieces: `OpenSimNGC.Appearance.Baking` (standalone
+  compositor, 18 files + `avatar_lad.xml` + 56 TGA character masks, LGPL
+  with the Linden Lab linking exception - needs a third-party notice),
+  `ServerSideBaking` region module (7 files: RegionProtocols bit, cap,
+  cof handshake, orchestrator, bake index), Robust `AppearanceService` +
+  connector (serves `texture/<agent>/<channel>/<uuid>`), a login-response
+  advertisement, and AvatarService/ScenePresence changes. No AIS
+  dependency (their ADR-006: `cof_version` is the COF folder's `Version`).
+  Costs and risks: their tree is net10 + SkiaSharp + CoreJ2K.Skia,
+  Confluence is net8 (retarget or backport the library); the golden
+  fidelity fixtures are not committed upstream, so fidelity vs. the real
+  viewer bake is unproven here (can be rebuilt from Casperia's own
+  residents' viewer bakes, which are ordinary assets); it touches the
+  appearance save path, the highest-consequence code in the avatar
+  pipeline. Suggested order if approved: (1) port the library + tests,
+  compare its output to real viewer bakes offline; (2) region module and
+  Robust service behind a default-off `[Appearance]` switch, enabled on
+  one test region only; (3) live-test with Firestorm and AyaneStorm; only
+  then consider default-on. Worth doing mainly if the cloud bug returns.
+- **AIS Inventory API v3 - from Tranquillity #207; scoped 2026-09-26, not
+  started.** A region caps module (`AISv3Module`, 12 files) serving the
+  viewer's `InventoryAPIv3`/`LibraryAPIv3` (fetch, item/category
+  mutation with delta envelopes, SlamFolder, purge, library copy), plus an
+  `IInventoryService` folder-delete overload threaded through
+  XInventoryService, the local/remote connectors, HGInventoryBroker, the
+  HG inventory services and the XInventory in-connector. Benefit: faster,
+  more atomic outfit/COF and folder operations for Firestorm-family
+  viewers (the viewer already speaks it). Cost: real surface area across
+  the inventory stack, and the same net10-to-net8 adaptation. Not needed
+  by SSB. Lower priority than SSB; no user-facing problem here currently
+  asks for it.
+- **Trusted Hypergrid - from Tranquillity #200; scoped 2026-09-26, decided
+  NOT to port now.** As merged upstream it is a registry plus signing
+  layer: an Ed25519 grid keypair, a `hg_trusted_grids` table, signed
+  `link_region`/`get_region` calls and `hgtrust` console commands. Their
+  own design brief states that nothing enforces on the result yet
+  (Export-bit gating, per-tier region access and asset export are
+  unbuilt slices, `GridTrustContext` is never published, and only the
+  gatekeeper pair of XML-RPC calls is wired). It only classifies grids
+  that also run Tranquillity; every stock grid stays "Open". With no
+  partner grids on the same software and no enforcement, porting it today
+  adds a database table, a key and signing overhead for no behaviour
+  change. Revisit if upstream ships the enforcement slices or a partner
+  grid appears.
+- **Tranquillity `feature/schema_sync`.** Only touches their Entity
+  Framework Core model layer (out of scope, see below); nothing to port.
 - **RSA-key login authentication.** A protocol aimed at bot/proxy
   clients rather than mainstream viewers. No client in this project's
   own stack currently speaks it, so it isn't scheduled until there's a
