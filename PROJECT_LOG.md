@@ -25211,3 +25211,17 @@ rolling restart only covers running regions, so the 9 that were already down wer
 Start All afterwards (which also started Ranchero); all 15 regions logged
 `[Concierge]: initialized for <region>` on the new binaries. **Still to verify in-world:** welcome,
 arrival announcement, `/4242` commands, manager IM, and a portal edit reaching a region.
+
+**Open issue, 2026-09-26 (in-world test, not yet diagnosed).** `/4242` commands and arrival
+detection are confirmed working live (UFPGC: `Steven Easterwood enters UFPGC`, then the command
+reply). A grid-wide welcome set on the admin defaults page (Admin > Settings > Concierge) did
+**not** show in-world afterwards (`/4242 welcome`, and arrivals log `no welcome message for
+region UFPGC`). Two things were checked before stopping: Robust's `GET /concierge/<uuid>` for a
+made-up region ID returned only `{"grid":"Casperia Prime"}`, i.e. no default welcome was visible
+through the endpoint at that moment; and the region-side log line for "no welcome" is the correct
+empty-state message, so the region client itself is behaving. Not yet checked: whether the portal
+save actually wrote a `concierge.welcome.default` row to `GridSettings` (save handler
+`HandleAdminSettingsConciergeSave`), whether the row key/kind matches what
+`ConciergeSettingKeys.Resolve` reads, and the 60-second region cache. Next step when picked up:
+read the `GridSettings` table for `concierge.*` keys, save again from the page, re-query the
+endpoint, then `/4242 welcome`. The user will retest.
