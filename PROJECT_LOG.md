@@ -25346,3 +25346,34 @@ for the region, audience not in `notify_audiences`, already told within 10 minut
 module, nobody online) and who it told, at Debug level with the `[Concierge]` tag, so a missing IM can
 be diagnosed from the region log. This part is region-side (`OpenSim.Region.OptionalModules`), so
 deploying it needs Restart All in addition to the Robust restart for the built-in text.
+
+**Concierge default semantics changed before the first deploy of it (2026-09-26).** After
+relaunching Robust with the built-in text, `/concierge/<region>` still returned no welcome or
+rules for any region, which means the grid-default rows exist and are saved empty (the old code
+also treated empty as unset, so the earlier loss of the welcome was most likely an empty save).
+With "saved empty = none" that would have silenced the greeting again. Now empty or never saved
+always means the built-in text, and a text of just `-` means "none" on purpose (grid or region).
+Harness 70/70. `OpenSim.Server.Handlers` re-copied to master; needs one more Robust restart before
+Restart All.
+
+**Concierge greeting verified live and `{people}` token added, 2026-09-26.** With the built-in text
+deployed, Jessica Starlight's arrival in Sandbox produced the full built-in welcome (tokens
+expanded), the second line and the arrival announcement; the manager-notice log correctly said she
+counts as a returning resident, which is not in `notify_audiences` (so no IM by design; a
+Trial/new/HG account is still needed to test the IM). Grammar fix: new `{people}` token renders
+"1 person" / "N people"; the built-in welcome and the default enter/leave announcements use it
+(`{count}` remains the plain number). Region and Robust assemblies (`OpenSim.Region.OptionalModules`,
+`OpenSim.Server.Handlers`) redeployed for this.
+
+**Concierge manager IM and audience greeting verified live, 2026-09-26.** With Jessica Starlight
+temporarily flagged Trial Member (direct `UserFlags` 0 -> 256 while Robust was down; reverted to 0
+afterwards, verified), her login to Sandbox produced: the `[new]` greeting via the `[trial]` ->
+`[new]` fallback ("Welcome to Casperia Prime, Jessica! You're new here..."), the arrival
+announcement with the new grammar ("now 2 people in this region"), and - to the estate owner - an
+object-style IM `Concierge (Sandbox): Jessica Starlight (Trial Member) arrived in Sandbox.` The region log
+shows the decision path (`telling <owner> that Jessica Starlight (Trial Member) arrived in Sandbox`),
+and earlier a returning resident's arrival correctly logged `not notifying managers ... returning
+resident, which is not in notify_audiences`. Verified: welcome, rules and /4242 commands, portal-edited
+default, built-in defaults, `{people}`, announcements, audience section fallback, manager IM. Not yet
+exercised live: the `[hg]` section (needs a Hypergrid visitor), a per-region portal override, and the
+per-region "notices off" switch.

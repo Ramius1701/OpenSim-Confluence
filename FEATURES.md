@@ -598,7 +598,7 @@ returning resident, a brand-new resident (an account younger than
 `[new]`, `[trial]` and `[hg]` sections in the text with everything else as
 the default, and it can name them by display name, say how many people are
 here, and mention the region, estate, owner and grid (`{displayname}`,
-`{count}`, `{region}`, `{estate}`, `{owner}`, `{grid}`...). Unknown or stray
+`{count}`, `{people}` ("1 person" / "3 people"), `{region}`, `{estate}`, `{owner}`, `{grid}`...). Unknown or stray
 braces in a text are left as written, so a welcome can never fail to send.
 
 Arrivals and departures can be announced in local chat, a departure is only
@@ -627,8 +627,9 @@ old flat welcome files still work when the portal has no text for a region.
 A grid that has not written its own text still greets people: a built-in
 welcome (with `[new]` and `[hg]` variants) and a short set of house rules are
 used until the grid default is saved in the portal, where they are shown ready
-to edit. Saving an empty grid default turns that message off on purpose;
-a region's own text always wins.
+to edit. An empty box means the same as never saved, so it can't silence
+the greeting by accident; saving just `-` turns a message off on purpose, for
+the whole grid or for one region. A region's own text always wins.
 
 ### Region stability
 

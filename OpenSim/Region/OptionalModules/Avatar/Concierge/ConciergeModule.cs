@@ -92,8 +92,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
         private Regex m_regions = null;
         private string m_welcomes = null;
         private int m_conciergeChannel = 4242;
-        private string m_announceEntering = "{displayname} enters {region} (now {count} visitors in this region)";
-        private string m_announceLeaving = "{displayname} leaves {region} (back to {count} visitors in this region)";
+        private string m_announceEntering = "{displayname} enters {region} (now {people} in this region)";
+        private string m_announceLeaving = "{displayname} leaves {region} (back to {people} in this region)";
         private bool m_announceArrivals = true;
         private int m_newResidentDays = 7;
         private string m_xmlRpcPassword = String.Empty;
@@ -562,6 +562,9 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
                         return m_whoami;
                     case "count":
                         return count;
+                    case "people":
+                        // "1 person" / "3 people": the count with the right noun.
+                        return count == "1" ? "1 person" : count + " people";
                     case "grid":
                     {
                         // The grid's own name as set in the web portal, else the ini value.

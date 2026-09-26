@@ -22,6 +22,6 @@ private: only the avatar who asked receives them.
 | `/4242 staff` | The estate owner and managers who are online right now, and which region each is in; nobody is listed if offline |
 
 `rules` and `welcome` use the same fill-in details and audience sections as the
-welcome text: `{displayname}`, `{name}`, `{firstname}`, `{region}`, `{count}`,
+welcome text: `{displayname}`, `{name}`, `{firstname}`, `{region}`, `{count}`, `{people}`,
 `{grid}`, `{estate}`, `{owner}`, `{concierge}`, and `[new]`, `[trial]`, `[hg]`
 sections.

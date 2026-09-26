@@ -86,7 +86,7 @@ namespace OpenSim.Server.Handlers.Concierge
         // turning the concierge on greets people straight away. Both are
         // ordinary templates (see the welcome text help in the web portal).
         public const string BuiltInWelcome =
-            "Welcome to {grid}, {displayname}! You are in {region} with {count} people here.\n" +
+            "Welcome to {grid}, {displayname}! You are in {region} with {people} here.\n" +
             "Type /4242 help to see what I can do.\n" +
             "\n" +
             "[new]\n" +
@@ -110,17 +110,27 @@ namespace OpenSim.Server.Handlers.Concierge
 
         /// <summary>
         /// Text for a region: its own value if it has one, else the grid-wide
-        /// default. A grid default that was never saved means the built-in
-        /// text; one that was saved empty means "none" on purpose.
+        /// default, else the built-in text. Empty (or never saved) always
+        /// means "not set here", so an accidentally emptied box can never
+        /// silence the greeting; a text that is just "-" means "none" on
+        /// purpose, for a region or for the whole grid.
         /// </summary>
         public static string ResolveText(IGridSettingsService settings, string kind, UUID regionID)
         {
             string own = settings.Get(Key(kind, regionID));
-            if (!string.IsNullOrEmpty(own))
-                return own;
+            if (!string.IsNullOrWhiteSpace(own))
+                return IsNone(own) ? string.Empty : own;
 
             string gridWide = settings.Get(Key(kind, Default));
-            return gridWide ?? BuiltIn(kind);
+            if (!string.IsNullOrWhiteSpace(gridWide))
+                return IsNone(gridWide) ? string.Empty : gridWide;
+
+            return BuiltIn(kind);
+        }
+
+        public static bool IsNone(string text)
+        {
+            return text != null && text.Trim() == "-";
         }
 
         /// <summary>The switches are stored as "true"/"false"; anything else is unset.</summary>

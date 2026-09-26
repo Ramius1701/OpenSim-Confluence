@@ -53,10 +53,11 @@ namespace OpenSim.Server.Handlers.WebInterface
         // down" (for a region the grid default, for the grid default the
         // module's own ini setting).
         // For the grid-defaults page: a default that was never saved shows the
-        // built-in text (so it can be read and edited); one saved empty stays empty.
+        // built-in text (so it can be read and edited), and so does one saved empty.
         private string ConciergeDefaultText(string kind, string scope)
         {
-            return m_GridSettingsService.Get(ConciergeSettingKeys.Key(kind, scope)) ?? ConciergeSettingKeys.BuiltIn(kind);
+            string saved = m_GridSettingsService.Get(ConciergeSettingKeys.Key(kind, scope));
+            return string.IsNullOrWhiteSpace(saved) ? ConciergeSettingKeys.BuiltIn(kind) : saved;
         }
 
         private static string ConciergeFlagSelect(string name, string current, string inheritLabel)
@@ -84,7 +85,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private const string ConciergeTextHelp =
             "<p class=\"news-meta\">One chat line per line. Fill in details with <code>{displayname}</code>, <code>{name}</code>, " +
-            "<code>{firstname}</code>, <code>{region}</code>, <code>{count}</code> (people here), <code>{grid}</code>, " +
+            "<code>{firstname}</code>, <code>{region}</code>, <code>{count}</code> (a number), <code>{people}</code> (\"1 person\" or \"3 people\"), <code>{grid}</code>, " +
             "<code>{estate}</code>, <code>{owner}</code> and <code>{concierge}</code>. Show a different text to some visitors by " +
             "starting a section on its own line: <code>[new]</code> (a new resident), <code>[trial]</code> (a Trial Member), " +
             "<code>[hg]</code> (a visitor from another grid); everything else, or text before any section, is the " +
@@ -303,8 +304,8 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append(SettingsMessageBanner(request))
               .Append("<p>What every region uses until its estate owner sets their own in My Regions. The module itself is turned on ")
               .Append("in each region's configuration (<code>[Concierge] enabled = true</code>).</p>")
-              .Append("<p>Until you save something here the grid uses the built-in text shown below. Edit and save to change it; ")
-              .Append("saving an empty box turns that message off for regions that don't set their own.</p>");
+              .Append("<p>Until you save something here the grid uses the built-in text shown below (an empty box means the same). ")
+              .Append("Edit and save to change it. To turn a message off, save just a single <code>-</code>. A region's own text always wins.</p>");
 
             sb.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/settings/concierge/save\">");
 
