@@ -25236,3 +25236,12 @@ contexts, PartnerRequest and PaymentOrder models), which Confluence does not hav
 Seven stale Tranquillity branches (`dev-future`, `feature/fix-lslhttp`, `feature/robust-di`,
 `helper/xinv`, `moneyservice_di`, both release branches) were deleted upstream and pruned locally.
 Profile JSON-RPC gate approved by the owner 2026-09-26 for porting after Concierge testing.
+
+**Concierge welcome verified live, 2026-09-26.** The earlier "grid-wide welcome not showing"
+report resolved itself on retest: with a grid-default welcome and rules saved in the admin page,
+UFPGC delivered the resident greeting with tokens expanded (`Welcome to Casperia Prime, <name>! You
+are in UFPGC with 2 people here.`), the second welcome line, and the rules text with `{owner}`
+expanded. That confirms the full portal -> GridSettings -> Robust `/concierge` endpoint -> region
+cache -> in-world chat path for the grid default. (The first attempt likely predated the save or
+the 60 s region cache; not separately diagnosed.) Still untested live: `[new]`/`[trial]`/`[hg]`
+audience sections, per-region override, arrival announcements as seen by others, and manager IMs.
