@@ -25298,3 +25298,20 @@ are in ROADMAP: SSB (#207) is the one with real value and is the natural answer 
 class of bug, staged plan recorded, not started; AIS v3 (#207) scoped as lower priority, independent
 of SSB; Trusted Hypergrid (#200) decided not to port (registry and signing only, nothing enforces,
 no partner grids); `feature/schema_sync` is EF-Core-only, not applicable.
+
+**Empty texture assets: cause found, fixed in code, NOT yet deployed or committed (2026-09-26).**
+Traced the 1,536 zero-data `fsassets` rows (hash = SHA-256 of nothing) to two writers. Mesh
+uploads: `BunchOfCaps` stored every `texture_list` entry, but Firestorm sends an empty binary for a
+texture it could not include (`llmeshrepository.cpp:2993`), so the server created an empty texture
+asset and pointed the model's faces at it (each `.dae` upload in the data shows a batch created in
+the same second, ~15% empty). IAR loads: `InventoryArchiveReadRequest.LoadAsset` stored zero-length
+archive files verbatim (name "From IAR"). Both were vanilla behaviour. Aggravating: FSAssets
+`Store` keeps the first row per ID, so an empty row could never be replaced by a correct import.
+Changes: `BunchOfCaps` skips empty entries (slot kept, face keeps `WHITE_TEXTURE`, no inventory item);
+`LoadAsset` skips and warns on empty data (counts as a failed restore); `FSAssetHashes.Empty`
+constant added in `IFSAssetData.cs`; `MySQLFSAssetData.Store` and `PGSQLFSAssetData.Store` replace
+the hash when the existing row is empty and new data is real. Solution builds. Verification still
+to do after a deploy: upload a small textured mesh in Firestorm (texture upload on) and confirm no
+new empty-hash rows; load an IAR containing an empty file and confirm the warning; re-store real
+data over one existing empty row and confirm it serves. Existing empty rows cannot be recovered
+from the server. Data method: read-only queries via a temporary mysql option file (deleted after).

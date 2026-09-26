@@ -559,6 +559,16 @@ namespace OpenSim.Region.CoreModules.Avatar.Inventory.Archiver
 
             //m_log.DebugFormat("[INVENTORY ARCHIVER]: Importing asset {0}, type {1}", uuid, assetType);
 
+            // An IAR written by a grid that no longer had the asset can carry a
+            // zero-length file for it. Storing that creates an asset every viewer
+            // fails to fetch (and, before the FSAssets fix, one a later good
+            // import could not replace), so skip it and say so.
+            if (data == null || data.Length == 0)
+            {
+                m_log.WarnFormat("[INVENTORY ARCHIVER]: Skipping empty asset {0} in the archive (no data to import)", assetId);
+                return false;
+            }
+
             AssetBase asset = new(assetId, "From IAR", assetType, UUID.ZeroString)
             {
                 Data = data

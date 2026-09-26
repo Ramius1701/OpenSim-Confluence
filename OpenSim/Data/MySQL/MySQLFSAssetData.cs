@@ -247,10 +247,22 @@ namespace OpenSim.Data.MySQL
 
                 }
 
-//                return false;
-                // if the asset already exits
-                // assume it was already correctly stored
-                // or regions will keep retry.
+                // The asset already exists: assume it was correctly stored, or
+                // regions will keep retrying - except a row that holds no data at
+                // all, which is never correct. A later store of real data for the
+                // same ID (say, a good re-import) replaces it.
+                if (oldhash == FSAssetHashes.Empty && hash != FSAssetHashes.Empty)
+                {
+                    using (MySqlCommand heal = new MySqlCommand())
+                    {
+                        heal.Parameters.AddWithValue("?id", meta.ID);
+                        heal.Parameters.AddWithValue("?hash", hash);
+                        heal.CommandText = String.Format("update {0} set hash = ?hash, access_time = UNIX_TIMESTAMP() where id = ?id", m_Table);
+                        ExecuteNonQuery(heal);
+                    }
+                    m_log.InfoFormat("[FSAssets] Replaced empty data for asset {0}", meta.ID);
+                }
+
                 return true;
             }
             catch(Exception e)

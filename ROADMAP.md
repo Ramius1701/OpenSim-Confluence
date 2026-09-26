@@ -56,17 +56,26 @@ gap today. For what already exists, see `FEATURES.md`.
   the bake image. Next step is still live capture the next time it
   happens, now also noting whether `[GETASSET]` 404s appear for that
   avatar's session.
-- **1,536 texture assets stored with zero bytes of data (found 2026-09-26
-  while chasing the cloud bug).** `fsassets` rows whose hash is the
-  SHA-256 of empty data. Viewers get a 404 (`[GETASSET]: asset with empty
-  data`, 10-20 new log lines a day). Names show where they came from:
-  696 "From IAR" (mostly created 2025-08/09), and ~800 named like mesh
-  uploads (`*.dae`, `prim0-mesh`), created 2026-04 and 2026-06. None since
-  July. Textures on that content show grey/blank. Not yet known whether
-  the IAR/mesh-upload code stored empty data or the source had none;
-  they cannot be recovered from the server, only re-uploaded. To do:
-  find the writer (IAR load path and the mesh-upload texture path), and
-  give operators a way to list affected assets.
+- **1,536 texture assets stored with zero bytes of data - cause found and
+  fixed in code 2026-09-26, awaiting deploy; the existing rows stay
+  broken.** Two writers, both storing whatever bytes arrived: (1) the mesh
+  upload (`BunchOfCaps`, ~800 rows): Firestorm sends an *empty* binary in
+  `texture_list` for a texture it could not or did not include
+  (`llmeshrepository.cpp:2993`, "empty binary to indicate texture is not
+  included"), and the server stored it as a real texture asset that the
+  model's faces then referenced - grey faces; (2) IAR load (696 rows,
+  named "From IAR"): a zero-length file in the archive was stored as-is.
+  Compounding it, FSAssets keeps the *first* row for an ID and ignores
+  later stores, so a good re-import could never replace an empty row. Fixes:
+  empty mesh-upload textures are no longer stored (the face keeps the
+  default white texture and the image indexes still line up); IAR load
+  skips zero-length assets with a warning; both FSAssets data plugins
+  (MySQL, PostgreSQL) now let real data replace a row whose hash is the
+  empty-data hash. The 1,536 existing rows have no data anywhere on the
+  grid - the affected meshes need their textures re-applied, or the IAR
+  re-imported from a good source (the replace-empty fix makes a re-import
+  work). Not exercised live yet: needs a mesh upload with textures and an
+  IAR load after the deploy.
   **To actually catch this next time**: reproduce live - when it
   happens again, tail the affected region's log and check CAPS/circuit
   registration state in real time, before rebaking clears the

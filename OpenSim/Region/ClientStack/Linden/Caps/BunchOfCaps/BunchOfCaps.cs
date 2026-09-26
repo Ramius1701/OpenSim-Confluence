@@ -744,8 +744,20 @@ namespace OpenSim.Region.ClientStack.Linden
 
                     for (int i = 0; i < texture_list.Count; i++)
                     {
+                        byte[] textureData = texture_list[i].AsBinary();
+                        if (textureData == null || textureData.Length == 0)
+                        {
+                            // The viewer sends an empty entry for a texture it could not
+                            // include (or chose not to). Storing that would create an asset
+                            // with no data that every viewer then fails to fetch, so treat
+                            // it as "no texture": the face keeps the default white one.
+                            // The slot is kept so the faces' image indexes still line up.
+                            textures.Add(Primitive.TextureEntry.WHITE_TEXTURE);
+                            continue;
+                        }
+
                         AssetBase textureAsset = new AssetBase(UUID.Random(), assetName, (sbyte)AssetType.Texture, creatorIDstr);
-                        textureAsset.Data = texture_list[i].AsBinary();
+                        textureAsset.Data = textureData;
                         if (istest)
                             textureAsset.Local = true;
                         m_assetService.Store(textureAsset);

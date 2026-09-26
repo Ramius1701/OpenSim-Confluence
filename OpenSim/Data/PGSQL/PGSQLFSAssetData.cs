@@ -159,6 +159,10 @@ namespace OpenSim.Data.PGSQL
                 AssetMetadata existingAsset = Get(meta.ID, out oldhash);
 
                 string query = String.Format("UPDATE {0} SET \"access_time\" = :access_time WHERE \"id\" = :id", m_Table);
+                // A row holding no data at all is never correct: a later store of real
+                // data for the same ID replaces its hash (see FSAssetHashes.Empty).
+                if (existingAsset != null && oldhash == FSAssetHashes.Empty && hash != FSAssetHashes.Empty)
+                    query = String.Format("UPDATE {0} SET \"hash\" = :hash, \"access_time\" = :access_time WHERE \"id\" = :id", m_Table);
                 if (existingAsset == null)
                 {
                    query = String.Format("insert into {0} (\"id\", \"type\", \"hash\", \"asset_flags\", \"create_time\", \"access_time\") values ( :id, :type, :hash, :asset_flags, :create_time, :access_time)", m_Table);

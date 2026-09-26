@@ -33,6 +33,15 @@ namespace OpenSim.Data
 {
     public delegate string FSStoreDelegate(AssetBase asset, bool force);
 
+    // SHA-256 of zero bytes. An FSAssets row with this hash is an asset that
+    // was stored with no data at all (an empty texture from a mesh upload, an
+    // empty file in an IAR): viewers get a 404 for it, and because Store keeps
+    // the first row for an ID, it would otherwise stay empty forever.
+    public static class FSAssetHashes
+    {
+        public const string Empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    }
+
     public interface IFSAssetDataPlugin : IPlugin
     {
         bool[]          AssetsExist(UUID[] uuids);
