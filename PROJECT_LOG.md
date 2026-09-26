@@ -25245,3 +25245,22 @@ expanded. That confirms the full portal -> GridSettings -> Robust `/concierge` e
 cache -> in-world chat path for the grid default. (The first attempt likely predated the save or
 the 60 s region cache; not separately diagnosed.) Still untested live: `[new]`/`[trial]`/`[hg]`
 audience sections, per-region override, arrival announcements as seen by others, and manager IMs.
+
+**Profile JSON-RPC gate ported, 2026-09-26 (built and unit-checked, NOT yet deployed).** Ported
+from Tranquillity's #210 (`JsonRpcProfileHandlers` + `ControlPlaneAccess.AuthorizeJsonRpc`), adapted
+to Confluence's own `ControlPlaneAccess` (auto-discovered trust, throttled refusal logging).
+Changes: `BaseHttpServer` stamps each JSON-RPC request with the caller's address and whether it
+carried `X-SecondLife-Shard` (assigned after parsing, so a caller cannot forge either key; key names
+are literals because `OpenSim.Framework.Servers.HttpServer` cannot reference `OpenSim.Server.Base`);
+`ControlPlaneAccess.AuthorizeJsonRpc` + shared constants; `JsonRpcProfileHandlers` now takes a
+`ControlPlaneAccess` and gates 11 methods (classified update/delete, picks update/delete, notes
+request/update, properties update, interests update, preferences request/update, user-app-data
+update); both construction sites updated (Robust `UserProfilesConnector`, region
+`LocalUserProfilesServicesConnector`). Public reads (properties, picks, classifieds, interests,
+image assets, app-data request) stay open. Scratch harness: 7 new checks (loopback and ::1 allowed;
+foreign, script-marked-even-from-loopback, missing and garbage address all refused with
+MethodNotFound), 61/61 total. Whole solution builds. **Deploy needs**: `OpenSim.Framework.Servers.
+HttpServer`, `OpenSim.Server.Base`, `OpenSim.Server.Handlers`, `OpenSim.Region.CoreModules` - and
+because the HTTP server assembly is shared, Robust plus every region restart. Verify after deploy
+with a real profile edit (about text, a note on another avatar) and check for no
+`Refusing JSON-RPC` lines from own regions. ROADMAP entry removed (shipped once deployed).

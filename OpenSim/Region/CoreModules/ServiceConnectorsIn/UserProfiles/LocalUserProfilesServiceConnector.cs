@@ -133,7 +133,7 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Profile
 
             Enabled = true;
 
-            JsonRpcProfileHandlers handler = new JsonRpcProfileHandlers(ServiceModule);
+            JsonRpcProfileHandlers handler = new JsonRpcProfileHandlers(ServiceModule, new ControlPlaneAccess(source));
 
             Server.AddJsonRPCHandler("avatarclassifiedsrequest", handler.AvatarClassifiedsRequest);
             Server.AddJsonRPCHandler("classified_update", handler.ClassifiedUpdate);

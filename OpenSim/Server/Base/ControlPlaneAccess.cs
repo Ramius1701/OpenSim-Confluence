@@ -36,6 +36,7 @@ using System.Threading;
 using log4net;
 using Nini.Config;
 using OpenMetaverse;
+using OpenMetaverse.StructuredData;
 using OpenSim.Framework.Servers.HttpServer;
 
 namespace OpenSim.Server.Base
@@ -213,6 +214,50 @@ namespace OpenSim.Server.Base
                 string.Format("[CONTROL PLANE ACCESS]: Refusing {0} {1} from {2}: source address is not a trusted control-plane host. If this is one of your own servers (a region, or Robust), add its address to ControlPlaneTrustedHosts.",
                     request.HttpMethod, family, remote.Address));
             response.StatusCode = (int)blockedStatus;
+            return false;
+        }
+
+        // JSON-RPC variant of Authorize, for the sensitive profile methods.
+        // BaseHttpServer stamps every JSON-RPC request with the caller's
+        // address and whether it carried the in-world-script marker header
+        // (these key names must match the literals in BaseHttpServer, which
+        // cannot reference this assembly). A refusal answers "Method not
+        // found" so a scanner learns nothing about which methods exist.
+        public const string JsonRpcRemoteAddressKey = "__opensim_remote_address";
+        public const string JsonRpcLlHttpRequestKey = "__opensim_llhttprequest";
+
+        public bool AuthorizeJsonRpc(OSDMap json, ref JsonRpcResponse response)
+        {
+            string method = json != null && json.TryGetValue("method", out OSD m) ? m.AsString() : "?";
+
+            if (json != null && json.TryGetValue(JsonRpcLlHttpRequestKey, out OSD script) && script.AsBoolean())
+            {
+                LogRefusal("rpcscript|" + method,
+                    string.Format("[CONTROL PLANE ACCESS]: Refusing JSON-RPC {0}: in-world script HTTP requests are never allowed on control-plane methods.", method));
+                return MethodNotFound(ref response);
+            }
+
+            if (json == null || !json.TryGetValue(JsonRpcRemoteAddressKey, out OSD remote)
+                || !IPAddress.TryParse(remote.AsString(), out IPAddress address))
+            {
+                LogRefusal("rpcnoaddr|" + method,
+                    string.Format("[CONTROL PLANE ACCESS]: Refusing JSON-RPC {0}: caller address unknown.", method));
+                return MethodNotFound(ref response);
+            }
+
+            if (IsTrustedAddress(address))
+                return true;
+
+            LogRefusal("rpcaddr|" + address + "|" + method,
+                string.Format("[CONTROL PLANE ACCESS]: Refusing JSON-RPC {0} from {1}: source address is not a trusted control-plane host. If this is one of your own servers (a region, or Robust), add its address to ControlPlaneTrustedHosts. (A resident visiting another grid also reaches this: their private notes/preferences are unavailable there by design.)",
+                    method, address));
+            return MethodNotFound(ref response);
+        }
+
+        private static bool MethodNotFound(ref JsonRpcResponse response)
+        {
+            response.Error.Code = ErrorCode.MethodNotFound;
+            response.Error.Message = "Method not found";
             return false;
         }
 

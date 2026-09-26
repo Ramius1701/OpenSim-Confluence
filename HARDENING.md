@@ -119,13 +119,25 @@ Transaction callbacks now require a random per-transaction key, and OAuth linkin
 validates a persisted one-shot `state`. Back up the database first: the migrations
 add `CallbackKey` (`GloebitTransactions`) and `PendingAuthState` (`GloebitUsers`).
 
-## Not applied yet
+## Profile JSON-RPC gate
 
-The sensitive profile JSON-RPC methods (private notes, preferences/email, profile
-writes) are **not** gated to trusted callers yet. The calls come from regions, not
-viewers, so gating is feasible; the open question is that a resident visiting
-*another* grid could no longer edit or sync those private items through that
-foreign region. Public profile viewing would be unaffected.
+The sensitive profile methods are refused unless the caller is a trusted control-plane
+host: private notes (read and write), preferences/email, profile and interests writes,
+picks and classifieds writes and deletes, and user-data writes. A refusal answers
+"Method not found", so a scanner learns nothing about which methods exist, and the
+log gets one throttled `[CONTROL PLANE ACCESS] Refusing JSON-RPC ...` line per
+source and method per minute. Public profile *reads* (properties, picks, classifieds,
+interests, image assets) stay open, so profiles remain viewable from other grids.
+
+The calls are made by each region's profile module for the viewer, not by viewers, so
+on a normal grid the callers are your own region processes and are covered by the same
+trusted-host discovery as the rest of this page. Requests carrying the in-world-script
+HTTP marker are refused even from a trusted address.
+
+**Trade-off:** a resident of this grid visiting *another* grid has that foreign region
+call your profile server, from an address you do not trust. Their private notes and
+preferences are unavailable, and profile edits made there do not save, until they are
+back on a trusted region. This matches upstream Tranquillity's choice.
 
 ## Deployment checklist
 

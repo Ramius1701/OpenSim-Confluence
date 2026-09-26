@@ -1489,6 +1489,13 @@ namespace OpenSim.Framework.Servers.HttpServer
                     {
                         try
                         {
+                            // Stamped here (overwriting anything the caller sent under these
+                            // names) so handlers can gate on the real source of the call.
+                            // The key names are literals: this assembly cannot reference
+                            // OpenSim.Server.Base, where ControlPlaneAccess defines them.
+                            jsonRpcRequest["__opensim_remote_address"] = OSD.FromString(request.RemoteIPEndPoint.Address.ToString());
+                            jsonRpcRequest["__opensim_llhttprequest"] = OSD.FromBoolean(request.Headers["X-SecondLife-Shard"] != null);
+
                             if(!method(jsonRpcRequest, ref jsonRpcResponse))
                             {
                                 // The handler sent back an unspecified error

@@ -677,6 +677,13 @@ multi-machine setup, deployment checklist) is in `HARDENING.md`.
   warning naming the offending address (throttled to one line per source
   and endpoint per minute so a scanner can't flood the log), and each
   process logs its trusted-address count at startup.
+- **Profile JSON-RPC gate** — the sensitive profile methods (private
+  notes, preferences/email, profile/interests/picks/classifieds/user-data
+  writes and deletes) now refuse callers that aren't trusted control-plane
+  hosts, answering "Method not found" and logging a throttled refusal.
+  Public profile reads stay open across grids. Cost: a resident visiting
+  another grid can't read or save private notes/preferences through that
+  foreign region.
 - **X-Forwarded-For trust fixed at the source** — the header is now
   only honored when the direct TCP peer is loopback, closing a
   source-IP spoofing gap that undermined every IP-based trust
