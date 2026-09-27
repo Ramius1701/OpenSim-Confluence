@@ -25531,3 +25531,28 @@ reaches "Startup complete" and loads Concierge, and no service fails to load. Th
 MySQL/MariaDB, the database Casperia itself runs. Not covered: the data-backend harness
 (`Tools/data-backend-check`) still tests only SQLite and PostgreSQL; the MySQL classes are the original
 ones and have not been put through the same method-by-method checks.
+
+## Pending fixes deployed to Casperia (2026-09-27)
+
+One batched deploy: Robust shut down by the owner, 186 DLL/PDB files copied from the Release build into
+`S:\Opensim\Casperia` and verified byte-for-byte, Robust relaunched (no warnings or errors, all migrations
+current), then Restart All from the Simulators page. All 15 regions re-registered with the grid between
+16:16 and 16:29. Deliberately left out of the copy: the WebRtc voice DLLs (they carry the owner's
+uncommitted ConfluenceVoice test on Sandbox), Gloebit, HoloPhysicsGuard and MoneyServer.
+
+What went live: the empty-texture fixes (mesh upload and IAR load), the Robust no-console fallback, the
+first-admin bootstrap fix, and the new SQLite/PostgreSQL data backends (inert on Casperia's MySQL).
+
+Log check of every region afterwards found nothing new: zero errors in nine regions; the rest showed only
+old, repeating errors (Tangle, UFPGC and Welcome Center script assets that are missing from the grid;
+GFC's known-lost WindowFrame mesh; Sandbox's ConfluenceVoice "viewer session 0000... not found", left for
+the voice work). Sandbox loaded ConfluenceVoice (WebRtcVoice) as intended. Welcome Center runs a
+third-party Vivox-compatible service (ThinkVox, thinkvox.cloud, configured in its own `[ThinkVox]` ini
+section); nothing in Confluence reads that section and voice there works.
+
+Found while checking: Sector_001 has `physics = ubODE` with `meshing = Meshmerizer` and ubODE logs "meshing
+option must be set to ubODEMeshmerizer" at every start (34 times since 2026-09-12). The ini was left alone
+on purpose; see the roadmap entry on making physics engines and meshers interchangeable.
+
+Still to be checked by the owner in-world: mesh upload with textures (no new empty-texture assets), an IAR
+containing an empty file, and the Concierge `[hg]` section, per-region override and notices-off switch.

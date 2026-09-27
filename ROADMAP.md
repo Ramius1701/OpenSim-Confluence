@@ -345,6 +345,14 @@ Web & Admin UI section rather than here.)*
 
 ## Planned, not started
 
+- **Physics engines and meshers should be interchangeable (owner requirement, 2026-09-27).** Confluence
+  carries its own physics and meshing so that any engine can work with any mesher: ubODE and BulletSim
+  with either Meshmerizer or ubODEMeshmerizer, and the same for Phlox and Jolt. Today ubODE refuses the
+  plain Meshmerizer with an error at every start ("meshing option must be set to ubODEMeshmerizer"; seen
+  on Sector_001, which is configured that way). Work: read how each engine consumes the mesher's output,
+  then remove or adapt that check so every pairing works, and test each pairing on a scratch region. The
+  earlier "ubODEMeshmerizer bug" finding was overturned by testing, so establish what actually differs
+  between the meshers before changing anything.
 - **Database support matrix - close every gap (owner requirement, 2026-09-27).** Confluence must run
   every feature on SQLite, MySQL/MariaDB and PostgreSQL, in standalone and grid mode. Status, measured by
   `Tools/fresh-clone-matrix.py` (the list lives in `Tools/fresh-clone-matrix-expected.json`; it is now
