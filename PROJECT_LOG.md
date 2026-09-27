@@ -25625,3 +25625,87 @@ MySQL/MariaDB and PostgreSQL, in both standalone and grid mode. Moved to `FEATUR
 
 Not deployed to Casperia yet (Casperia runs MySQL; this backend is inert there, same as the other SQLite/
 PostgreSQL backends added this pass).
+
+## In-world map "Find" flash-then-vanish: root cause confirmed and fixed (2026-09-28)
+
+Operator reported the in-world World Map "Find" (typing a region name, e.g. "UFPGC", and clicking Find)
+flashes the result then it vanishes - confirmed to happen for every region tried, on release, beta and
+nightly Firestorm alike, so not a client-version quirk.
+
+**Dead end, worth recording so it isn't re-walked**: operator recalled a past session working on
+`WorldMapModule.cs` for a maptile issue that "should've been reversed." Checked exhaustively - `git log`/
+`git blame` on the full tracked history of this file (every commit, including decades of upstream OpenSim's
+own history) shows exactly one Confluence-authored change ever: the Batch 13 on-demand-maptile-regen HTTP
+endpoint (2026-08-11), which is wanted and unrelated to search. The 2026-09-14 "In-world World Map
+investigation" log entry's real revert touched `MapGetServerConnector.cs`/`MapImageService.cs`/
+`GridService.cs`, not this file. Also checked the live deployed `OpenSim.Region.CoreModules.dll` directly
+(UTF-16-aware string search, not the naive byte-search that gave a false negative at first) for the same
+markers current source has - present. No evidence an unreverted experimental fix is sitting in this file or
+its deployed binary. (Note for later: an MD5 mismatch between two independently-built copies of this DLL is
+not meaningful on its own - .NET embeds a random Module Version ID on every build even from byte-identical
+source - so that check alone can't prove or disprove drift; a real drift check needs the "copy right after
+building, cmp -s immediately" pattern already used for actual deploys, not two builds made at different
+times.)
+
+**A second theory (`HGWorldMapModule`'s per-agent block-reset), tested live and not the cause.** Confirmed
+`[HG MAP]: Resetting N blocks` genuinely fires on routine child-agent close, but a controlled reproduction
+(baseline every region's log line count, have the operator reproduce, diff) showed zero `[HG MAP]` activity
+anywhere in the grid at the exact moment of the flash. Real negative evidence, not just an unproven idea -
+recorded so this path isn't re-walked either.
+
+**Root cause, confirmed with direct evidence on both ends of the wire.** Uncommented `MapSearchModule.cs`'s
+own existing (but disabled) debug logging - safe, log-only, no behavior change - rebuilt, deployed to the
+two regions the operator was testing from, and had them reproduce it again. The captured log showed exactly
+what was being sent for every search, e.g. searching "ufpgc":
+```
+sending block Name='UFPGC' X=995 Y=1001 Access=13 MapImageId=00000000-0000-0000-0000-000000000000
+sending block Name='ufpgc' X=0 Y=0 Access=255 MapImageId=00000000-0000-0000-0000-000000000000
+```
+`OnMapNameRequestHandler` calls `AddFinalBlock` unconditionally, even on a successful match - every search
+reply carries a second, synthetic "does not exist" block (`Access = 255`/`SimAccess.NonExistent`) right
+alongside the real one. This is original, unmodified vanilla OpenSim behavior (`git blame`: UbitUmarov,
+2020-12-17), not a Confluence bug.
+
+Traced the exact consequence through Firestorm's own source (`phoenix-firestorm`, not edited, per the
+viewer cross-verification standard):
+- `llworldmapmessage.cpp::processMapBlockReply` treats *any* block with `accesscode == 255` in a reply as a
+  failed lookup, setting `found_null_sim = true` - regardless of whether an earlier block in the *same*
+  reply was a real match.
+- That flows into `LLFloaterWorldMap::updateSims(found_null_sim)`
+  (`llfloaterworldmap.cpp`), which does `if (found_null_sim) mCompletingRegionName = "";` - clearing the
+  viewer's "still waiting for this search" state.
+- `updateSims`'s own first line is `if (mCompletingRegionName == "") return;` - so every subsequent reply
+  for the same search is silently dropped from then on.
+- The region's own log showed the viewer sends 6-8 near-identical `MapNameRequest` packets within about 1.5
+  seconds per Find click. Only the first reply's terminator does anything (correctly showing the match
+  briefly); every reply after that for the same click hits the now-blank `mCompletingRegionName` guard and
+  is dropped - the flash, then the vanish.
+
+Firestorm's own devs have a named bug for the general shape of this reply
+(`FIRE-31368: [OPENSIM] Search returns more than one result`, `llworldmapmessage.cpp` lines 177-184), but
+their workaround only covers resolving a `hop://` hypergrid redirect, not the plain Find box, so it never
+helped here.
+
+**Fix, in `MapSearchModule.cs`**: only call `AddFinalBlock` when nothing was actually found
+(`regionInfos == null || regionInfos.Count == 0`). The closing block still has a real purpose - telling an
+older viewer generation "stop waiting, this is everything" - so it's kept for a genuine zero-match search,
+just no longer sent alongside a real result. Also fixed while in this function, both safe/behavior-neutral:
+the bare `catch{}` that silently swallowed every exception with zero logging now logs a warning (would have
+made this exact bug much faster to chase if it had ever been informative), and the debug logging used to
+diagnose this is left in place (harmless, log-only) rather than re-commented out.
+
+Built clean, deployed (this file alone - `git diff` confirmed it was the only source change since the
+previous deploy) to the two regions under test, byte-verified. **Not yet re-confirmed with the fix live**:
+the grid was fully stopped for an unrelated full sync before the operator could reproduce Find again
+post-fix; retest once the grid is back up.
+
+**Separate, real mistake made while syncing the grid back up, unrelated to the map work itself**: a
+full-`bin/`-folder sync (done because the whole grid was down, the ideal window for a complete rather than
+targeted deploy) copied every file in the repo's local `bin/`, including stale runtime log files
+(`Robust.log`, `OpenSim.log`, `MoneyServer.log`, `RobustStats.log`, `OpenSimStats.log`, `region.pid`) left
+over from old local test runs, onto Casperia's real ones - the master sync root doubles as Robust's actual
+live working directory, which this pass hadn't accounted for. Real, accepted loss of historical log text
+only; the operator confirmed the grid's actual state (database, resident data, region content) was
+untouched and declined to chase recovery. **Lesson for every future full-`bin/`-sync**: exclude `*.log`
+and `*.pid` unconditionally, not just the WebRtc voice files already excluded for being the operator's own
+in-progress test.
