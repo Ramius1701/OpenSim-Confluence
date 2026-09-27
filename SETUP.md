@@ -42,8 +42,7 @@ without `.example` and edited.
 | **MySQL / MariaDB** | works | works |
 | **PostgreSQL** | works | works |
 
-Every feature works on all three. The one exception is the optional FSAssets disk asset store, which has
-no SQLite backend yet; see [Known gaps](#known-gaps-by-database).
+Every feature works on all three, including the optional FSAssets disk asset store.
 
 Database connection settings, in the one place you set them:
 
@@ -148,8 +147,7 @@ choose a real password before anything else. There is nothing to create by hand.
 
 ## Known gaps by database
 
-None for the databases below: every feature that ships with Confluence has a backend on SQLite, MySQL /
-MariaDB and PostgreSQL, apart from one optional one.
+None. Every feature that ships with Confluence has a backend on SQLite, MySQL/MariaDB and PostgreSQL.
 
 | Feature | SQLite | PostgreSQL | MySQL / MariaDB |
 |---|---|---|---|
@@ -157,9 +155,9 @@ MariaDB and PostgreSQL, apart from one optional one.
 | Region Hypergrid records (RegionHGService) | works | works | works |
 | Offline instant messages | works | works | works |
 | Groups (data and search) | works | works | works |
-| Disk asset store (FSAssets, optional) | not yet | works | works |
+| Disk asset store (FSAssets, optional) | works | works | works |
 
-FSAssets is an alternative to the default asset service; the default one works on every database. The
+FSAssets is an alternative to the default asset service; the default one works on every database too. The
 machine-readable list of anything that fails to load is `Tools/fresh-clone-matrix-expected.json`, and the
 goal is to keep it empty.
 

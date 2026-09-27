@@ -357,19 +357,11 @@ Web & Admin UI section rather than here.)*
   because Jolt itself is still described below as unproven on a live region with real content/vehicles -
   revisit once that's no longer true, and scope any fix to Jolt's own files only (reading whichever mesher
   it's given through that mesher's existing pointer-based getters), never the vanilla engines/meshers.
-- **Jolt silently missing from a normal build (real bug, fix already shipped 2026-09-27).** The Jolt projects
-  are hand-maintained and not in `prebuild.xml`, so `dotnet build OpenSim.sln` never builds them; a fresh clone
-  with `physics = Jolt` reached "Startup complete" and then crashed on its first heartbeat with no physics
-  scene running. README.md/SETUP.md now document the one extra build command and `fresh-clone-matrix.py` runs
-  it. Still open: the region should fail clearly at start-up when its configured physics engine never loaded,
-  instead of reaching "Startup complete" and crashing moments later.
-- **Database support matrix - close every gap (owner requirement, 2026-09-27).** Confluence must run
-  every feature on SQLite, MySQL/MariaDB and PostgreSQL, in standalone and grid mode. Status, measured by
-  `Tools/fresh-clone-matrix.py` (the list lives in `Tools/fresh-clone-matrix-expected.json`; it is now
-  empty): PostgreSQL and SQLite load every service (Marketplace, RegionHGService, Offline IM and Groups
-  now have SQLite backends; Marketplace and RegionHGService have PostgreSQL ones). MySQL/MariaDB
-  now passes the matrix too (2026-09-27, all six database x mode combinations). Still open: the optional
-  FSAssets disk asset store has no SQLite backend (the default asset service works there).
+- **A region should fail clearly at start-up if its configured physics engine never loaded, not crash on
+  its first heartbeat (found 2026-09-27).** Surfaced by the Jolt build-gap bug (now fixed - see
+  FEATURES.md): with no physics engine loaded, a region still reached "Startup complete" and then threw an
+  unhandled `NullReferenceException` in `Scene.Update` on its first heartbeat. Applies to any cause of a
+  missing engine, not just that one bug. Not started.
 - **Server-side appearance baking (SSB) - from Tranquillity #207; scoped
   2026-09-26, not started.** The region composes each avatar's bake itself
   instead of relaying the viewer's, so "the viewer and region disagree

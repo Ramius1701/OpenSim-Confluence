@@ -420,6 +420,53 @@ static class Program
         Eq(label + " first region unchanged", (bool?)false, d.GetIsOpen(a));
     }
 
+    static void FSAssets(string label, IFSAssetDataPlugin d)
+    {
+        string idA = UUID.Random().ToString();
+        string idB = UUID.Random().ToString();
+        const string hashA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string hashB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+        Eq(label + " get missing asset is null", null, d.Get(idA, out string missingHash));
+
+        AssetMetadata a = new AssetMetadata
+        {
+            ID = idA,
+            FullID = new UUID(idA),
+            Type = (sbyte)AssetType.Texture,
+            Flags = AssetFlags.Normal
+        };
+        Eq(label + " store new returns true", true, d.Store(a, hashA));
+
+        AssetMetadata got = d.Get(idA, out string gotHash);
+        Eq(label + " round trip hash", hashA, gotHash);
+        Eq(label + " round trip id", idA, got.ID);
+        Eq(label + " round trip type", (sbyte)AssetType.Texture, got.Type);
+        Eq(label + " round trip flags", AssetFlags.Normal, got.Flags);
+
+        // A row with no data at all (the empty-texture/empty-IAR-file case) is never correct:
+        // a later store of real data for the same ID must heal it in place, not be ignored as
+        // "already exists".
+        AssetMetadata b = new AssetMetadata { ID = idB, FullID = new UUID(idB), Type = (sbyte)AssetType.Texture, Flags = AssetFlags.Normal };
+        d.Store(b, FSAssetHashes.Empty);
+        Eq(label + " empty-hash row stored", FSAssetHashes.Empty, d.Get(idB, out string emptyHash) != null ? emptyHash : null);
+        d.Store(b, hashB);
+        d.Get(idB, out string healedHash);
+        Eq(label + " empty-hash row healed by a later real store", hashB, healedHash);
+
+        bool[] exist = d.AssetsExist(new[] { new UUID(idA), new UUID(idB), UUID.Random() });
+        Eq(label + " AssetsExist a", true, exist[0]);
+        Eq(label + " AssetsExist b", true, exist[1]);
+        Eq(label + " AssetsExist missing", false, exist[2]);
+
+        Eq(label + " AssetsExist empty array", 0, d.AssetsExist(Array.Empty<UUID>()).Length);
+
+        Eq(label + " count at least 2", true, d.Count() >= 2);
+
+        Eq(label + " delete returns true", true, d.Delete(idB));
+        Eq(label + " deleted asset is gone", null, d.Get(idB, out string afterDeleteHash));
+    }
+
     static int Main(string[] args)
     {
         string sqliteFile = args.Length > 0 ? args[0] : "datatest.db";
@@ -447,8 +494,15 @@ static class Program
                     cmd.ExecuteNonQuery();
             }
         });
+        var sqliteFSAssets = new OpenSim.Data.SQLite.SQLiteFSAssetData();
+        sqliteFSAssets.Initialise(sq, "fsassets", 0);
+        FSAssets("sqlite", sqliteFSAssets);
+
         // constructing again over the same file must not fail (migration is idempotent)
         Eq("sqlite reopen ok", true, new OpenSim.Data.SQLite.SQLiteMarketplaceListingsData(sq) != null);
+        var sqliteFSAssetsReopen = new OpenSim.Data.SQLite.SQLiteFSAssetData();
+        sqliteFSAssetsReopen.Initialise(sq, "fsassets", 0);
+        Eq("sqlite FSAssets reopen ok", true, sqliteFSAssetsReopen != null);
 
         if (pg != null)
         {
@@ -473,6 +527,10 @@ static class Program
                         cmd.ExecuteNonQuery();
                 }
             });
+            var pgsqlFSAssets = new OpenSim.Data.PGSQL.PGSQLFSAssetData();
+            pgsqlFSAssets.Initialise(pg, "fsassets", 0);
+            FSAssets("pgsql", pgsqlFSAssets);
+
             Eq("pgsql reopen ok", true, new OpenSim.Data.PGSQL.PGSQLMarketplaceListingsData(pg) != null);
         }
 

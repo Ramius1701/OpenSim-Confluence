@@ -25595,3 +25595,33 @@ complete" and then crashed on its first heartbeat (no physics scene). This is in
 question above - a grid owner selecting Jolt should get a working engine or a clear failure, never a silent
 gap. Fix kept: README.md and SETUP.md now give the one extra build command, and `fresh-clone-matrix.py` runs it
 so a fresh clone with Jolt selected actually has Jolt.
+
+## FSAssets on SQLite: the last database-matrix gap closed (2026-09-27)
+
+Added `SQLiteFSAssetData` (`OpenSim/Data/SQLite/SQLiteFSAssetData.cs`), modeled on `PGSQLFSAssetData` (metadata
+only - `id`, `type`, `hash`, `create_time`, `access_time`, `asset_flags`; unlike the legacy MySQL table, `name`
+and `description` are not stored, since FSAssets never displays them - the asset's bytes live on disk in a file
+named after `hash`, handled by `FSAssetService` itself). One persistent connection, every call under a lock,
+matching this project's other SQLite backends. Ships the empty-hash healing rule the MySQL/PostgreSQL backends
+already had (a row storing `FSAssetHashes.Empty` - the empty-texture/empty-IAR-file case - is replaced in place
+by a later real store, never left empty forever). New migration `OpenSim/Data/SQLite/Resources/FSAssetStore.migrations`.
+Needs no ini changes: `[AssetService]`'s `StorageProvider`/`ConnectionString` already default to blank, inheriting
+`[DatabaseService]`, the same as every other backend added this pass.
+
+A build gotcha, not a code bug: the new file did not compile into `OpenSim.Data.SQLite.dll` on the first build.
+This project's csproj files are SDK-style but hold explicit, Prebuild-generated `<Compile Include>` lists, not a
+live wildcard (see [[casperia-repo-build-tooling-gotchas]]) - a new file needs `runprebuild.bat` re-run before
+`dotnet build` will ever see it. Caught only because `Tools/data-backend-check`'s own build failed with "type
+does not exist," not because anything else flagged it.
+
+Extended `Tools/data-backend-check` with FSAssets checks (round trip, the empty-hash healing rule, `AssetsExist`
+including an empty request, count, delete) against both SQLite and PostgreSQL - PostgreSQL's `PGSQLFSAssetData`
+had existed since the empty-texture fix work but was never run through this harness either. All 387 checks pass
+(0 failures) on real SQLite and PostgreSQL databases; both test databases dropped afterward.
+
+This closes the database support matrix: every feature Confluence ships now has a working backend on SQLite,
+MySQL/MariaDB and PostgreSQL, in both standalone and grid mode. Moved to `FEATURES.md`; removed from
+`ROADMAP.md`'s "Planned, not started".
+
+Not deployed to Casperia yet (Casperia runs MySQL; this backend is inert there, same as the other SQLite/
+PostgreSQL backends added this pass).

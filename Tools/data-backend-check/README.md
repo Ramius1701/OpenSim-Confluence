@@ -13,6 +13,9 @@ and PostgreSQL:
 - **Groups** - groups, roles (exact 64-bit powers), membership, role membership, active group, invitations
   and notices with their two-week clean-ups, bans, search (including hostile search text), counts, and the
   cascade when a group is deleted.
+- **FSAssets** - round trips (id, type, flags, hash), the empty-hash healing rule (a row storing no data at
+  all is replaced in place by a later real store, never left empty forever), `AssetsExist` (including an
+  empty request), count, and delete.
 
 When a backend is added or changed (the remaining gaps are listed in
 `Tools/fresh-clone-matrix-expected.json`), add its checks here first.

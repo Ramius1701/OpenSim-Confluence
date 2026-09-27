@@ -1,0 +1,17 @@
+:VERSION 1
+
+BEGIN TRANSACTION;
+
+-- Same shape as PGSQLFSAssetData's table: metadata only (name/description are never
+-- displayed for an FSAsset, so unlike the legacy MySQL table they are not stored here).
+-- The asset's actual bytes live on disk, in a file named after "hash".
+CREATE TABLE IF NOT EXISTS fsassets (
+	id varchar(36) NOT NULL PRIMARY KEY,
+	type integer NOT NULL,
+	hash char(64) NOT NULL,
+	create_time integer NOT NULL DEFAULT 0,
+	access_time integer NOT NULL DEFAULT 0,
+	asset_flags integer NOT NULL DEFAULT 0
+);
+
+COMMIT;

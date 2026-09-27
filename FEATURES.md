@@ -656,6 +656,20 @@ NaN/Infinity before being applied.
   to match MySQL across all three backends.
 - Experience Tools has full PostgreSQL and SQLite implementations, not
   MySQL-only.
+- **Every feature runs on SQLite, MySQL/MariaDB and PostgreSQL, in standalone and grid mode (owner
+  requirement, closed 2026-09-27).** Native Marketplace, Region Hypergrid records (RegionHGService),
+  Offline instant messages and Groups (data and search) all have SQLite and PostgreSQL backends
+  alongside the original MySQL ones; the optional FSAssets disk asset store (an alternative to the
+  default asset service) now has a SQLite backend too - the one remaining gap. Verified two ways:
+  `Tools/fresh-clone-matrix.py` builds and boots a region on all six database x mode combinations from
+  a fresh clone (`Tools/fresh-clone-matrix-expected.json` is empty - nothing fails to load), and
+  `Tools/data-backend-check` exercises every method of every SQLite/PostgreSQL backend directly against
+  a real database (387 checks). See `SETUP.md`'s "Known gaps by database" table.
+- **A fresh clone that selects the Jolt physics engine (`physics = Jolt`) actually gets it.** The Jolt
+  projects are hand-maintained and outside the generated `OpenSim.sln`, so a plain `dotnet build
+  OpenSim.sln` silently skipped them; a region configured for Jolt used to reach "Startup complete" and
+  then crash on its first heartbeat with no physics engine loaded. README.md and SETUP.md document the
+  one extra build command, and `Tools/fresh-clone-matrix.py` runs it as part of its own build step.
 
 ## Control-Plane Security Hardening
 
