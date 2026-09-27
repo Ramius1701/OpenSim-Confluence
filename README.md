@@ -111,6 +111,16 @@ dotnet build OpenSim.sln --configuration Release
 dotnet build OpenSim.sln --configuration Release
 ```
 
+The Jolt physics engine (`physics = Jolt`) is not part of the generated solution. To use it, build it once
+more after the steps above (both platforms):
+
+```bash
+dotnet build OpenSim/Region/PhysicsModules/JoltPhysics/OpenSim.Region.PhysicsModule.JoltPhysics.csproj --configuration Release
+```
+
+Without it, selecting Jolt leaves a region with no physics engine. ubODE (the default) and BulletSim need no
+extra step, and either works with either mesher.
+
 See `BUILDING.md` for the official base requirements.
 
 ## Configuration

@@ -345,14 +345,24 @@ Web & Admin UI section rather than here.)*
 
 ## Planned, not started
 
-- **Physics engines and meshers should be interchangeable (owner requirement, 2026-09-27).** Confluence
-  carries its own physics and meshing so that any engine can work with any mesher: ubODE and BulletSim
-  with either Meshmerizer or ubODEMeshmerizer, and the same for Phlox and Jolt. Today ubODE refuses the
-  plain Meshmerizer with an error at every start ("meshing option must be set to ubODEMeshmerizer"; seen
-  on Sector_001, which is configured that way). Work: read how each engine consumes the mesher's output,
-  then remove or adapt that check so every pairing works, and test each pairing on a scratch region. The
-  earlier "ubODEMeshmerizer bug" finding was overturned by testing, so establish what actually differs
-  between the meshers before changing anything.
+- **Jolt able to use either mesher (owner requirement; scoped down, paused 2026-09-27).** Confluence's own
+  alternative physics engine (Jolt) should work with either mesher (Meshmerizer, ubODEMeshmerizer), the same
+  way it can already be paired with either database. A first pass fixed this by patching BulletSim, ubODE,
+  Meshmerizer and ubODEMeshmerizer themselves - reverted: those are vanilla OpenSim's own code (the
+  ubODE-requires-ubODEMeshmerizer restriction Sector_001 hit is upstream's own long-standing design, not a
+  Confluence bug), and patching them would have permanently diverged from opensim-master. The plan had also
+  named "Phlox" as a second alternative engine; checked directly, Phlox is entirely a script engine
+  (Tranquillity's LSL/SLua work), not physics - there is no second engine in scope. See `PROJECT_LOG.md`'s
+  2026-09-27 entry for the real findings (which mesher internals block which engines) to start from. Paused
+  because Jolt itself is still described below as unproven on a live region with real content/vehicles -
+  revisit once that's no longer true, and scope any fix to Jolt's own files only (reading whichever mesher
+  it's given through that mesher's existing pointer-based getters), never the vanilla engines/meshers.
+- **Jolt silently missing from a normal build (real bug, fix already shipped 2026-09-27).** The Jolt projects
+  are hand-maintained and not in `prebuild.xml`, so `dotnet build OpenSim.sln` never builds them; a fresh clone
+  with `physics = Jolt` reached "Startup complete" and then crashed on its first heartbeat with no physics
+  scene running. README.md/SETUP.md now document the one extra build command and `fresh-clone-matrix.py` runs
+  it. Still open: the region should fail clearly at start-up when its configured physics engine never loaded,
+  instead of reaching "Startup complete" and crashing moments later.
 - **Database support matrix - close every gap (owner requirement, 2026-09-27).** Confluence must run
   every feature on SQLite, MySQL/MariaDB and PostgreSQL, in standalone and grid mode. Status, measured by
   `Tools/fresh-clone-matrix.py` (the list lives in `Tools/fresh-clone-matrix-expected.json`; it is now

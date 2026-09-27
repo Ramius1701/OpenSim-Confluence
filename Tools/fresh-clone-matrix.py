@@ -560,6 +560,14 @@ def main():
             log("\n".join(errs))
             log("RESULT: FAIL - the clone does not build by the README steps")
             return 1
+        # Jolt is hand-maintained and not in the generated solution; the README gives it one extra command.
+        r = run(["dotnet", "build", "OpenSim/Region/PhysicsModules/JoltPhysics/OpenSim.Region.PhysicsModule.JoltPhysics.csproj",
+                 "-c", "Release", "-v", "q", "-nologo"], cwd=src, check=False)
+        if r.returncode != 0:
+            errs = [l for l in (r.stdout + r.stderr).splitlines() if ": error " in l][:8]
+            log("\n".join(errs))
+            log("RESULT: FAIL - the Jolt project does not build by the README steps")
+            return 1
         log("== build OK")
     else:
         head = run(["git", "-C", src, "rev-parse", "--short", "HEAD"]).stdout.strip()

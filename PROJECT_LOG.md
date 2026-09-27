@@ -25556,3 +25556,42 @@ on purpose; see the roadmap entry on making physics engines and meshers intercha
 
 Still to be checked by the owner in-world: mesh upload with textures (no new empty-texture assets), an IAR
 containing an empty file, and the Concierge `[hg]` section, per-region override and notices-off switch.
+
+## Physics engines and meshers made interchangeable, then reverted pending a proven Jolt (2026-09-27)
+
+Owner requirement: any physics engine should work with any mesher (Meshmerizer, ubODEMeshmerizer). Started by
+reading how BulletSim, ubODE and Jolt use the shared `IMesher` interface and fixing what stood in the way:
+start-up checks in BulletSim/ubODE/Jolt that rejected the "wrong" mesher, ubODEMeshmerizer's meshes being
+unreadable by any engine but ubODE, Meshmerizer silently ignoring ubODE's request for a convex hull, and
+BulletSim casting the mesher to one concrete class instead of an interface. A new `Tools/mesher-check` (86
+checks) and a `CFX_PAIRING` option on the fresh-clone script confirmed all six engine/mesher pairings started
+a region cleanly.
+
+**Reverted, on the owner's direction, before any of it reached git or Casperia.** Two problems with the
+approach itself, not with whether the fixes worked:
+
+- **Scope.** BulletSim, ubODE, Meshmerizer and ubODEMeshmerizer are vanilla OpenSim's own code - the pairing
+  restriction being "fixed" (ubODE requires ubODEMeshmerizer) is upstream's own long-standing design, not a
+  Confluence bug. Patching those files created a permanent divergence from opensim-master that would have had
+  to be reconciled by hand on every future upstream sync, which cuts directly against
+  [[casperia-project-mission]]'s "absorb proven features from opensim-master" goal. The one alternative engine
+  Confluence actually owns is Jolt; interop work belongs entirely on Jolt's side (reading whichever mesher it's
+  given through that mesher's *existing* pointer-based getters), not inside the vanilla engines/meshers.
+- **A wrong premise.** The plan named "Phlox" as a second alternative physics engine alongside Jolt. Checked
+  directly against the real `phlox-core` remote (`HalcyonGrid/phlox`): it is entirely an LSL/SLua script
+  compiler/VM (`Phlox.sln`, `Source`, ANTLR grammar) - no physics code anywhere in it. This matches the
+  project's own earlier audit history. Phlox is Tranquillity's scripting-engine work; Homeworldz (not Phlox) is
+  the reference point for Jolt. There was never a second physics engine to build interop for.
+
+Given Jolt's own state - not part of the generated solution (below), still described in `bin/OpenSim.ini.example`
+as unproven on a live region with real content/vehicles - the owner chose to pause this rather than build a
+Jolt-only adapter around an engine still being shaken out. Nothing here has code to resume from; the real
+technical findings (which files serve which engines, how ubODEMeshmerizer's mesh format is not directly
+readable by the others) are recorded above for whenever Jolt is proven enough to justify it.
+
+**One separate, real bug kept from this pass.** The Jolt projects are hand-maintained and not in `prebuild.xml`,
+so `dotnet build OpenSim.sln` silently never builds them; a fresh clone with `physics = Jolt` reached "Startup
+complete" and then crashed on its first heartbeat (no physics scene). This is independent of the interop
+question above - a grid owner selecting Jolt should get a working engine or a clear failure, never a silent
+gap. Fix kept: README.md and SETUP.md now give the one extra build command, and `fresh-clone-matrix.py` runs it
+so a fresh clone with Jolt selected actually has Jolt.
