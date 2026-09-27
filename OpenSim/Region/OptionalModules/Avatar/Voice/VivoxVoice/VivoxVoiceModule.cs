@@ -109,6 +109,12 @@ namespace OpenSim.Region.OptionalModules.Avatar.Voice.VivoxVoice
 
         private IConfig m_config;
 
+        // True when the WebRTC voice module is enabled in the same region. That module then owns
+        // the ProvisionVoiceAccountRequest capability and forwards Vivox-type requests here (see
+        // AddRegion), so a viewer's Vivox client gets real credentials instead of an error. A
+        // Firestorm Vivox client whose first provision fails gives up for the whole session.
+        private static bool m_webRtcCoexist = false;
+
         private object m_Lock;
 
         public void Initialise(IConfigSource config)
@@ -122,6 +128,11 @@ namespace OpenSim.Region.OptionalModules.Avatar.Voice.VivoxVoice
 
             if (!m_config.GetBoolean("enabled", false))
                 return;
+
+            IConfig webRtcConfig = config.Configs["WebRtcVoice"];
+            m_webRtcCoexist = webRtcConfig != null && webRtcConfig.GetBoolean("Enabled", false);
+            if (m_webRtcCoexist)
+                m_log.Info("[VivoxVoice] WebRtcVoice is enabled too: it serves ProvisionVoiceAccountRequest and forwards Vivox-type requests here");
 
             m_Lock = new object();
 
@@ -309,6 +320,16 @@ namespace OpenSim.Region.OptionalModules.Avatar.Voice.VivoxVoice
                     {
                         OnRegisterCaps(scene, agentID, caps);
                     };
+
+                // Let the WebRTC module hand Vivox-type provision requests to this module. Shared
+                // through the scene as a plain delegate type so neither module needs to reference
+                // the other's assembly.
+                if (m_webRtcCoexist)
+                {
+                    scene.RegisterModuleInterface<Action<IOSHttpRequest, IOSHttpResponse, UUID>>(
+                        (IOSHttpRequest req, IOSHttpResponse resp, UUID agent) =>
+                            ProvisionVoiceAccountRequest(req, resp, agent, scene));
+                }
             }
         }
 
@@ -419,11 +440,16 @@ namespace OpenSim.Region.OptionalModules.Avatar.Voice.VivoxVoice
         {
             m_log.DebugFormat("[VivoxVoice] OnRegisterCaps: agentID {0} caps {1}", agentID, caps);
 
-            caps.RegisterSimpleHandler("ProvisionVoiceAccountRequest",
-                    new SimpleStreamHandler("/" + UUID.Random(), delegate (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
-                    {
-                        ProvisionVoiceAccountRequest(httpRequest, httpResponse, agentID, scene);
-                    }));
+            // With WebRTC voice enabled in this region, that module owns this capability (a
+            // second registration under the same name is ignored) and forwards Vivox requests.
+            if (!m_webRtcCoexist)
+            {
+                caps.RegisterSimpleHandler("ProvisionVoiceAccountRequest",
+                        new SimpleStreamHandler("/" + UUID.Random(), delegate (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
+                        {
+                            ProvisionVoiceAccountRequest(httpRequest, httpResponse, agentID, scene);
+                        }));
+            }
 
             caps.RegisterSimpleHandler("ParcelVoiceInfoRequest",
                     new SimpleStreamHandler("/" + UUID.Random(), delegate (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)

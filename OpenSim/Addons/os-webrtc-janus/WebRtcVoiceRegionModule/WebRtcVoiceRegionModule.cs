@@ -188,7 +188,20 @@ namespace osWebRtcVoice
                 ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
                 simFeatures?.AddFeature("VoiceServerType", OSD.FromString("webrtc"));
                 if (TryGetStunServers(out string stuns))
+                {
                     simFeatures?.AddFeature("VoiceStunServers", OSD.FromString(stuns));
+
+                    // Firestorm 7.2.4+ (FIRE-36421) does NOT read VoiceStunServers: it reads
+                    // SimulatorFeatures["stun-servers"] as a comma-separated list of stun: URIs.
+                    // Absent/empty makes its libwebrtc reject the peer connection with
+                    // "ICE server parsing failed: Empty uri" and the mic stays greyed out.
+                    // Same fix as intelligentwolf/os-webrtc-janus d88c35f, but driven by the
+                    // configured StunServers list instead of a hardcoded one.
+                    var uris = new System.Collections.Generic.List<string>();
+                    foreach (string s in stuns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        uris.Add(s.StartsWith("stun:", StringComparison.OrdinalIgnoreCase) ? s : "stun:" + s);
+                    simFeatures?.AddFeature("stun-servers", OSD.FromString(string.Join(",", uris)));
+                }
             }
         }
 
@@ -414,7 +427,8 @@ namespace osWebRtcVoice
             }
 
             // Deserialize the request. Convert the LLSDXml to OSD for our use
-            OSDMap map = BodyToMap(request, $"{LogHeader}[ProvisionVoice]");
+            // Leave the body readable: a Vivox-type request is forwarded below and re-read there.
+            OSDMap map = BodyToMap(request, $"{LogHeader}[ProvisionVoice]", true);
             if (map is null)
             {
                 m_log.Error($"{LogHeader}[ProvisionVoice]: No request data found. Agent={agentID}");
@@ -427,6 +441,21 @@ namespace osWebRtcVoice
             {
                 if (vstosd is OSDString vst && !((string)vst).Equals("webrtc", StringComparison.OrdinalIgnoreCase))
                 {
+                    // A viewer's Vivox client asks for a Vivox account at login, before it has learned
+                    // that this region uses WebRTC. Firestorm gives up on Vivox for the rest of the
+                    // session if that first request fails, which silences every Vivox or ThinkVox
+                    // region visited afterwards. If the Vivox module is enabled in this region,
+                    // hand the request to it so the client gets real credentials.
+                    if (((string)vst).Equals("vivox", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var vivoxProvision = scene.RequestModuleInterface<Action<IOSHttpRequest, IOSHttpResponse, UUID>>();
+                        if (vivoxProvision != null)
+                        {
+                            vivoxProvision(request, response, agentID);
+                            return;
+                        }
+                    }
+
                     m_log.Warn($"{LogHeader}[ProvisionVoice]: voice_server_type is not 'webrtc'");
                     if (m_log.IsDebugEnabled)
                         m_log.Warn($"{LogHeader}[ProvisionVoice]: Request detail: {map}");
@@ -861,18 +890,30 @@ namespace osWebRtcVoice
         /// <param name="request"></param>
         /// <param name="pCaller"></param>
         /// <returns>'null' if the request body is empty or cannot be deserialized</returns>
-        private OSDMap BodyToMap(IOSHttpRequest request, string pCaller)
+        private OSDMap BodyToMap(IOSHttpRequest request, string pCaller, bool rewind = false)
         {
             try
             {
                 if (request.InputStream.Length > 0)
-                { 
-                    using Stream inputStream = request.InputStream;
-                    OSD tmp = OSDParser.DeserializeLLSDXml(inputStream);
-                    if (_MessageDetails)
-                        m_log.Debug($"{pCaller} BodyToMap: Request: {tmp}");
-                    if(tmp is OSDMap map)
-                        return map;
+                {
+                    Stream inputStream = request.InputStream;
+                    try
+                    {
+                        OSD tmp = OSDParser.DeserializeLLSDXml(inputStream);
+                        if (_MessageDetails)
+                            m_log.Debug($"{pCaller} BodyToMap: Request: {tmp}");
+                        if(tmp is OSDMap map)
+                            return map;
+                    }
+                    finally
+                    {
+                        // Normally the body is consumed and closed here. With rewind the stream is
+                        // left open at the start so it can be read again (forwarding to another module).
+                        if (rewind && inputStream.CanSeek)
+                            inputStream.Position = 0;
+                        else
+                            inputStream.Dispose();
+                    }
                 }
             }
             catch
