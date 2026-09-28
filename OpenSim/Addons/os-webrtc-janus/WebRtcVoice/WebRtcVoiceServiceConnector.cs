@@ -27,6 +27,7 @@
 
 using System;
 using System.Reflection;
+using System.Threading;
 
 using OpenSim.Framework;
 
@@ -131,13 +132,58 @@ namespace osWebRtcVoice
             return JsonRpcRequest("voice_signaling_request", m_serverURI, req);
         }
 
+        // Firestorm's WebRTC voice client does not retry a failed ProvisionVoiceAccountRequest
+        // on its own: one failed attempt permanently fails voice for that region until the
+        // viewer relogs or teleports away and back (confirmed live, 2026-09-28 -- a single
+        // "connection actively refused" against an otherwise healthy, 29-minutes-stable
+        // ConfluenceVoice was enough to leave a viewer with no voice in Sandbox while a second
+        // viewer connected normally seconds later). Retrying a genuine transport failure here,
+        // cheaply and fast, means the viewer often never sees it happen at all.
+        private const int MaxJsonRpcAttempts = 3;
+        private const int JsonRpcRetryDelayMs = 300;
+
         public OSDMap JsonRpcRequest(string method, string uri, OSDMap pParams)
         {
-            string jsonId = UUID.Random().ToString();
-
-            if(string.IsNullOrWhiteSpace(uri))
+            if (string.IsNullOrWhiteSpace(uri))
                 return null;
 
+            OSDMap lastError = null;
+            for (int attempt = 1; attempt <= MaxJsonRpcAttempts; attempt++)
+            {
+                (OSDMap result, OSDMap transportError) = TryJsonRpcRequest(method, uri, pParams);
+                if (result is not null)
+                    return result;
+
+                lastError = transportError;
+                if (attempt < MaxJsonRpcAttempts)
+                {
+                    m_log.Warn(
+                        $"{LogHeader}: JsonRpc request '{method}' to {uri} failed (attempt {attempt}/{MaxJsonRpcAttempts}), " +
+                        $"retrying: {OSDParser.SerializeJsonString(transportError)}");
+                    Thread.Sleep(JsonRpcRetryDelayMs);
+                }
+            }
+
+            m_log.Error($"{LogHeader}: JsonRpc request '{method}' to {uri} failed after {MaxJsonRpcAttempts} attempts");
+            return lastError;
+        }
+
+        // One attempt at the JSON-RPC round trip.
+        //
+        // Returns (result, null) on success -- including a genuine application-level
+        // {"error": ...} response from the WebRTC voice service itself. That is NOT retried:
+        // retrying an at-capacity rejection or a real validation error fixes nothing and can
+        // only cause confusing duplicate side effects (e.g. a second session created for the
+        // same logout).
+        //
+        // Returns (null, errorMap) only when the round trip itself did not complete -- a thrown
+        // exception, an empty response, or PostToService's own failure shape (it reports a
+        // connection failure as a normal-looking map rather than throwing, which is why the
+        // "invalid response" branch below is the one that actually caught the live incident
+        // this retry exists for, not the catch block). That is exactly the case worth retrying.
+        private (OSDMap, OSDMap) TryJsonRpcRequest(string method, string uri, OSDMap pParams)
+        {
+            string jsonId = UUID.Random().ToString();
             OSDMap request = new()
             {
                 { "jsonrpc", OSD.FromString("2.0") },
@@ -157,55 +203,42 @@ namespace osWebRtcVoice
             }
             catch (Exception e)
             {
-                m_log.Error($"{LogHeader}: JsonRpc request '{method}' to {uri} failed: {e.Message}");
                 m_log.Debug($"{LogHeader}: request: {request}");
-                return new OSDMap()
-                {
-                    { "error", OSD.FromString(e.Message) }
-                };
+                return (null, new OSDMap() { { "error", OSD.FromString(e.Message) } });
             }
 
             if (outerResponse is null || outerResponse.Count == 0)
             {
-                string errm = $"JsonRpc request '{method}' to {uri} returned an empty response";
-                m_log.Error(errm);
-                return new OSDMap()
+                return (null, new OSDMap()
                 {
-                    { "error", errm }
-                };
+                    { "error", $"JsonRpc request '{method}' to {uri} returned an empty response" }
+                });
             }
 
             if (!outerResponse.TryGetOSDMap("_Result", out OSDMap response))
             {
-                string errm = $"JsonRpc request '{method}' to {uri} returned an invalid response: {OSDParser.SerializeJsonString(outerResponse)}";
-                m_log.Error(errm);
-                return new OSDMap()
+                return (null, new OSDMap()
                 {
-                    { "error", errm }
-                };
+                    { "error", $"JsonRpc request '{method}' to {uri} returned an invalid response: {OSDParser.SerializeJsonString(outerResponse)}" }
+                });
             }
 
             if (response.TryGetValue("error", out OSD osdtmp))
             {
                 string errm = $"JsonRpc request '{method}' to {uri} returned an error: {OSDParser.SerializeJsonString(osdtmp)}";
                 m_log.Error(errm);
-                return new OSDMap()
-                {
-                    { "error", errm }
-                };
+                return (new OSDMap() { { "error", errm } }, null);
             }
 
-            if (!response.TryGetOSDMap("result", out OSDMap resultmap ))
+            if (!response.TryGetOSDMap("result", out OSDMap resultmap))
             {
-                string errm = $"JsonRpc request '{method}' to {uri} returned result as non-OSDMap: {OSDParser.SerializeJsonString(outerResponse)}";
-                m_log.Error(errm);
-                return new OSDMap()
+                return (null, new OSDMap()
                 {
-                    { "error", errm }
-                };
+                    { "error", $"JsonRpc request '{method}' to {uri} returned result as non-OSDMap: {OSDParser.SerializeJsonString(outerResponse)}" }
+                });
             }
 
-            return resultmap;
+            return (resultmap, null);
         }
     }
 }
