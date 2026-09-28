@@ -517,19 +517,6 @@ alpha texture cards, water depth shading) rather than placeholder
 boxes. Each 256m cell of a larger region gets its own tile, matching
 how the map protocol actually addresses tiles.
 
-Map tiles otherwise have no cleanup/expiry mechanism at all - a region
-that goes offline, gracefully or via a crash, would leave its last-
-generated tile on the World Map forever with nothing to serve it stock
-OpenSim's own way. Opt-in (`[MapImageService] GridService` in
-Robust.HG.ini) closes that gap two ways: the tile-serving endpoint
-checks whether a region is still actually registered at that position
-before serving its zoom level 1 tile, and a periodic background sweep
-removes any zoom level 1 tile with no currently-registered region -
-catching the crash/hard-kill case a graceful region deregistration
-alone can't reach. Both reuse the existing `RemoveMapTile` path, so
-the composite/overview zoom levels regenerate correctly too, not just
-the single-region tile.
-
 Background maptile (re)generation defers while real avatars are
 present so it doesn't compete for resources, but correctly ignores
 NPCs when deciding that - a region with only bots/NPCs and no actual
