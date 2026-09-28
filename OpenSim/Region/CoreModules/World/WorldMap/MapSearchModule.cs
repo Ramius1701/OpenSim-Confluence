@@ -205,7 +205,12 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                     block.MapImageId = r.TerrainImage;
                     break;
                 case 2:
-                    block.MapImageId = r.ParcelImage;
+                    // ParcelImage is the legacy for-sale-parcel overlay - never populated here when
+                    // the modern MapImageService is active (WorldMapModule.cs's own
+                    // m_storeLegacyMaptileAssets skips generating it on purpose, since it would
+                    // otherwise be pure waste). Fall back to the real terrain snapshot rather than
+                    // showing a find result with no image at all.
+                    block.MapImageId = r.ParcelImage != UUID.Zero ? r.ParcelImage : r.TerrainImage;
                     break;
                 default:
                     block.MapImageId = UUID.Zero;
