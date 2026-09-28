@@ -25709,3 +25709,123 @@ only; the operator confirmed the grid's actual state (database, resident data, r
 untouched and declined to chase recovery. **Lesson for every future full-`bin/`-sync**: exclude `*.log`
 and `*.pid` unconditionally, not just the WebRtc voice files already excluded for being the operator's own
 in-progress test.
+
+**Second real bug in the same handler, found while re-verifying the first fix (2026-09-28)**: even with the
+false-negative terminator gone, `flags == 2` searches (the Find box's own protocol variant) still carried a
+blank map image for every result. `OnMapNameRequestHandler`'s `case 2:` set `block.MapImageId =
+r.ParcelImage` unconditionally - and `r.ParcelImage` is always `UUID.Zero` on this grid, because
+`WorldMapModule.cs`'s own `m_storeLegacyMaptileAssets`/`storeLegacyAssets` setting (a real donor feature
+from GuntharDeNiro, "Reduce maptile lag and skip legacy map asset uploads," faithfully merged with zero
+drift - confirmed via `git log --follow` showing exactly two non-vanilla-author commits ever touch this
+file) deliberately stops regenerating that legacy `ParcelImageID` asset once the modern `MapImageService`
+takes over. Every Find result was carrying a genuinely correct region match with no image reference at all.
+Fixed to fall back to `r.TerrainImage` (the modern, still-actively-maintained snapshot) when `ParcelImage`
+is zero. Committed and deployed alongside the first fix.
+
+**Root cause of the deeper symptom (viewer permanently stuck on "None found." on some regions but not
+others, even with confirmed byte-correct server replies) remains unresolved** despite exhaustive checking
+across DB fields (5 regions), full file-tree diffs, region flags, module load state, asset validity, and
+git history/authorship back to 2008. The operator is confident, and has demonstrated repeatedly through live
+testing, that this is a real, region-specific Confluence bug, not a viewer quirk or vanilla OpenSim issue -
+this stays open, not closed, pending a new lead.
+
+## Confluence was 15 commits behind opensim/opensim - merged and pushed (2026-09-28)
+
+While chasing the map-search bug above, compared `MapSearchModule.cs`/`WorldMapModule.cs` against real
+vanilla OpenSim "not just tonight but all time" - which surfaced a bigger, previously-unnoticed problem:
+this repo's `origin` remote (`https://github.com/opensim/opensim.git`, the real upstream project - not the
+Confluence GitHub repo itself, which lives under a different remote name) was 15 commits and roughly 6+
+weeks behind. Confluence had quietly stopped syncing with the project it's supposed to stay "true to" per
+[[casperia-project-mission]] - not a deliberate pause, just a gap nobody had checked for.
+
+**Fact worth spelling out plainly, since it wasn't written down anywhere before**: `opensim/opensim` is the
+shared upstream every fork in this ecosystem descends from - Tranquillity, WhiteCore, Mobius, Gunthar,
+Homeworldz, all of them, including Confluence itself. `S:\Github\opensim-master` is a separate local clone
+of that same real upstream, kept around for direct file-diffing. When any of those forks has something
+worth absorbing, it flows in two possible ways: (a) directly from `opensim/opensim` via this exact merge
+process, the same one used on 2026-08-11 and again here, or (b) hand-ported from the fork itself when the
+fix is fork-specific and never went upstream. Falling behind on (a) isn't the same problem as falling behind
+on any one fork - it's falling behind the thing all the forks themselves are measured against.
+
+Merged `origin/master`'s 15 commits into `merge-experiment`, resolving conflicts in 12 files by hand (not a
+blind `git merge -X ours`/`-X theirs`) - checked each side for real, current usage via `grep` before keeping
+or dropping anything, matching the same discipline as the 2026-08-11 merge:
+
+- `NetworkServersInfo.cs`/`RegionInfo.cs`: kept Confluence's still-used `HttpListenerAddress` field
+  (confirmed live via `RegionApplicationBase.cs`) and removed confirmed-dead `proxy_url` handling in favor
+  of upstream's cleaner null-check style.
+- `MapGetServerConnector.cs`: kept Confluence's path-construction fix and `GridService` stale-tile
+  deregistration check (both real, already-deployed fixes), adopted upstream's `UUID.TryParse`-based
+  scopeID validation in place of an old try/catch that returned a mysterious `new byte[9]` on bad input.
+- `ConciergeModule.cs`: kept Confluence's XML-RPC security hardening, its in-world chat command dispatch
+  (`HandleCommand` - confirmed genuinely absent from upstream's own version), and its entire
+  audience-classification/broker-update system (~179 lines upstream has no equivalent of at all); took
+  upstream's null-conditional event trigger and one piece of confirmed-dead-code cleanup.
+- `HGFriendsServerPostHandler.cs`/`HGFriendsService.cs`: kept Confluence's exact-match presence-notification
+  fix (same class of bug as `FriendshipDeleteMatches` - a substring match could leak/spoof presence status
+  to the wrong party) and its multi-session status-notify loop fix; adopted upstream's early-return
+  structure where it was purely cosmetic.
+- `UserProfilesHandlers.cs`: kept the `AuthorizeJsonRpc` gate, adopted upstream's pattern-matched params
+  parsing already used elsewhere in the same file for consistency.
+- `ObjectHandlers.cs`: adopted upstream's `TryGetString`-based state parsing wholesale - the surrounding
+  method had already been auto-merged onto upstream's newer args-helper API, so keeping the old
+  `ContainsKey`-style line would have left a variable referenced but never declared.
+- `UserAgentService.cs`: kept Confluence's token-verification hardening (never logs the service token
+  itself, null-safe comparison instead of `hgttoken.Equals(token)`).
+- `Robust.ini.example`/`Robust.HG.ini.example`: kept Confluence's stronger OpenID-disabled-by-default
+  wording ("Uncomment only if you intentionally provide OpenID login. Most grids should leave this
+  disabled.").
+
+Build verified clean (0 errors, 0 warnings) after resolution. One apparent red flag in the diff turned out
+to be a non-issue worth recording so it isn't re-investigated: the merge's diff-stat showed `prebuild.xml`
+changing by 597 lines, which looked like a structural rewrite risk on a build-critical, hand-maintained file.
+Traced it directly - that number came from diffing the wrong pair (origin/master's tree against the merged
+result, not against Confluence's own pre-merge state). `prebuild.xml` in the actual merge commit is
+byte-for-byte identical to Confluence's pre-merge copy; upstream's version is just 597 lines shorter because
+it lacks all 20 of Confluence's custom service project stanzas (`AccessControlService`, `AbuseReportsService`,
+`ExperienceService`, etc.) and its diagnostic comment block. Git auto-merged it cleanly with zero conflict.
+
+Committed as `0e6c763dbf` and pushed to `confluence/merge-experiment` (17 commits ahead of where the remote
+was). Deliberately does **not** touch `MapSearchModule.cs`/`WorldMapModule.cs` - no conflicts existed there,
+so this merge neither fixes nor masks the still-open map-search bug above.
+
+## Tranquillity sync-status audit: `git cherry`, and why raw commit counts mislead here (2026-09-28)
+
+Operator asked to also check whether Tranquillity had been kept in sync, expecting the answer to be no.
+[[casperia-donor-sync-2026-09-25]] already flagged that Tranquillity rewrote its own git history at some
+point, meaning a raw `git log HEAD..tranquillity/develop` commit count is likely to be inflated by
+duplicate/rewritten commits rather than reflecting genuinely new work - `git cherry` (patch-id based, not
+SHA based) is the correct tool here, and hadn't actually been run yet.
+
+Found a real merge-base (`d3f314b29289`, dated 2026-03-05) confirming genuine shared history still exists.
+Since that point: Tranquillity has 2127 commits (1770 non-merge), Confluence 756. `git cherry
+merge-experiment tranquillity/develop` flagged only 12 of those 1770 as patch-identical to something already
+in `merge-experiment` - the other 1758 show as unmatched.
+
+**The raw number overstates the real gap, and sampling why matters.** Dated commits in that unmatched set
+go all the way back to 2020 despite sitting topologically after the March-2026 merge-base - strong evidence
+of exactly the history rewrite already flagged in memory, not evidence of genuinely new 2020-era work.
+Sampling by actual author-date (not topology) shows Tranquillity's real divergence started around
+2026-01-17 ("Restructure projects so they each live in a separate project folder under Source/Tests/Addons")
+and is a full architectural rewrite, not an incremental feature stream: dropped log4net for `ILogger`,
+moved to .NET 10, switched SQLite providers and MySQL EF provider, added Mono.Addins plugin loading, added
+whole new subsystems (Phlox - an LSL/SLua compiler+VM+runtime, a bot/NPC framework, a Trusted Hypergrid
+charter, Inventory API v3/server-side appearance baking). A literal `git merge tranquillity/develop` is not
+realistic against this - it would collide at the structural level (different project layout, different
+runtime) before reaching any logic conflict.
+
+Checked the 7 most plausible individually-portable items anyway (3 real security-shaped fixes plus 4 small
+LSL/OSSL fixes) against current Confluence source - all 7 were already present. The 3 security fixes
+(`DenyIdentified`/`DenyTransacted` estate enforcement, parcel-for-sale flag check, `HGInventoryAccessModule`
+export-bit honoring) were already ported, most likely during the ICan disclosure remediation work. The other
+4 (`llInsertString` bounds fix, `CLICK_ACTION_IGNORE` constant, `llSetRenderMaterial`, `osNpcPlayAnimation`
+asset-lookup) all turned out to be authored by `UbitUmarov` (a real upstream OpenSim core dev, not
+Tranquillity's own work) and were absorbed automatically by the opensim-master merge above, confirmed via
+`git merge-base origin/master tranquillity/develop` landing on the identical commit as Confluence's own
+merge-base with Tranquillity.
+
+**Conclusion**: nothing to port from this audit. Tranquillity is a real, actively-diverging fork worth
+checking again later for specific named features (Phlox, Trusted Hypergrid) as their own deliberate
+evaluation - not something to re-run `git cherry` against expecting a shrinking number, since its ongoing
+architectural rewrite means the unmatched count will likely stay large regardless of how much genuinely
+useful work either project does.
