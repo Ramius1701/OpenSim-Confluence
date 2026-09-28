@@ -26,10 +26,7 @@
  */
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.IO;
-using System.IO.Compression;
 using System.Reflection;
 using System.Net;
 
@@ -51,8 +48,6 @@ namespace OpenSim.Server.Handlers.Simulation
     public class AgentPostHandler : SimpleStreamHandler
     {
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
-
-        protected bool m_Proxy = false;
 
         public AgentPostHandler(string path) : base(path)
         {

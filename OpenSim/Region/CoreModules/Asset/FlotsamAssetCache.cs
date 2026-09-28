@@ -1211,7 +1211,7 @@ namespace OpenSim.Region.CoreModules.Asset
                 }
 
                 EntityBase[] entities = s.Entities.GetEntities();
-                foreach (EntityBase entity in entities.AsSpan())
+                foreach (EntityBase entity in entities)
                 {
                     if (!m_cleanupRunning)
                         break;

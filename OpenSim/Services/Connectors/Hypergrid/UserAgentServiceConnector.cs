@@ -90,9 +90,7 @@ namespace OpenSim.Services.Connectors.Hypergrid
                 return false;
             }
 
-            m_ServerURL = url;
-            if (!m_ServerURL.EndsWith("/"))
-                m_ServerURL += "/";
+            m_ServerURL = url.EndsWith('/') ? url : url + "/";
 
             return true;
         }
@@ -107,7 +105,7 @@ namespace OpenSim.Services.Connectors.Hypergrid
         // Either way, this is verified by the handler
         public bool LoginAgentToGrid(GridRegion source, AgentCircuitData aCircuit, GridRegion gatekeeper, GridRegion destination, bool fromLogin, out string reason)
         {
-            reason = String.Empty;
+            reason = string.Empty;
 
             if (destination == null)
             {

@@ -81,6 +81,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
         // password everyone can read in the repository.
         private const string InsecureDefaultPassword = "SECRET";
 
+        //private const int DEBUG_CHANNEL = 2147483647; use base value
+
         private new List<IScene> m_scenes = new List<IScene>();
         private List<IScene> m_conciergedScenes = new List<IScene>();
         private readonly Dictionary<UUID, HashSet<UUID>> m_present = new Dictionary<UUID, HashSet<UUID>>();
@@ -659,7 +661,7 @@ namespace OpenSim.Region.OptionalModules.Avatar.Concierge
                     From = m_whoami,
                     Scene = scene
                 };
-                targetScene.EventManager.TriggerOnChatBroadcast(this, c);
+                targetScene?.EventManager.TriggerOnChatBroadcast(this, c);
             }
         }
 

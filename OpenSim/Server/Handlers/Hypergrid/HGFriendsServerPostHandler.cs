@@ -219,21 +219,15 @@ namespace OpenSim.Server.Handlers.Hypergrid
         byte[] StatusNotification(Dictionary<string, object> request)
         {
             object tmpObj;
-            UUID principalID = UUID.Zero;
-            if (request.TryGetValue("userID", out tmpObj))
-                UUID.TryParse(tmpObj.ToString(), out principalID);
-            else
+            if (!request.TryGetValue("userID", out tmpObj) || !UUID.TryParse(tmpObj.ToString(), out UUID principalID))
             {
-                m_log.WarnFormat("[HGFRIENDS HANDLER]: no userID in request to notify");
+                m_log.WarnFormat("[HGFRIENDS HANDLER]: no userID in StatusNotification request");
                 return FailureResult();
             }
 
-            bool online = true;
-            if (request.TryGetValue("online", out tmpObj))
-                bool.TryParse(tmpObj.ToString(), out online);
-            else
+            if (!request.TryGetValue("online", out tmpObj) || !bool.TryParse(tmpObj.ToString(), out bool online))
             {
-                m_log.WarnFormat("[HGFRIENDS HANDLER]: no online in request to notify");
+                m_log.WarnFormat("[HGFRIENDS HANDLER]: no online value in StatusNotification request");
                 return FailureResult();
             }
 
@@ -255,7 +249,7 @@ namespace OpenSim.Server.Handlers.Hypergrid
                     ? m_TheService.StatusNotification(friends, principalID, online)
                     : null;
 
-            Dictionary<string, object> result = new Dictionary<string, object>();
+            Dictionary<string, object> result = [];
             if (onlineFriends == null || onlineFriends.Count == 0)
                 result["RESULT"] = "NULL";
             else
@@ -263,7 +257,7 @@ namespace OpenSim.Server.Handlers.Hypergrid
                 int i = 0;
                 foreach (UUID f in onlineFriends)
                 {
-                    result["friend_" + i] = f.ToString();
+                    result["friend_" + i.ToString()] = f.ToString();
                     i++;
                 }
             }

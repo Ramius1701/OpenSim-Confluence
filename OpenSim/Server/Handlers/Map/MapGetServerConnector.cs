@@ -66,7 +66,7 @@ namespace OpenSim.Server.Handlers.MapImage
             if (string.IsNullOrWhiteSpace(gridService))
                 throw new Exception("No LocalServiceModule in config file");
 
-            object[] args = new object[] { config };
+            object[] args = [config];
             m_MapService = ServerUtils.LoadPlugin<IMapImageService>(gridService, args);
 
             // Same optional "[MapImageService] GridService" liveness-check
@@ -86,7 +86,7 @@ namespace OpenSim.Server.Handlers.MapImage
 
     class MapServerGetHandler : BaseStreamHandler
     {
-        public static readonly object ev = new object();
+        public static readonly object ev = new();
 
         //private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -116,7 +116,7 @@ namespace OpenSim.Server.Handlers.MapImage
             {
                 httpResponse.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
                 httpResponse.AddHeader("Retry-After", "10");
-                return Array.Empty<byte>();
+                return [];
             }
 
             // Every exit below used to be a bare return with a single
@@ -127,27 +127,29 @@ namespace OpenSim.Server.Handlers.MapImage
             // see PROJECT_LOG.md 2026-09-23). One try/finally now covers
             // every path, including the two Confluence-specific early
             // returns added by later fixes below.
+            //
+            // 2026-09-28 upstream sync: adopted origin/master's cleaner
+            // scopeID validation (UUID.TryParse + a proper 404) in place
+            // of the old try/catch-around-`new UUID(...)` that returned a
+            // mysterious `new byte[9]` on a bad scope - same intent, this
+            // is just correct instead of a magic value. The path-
+            // construction bug fix and the GridService stale-tile check
+            // below are Confluence-only and not present upstream; kept.
             try
             {
-                byte[] result = Array.Empty<byte>();
-                string format = string.Empty;
-
-                //UUID scopeID = new UUID("07f8d88e-cd5e-4239-a0ed-843f75d09992");
                 UUID scopeID = UUID.Zero;
 
                 // This will be map/tilefile.ext, but on multitenancy it will be
                 // map/scope/teilefile.ext
                 path = path.Trim('/');
-                string[] bits = path.Split(new char[] {'/'});
+                string[] bits = path.Split(['/']);
                 if (bits.Length > 2)
                 {
-                    try
+                    if (string.IsNullOrEmpty(bits[1]) || !UUID.TryParse(bits[1], out scopeID))
                     {
-                        scopeID = new UUID(bits[1]);
-                    }
-                    catch
-                    {
-                        return new byte[9];
+                        httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
+                        httpResponse.ContentType = "text/plain";
+                        return [];
                     }
                     path = bits[2];
                     path = path.Trim('/');
@@ -173,7 +175,7 @@ namespace OpenSim.Server.Handlers.MapImage
                 {
                     httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
                     httpResponse.ContentType = "text/plain";
-                    return Array.Empty<byte>();
+                    return [];
                 }
 
                 if (m_GridService != null)
@@ -190,12 +192,12 @@ namespace OpenSim.Server.Handlers.MapImage
                         {
                             httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
                             httpResponse.ContentType = "text/plain";
-                            return Array.Empty<byte>();
+                            return [];
                         }
                     }
                 }
 
-                result = m_MapService.GetMapTile(path, scopeID, out format);
+                byte[] result = m_MapService.GetMapTile(path, scopeID, out string format);
                 if (result.Length > 0)
                 {
                     httpResponse.StatusCode = (int)HttpStatusCode.OK;
@@ -209,7 +211,6 @@ namespace OpenSim.Server.Handlers.MapImage
                     httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
                     httpResponse.ContentType = "text/plain";
                 }
-
                 return result;
             }
             finally

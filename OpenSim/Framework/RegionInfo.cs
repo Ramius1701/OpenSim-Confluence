@@ -59,8 +59,6 @@ namespace OpenSim.Framework
         // private IConfigSource m_configSource = null;
 
         public UUID originRegionID = UUID.Zero;
-        public string proxyUrl = "";
-        public int ProxyOffset = 0;
         public string regionSecret = UUID.Random().ToString();
 
         public string osSecret;
@@ -1135,8 +1133,6 @@ namespace OpenSim.Framework
             if (!string.IsNullOrEmpty(RemotingAddress))
                 args["remoting_address"] = OSD.FromString(RemotingAddress);
             args["remoting_port"] = OSD.FromString(RemotingPort.ToString());
-            if (!string.IsNullOrEmpty(proxyUrl))
-                args["proxy_url"] = OSD.FromString(proxyUrl);
             if (RegionType != String.Empty)
                 args["region_type"] = OSD.FromString(RegionType);
 
@@ -1190,9 +1186,7 @@ namespace OpenSim.Framework
                 RemotingAddress = args["remoting_address"].AsString();
             if (args.ContainsKey("remoting_port"))
                 UInt32.TryParse(args["remoting_port"].AsString(), out m_remotingPort);
-            if (args.ContainsKey("proxy_url"))
-                proxyUrl = args["proxy_url"].AsString();
-            if (args.ContainsKey("region_type"))
+            if (args["region_type"] != null)
                 m_regionType = args["region_type"].AsString();
         }
 

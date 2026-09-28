@@ -252,12 +252,10 @@ namespace OpenSim.Services.HypergridService
             if (m_FriendsService == null || m_PresenceService == null)
             {
                 m_log.WarnFormat("[HGFRIENDS SERVICE]: Unable to perform status notifications because friends or presence services are missing");
-                return new List<UUID>();
+                return [];
             }
 
             // Let's unblock the caller right now, and take it from here async
-
-            List<UUID> localFriendsOnline = new List<UUID>();
 
             m_log.DebugFormat("[HGFRIENDS SERVICE]: Status notification: foreign user {0} wants to notify {1} local friends of {2} status",
                 foreignUserID, friends.Count, (online ? "online" : "offline"));
@@ -286,58 +284,44 @@ namespace OpenSim.Services.HypergridService
                 }
             }
 
-            // Now, let's send the notifications
             //m_log.DebugFormat("[HGFRIENDS SERVICE]: Status notification: user has {0} local friends", usersToBeNotified.Count);
 
             // First, let's send notifications to local users who are online in the home grid
             //
-            // Ported from a real upstream fix (opensim/opensim PR #62,
-            // "the break on line 265 kicks it out of the loops after
-            // first friend, so other friends on same grid do not appear
-            // online") - the old loop below found the first session with
-            // a non-zero RegionID and immediately broke out, so only one
-            // HG friend on the same home grid ever got notified/counted
-            // as online even when several were, silently under-reporting
-            // friends-online status for anyone with more than one friend
-            // logged into the same foreign grid at once. Now every
-            // matching session is processed.
+            // No break/early-exit in this loop - a prior bug here (opensim/
+            // opensim PR #62) broke out after the first matching session,
+            // so only one HG friend on the same home grid ever got notified/
+            // counted as online even when several were. Every matching
+            // session must be processed.
             PresenceInfo[] friendSessions = m_PresenceService.GetAgents(usersToBeNotified.ToArray());
-            if (friendSessions != null && friendSessions.Length > 0)
-            {
-                foreach (PresenceInfo friendSession in friendSessions)
-                {
-                    if (friendSession.RegionID.IsZero()) // let's guard against traveling agents
-                        continue;
+            if(friendSessions is null || friendSessions.Length == 0)
+                return [];
 
-                    ForwardStatusNotificationToSim(friendSession.RegionID, foreignUserID, friendSession.UserID, online);
-                    usersToBeNotified.Remove(friendSession.UserID.ToString());
-                    UUID id;
-                    if (online && UUID.TryParse(friendSession.UserID, out id) && !localFriendsOnline.Contains(id))
-                        localFriendsOnline.Add(id);
+            List<UUID> localFriendsOnline = [];
+
+            foreach (PresenceInfo friendSession in friendSessions)
+            {
+                // Guard against agents currently traveling between regions.
+                if (friendSession.RegionID.IsZero())
+                    continue;
+
+                ForwardStatusNotificationToSim(
+                    friendSession.RegionID,
+                    foreignUserID,
+                    friendSession.UserID,
+                    online
+                );
+
+                if (online && UUID.TryParse(friendSession.UserID, out UUID id) && !localFriendsOnline.Contains(id))
+                {
+                    localFriendsOnline.Add(id);
                 }
             }
 
-//            // Lastly, let's notify the rest who may be online somewhere else
-//            foreach (string user in usersToBeNotified)
-//            {
-//                UUID id = new UUID(user);
-//                //m_UserAgentService.LocateUser(id);
-//                //etc...
-//                //if (m_TravelingAgents.ContainsKey(id) && m_TravelingAgents[id].GridExternalName != m_GridName)
-//                //{
-//                //    string url = m_TravelingAgents[id].GridExternalName;
-//                //    // forward
-//                //}
-//                //m_log.WarnFormat("[HGFRIENDS SERVICE]: User {0} is visiting another grid. HG Status notifications still not implemented.", user);
-//            }
+            // Lastly, let's notify the rest who may be online somewhere else
+            // NOT SUPPORTED
 
-            // and finally, let's send the online friends
-            if (online)
-            {
-                return localFriendsOnline;
-            }
-            else
-                return new List<UUID>();
+            return online ? localFriendsOnline : [];
         }
 
         #endregion IHGFriendsService
@@ -434,8 +418,7 @@ namespace OpenSim.Services.HypergridService
 
         protected void ForwardStatusNotificationToSim(UUID regionID, UUID foreignUserID, string user, bool online)
         {
-            UUID userID;
-            if (UUID.TryParse(user, out userID))
+            if (UUID.TryParse(user, out UUID userID))
             {
                 if (m_FriendsLocalSimConnector != null)
                 {
