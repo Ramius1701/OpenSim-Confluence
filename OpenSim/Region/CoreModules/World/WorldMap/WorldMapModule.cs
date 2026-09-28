@@ -49,6 +49,8 @@ using OpenSim.Framework.Servers.HttpServer;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.CoreModules.World.Land;
+using OpenSim.Server.Base;
+using OpenSim.Services.Interfaces;
 using Caps=OpenSim.Framework.Capabilities.Caps;
 using OSDArray=OpenMetaverse.StructuredData.OSDArray;
 using OSDMap=OpenMetaverse.StructuredData.OSDMap;
@@ -101,6 +103,17 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
         protected bool m_localV1MapAssets = false; // keep V1 map assets only on  local cache
         protected bool m_storeLegacyMaptileAssets = false;
         protected string m_mapTilesDirectory = string.Empty; // directory to load/save map tile images
+
+        // Confluence addition (2026-09-29): upstream OpenSim's own
+        // HandleMapItemRequest has real, working cases for AgentLocations/
+        // Telehub/LandForSale (all using live scene data) but treats
+        // PgEvent/MatureEvent/AdultEvent/Classified/Popular as a deliberate
+        // no-op ("just dont not cry about them" - upstream's own comment,
+        // unchanged by this addition). Reuses the exact same [EventsService]
+        // config section and IEventsService backend ConfluenceSearchModule
+        // already loads for the Directory floater's Events tab, so grid
+        // owners configure this once, not twice.
+        private IEventsService m_eventsService = null;
 
         private readonly object m_sceneLock = new object();
         public WorldMapModule()
@@ -173,6 +186,20 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                 {
                     m_log.Error($"[WORLD MAP]: failed to create folder {m_mapTilesDirectory} for local map tiles {e.Message}");
                     m_mapTilesDirectory = null;
+                }
+            }
+
+            IConfig eventsConfig = config.Configs["EventsService"];
+            string eventsServiceDll = eventsConfig?.GetString("LocalServiceModule", string.Empty);
+            if (!string.IsNullOrEmpty(eventsServiceDll))
+            {
+                try
+                {
+                    m_eventsService = ServerUtils.LoadPlugin<IEventsService>(eventsServiceDll, new object[] { config });
+                }
+                catch (Exception e)
+                {
+                    m_log.Warn("[WORLD MAP]: Failed to load EventsService for map event pins", e);
                 }
             }
         }
@@ -549,6 +576,39 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                         break;
 
                     case (uint)GridItemType.PgEvent:
+                        // Confluence addition (2026-09-29): real event pins, reusing
+                        // the same IEventsService/EventItem backend the Directory
+                        // floater's Events tab already uses (ConfluenceSearchModule).
+                        // EventItem has no per-event maturity rating anywhere in this
+                        // codebase's data model, so there is no honest way to split
+                        // results into Mature/Adult here - everything goes through
+                        // this PG case, and MatureEvent/AdultEvent stay the same
+                        // no-op upstream already used, rather than fabricate a
+                        // maturity classification that doesn't exist. GlobalPos is
+                        // already a world (not region-local) position - see
+                        // EventItem's own class comment - so no region lookup or
+                        // landing-point math is needed, unlike the LandForSale case
+                        // above.
+                        if (m_eventsService != null)
+                        {
+                            List<EventItem> upcoming = m_eventsService.GetUpcoming(0, 100);
+                            foreach (EventItem ev in upcoming)
+                            {
+                                if (!Vector3.TryParse(ev.GlobalPos, out Vector3 pos) || pos.X == 0f && pos.Y == 0f)
+                                    continue;
+
+                                mapitem = new mapItemReply(
+                                            (uint)pos.X, (uint)pos.Y,
+                                            ev.ID,
+                                            ev.Title,
+                                            0, 0
+                                );
+                                mapitems.Add(mapitem);
+                            }
+                        }
+                        remoteClient.SendMapItemReply(mapitems.ToArray(), itemtype, flags);
+                        break;
+
                     case (uint)GridItemType.MatureEvent:
                     case (uint)GridItemType.AdultEvent:
                     case (uint)GridItemType.Classified:
