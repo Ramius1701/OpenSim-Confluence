@@ -25828,4 +25828,160 @@ merge-base with Tranquillity.
 checking again later for specific named features (Phlox, Trusted Hypergrid) as their own deliberate
 evaluation - not something to re-run `git cherry` against expecting a shrinking number, since its ongoing
 architectural rewrite means the unmatched count will likely stay large regardless of how much genuinely
+work has landed on either side.
+
+## A deploy mistake caused a full grid outage - real cause, real fix, real lesson (2026-09-28)
+
+Deploying the upstream merge above, only the 4 assemblies that had *manual conflict resolution*
+(`OpenSim.Framework.dll`, `OpenSim.Region.OptionalModules.dll`, `OpenSim.Server.Handlers.dll`,
+`OpenSim.Services.HypergridService.dll`) were copied to the master root - a wrong scoping decision that
+conflated "which files had a git merge conflict" with "which files need to be redeployed together." Those
+are not the same list: `OpenSim/Region/Application/OpenSimBase.cs` auto-merged cleanly (no conflict, so
+never reviewed) but still changed - upstream's own removal of `RegionInfo.proxyUrl` propagated into it. The
+master root ended up with a **new** `OpenSim.Framework.dll` (missing that field) paired with an **old**
+`OpenSim.exe`/`OpenSim.dll` (still calling `regionInfo.proxyUrl` by name) - a hard assembly-linkage mismatch.
+Every region that cycled through the rolling restart hit `System.MissingFieldException:
+'OpenSim.Framework.RegionInfo.proxyUrl'` in `OpenSimBase.CreateRegion` and crashed immediately, eventually
+taking down the entire grid (confirmed live: all 15 region processes exited, only Robust remained).
+
+**Real fix**: any code deploy is the *entire* fresh build output tree, copied as one atomic unit - never a
+hand-picked subset based on what a diff review believed changed. Deployed the complete `bin/` output
+(281 top-level files + 7 `lib64/*.dll`, matching exactly the same file-pattern set `SyncRegionBinaries`
+itself already uses for regions) to the master root, verified every file byte-for-byte against the repo
+build via `md5sum`, relaunched Robust, and had the operator bring regions back up one at a time with a log
+check after each (`UFPGC` first, confirmed clean - `INITIALIZATION COMPLETE... LOGINS ENABLED`, a real
+resident logged in and completed movement - before the rest followed). **Real, hard-learned lesson,
+recorded here so it doesn't recur**: a git merge conflict list and a binary-deploy file list are different
+concepts entirely; a shared/base assembly changing means every assembly that touches it must move together,
+including ones that merged with zero conflict.
+
+Also confirmed and fixed an actually-unrelated critical mistake surfaced by the outage: the full-tree deploy
+script must only ever copy the exact file-type patterns `SyncRegionBinaries` uses (`*.dll`/`*.exe`/`*.pdb`/
+`*.config`/`*.json`/`*.dll.win`/`*.dll.linux` + `lib64/*.dll`) - the repo's own `bin/` folder also contains
+this checkout's own local dev databases, `.ini` configs, and runtime data folders (`Regions/`, `Estates/`,
+`maptiles/`, `assetcache/`, `data/`). A blind full-folder copy would have overwritten Casperia's real,
+live production databases and configs with empty local test data - caught and avoided before it happened,
+not after.
+
+## Extended "Find" self-search investigation: real fixes shipped, deeper root cause never found, everything
+## reverted to vanilla behavior as a deliberate reset (2026-09-28)
+
+Following on from the two real, confirmed map-search fixes earlier tonight (terminator-block,
+ParcelImage-zero fallback - both entries above), the operator reported the deeper symptom was still
+happening: searching Find for the exact name of the region you are *currently standing in* fails
+(flashes then reverts), while searching for that same region's name *from any other region* works
+correctly. Confirmed by the operator across a comprehensive, fresh test after a full grid restart:
+10 of 15 regions (SailorV Creations, Sandbox, Sector 001-004, Sol Sector, Starbase Andromeda, Tangle, UFPGC)
+fail on self-search; 5 (Farm, GFC, Ranchero, Section 31, Welcome Center) don't. Confirmed via direct
+comparison against real, unaltered `opensim-master` and via testing on Nightly/Beta/Release Firestorm
+alike that this is not a viewer-version quirk and not vanilla behavior - a genuine Confluence-side
+regression, per the operator's own repeated and ultimately correct insistence throughout.
+
+**Everything checked and ruled out, each with direct evidence, not assumption:**
+- **Server-side reply content and timing** - added temporary diagnostic logging at every relevant layer
+  (`MapSearchModule.OnMapNameRequestHandler`, `LLClientView.SendMapBlock`'s Land-throttle queue depth,
+  `RegionGridServiceConnector.GetRegionsByURI`'s local/remote merge) and captured live, real test data
+  multiple times, including a direct A/B comparison: Welcome Center (works) and Sandbox (fails) produced
+  **byte-identical-shaped, fully correct replies** through the exact same code paths - single block, correct
+  name/coordinates, `Access=13`, a valid non-zero image UUID, zero throttle-queue delay. One genuinely
+  worked, one didn't, with no observable difference in what the server did or sent in either case.
+- **The local/remote grid-connector merge** (`RegionGridServiceConnector.GetRegionsByURI` prefers a local,
+  in-process match over a fresh remote one) is real, confirmed live via direct instrumentation, and is
+  **genuinely unmodified vanilla code** (diffed byte-for-byte against `opensim-master`) - present and
+  behaving identically on both a working and a failing region, so not the differentiator either.
+- **Database row fields** (`flags`, `access`, `sizeX`/`sizeY`, `regionMapTexture`/`parcelMapTexture`) show
+  no correlation with the 10-vs-5 split at all - both groups span every size, and 13 of 15 regions share
+  the identical `flags` value regardless of which side of the list they're on.
+- **Config** - confirmed `MapSearchModule.cs`/`WorldMapModule.cs` read zero config keys of any kind; there
+  is no per-region setting this could possibly hinge on.
+- **`Regions.ini` full content** - two different provisioning templates are genuinely in use grid-wide (an
+  older minimal one, a newer Store-provisioned verbose one), a real, independently-worth-fixing
+  inconsistency, but it does not correlate with the 10-vs-5 split either.
+- **Packet-serialization code** (`LLClientView.SendMapBlock`) - read in full, confirmed byte-for-byte
+  identical to vanilla `opensim-master`.
+- **Estate assignment** - one estate ("Starfleet") happened to contain 7 of the 10 broken regions with
+  perfect consistency, a striking-looking correlation that turned out to be a dead end: that estate's own
+  settings are byte-identical to a *clean* estate's, same owner UUID even - the grouping reflects how the
+  operator organized the grid by theme, not a technical cause.
+- **Composite/overview map tiles** - a real, separately-confirmed bug was found and fixed here (see next
+  section), then also ruled out as the specific cause of the self-search symptom: after the fix, every
+  composite tile file on disk was confirmed genuinely valid, and the self-search symptom still reproduced
+  identically on a completely fresh, clean full-grid restart with no crash history at all - ruling out
+  anything timing/crash-dependent.
+- **Viewer-side C++ source** (`phoenix-firestorm`, not edited, read directly) - traced the entire client
+  pipeline for this exact scenario: `processMapBlockReply` (confirmed the OpenSim-only hypergrid
+  `hop://`-redirect intercept, `processExactNamedRegionResponse`, is genuinely inert for an ordinary Find
+  search - it only ever fires when a pending SLURL-redirect query exists) → `LLWorldMap::insertRegion`
+  (confirmed unconditional - always sets the name/access/flags fresh, no "skip if already cached" logic
+  anywhere) → `LLFloaterWorldMap::updateSims` (confirmed it re-scans the viewer's *entire* local region
+  cache for a name match, not just the just-arrived packet's contents - correctly explained the general
+  mechanism but revealed no self-vs-other branch anywhere in the chain).
+- **Viewer's own local cache** - operator confirmed directly, from prior experience, that clearing
+  Firestorm's cache does nothing for this.
+- **Provisioning history** - operator confirmed all 15 regions are original `opensim-master`-based sims,
+  no special one-off creation/migration history distinguishing the broken set from the clean one.
+
+**Real bugs found and fixed along the way, independently confirmed correct** (all three initially shipped,
+then reverted together - see below):
+1. A genuine second, unfixed copy of the ParcelImage-zero bug in `WorldMapModule.cs`'s own
+   `MapBlockFromGridRegion` (a separate method from the one already fixed in `MapSearchModule.cs`, serving
+   the tile-grid/map-panning path) - fixed with the same TerrainImage fallback. Ruled out as the cause of
+   the self-search symptom specifically once diagnostic logging proved that code path (`GetAndSendBlocksInternal`)
+   never fires at all during a plain Find search, on any region, ever (zero log entries grid-wide).
+2. A real, confirmed composite/overview map-tile staleness bug in `MapImageService.cs`: the in-memory,
+   non-persistent tile-regeneration queue (`m_MultiRezToBuild`, genuinely vanilla-inherited code, confirmed
+   byte-identical to `opensim-master`) can lose pending composite-tile rebuilds if Robust restarts before a
+   60-second delayed background worker gets to run - a real, live-demonstrated mechanism given how many
+   times Robust restarted during tonight's crash-and-recovery. Added a one-time startup self-heal
+   (`RebuildCompositeTilesForOnlineRegions`) that re-derives and re-enqueues every currently-registered
+   region's composite tiles unconditionally, mirroring `SweepOrphanedTiles`'s own existing disk-scan pattern
+   in the opposite direction. Real, working fix for a real bug - but a fresh, full grid restart (no crash
+   history to lose anything from) still reproduced the identical self-search failure afterward, definitively
+   ruling this out as the cause of that specific symptom too.
+
+**Decision, made explicitly by the operator after this exhaustive process turned up no further leads**:
+revert all three of tonight's map-search/map-tile commits (`4b6ef09add`, `f6d5b5010b`, `c411a737e5`) plus
+the never-committed self-heal/diagnostic-logging work, returning `MapSearchModule.cs`, `WorldMapModule.cs`,
+`MapGetServerConnector.cs`, `GridService.cs`, and `MapImageService.cs` to exactly vanilla `opensim-master`
+behavior for this whole area. Rationale, stated directly: continuing to layer fix after fix on top of an
+already-uncertain foundation, without ever having found the actual root cause, was not converging on
+stability - a clean, known, vanilla baseline is a better place to stand than an accumulating stack of
+partial, unproven patches. This is a deliberate reset, not an abandonment - the plan is to re-attempt this
+investigation fresh, from this clean baseline, in a future session.
+
+**What reverting this brought back, accepted knowingly as the cost of the reset:**
+- The original terminator-block flash-then-vanish bug (universal - any successful Find search, not just
+  self-search, briefly shows a result then reverts to "None found.").
+- The original ParcelImage-zero-shows-blank-image bug in Find results.
+- The original stale-map-tile-served-forever bug for any region that goes offline gracefully or via a crash
+  (no cleanup mechanism at all now, matching stock OpenSim).
+
+**Real mid-revert findings worth recording for next time:**
+- `git revert` on `c411a737e5` produced real merge conflicts (not clean auto-apply) since
+  `MapGetServerConnector.cs` had three generations of change layered onto the same function since that
+  commit: a pre-existing, Confluence-only path-construction bug fix (predates `c411a737e5`, unrelated,
+  correctly preserved), `c411a737e5`'s own `GetRegionByPosition` liveness check (the thing being removed),
+  and tonight's upstream-sync `UUID.TryParse` scopeID validation (postdates `c411a737e5`, unrelated,
+  correctly preserved). Resolved by hand, verified the file compiles with zero dangling references to the
+  removed `GridService` cross-reference field before committing.
+- `FEATURES.md` showed a conflict spanning nearly the entire file (it has grown enormously across many
+  sessions since `c411a737e5`) - resolved by keeping the current file wholesale and manually removing just
+  the one paragraph that documented the now-reverted feature, rather than letting a blind merge touch
+  months of unrelated documentation.
+- `PROJECT_LOG.md` itself conflicted on every revert (git tried to strip the historical log entries along
+  with the code) - resolved by always keeping the full accumulated log intact and adding new entries on
+  top, since a documentation file's job is to record what was tried and why, not to match the current code
+  state line-for-line.
+- Found and separately committed (not part of the revert) a genuinely unrelated, already-complete piece of
+  work sitting uncommitted in the working tree from earlier tonight: a retry mechanism for WebRTC voice
+  JSON-RPC requests (`WebRtcVoiceServiceConnector.cs`) that don't complete due to a transport failure -
+  Firestorm's own WebRTC voice client does not retry a failed `ProvisionVoiceAccountRequest` on its own, so
+  one transient connection failure permanently fails voice for that region until the viewer relogs.
+
+**For whoever re-attempts this next**: don't re-walk the ruled-out list above - every item on it has direct,
+repeatable evidence behind it, not just reasoning. The most promising unexplored angle, if any, is a genuine
+packet capture (Wireshark) or Firestorm's own per-category debug logging (the "WorldMap" tag specifically)
+during a live self-search test - both proposed but not yet obtained. Everything else independently
+derivable from source code, live server-side instrumentation, and direct database/config inspection has now
+been checked.
 useful work either project does.
