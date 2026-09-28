@@ -119,7 +119,7 @@ dotnet build OpenSim/Region/PhysicsModules/JoltPhysics/OpenSim.Region.PhysicsMod
 ```
 
 Without it, selecting Jolt leaves a region with no physics engine. ubODE (the default) and BulletSim need no
-extra step.
+extra step, and either works with either mesher.
 
 See `BUILDING.md` for the official base requirements.
 

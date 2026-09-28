@@ -117,9 +117,7 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                     return;
                 }
 
-                // TEMPORARY diagnostic logging (2026-09-28) - investigating the in-world "Find"
-                // flash-then-vanish report. Safe/log-only: no behavior change. Remove once resolved.
-                m_log.DebugFormat("[MAPSEARCHMODULE]: MAP NAME=({0}) flags={1}", mapName, flags);
+                //m_log.DebugFormat("MAP NAME=({0})", mapName);
                 string mapNameOrig = mapName;
                 int indx = mapName.IndexOfAny(new char[] {'.', '!','+','|',':','%'});
                 bool needOriginalName = indx >= 0;
@@ -130,7 +128,7 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                 if (!remoteClient.IsActive)
                     return;
 
-                m_log.DebugFormat("[MAPSEARCHMODULE]: search {0} returned {1} regions", mapName, regionInfos == null ? -1 : regionInfos.Count);
+                //m_log.DebugFormat("[MAPSEARCHMODULE]: search {0} returned {1} regions", mapName, regionInfos.Count);
 
                 if (regionInfos != null && regionInfos.Count > 0)
                 {
@@ -145,27 +143,8 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                     }
                 }
 
-                // Real fix (2026-09-28): only close the result list with a synthetic "does not
-                // exist" (Access=NonExistent) block when nothing was actually found. Sending it
-                // unconditionally - even alongside a real match - is what vanilla OpenSim always
-                // did here, but Firestorm-family viewers (confirmed against their own source,
-                // llworldmapmessage.cpp/llworldmap.cpp/llfloaterworldmap.cpp) treat ANY block with
-                // Access=255 in a reply as a failed lookup: it sets found_null_sim, which clears
-                // LLFloaterWorldMap's mCompletingRegionName, which makes every later reply for the
-                // same search (the viewer sends several near-identical MapNameRequest packets per
-                // click) get silently dropped by updateSims' own "already done" guard. Only the
-                // first reply ever did anything, which is exactly the "flashes then vanishes"
-                // symptom. The closing block still has a real purpose - telling an older viewer
-                // "stop waiting, this is everything" - so it's kept for the genuine zero-match
-                // case, just no longer sent alongside a real result.
-                if (regionInfos == null || regionInfos.Count == 0)
-                    AddFinalBlock(blocks, mapNameOrig);
-
-                // TEMPORARY diagnostic logging (2026-09-28): log exactly what is being sent back,
-                // in order - this is the one thing the earlier investigation couldn't see at all.
-                foreach (MapBlockData b in blocks)
-                    m_log.DebugFormat("[MAPSEARCHMODULE]: sending block Name='{0}' X={1} Y={2} Access={3} MapImageId={4}",
-                        b.Name, b.X, b.Y, b.Access, b.MapImageId);
+                // final block, closing the search result
+                AddFinalBlock(blocks, mapNameOrig);
 
                 // flags are agent flags sent from the viewer.
                 // they have different values depending on different viewers, apparently
@@ -180,13 +159,7 @@ namespace OpenSim.Region.CoreModules.World.WorldMap
                         remoteClient.SendAgentAlertMessage("No regions found with that name.", true);
                 }
             }
-            catch (Exception e)
-            {
-                // TEMPORARY (2026-09-28): this was a bare catch{} that silently swallowed every
-                // exception with zero logging - kept safe (still never lets an exception escape
-                // to the caller) but now actually visible if something is throwing here.
-                m_log.WarnFormat("[MAPSEARCHMODULE]: OnMapNameRequestHandler threw for '{0}': {1}", mapName, e);
-            }
+            catch{ }
         }
 
         private static void MapBlockFromGridRegion(MapBlockData block, GridRegion r, uint flag)
