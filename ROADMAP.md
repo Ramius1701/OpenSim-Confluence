@@ -56,6 +56,34 @@ gap today. For what already exists, see `FEATURES.md`.
   the bake image. Next step is still live capture the next time it
   happens, now also noting whether `[GETASSET]` 404s appear for that
   avatar's session.
+- **In-world map "Find" fails when searching for your own current
+  region's name specifically - root cause not found, reverted to
+  vanilla behavior as a deliberate reset (2026-09-28).** Searching
+  Find for the exact region you're standing in flashes then reverts;
+  searching for that same region's name from anywhere else works
+  fine. Reproduced consistently on 10 of 15 regions, confirmed not a
+  viewer bug (tested Nightly/Beta/Release, compared directly against
+  unaltered `opensim-master`, which doesn't have this at all). An
+  exhaustive investigation ruled out, with direct live evidence rather
+  than assumption: server reply content and timing (byte-identical,
+  zero-delay replies captured on both a working and a failing region),
+  the local/remote grid-connector merge (genuinely unmodified vanilla
+  code), every database row field, config (none exists for this
+  module), `Regions.ini` template differences, packet-serialization
+  code (vanilla-identical), estate assignment, composite map-tile
+  staleness (a real, separate bug found and fixed, then ruled out),
+  the full Firestorm-side C++ pipeline (`phoenix-firestorm`, read not
+  edited), viewer cache, and provisioning history. Two real, unrelated
+  bugs were found and fixed along the way (a Find terminator-block
+  false-negative, and a blank-image fallback) but all three
+  map-search/map-tile commits from that session were deliberately
+  reverted together rather than leave a partial, unproven stack of
+  fixes in place - full writeup, including the complete ruled-out
+  list, in `PROJECT_LOG.md` (2026-09-28). Grid currently runs exactly
+  vanilla `opensim-master` behavior for map search and map-tile
+  cleanup; a fresh re-attempt is planned, most likely needing a real
+  packet capture or Firestorm's own "WorldMap" debug-tag logging to
+  get visibility past what server-side instrumentation alone can show.
 - **1,536 texture assets stored with zero bytes of data - cause found and
   fixed in code 2026-09-26, awaiting deploy; the existing rows stay
   broken.** Two writers, both storing whatever bytes arrived: (1) the mesh
