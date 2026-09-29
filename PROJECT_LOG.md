@@ -25998,19 +25998,19 @@ guessing.
 
 **Confirmed reproduction conditions:**
 - Region-local (128, 128) specifically - not the region's true geometric center. Confirmed on both
-  standard 256x256 regions (where 128,128 *is* the center) and on Tangle/UFPGC, which turned out via
-  direct DB query to be genuine 1024x1024 VAR regions (`sizeX=1024, sizeY=1024` in the `regions` table) -
-  meaning their true center is (512,512), yet the bug still fires at local (128,128). The trigger is tied
-  to the literal coordinate, not to "region center" as a concept.
+  standard 256x256 regions (where 128,128 *is* the center) and on two of the grid's VAR regions, which
+  turned out via direct DB query to be genuine 1024x1024 regions (`sizeX=1024, sizeY=1024` in the
+  `regions` table) - meaning their true center is (512,512), yet the bug still fires at local (128,128).
+  The trigger is tied to the literal coordinate, not to "region center" as a concept.
 - A small-radius "bubble," not an infinitely precise point - a ~3m horizontal offset (128,128 -> 125,128)
-  or enough altitude (roughly Z 36+ on Welcome Center, where ground level is ~24.6m) clears it.
+  or enough altitude (roughly Z 36+ on the region tested, where ground level is ~24.6m) clears it.
 - Requires actual ground/terrain contact - landing on a prim/platform at height avoids it; landing on bare
   terrain at low altitude triggers it. This was the operator's own observation and is the best remaining
   clue for whoever picks this up next.
 - Universal across every region tested (confirmed on all 15 Casperia regions, both region sizes, both
-  ubODE and BulletSim physics engines - UFPGC already runs BulletSim, ruling out any single physics
-  engine's own native collision code), both Firestorm and CoolVL Viewer, and two different avatar
-  accounts (rules out anything specific to one avatar's attachments/appearance/account data).
+  ubODE and BulletSim physics engines - one of the VAR regions already runs BulletSim, ruling out any
+  single physics engine's own native collision code), both Firestorm and CoolVL Viewer, and two different
+  avatar accounts (rules out anything specific to one avatar's attachments/appearance/account data).
 - Confirmed **absent** on bare vanilla opensim-master, standalone mode, built fresh from real upstream
   source tonight (not just read - actually built, booted, and tested), across multiple repeated clean
   tests at the exact same coordinate.
@@ -26047,7 +26047,7 @@ assumption) - everything below is byte-identical to vanilla:**
   regions checked (even accounting for large prims' full bounding box, not just their recorded root
   position); exactly one parcel per region, no parcel boundary/corner anywhere near that point; the
   actual stored terrain heightfield decoded with the real compiled `TerrainData` class - completely
-  finite, flat (24.59m), zero NaN/Infinity anywhere in the entire 256x256 heightmap for Welcome Center.
+  finite, flat (24.59m), zero NaN/Infinity anywhere in the entire 256x256 heightmap for the region tested.
 - Found a real, substantial Confluence-only addition - `TerrainPerlin.cs`, a full Perlin-noise terrain
   generator for new regions - but its own math uses proportional centers (`width/2f`), not a hardcoded
   128, so it doesn't predict a region-size-independent artifact at exactly 128; it also only runs at
@@ -26061,8 +26061,8 @@ assumption) - everything below is byte-identical to vanilla:**
   avatar lookup at all; scene entities are tracked in plain dictionaries.
 - A NaN in the stored terrain height data, or a boundary bug in the bilinear height-lookup function - both
   checked directly (real data decode + hand-traced math); both clean.
-- A physics-engine-specific native collision bug - ruled out by UFPGC (BulletSim) and every other region
-  (ubODE) both showing the identical symptom.
+- A physics-engine-specific native collision bug - ruled out by the BulletSim-running VAR region and
+  every other (ubODE) region both showing the identical symptom.
 - A `CoarseLocationUpdate` byte-encoding sign-overflow at raw value 128 (0x80) - mechanically plausible,
   checked, byte-identical to vanilla.
 - An `EventQueueGet` (`/CE/` capability) HTTP 502 warning appearing in the viewer console at the same
