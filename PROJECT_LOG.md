@@ -26193,3 +26193,65 @@ Hypergrid"), now shown on both pages since it's not disclosure-sensitive.
 
 Built clean, deployed to Casperia Prime's Robust the same verified-PID way as the fix above, restarted
 clean with zero new errors and all 15 regions and all 127 map tiles confirmed untouched.
+
+## Public-website competitive audit, and four real WebUI additions shipped (2026-09-30)
+
+Prompted by a direct ask to re-evaluate `WebInterfaceServiceConnector.cs` against real competing OpenSim
+grid websites (3rd Rock Grid, DigiWorldz, Wolf Territories, OSGrid - fetched/searched live, not guessed)
+and find genuine gaps on both the user-facing and admin sides. Findings and design decisions worth keeping:
+
+- **The real finding wasn't "add graphics" in the abstract** - it was that the site had no mechanism at
+  all for a grid owner to express their own identity (no photos, no showcase, no social proof), and
+  critically, Confluence must never bake in any *specific* identity (Casperia's own Star Trek theme
+  included) since any grid owner runs this same code - every capability below is a generic, empty
+  mechanism the operator populates, never pre-filled content.
+- Checked the actual live code before proposing anything, twice catching near-duplicate work: a
+  "busiest region" single-line callout already existed on the home page (just not a multi-region list),
+  and a full ambient background slideshow (`WebSplash/`, folder-drop, uncaptioned) already existed on the
+  in-viewer splash - distinct from, and not replaced by, the new captioned homepage showcase below.
+
+**Shipped:**
+1. **Busiest Regions list** - the existing single "X people are in [Region]" line on the home page now
+   shows up to 5 regions when more than one has visitors, each with its own teleport link, instead of
+   naming only the single busiest. Falls back to the original one-line version for exactly one populated
+   region.
+2. **Homepage Gallery** ("See the World") - a real captioned photo showcase on the public home page,
+   distinct from the existing ambient WebSplash background. Follows the same "operator drops files in a
+   folder next to Robust.exe" convention WebSplash already uses (a real file-upload form is a separate,
+   larger change, not built here) - what's new is a web admin page (Grid Settings > Homepage Gallery) to
+   caption, order and enable/disable each already-dropped file, so populating captions doesn't need
+   shell/RDP access, only dropping the image files themselves does. Metadata stored as one JSON blob in
+   the existing `IGridSettingsService` key-value store, not a new database table/migration.
+3. **Testimonials** - explicitly corrected mid-design at the operator's direction: NOT admin-authored like
+   News/Events. Residents submit their own quote from a new self-service page (`/testimonial`, linked from
+   the sidebar's Community section), tied to their account rather than a free-text name field (so there's
+   no impersonation surface, and the displayed name is always resolved live off the real account, never a
+   stale copy). Submitting or editing always resets the entry to unpublished, so an already-approved quote
+   can't be silently changed after approval - it always needs a fresh admin look. The admin page (Grid
+   Settings > Testimonials) is a real moderation queue (approve/order/reject), not an authoring tool.
+4. **Grid Team** (staff directory) - admin-authored, since "who works here" is inherently curated, not
+   self-submitted. Picks an existing account by "First Last" name, the same resolution
+   `HandleAdminStarterLooksSave` already uses for its model-account field, rather than a free-text name -
+   the displayed name is always the real, current account name, and it enables a genuine "Message" link
+   straight to that person's inbox (`/messages/compose?to=<id>`), the direct-contact pattern Wolf
+   Territories' own staff list uses.
+
+All four render on the public home page (`HandleHome`), not the in-viewer splash - that page's whole job
+is "why should a visitor join," matching where the existing busiest-region/classifieds/economy widgets
+already live. Built clean each pass, deployed to Casperia Prime's Robust the same verified-PID way as the
+fixes above, restarted clean with zero new errors, all 15 regions and all 127 map tiles confirmed
+untouched each time, and a live curl smoke-check against the new and existing routes confirmed no server
+errors before calling it done.
+
+**Not built, flagged for a real future scoping pass if wanted**: an in-browser, no-viewer-download way to
+explore the world (Wolf Territories' "WolfStorm") - the single highest-ceiling item found, but a genuine
+WebGL OpenSim/SL protocol client, roughly the scale of the LLPathingLib navmesh-viewer effort in
+`ROADMAP.md` or larger, not a quick add. Also noted but not yet acted on: whether `/store` shows pricing
+to anonymous visitors before login (unverified either way), and an `/admin` landing-page KPI dashboard
+(open abuse reports, pending tickets, today's signups, current Diagnostics failures) plus an admin-action
+audit log, both real gaps on the admin side identified during the same pass.
+
+**Unrelated, caught mid-deploy**: Robust was found not running at all before the final deploy of this
+batch, with no graceful `[SHUTDOWN]` sequence in `Robust.log` - it just stopped mid-session. All 15
+regions were confirmed unaffected (separate processes). Cause not investigated - flagged to the operator,
+not chased further this session.

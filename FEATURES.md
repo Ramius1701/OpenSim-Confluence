@@ -38,7 +38,18 @@ alongside the existing support-ticket system.
 
 ### Public pages
 
-- Home/splash with live grid stats.
+- Home/splash with live grid stats, a "Busiest Regions" list naming up
+  to 5 currently-populated regions with direct teleport links (falls
+  back to a single-line mention when only one region has visitors), an
+  admin-curated photo showcase ("See the World" — operator drops image
+  files into a `GridGallery` folder, then captions/orders/enables each
+  one from the admin console, no upload form needed), a staff directory
+  ("Grid Team" — admin picks existing accounts by name, each with a
+  direct in-site Message link), and resident-submitted, admin-approved
+  testimonials (self-service at `/testimonial`; an edit always resets a
+  quote to unpublished so nothing bypasses moderation). All four are
+  empty, theme-agnostic mechanisms any grid owner populates with their
+  own content — Confluence itself never bakes in a specific identity.
 - Self-service sign-up with a starting-region picker (defaults to the
   grid's `DefaultRegion`-flagged regions) and an optional avatar-
   selection starter-look carousel — admin-curated "model" accounts
@@ -131,6 +142,11 @@ alongside the existing support-ticket system.
 - `/admin/starter-looks` — CRUD for the `/register` starter-look
   carousel: pick which existing account is the model by name, set
   display order, enable/disable a tile.
+- Grid Settings > Homepage Gallery, Testimonials, and Grid Team — the
+  admin side of the home-page identity features above: caption/order/
+  enable already-dropped showcase photos; approve, order, or reject
+  resident-submitted testimonials; add staff by account name with a
+  role and optional bio.
 - Grid settings, including a grid-wide login toggle (blocks new
   logins server-side at `LLLoginService`, with a configurable closed-
   message shown to anyone who tries) and an opt-in "clear all map

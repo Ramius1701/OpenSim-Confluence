@@ -491,8 +491,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                 "/change-password", "/change-email", "/transactions", "/myclassifieds",
                 "/myevents", "/forgot-password", "/reset-password", "/logout",
                 "/myregions", "/myland", "/myinventory", "/page", "/partner", "/myestates", "/delete-account",
-                "/offline-messages", "/messages",
-                "/help", "/guide", "/static", "/auctions", "/welcome-photos",
+                "/offline-messages", "/messages", "/testimonial",
+                "/help", "/guide", "/static", "/auctions", "/welcome-photos", "/gallery-photos",
                 // Multi-avatar accounts (see WebSession.WebAccountID) - the
                 // first avatar you register/log in with IS the master
                 // account, no separate portal credential.
@@ -1136,6 +1136,27 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/settings/map-tiles/save":
                         HandleAdminSettingsMapTilesSave(request, response);
                         break;
+                    case BasePath + "/admin/settings/gallery":
+                        HandleAdminSettingsGallery(request, response);
+                        break;
+                    case BasePath + "/admin/settings/gallery/save":
+                        HandleAdminSettingsGallerySave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/testimonials":
+                        HandleAdminSettingsTestimonials(request, response);
+                        break;
+                    case BasePath + "/admin/settings/testimonials/save":
+                        HandleAdminSettingsTestimonialsSave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/team":
+                        HandleAdminSettingsTeam(request, response);
+                        break;
+                    case BasePath + "/admin/settings/team/save":
+                        HandleAdminSettingsTeamSave(request, response);
+                        break;
+                    case BasePath + "/admin/settings/team/delete":
+                        HandleAdminSettingsTeamDelete(request, response);
+                        break;
                     case BasePath + "/admin/settings/features":
                         HandleAdminSettingsFeatures(request, response);
                         break;
@@ -1199,6 +1220,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/myinventory/iar-save":
                         HandleMyInventoryIarSave(request, response);
                         break;
+                    case BasePath + "/testimonial":
+                        HandleTestimonial(request, response);
+                        break;
+                    case BasePath + "/testimonial/save":
+                        HandleTestimonialSave(request, response);
+                        break;
+                    case BasePath + "/testimonial/withdraw":
+                        HandleTestimonialWithdraw(request, response);
+                        break;
                     default:
                         // Static pages are served at an operator-chosen slug,
                         // not a fixed path this switch can list in advance -
@@ -1210,6 +1240,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                             HandleStaticAsset(request, response, path.Substring((BasePath + "/static/").Length));
                         else if (path.StartsWith(BasePath + "/welcome-photos/", StringComparison.Ordinal))
                             HandleWelcomePhoto(request, response, path.Substring((BasePath + "/welcome-photos/").Length));
+                        else if (path.StartsWith(BasePath + "/gallery-photos/", StringComparison.Ordinal))
+                            HandleGalleryPhoto(request, response, path.Substring((BasePath + "/gallery-photos/").Length));
                         else
                         {
                             // Reference's http_404.html - real gap, a
@@ -1455,20 +1487,21 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<GridRegion> regions = FilterListedRegions(aliveRegions);
             HashSet<string> aliveRegionIDs = new HashSet<string>(aliveRegions.Select(r => r.RegionID.ToString()));
             int onlineNow = 0;
-            GridRegion busiestRegion = null;
-            int busiestRegionCount = 0;
+            // Every LISTED region with at least one person right now,
+            // busiest first - a flat "2 online" reads as sparse on a
+            // smaller grid; naming specific places people actually are
+            // gives a visitor a real reason to click rather than just a
+            // number, and showing several (not just the single busiest)
+            // reads as "there's a real place happening here," not "one
+            // lonely region has one person in it." Unlisted regions are
+            // excluded from this list (respects the same opt-out as the
+            // regions-to-explore count/list above) even though their
+            // occupants still count toward onlineNow itself.
+            List<(GridRegion Region, int Count)> busiestRegions = new List<(GridRegion, int)>();
             if (m_GridUserService != null)
             {
                 onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
 
-                // Names the single most-populated LISTED region right now,
-                // with a direct teleport link - a flat "2 online" reads as
-                // sparse on a smaller grid; naming somewhere specific and
-                // inviting to land gives a visitor an actual reason to
-                // click rather than just a number. Unlisted regions are
-                // excluded from the SUGGESTION (respects the same opt-out
-                // as the regions-to-explore count/list above) even though
-                // their occupants still count toward onlineNow itself.
                 List<GridUserInfo> onlineUsers = m_GridUserService.GetOnlineUsers(aliveRegionIDs);
                 HashSet<UUID> listedRegionIDs = new HashSet<UUID>(regions.Select(r => r.RegionID));
                 Dictionary<UUID, int> byRegion = new Dictionary<UUID, int>();
@@ -1481,12 +1514,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 foreach (var kvp in byRegion)
                 {
-                    if (kvp.Value > busiestRegionCount)
-                    {
-                        busiestRegionCount = kvp.Value;
-                        busiestRegion = regions.FirstOrDefault(r => r.RegionID == kvp.Key);
-                    }
+                    GridRegion region = regions.FirstOrDefault(r => r.RegionID == kvp.Key);
+                    if (region != null)
+                        busiestRegions.Add((region, kvp.Value));
                 }
+                busiestRegions.Sort((a, b) => b.Count.CompareTo(a.Count));
+                if (busiestRegions.Count > 5)
+                    busiestRegions.RemoveRange(5, busiestRegions.Count - 5);
             }
 
             int totalAccounts = 0;
@@ -1514,14 +1548,27 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<span>+").Append(newAccounts7d.ToString("N0")).Append(" new this week</span>");
             sb.Append("</div>");
 
-            if (busiestRegion != null)
+            if (busiestRegions.Count == 1)
             {
-                string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(busiestRegion.RegionName) + "/128/128/25";
+                string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(busiestRegions[0].Region.RegionName) + "/128/128/25";
                 sb.Append("<p class=\"tagline-lead\" style=\"margin-top:-10px;\">")
-                  .Append(busiestRegionCount).Append(busiestRegionCount == 1 ? " person is " : " people are ")
-                  .Append("in <a href=\"").Append(Html(hopUrl)).Append("\">").Append(Html(busiestRegion.RegionName))
+                  .Append(busiestRegions[0].Count).Append(busiestRegions[0].Count == 1 ? " person is " : " people are ")
+                  .Append("in <a href=\"").Append(Html(hopUrl)).Append("\">").Append(Html(busiestRegions[0].Region.RegionName))
                   .Append("</a> right now - join them.</p>");
             }
+            else if (busiestRegions.Count > 1)
+            {
+                sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-people\"></i> Busiest Right Now</h2><ul class=\"busiest-regions-list\">");
+                foreach ((GridRegion region, int count) in busiestRegions)
+                {
+                    string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
+                    sb.Append("<li>").Append(count).Append(count == 1 ? " person in " : " people in ")
+                      .Append("<a href=\"").Append(Html(hopUrl)).Append("\">").Append(Html(region.RegionName)).Append("</a></li>");
+                }
+                sb.Append("</ul></div>");
+            }
+
+            sb.Append(RenderGridGalleryShowcase());
 
             // No CTA row here - Log In/Sign Up are already one click away in
             // the top nav for every logged-out visitor (see WritePage's
@@ -1565,6 +1612,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendFeatureCard(sb, "We Actually Listen", "Feedback that goes somewhere",
                     "A real suggestion box and support queue an admin reads - not a dead mailbox.");
             sb.Append("</div>");
+
+            sb.Append(RenderGridTeam());
+            sb.Append(RenderTestimonials());
 
             string classifieds = RenderFeaturedClassifieds(6);
             string economy = RenderEconomyStats();
@@ -1773,6 +1823,53 @@ namespace OpenSim.Server.Handlers.WebInterface
         // layer's background-image once its own onload has fired, then
         // crossfade opacity - which, unlike background-image, browsers
         // reliably animate.
+        // Homepage showcase gallery - a real value-add missing before
+        // (2026-09-30): the existing WebSplash/ slideshow above is an
+        // ambient full-viewport background, uncaptioned, on the in-viewer
+        // splash only. This is a distinct, deliberately captioned "look
+        // at this world" section on the actual marketing home page
+        // (HandleHome), the same job real competing grids' hero-photo/
+        // region-showcase sections do - just theme-agnostic: it's an
+        // empty, generic mechanism any grid owner populates with their
+        // own screenshots, never a specific baked-in identity.
+        //
+        // Storage follows the same established "drop files in a
+        // conventionally-named folder next to Robust.exe, no config key
+        // needed" convention WebSplash/ and RegionWeb's own carousel
+        // already use for images in this codebase - adding a real
+        // multipart file-upload path is a bigger, separate change (see
+        // ROADMAP.md) and not needed to get real value here. What WAS
+        // missing and IS new here: a real admin-web layer on top of that
+        // folder (caption/order/enable per file), so populating captions
+        // doesn't need shell/RDP access, only dropping the image files
+        // themselves does - see HandleAdminSettingsGallery.
+        private string RenderGridGalleryShowcase()
+        {
+            List<GalleryEntry> entries = LoadGalleryEntries()
+                    .Where(e => e.Enabled && File.Exists(Path.Combine(GridGalleryDirectory, e.FileName)))
+                    .OrderBy(e => e.SortOrder).ThenBy(e => e.FileName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            if (entries.Count == 0)
+                return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<style>.gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}" +
+                    ".gallery-item{border-radius:8px;overflow:hidden;background:var(--card-bg);}" +
+                    ".gallery-item img{width:100%;height:160px;object-fit:cover;display:block;}" +
+                    ".gallery-item .gallery-caption{padding:8px 10px;font-size:13px;color:var(--muted);}</style>");
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-images\"></i> See the World</h2><div class=\"gallery-grid\">");
+            foreach (GalleryEntry entry in entries)
+            {
+                sb.Append("<div class=\"gallery-item\"><img src=\"").Append(BasePath).Append("/gallery-photos/")
+                  .Append(Html(Uri.EscapeDataString(entry.FileName))).Append("\" alt=\"").Append(Html(entry.Caption)).Append("\">");
+                if (!string.IsNullOrEmpty(entry.Caption))
+                    sb.Append("<div class=\"gallery-caption\">").Append(Html(entry.Caption)).Append("</div>");
+                sb.Append("</div>");
+            }
+            sb.Append("</div></div>");
+            return sb.ToString();
+        }
+
         private string RenderWelcomeSlideshow()
         {
             List<string> photos = GetWelcomePhotoFiles();
@@ -8119,6 +8216,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(nav, BasePath + "/admin/settings/announcement", "bi-megaphone", "Announcement", "Banner shown on the home page and login splash");
             AppendDashboardLink(nav, BasePath + "/admin/settings/economy", "bi-cash-coin", "Economy: Banker Avatar", "Where currency fees and charges flow to");
             AppendDashboardLink(nav, BasePath + "/admin/settings/map-tiles", "bi-map", "Map Tiles", "Clear cached map tiles on Robust's next restart");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/gallery", "bi-images", "Homepage Gallery", "Caption, order and enable showcase photos on the home page");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/testimonials", "bi-chat-quote", "Testimonials", "Approve, order and reject resident-submitted quotes");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/team", "bi-people", "Grid Team", "Staff directory shown on the home page, with a Message link");
             AppendDashboardLink(nav, BasePath + "/admin/settings/features", "bi-stars", "Features Content", "Powered By list and Membership Perks");
             AppendDashboardLink(nav, BasePath + "/admin/settings/concierge", "bi-chat-dots", "Concierge", "Default welcome message, rules and switches for every region");
             nav.Append("</div>");
@@ -8407,6 +8507,89 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_GridSettingsService.Set("ClearMapTilesOnStartup", clearMapTilesOnStartup ? "true" : "false");
 
             response.Redirect(BasePath + "/admin/settings/map-tiles?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
+        }
+
+        // Homepage showcase gallery admin - see RenderGridGalleryShowcase's
+        // comment for the overall design. This page is deliberately just a
+        // caption/order/enable editor over whatever's already sitting in
+        // GridGallery/ next to Robust.exe - it never writes image bytes
+        // itself, matching this codebase's existing "operator drops files
+        // in a folder" convention for this kind of content (WebSplash/
+        // works the same way).
+        private void HandleAdminSettingsGallery(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Homepage Gallery"))
+                return;
+
+            List<GalleryEntry> entries = LoadGalleryEntries();
+
+            StringBuilder body = new StringBuilder();
+            body.Append("<h1>Homepage Gallery</h1>")
+                .Append("<p><a href=\"").Append(BasePath).Append("/admin/settings\">Back to settings</a></p>")
+                .Append(SettingsMessageBanner(request))
+                .Append("<p class=\"news-meta\">Shown on the home page (\"See the World\") for every visitor, logged in or not. ")
+                .Append("To add a photo, drop a .jpg/.jpeg/.png/.webp file into the <code>GridGallery</code> folder next to Robust.exe, ")
+                .Append("then set its caption and check Enabled below and Save - a dropped file never shows publicly until you do. ")
+                .Append("Deleting the file from that folder removes it here too.</p>");
+
+            if (entries.Count == 0)
+            {
+                body.Append("<p>No images found in <code>GridGallery</code> yet.</p>");
+            }
+            else
+            {
+                body.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/settings/gallery/save\"><table><thead>")
+                    .Append("<tr><th>Preview</th><th>File</th><th>Caption</th><th>Order</th><th>Enabled</th></tr></thead><tbody>");
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    GalleryEntry entry = entries[i];
+                    body.Append("<tr><td><img src=\"").Append(BasePath).Append("/gallery-photos/")
+                        .Append(Html(Uri.EscapeDataString(entry.FileName))).Append("\" style=\"width:80px;height:60px;object-fit:cover;border-radius:4px;\"></td>")
+                        .Append("<td>").Append(Html(entry.FileName))
+                        .Append("<input type=\"hidden\" name=\"file_").Append(i).Append("\" value=\"").Append(Html(entry.FileName)).Append("\"></td>")
+                        .Append("<td><input type=\"text\" name=\"caption_").Append(i).Append("\" value=\"").Append(Html(entry.Caption)).Append("\" placeholder=\"e.g. Our main welcome hub\"></td>")
+                        .Append("<td><input type=\"number\" name=\"order_").Append(i).Append("\" value=\"").Append(entry.SortOrder).Append("\" style=\"width:70px\"></td>")
+                        .Append("<td><input type=\"checkbox\" name=\"enabled_").Append(i).Append("\" value=\"true\"")
+                        .Append(entry.Enabled ? " checked" : "").Append(" style=\"width:auto\"></td></tr>");
+                }
+                body.Append("</tbody></table><input type=\"hidden\" name=\"count\" value=\"").Append(entries.Count).Append("\">")
+                    .Append("<button type=\"submit\">Save</button></form>");
+            }
+
+            WritePage(request, response, PageTitle("Homepage Gallery"), body.ToString());
+        }
+
+        private void HandleAdminSettingsGallerySave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            int.TryParse(FormValue(form, "count"), out int count);
+
+            List<GalleryEntry> entries = new List<GalleryEntry>();
+            for (int i = 0; i < count; i++)
+            {
+                string fileName = FormValue(form, "file_" + i);
+                if (string.IsNullOrEmpty(fileName))
+                    continue;
+                int.TryParse(FormValue(form, "order_" + i), out int order);
+                entries.Add(new GalleryEntry
+                {
+                    FileName = fileName,
+                    Caption = FormValue(form, "caption_" + i).Trim(),
+                    SortOrder = order,
+                    Enabled = FormValue(form, "enabled_" + i) == "true",
+                });
+            }
+
+            SaveGalleryEntries(entries);
+
+            response.Redirect(BasePath + "/admin/settings/gallery?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
         }
 
         private void HandleAdminSettingsFeatures(IOSHttpRequest request, IOSHttpResponse response)
@@ -17810,6 +17993,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             ("/myevents", "bi-calendar-event", "Events"),
             ("/auctions", "bi-hammer", "Auctions"),
             ("/suggestion-box", "bi-lightbulb", "Suggestion Box"),
+            ("/testimonial", "bi-chat-quote", "Share Your Story"),
         };
 
         // Split back into separate My Regions / My Land pages (2026-08-23) -
@@ -18188,6 +18372,566 @@ namespace OpenSim.Server.Handlers.WebInterface
             };
             response.AddHeader("Cache-Control", "public, max-age=3600");
             response.RawBuffer = File.ReadAllBytes(path);
+        }
+
+        // Homepage showcase gallery - see RenderGridGalleryShowcase's own
+        // comment for the design rationale. Same folder-drop convention
+        // and traversal-safety discipline as WelcomePhoto* above, in its
+        // own directory (GridGallery/, not WebSplash/) since the two
+        // serve genuinely different jobs (ambient background vs. a
+        // captioned showcase) and an operator may want different images,
+        // or only one of the two, for each.
+        private sealed class GalleryEntry
+        {
+            public string FileName { get; set; } = string.Empty;
+            public string Caption { get; set; } = string.Empty;
+            public int SortOrder { get; set; }
+            public bool Enabled { get; set; }
+        }
+
+        private static readonly string[] GridGalleryExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
+
+        private static string GridGalleryDirectory =>
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "GridGallery");
+
+        private static List<string> GetGridGalleryFiles()
+        {
+            List<string> files = new List<string>();
+            string dir = GridGalleryDirectory;
+            if (!Directory.Exists(dir))
+                return files;
+
+            foreach (string path in Directory.GetFiles(dir))
+            {
+                if (Array.IndexOf(GridGalleryExtensions, Path.GetExtension(path).ToLowerInvariant()) >= 0)
+                    files.Add(Path.GetFileName(path));
+            }
+            files.Sort(StringComparer.OrdinalIgnoreCase);
+            return files;
+        }
+
+        // Metadata (caption/order/enabled) stored as one JSON blob under a
+        // single IGridSettingsService key - the same key-value store
+        // every other small piece of grid config already uses (GridName,
+        // ClearMapTilesOnStartup, BankerAvatarID, etc.). Deliberately not
+        // a new database table: this codebase treats "every feature on
+        // MySQL/PostgreSQL/SQLite, standalone and grid mode" as a real
+        // requirement (see FEATURES.md's Database section), and a new
+        // table means three new migrations for a feature this small: one
+        // existing string column already covers it.
+        private List<GalleryEntry> LoadGalleryEntries()
+        {
+            List<GalleryEntry> stored = new List<GalleryEntry>();
+            string json = m_GridSettingsService?.Get("GridGalleryEntries");
+            if (!string.IsNullOrEmpty(json))
+            {
+                try
+                {
+                    stored = System.Text.Json.JsonSerializer.Deserialize<List<GalleryEntry>>(json) ?? new List<GalleryEntry>();
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[WEBINTERFACE]: Could not parse GridGalleryEntries setting: {0}", e);
+                }
+            }
+
+            // Left-join against whatever's actually on disk right now - a
+            // file the admin hasn't configured yet still shows up (as
+            // Enabled=false, so it never surfaces publicly by surprise
+            // just because someone dropped a new file in the folder); a
+            // configured entry whose file was deleted is dropped rather
+            // than kept as a dangling row.
+            Dictionary<string, GalleryEntry> byFile = stored.ToDictionary(e => e.FileName, StringComparer.OrdinalIgnoreCase);
+            List<GalleryEntry> result = new List<GalleryEntry>();
+            int nextOrder = stored.Count > 0 ? stored.Max(e => e.SortOrder) + 1 : 0;
+            foreach (string fileName in GetGridGalleryFiles())
+            {
+                if (byFile.TryGetValue(fileName, out GalleryEntry existing))
+                    result.Add(existing);
+                else
+                    result.Add(new GalleryEntry { FileName = fileName, SortOrder = nextOrder++, Enabled = false });
+            }
+            return result;
+        }
+
+        private void SaveGalleryEntries(List<GalleryEntry> entries)
+        {
+            m_GridSettingsService?.Set("GridGalleryEntries", System.Text.Json.JsonSerializer.Serialize(entries));
+        }
+
+        private void HandleGalleryPhoto(IOSHttpRequest request, IOSHttpResponse response, string unsafeName)
+        {
+            string fileName = Path.GetFileName(Uri.UnescapeDataString(unsafeName));
+            if (string.IsNullOrEmpty(fileName) ||
+                    Array.IndexOf(GridGalleryExtensions, Path.GetExtension(fileName).ToLowerInvariant()) < 0)
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            string path = Path.Combine(GridGalleryDirectory, fileName);
+            if (!File.Exists(path))
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+
+            response.ContentType = Path.GetExtension(fileName).ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream",
+            };
+            response.AddHeader("Cache-Control", "public, max-age=3600");
+            response.RawBuffer = File.ReadAllBytes(path);
+        }
+
+        // Resident-submitted, admin-moderated homepage testimonials
+        // (2026-09-30). Deliberately NOT admin-authored like News/Events -
+        // real social proof has to come from actual residents, not the
+        // operator writing quotes for them. One entry per account (a
+        // resubmit replaces the resident's own previous quote, it doesn't
+        // pile up duplicates), keyed by AccountID rather than a stored
+        // name/quote-author string, both because that's the only way to
+        // guarantee "this quote is really from this account" without a
+        // second identity check, and because Name is then always resolved
+        // live off the real account - a display-name change or the
+        // account being deleted is reflected automatically, never a stale
+        // copy. Submitting or editing always resets Enabled to false -
+        // every quote needs a fresh admin look before it goes back on the
+        // public page, including a resident editing an already-approved
+        // one, so nothing bypasses moderation by editing after approval.
+        private sealed class TestimonialEntry
+        {
+            public UUID ID { get; set; }
+            public UUID AccountID { get; set; }
+            public string Quote { get; set; } = string.Empty;
+            public DateTime Submitted { get; set; }
+            public int SortOrder { get; set; }
+            public bool Enabled { get; set; }
+        }
+
+        private List<TestimonialEntry> LoadTestimonials()
+        {
+            string json = m_GridSettingsService?.Get("GridTestimonials");
+            if (string.IsNullOrEmpty(json))
+                return new List<TestimonialEntry>();
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<TestimonialEntry>>(json) ?? new List<TestimonialEntry>();
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[WEBINTERFACE]: Could not parse GridTestimonials setting: {0}", e);
+                return new List<TestimonialEntry>();
+            }
+        }
+
+        private void SaveTestimonials(List<TestimonialEntry> entries)
+        {
+            m_GridSettingsService?.Set("GridTestimonials", System.Text.Json.JsonSerializer.Serialize(entries));
+        }
+
+        // /testimonial - a resident's own submission, session-gated same as
+        // every other self-service page (myclassifieds, myevents, etc.).
+        private void HandleTestimonial(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            TestimonialEntry mine = LoadTestimonials().FirstOrDefault(e => e.AccountID == session.PrincipalID);
+
+            StringBuilder body = new StringBuilder();
+            body.Append("<h1><i class=\"bi bi-chat-quote\"></i> Share Your Story</h1>")
+                .Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a></p>")
+                .Append(SettingsMessageBanner(request))
+                .Append("<p class=\"news-meta\">Tell prospective residents what you like about this grid. Shown on the home page under ")
+                .Append("your own name once an admin approves it - editing an already-approved quote sends it back for a fresh look ")
+                .Append("before it's shown again.</p>");
+
+            if (mine != null)
+            {
+                body.Append("<p>Status: ").Append(mine.Enabled
+                        ? "<span class=\"pill pill-yes\">Published</span>"
+                        : "<span class=\"pill pill-warn\">Awaiting admin approval</span>").Append("</p>");
+            }
+
+            body.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/testimonial/save\">")
+                .Append("<label>Your quote<br/><textarea name=\"quote\" rows=\"4\" required>")
+                .Append(Html(mine?.Quote ?? string.Empty)).Append("</textarea></label><br/>")
+                .Append("<button type=\"submit\">").Append(mine != null ? "Update" : "Submit").Append("</button>")
+                .Append("</form>");
+
+            if (mine != null)
+            {
+                body.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/testimonial/withdraw\" ")
+                    .Append("onsubmit=\"return confirm('Remove your testimonial entirely?');\" style=\"margin-top:8px;\">")
+                    .Append("<button type=\"submit\" class=\"muted\">Withdraw</button></form>");
+            }
+
+            WritePage(request, response, PageTitle("Share Your Story"), body.ToString());
+        }
+
+        private void HandleTestimonialSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            string quote = FormValue(form, "quote").Trim();
+            if (string.IsNullOrEmpty(quote))
+            {
+                response.Redirect(BasePath + "/testimonial?message=" + Uri.EscapeDataString("A quote is required."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            List<TestimonialEntry> entries = LoadTestimonials();
+            TestimonialEntry mine = entries.FirstOrDefault(e => e.AccountID == session.PrincipalID);
+            if (mine == null)
+            {
+                mine = new TestimonialEntry { ID = UUID.Random(), AccountID = session.PrincipalID, SortOrder = entries.Count };
+                entries.Add(mine);
+            }
+            mine.Quote = quote;
+            mine.Submitted = DateTime.UtcNow;
+            mine.Enabled = false;
+
+            SaveTestimonials(entries);
+
+            response.Redirect(BasePath + "/testimonial?message=" + Uri.EscapeDataString("Thanks! Your testimonial is awaiting admin approval."), HttpStatusCode.Redirect);
+        }
+
+        private void HandleTestimonialWithdraw(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+
+            List<TestimonialEntry> entries = LoadTestimonials();
+            int removed = entries.RemoveAll(e => e.AccountID == session.PrincipalID);
+            if (removed > 0)
+                SaveTestimonials(entries);
+
+            response.Redirect(BasePath + "/testimonial?message=" + Uri.EscapeDataString("Testimonial removed."), HttpStatusCode.Redirect);
+        }
+
+        // Admin moderation queue - deliberately NOT an authoring tool (see
+        // the class comment above): residents write these, admins only
+        // approve/order/reject. Same index-based single-form shape as the
+        // Homepage Gallery admin page, for the same reason - every row
+        // here already exists (submitted by a resident), there's nothing
+        // to "add" from this page.
+        private void HandleAdminSettingsTestimonials(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Testimonials"))
+                return;
+
+            List<TestimonialEntry> entries = LoadTestimonials().OrderBy(e => e.SortOrder).ToList();
+
+            StringBuilder body = new StringBuilder();
+            body.Append("<h1>Testimonials</h1>")
+                .Append("<p><a href=\"").Append(BasePath).Append("/admin/settings\">Back to settings</a></p>")
+                .Append(SettingsMessageBanner(request))
+                .Append("<p class=\"news-meta\">Residents submit these themselves from their dashboard (\"Share Your Story\"). ")
+                .Append("Check Enabled to publish a quote on the home page; unchecking or deleting removes it.</p>");
+
+            if (entries.Count == 0)
+            {
+                body.Append("<p>No testimonials submitted yet.</p>");
+            }
+            else
+            {
+                body.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/settings/testimonials/save\"><table><thead>")
+                    .Append("<tr><th>Resident</th><th>Quote</th><th>Submitted</th><th>Order</th><th>Enabled</th><th>Delete</th></tr></thead><tbody>");
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    TestimonialEntry entry = entries[i];
+                    UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, entry.AccountID);
+                    string name = account != null ? account.Name : "(deleted account)";
+                    body.Append("<tr><td>").Append(Html(name))
+                        .Append("<input type=\"hidden\" name=\"id_").Append(i).Append("\" value=\"").Append(entry.ID).Append("\"></td>")
+                        .Append("<td style=\"max-width:320px;\">").Append(Html(entry.Quote)).Append("</td>")
+                        .Append("<td>").Append(Html(entry.Submitted.ToString("yyyy-MM-dd"))).Append("</td>")
+                        .Append("<td><input type=\"number\" name=\"order_").Append(i).Append("\" value=\"").Append(entry.SortOrder).Append("\" style=\"width:70px\"></td>")
+                        .Append("<td><input type=\"checkbox\" name=\"enabled_").Append(i).Append("\" value=\"true\"")
+                        .Append(entry.Enabled ? " checked" : "").Append(" style=\"width:auto\"></td>")
+                        .Append("<td><input type=\"checkbox\" name=\"delete_").Append(i).Append("\" value=\"true\" style=\"width:auto\"></td></tr>");
+                }
+                body.Append("</tbody></table><input type=\"hidden\" name=\"count\" value=\"").Append(entries.Count).Append("\">")
+                    .Append("<button type=\"submit\">Save</button></form>");
+            }
+
+            WritePage(request, response, PageTitle("Testimonials"), body.ToString());
+        }
+
+        private void HandleAdminSettingsTestimonialsSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            int.TryParse(FormValue(form, "count"), out int count);
+
+            List<TestimonialEntry> existing = LoadTestimonials();
+            List<TestimonialEntry> result = new List<TestimonialEntry>();
+            for (int i = 0; i < count; i++)
+            {
+                if (!UUID.TryParse(FormValue(form, "id_" + i), out UUID id))
+                    continue;
+                if (FormValue(form, "delete_" + i) == "true")
+                    continue;
+                TestimonialEntry entry = existing.FirstOrDefault(e => e.ID == id);
+                if (entry == null)
+                    continue;
+                int.TryParse(FormValue(form, "order_" + i), out int order);
+                entry.SortOrder = order;
+                entry.Enabled = FormValue(form, "enabled_" + i) == "true";
+                result.Add(entry);
+            }
+
+            SaveTestimonials(result);
+
+            response.Redirect(BasePath + "/admin/settings/testimonials?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
+        }
+
+        // Public render - resolves each account's real, current name live
+        // rather than trusting anything stored at submission time (see the
+        // class comment above for why).
+        private string RenderTestimonials()
+        {
+            List<TestimonialEntry> entries = LoadTestimonials()
+                    .Where(e => e.Enabled)
+                    .OrderBy(e => e.SortOrder)
+                    .ToList();
+            if (entries.Count == 0 || m_UserAccountService == null)
+                return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<style>.testimonial-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}" +
+                    ".testimonial-card{background:var(--card-bg);border-radius:8px;padding:16px;}" +
+                    ".testimonial-card blockquote{margin:0 0 10px;font-style:italic;}" +
+                    ".testimonial-card .testimonial-author{font-weight:600;font-size:13px;color:var(--muted);}</style>");
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-chat-quote\"></i> What Residents Say</h2><div class=\"testimonial-grid\">");
+            foreach (TestimonialEntry entry in entries)
+            {
+                UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, entry.AccountID);
+                if (account == null)
+                    continue;
+                sb.Append("<div class=\"testimonial-card\"><blockquote>&ldquo;").Append(Html(entry.Quote)).Append("&rdquo;</blockquote>")
+                  .Append("<div class=\"testimonial-author\">&mdash; ").Append(Html(account.Name)).Append("</div></div>");
+            }
+            sb.Append("</div></div>");
+            return sb.ToString();
+        }
+
+        // Grid Team / staff directory (2026-09-30) - humanizes the grid for
+        // a prospective resident before they commit, same job Wolf
+        // Territories' named-admin list with direct-message links does.
+        // Admin-authored (unlike Testimonials above) - "who works here" is
+        // inherently curated by the operator, not self-submitted. Picks an
+        // existing UserAccount by "First Last" name, same resolution
+        // HandleAdminStarterLooksSave already uses for its model-account
+        // field, rather than a free-text name field - the Name shown
+        // publicly is always the real, current account name (never a
+        // stale/misspelled copy), and it enables a real "Message" link via
+        // the account's own UUID.
+        private sealed class TeamMemberEntry
+        {
+            public UUID ID { get; set; }
+            public UUID AccountID { get; set; }
+            public string Role { get; set; } = string.Empty;
+            public string Blurb { get; set; } = string.Empty;
+            public int SortOrder { get; set; }
+            public bool Enabled { get; set; }
+        }
+
+        private List<TeamMemberEntry> LoadGridTeam()
+        {
+            string json = m_GridSettingsService?.Get("GridTeamMembers");
+            if (string.IsNullOrEmpty(json))
+                return new List<TeamMemberEntry>();
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<TeamMemberEntry>>(json) ?? new List<TeamMemberEntry>();
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[WEBINTERFACE]: Could not parse GridTeamMembers setting: {0}", e);
+                return new List<TeamMemberEntry>();
+            }
+        }
+
+        private void SaveGridTeam(List<TeamMemberEntry> entries)
+        {
+            m_GridSettingsService?.Set("GridTeamMembers", System.Text.Json.JsonSerializer.Serialize(entries));
+        }
+
+        private void HandleAdminSettingsTeam(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            if (!RequireAdminSettingsSession(request, response, "Grid Team"))
+                return;
+
+            string idParam = request.QueryString.Get("id");
+            List<TeamMemberEntry> all = LoadGridTeam().OrderBy(e => e.SortOrder).ToList();
+            TeamMemberEntry editing = null;
+            if (!string.IsNullOrEmpty(idParam) && UUID.TryParse(idParam, out UUID editId))
+                editing = all.FirstOrDefault(e => e.ID == editId);
+
+            StringBuilder body = new StringBuilder();
+            body.Append("<h1>Grid Team</h1>")
+                .Append("<p><a href=\"").Append(BasePath).Append("/admin/settings\">Back to settings</a></p>")
+                .Append(SettingsMessageBanner(request))
+                .Append("<p class=\"news-meta\">Shown on the home page with a direct Message link - humanizes the grid for a visitor deciding whether to join.</p>");
+
+            body.Append("<table><tr><th>Order</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>");
+            foreach (TeamMemberEntry entry in all)
+            {
+                UserAccount account = m_UserAccountService?.GetUserAccount(UUID.Zero, entry.AccountID);
+                body.Append("<tr>");
+                body.Append("<td>").Append(entry.SortOrder).Append("</td>");
+                body.Append("<td><a href=\"").Append(BasePath).Append("/admin/settings/team?id=").Append(entry.ID).Append("\">")
+                        .Append(account != null ? Html(account.Name) : "<span class=\"error\">Account not found</span>").Append("</a></td>");
+                body.Append("<td>").Append(Html(entry.Role)).Append("</td>");
+                body.Append("<td><span class=\"pill ").Append(entry.Enabled ? "pill-yes\">Enabled" : "pill-no\">Disabled").Append("</span></td>");
+                body.Append("<td><form method=\"post\" action=\"").Append(BasePath).Append("/admin/settings/team/delete\" onsubmit=\"return confirm('Remove this team member?');\">")
+                        .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(entry.ID).Append("\"><button type=\"submit\">Remove</button></form></td>");
+                body.Append("</tr>");
+            }
+            body.Append("</table>");
+            if (all.Count == 0)
+                body.Append("<p>No team members listed yet.</p>");
+
+            string formTitle = editing != null ? "Edit team member" : "Add a team member";
+            string accountName = editing != null ? (m_UserAccountService?.GetUserAccount(UUID.Zero, editing.AccountID)?.Name ?? string.Empty) : string.Empty;
+
+            body.Append("<h2>").Append(formTitle).Append("</h2>")
+                .Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/settings/team/save\">")
+                .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(editing?.ID.ToString() ?? string.Empty).Append("\">")
+                .Append("<label>Account (First Last)<br/><input type=\"text\" name=\"account_name\" value=\"").Append(Html(accountName)).Append("\" required></label><br/>")
+                .Append("<label>Role<br/><input type=\"text\" name=\"role\" value=\"").Append(Html(editing?.Role ?? string.Empty)).Append("\" placeholder=\"e.g. Grid Owner, Estate Manager\" required></label><br/>")
+                .Append("<label>Short bio (optional)<br/><textarea name=\"blurb\" rows=\"2\">").Append(Html(editing?.Blurb ?? string.Empty)).Append("</textarea></label><br/>")
+                .Append("<label>Sort order<br/><input type=\"number\" name=\"sort_order\" value=\"").Append(editing?.SortOrder ?? (all.Count > 0 ? all.Max(e => e.SortOrder) + 10 : 0)).Append("\"></label><br/>")
+                .Append("<label><input type=\"checkbox\" name=\"enabled\" value=\"true\"").Append(editing == null || editing.Enabled ? " checked" : string.Empty).Append(" style=\"width:auto;display:inline\"> Enabled (shown on the home page)</label><br/>")
+                .Append("<button type=\"submit\">Save</button>")
+                .Append(editing != null ? " <a href=\"" + BasePath + "/admin/settings/team\">Cancel</a>" : string.Empty)
+                .Append("</form>");
+
+            WritePage(request, response, PageTitle("Grid Team"), body.ToString());
+        }
+
+        private void HandleAdminSettingsTeamSave(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            UUID.TryParse(FormValue(form, "id"), out UUID id);
+            string accountName = FormValue(form, "account_name").Trim();
+            string role = FormValue(form, "role").Trim();
+            string blurb = FormValue(form, "blurb").Trim();
+            int.TryParse(FormValue(form, "sort_order"), out int sortOrder);
+            bool enabled = FormValue(form, "enabled") == "true";
+
+            if (string.IsNullOrEmpty(accountName) || string.IsNullOrEmpty(role))
+            {
+                response.Redirect(BasePath + "/admin/settings/team?id=" + id + "&message=" + Uri.EscapeDataString("Account and role are required."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            string[] nameParts = accountName.Split(new[] { ' ' }, 2);
+            UserAccount account = nameParts.Length == 2 && m_UserAccountService != null
+                    ? m_UserAccountService.GetUserAccount(UUID.Zero, nameParts[0], nameParts[1])
+                    : null;
+            if (account == null)
+            {
+                response.Redirect(BasePath + "/admin/settings/team?id=" + id + "&message=" + Uri.EscapeDataString("No account found matching \"" + accountName + "\" (use \"First Last\")."), HttpStatusCode.Redirect);
+                return;
+            }
+
+            List<TeamMemberEntry> entries = LoadGridTeam();
+            TeamMemberEntry entry = id != UUID.Zero ? entries.FirstOrDefault(e => e.ID == id) : null;
+            bool isNew = entry == null;
+            if (isNew)
+            {
+                entry = new TeamMemberEntry { ID = UUID.Random() };
+                entries.Add(entry);
+            }
+            entry.AccountID = account.PrincipalID;
+            entry.Role = role;
+            entry.Blurb = blurb;
+            entry.SortOrder = sortOrder;
+            entry.Enabled = enabled;
+
+            SaveGridTeam(entries);
+
+            response.Redirect(BasePath + "/admin/settings/team?message=" + Uri.EscapeDataString("Saved."), HttpStatusCode.Redirect);
+        }
+
+        private void HandleAdminSettingsTeamDelete(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null || !session.IsAdmin || m_GridSettingsService == null)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                return;
+            }
+
+            Dictionary<string, string> form = ReadForm(request);
+            if (UUID.TryParse(FormValue(form, "id"), out UUID id))
+            {
+                List<TeamMemberEntry> entries = LoadGridTeam();
+                if (entries.RemoveAll(e => e.ID == id) > 0)
+                    SaveGridTeam(entries);
+            }
+
+            response.Redirect(BasePath + "/admin/settings/team?message=" + Uri.EscapeDataString("Removed."), HttpStatusCode.Redirect);
+        }
+
+        private string RenderGridTeam()
+        {
+            List<TeamMemberEntry> entries = LoadGridTeam().Where(e => e.Enabled).OrderBy(e => e.SortOrder).ToList();
+            if (entries.Count == 0 || m_UserAccountService == null)
+                return string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<style>.team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}" +
+                    ".team-card{background:var(--card-bg);border-radius:8px;padding:16px;}" +
+                    ".team-card .team-role{color:var(--muted);font-size:13px;margin:2px 0 8px;}</style>");
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-people\"></i> Grid Team</h2><div class=\"team-grid\">");
+            foreach (TeamMemberEntry entry in entries)
+            {
+                UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, entry.AccountID);
+                if (account == null)
+                    continue;
+                sb.Append("<div class=\"team-card\"><strong>").Append(Html(account.Name)).Append("</strong>")
+                  .Append("<div class=\"team-role\">").Append(Html(entry.Role)).Append("</div>");
+                if (!string.IsNullOrEmpty(entry.Blurb))
+                    sb.Append("<p>").Append(Html(entry.Blurb)).Append("</p>");
+                sb.Append("<a href=\"").Append(BasePath).Append("/messages/compose?to=").Append(entry.AccountID)
+                  .Append("\"><i class=\"bi bi-envelope\"></i> Message</a></div>");
+            }
+            sb.Append("</div></div>");
+            return sb.ToString();
         }
 
         // Real viewer-vs-browser detection, ported from the same mechanism

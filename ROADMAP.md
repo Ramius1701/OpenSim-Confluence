@@ -376,6 +376,22 @@ Web & Admin UI section rather than here.)*
 
 ## Planned, not started
 
+- **In-browser, no-viewer-download world exploration (2026-09-30).** The single highest-ceiling item found
+  during a competitive audit of real OpenSim grid websites (Wolf Territories' "WolfStorm," which launches
+  directly in Chrome/Edge/Brave, no install) - lets a curious visitor look around before committing to
+  downloading and configuring a full viewer. Genuinely large: means a WebGL OpenSim/SL protocol client,
+  roughly the scale of the LLPathingLib navmesh-viewer effort elsewhere in this file, or bigger. Not
+  scoped in detail yet.
+- **`/admin` landing-page KPI dashboard (2026-09-30).** Today `/admin` is a bare grid of links with no
+  at-a-glance numbers - open abuse reports, pending support tickets, today's new signups, which service is
+  currently failing (the admin Diagnostics section added 2026-09-30). Most of the underlying data already
+  exists in scattered handlers; this is mostly assembly, not new plumbing.
+- **Admin-action audit log (2026-09-30).** Residents have their own Recent Activity log on the dashboard;
+  there's no equivalent for admin accountability (who banned whom, who changed grid settings, who edited
+  an estate) on a multi-admin grid.
+- **Verify whether `/store` shows pricing to anonymous visitors (2026-09-30).** Flagged during the same
+  competitive audit (Wolf Territories markets its land pricing publicly, no login wall) but not actually
+  checked against Confluence's current code - confirm one way or the other before assuming it's a gap.
 - **Jolt able to use either mesher (owner requirement; scoped down, paused 2026-09-27).** Confluence's own
   alternative physics engine (Jolt) should work with either mesher (Meshmerizer, ubODEMeshmerizer), the same
   way it can already be paired with either database. A first pass fixed this by patching BulletSim, ubODE,
