@@ -26165,3 +26165,31 @@ future restart until someone remembers to turn it back off - worth remembering t
 exists before any future Robust restart, and worth considering whether a future change should make this
 kind of one-shot toggle auto-clear itself after firing once, so it can't silently arm itself for the next
 restart the way it just did here.
+
+## Admin Grid Statistics page brought back into parity with (and beyond) the public Grid Status page (2026-09-30)
+
+Separately, the operator noticed the admin-only `/admin/stats` page was showing noticeably less than the
+public `/gridstatus` page - a stale 5-row table with no service-health checks at all, next to a
+comprehensive 10-stat-tile page with a full per-service health table. The two pages had simply been built
+at different times and never reconciled, so the admin view had quietly fallen behind what any anonymous
+visitor could already see.
+
+The first fix attempt over-corrected: since both pages now happened to render identical content, the
+admin route was collapsed into a bare redirect to the public one. The operator caught this and asked for
+the actual relationship between the two pages to be reconsidered rather than just merged. The real
+distinction: a public transparency page for an anonymous audience should show *less* detail on a failure
+(a bare "Error" pill, not an internal exception message - leaking that would be a real disclosure
+concern) than an operations dashboard for the admin who has to actually fix it. So the correct
+relationship is admin &supe; public, not admin == public.
+
+**Final design**: `ComputeGridStatusStats`/`AppendGridStatusStatsHtml` remain the one shared computation
+and baseline rendering both pages use (this part was right - it's what stops the admin page from silently
+falling behind again). `/admin/stats` is a real page again, not a redirect, rendering that same baseline
+plus a new admin-only Diagnostics section (`AppendGridStatusDiagnosticsHtml`) showing the actual exception
+text behind any currently-failing service pill - populated in `GridStatusStats.ServiceErrors`, a
+dictionary only ever read by the admin page. The public page never renders this section and never sees
+this data. Also restored one stat the old admin page had that the merge had dropped ("Regions open to
+Hypergrid"), now shown on both pages since it's not disclosure-sensitive.
+
+Built clean, deployed to Casperia Prime's Robust the same verified-PID way as the fix above, restarted
+clean with zero new errors and all 15 regions and all 127 map tiles confirmed untouched.

@@ -6146,18 +6146,41 @@ namespace OpenSim.Server.Handlers.WebInterface
         // is null. Overall Status is derived from these per-row results,
         // not a single catch-all around the whole block that could mask
         // which specific service actually failed.
-        private void HandleGridStatus(IOSHttpRequest request, IOSHttpResponse response)
+        // Real-time grid stats + per-service health computation, shared by
+        // the public /gridstatus page and the admin-only /admin/stats page.
+        // Extracted 2026-09-30 after the admin page was found showing a
+        // much older, far thinner subset of what any anonymous visitor
+        // could already see on /gridstatus (5 plain rows vs. 10 stat tiles
+        // plus a full per-service health table) - the admin page had never
+        // been updated to match after /gridstatus grew all of this.
+        // Computing it once here and rendering it from both places means
+        // that gap can't silently reopen the way it did before.
+        private sealed class GridStatusStats
         {
-            string gridName = GetSetting("GridName", m_gridName);
-            int totalRegions = 0, varRegions = 0, singleRegions = 0;
-            int totalAccounts = 0, newAccounts7d = 0, onlineNow = 0, uniqueVisitors30d = 0;
-            long totalAreaSqm = 0;
+            public string GridName;
+            public int TotalRegions, VarRegions, SingleRegions;
+            public int HgOpenCount;
+            public int TotalAccounts, NewAccounts7d, OnlineNow, UniqueVisitors30d;
+            public long TotalAreaSqm;
+            public bool GridServiceOk, UserAccountsOk, CurrencyOk, SearchOk, InventoryOk,
+                    EventsOk, MarketplaceOk, StoreOk, FriendsOk, ProfilesOk;
+            public int UpcomingEventCount, MarketplaceListingCount, StoreItemCount, ActiveClassifiedCount;
+            public bool ServicesOk;
 
+            // Real exception text per failing service, keyed by the same
+            // label the Service Status table uses - admin-only detail
+            // (see AppendGridStatusDiagnosticsHtml). Deliberately never
+            // reaches the public /gridstatus page: a bare "Error" pill is
+            // the right amount of detail for an anonymous visitor, but an
+            // internal exception message (DB errors, internal paths) is
+            // exactly the kind of thing that page must not leak.
+            public Dictionary<string, string> ServiceErrors = new Dictionary<string, string>();
+        }
+
+        private GridStatusStats ComputeGridStatusStats()
+        {
+            GridStatusStats stats = new GridStatusStats { GridName = GetSetting("GridName", m_gridName) };
             HashSet<string> aliveRegionIDs = new HashSet<string>();
-
-            bool gridServiceOk = false, userAccountsOk = false, currencyOk = false, searchOk = false, inventoryOk = false,
-                    eventsOk = false, marketplaceOk = false, storeOk = false, friendsOk = false, profilesOk = false;
-            int upcomingEventCount = 0, marketplaceListingCount = 0, storeItemCount = 0, activeClassifiedCount = 0;
 
             if (m_GridService != null)
             {
@@ -6165,76 +6188,76 @@ namespace OpenSim.Server.Handlers.WebInterface
                 {
                     List<GridRegion> aliveRegions = FilterOnlineRegions(
                             m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000));
-                    // aliveRegionIDs feeds GetOnlineUserCount below - stays
-                    // unfiltered by Unlisted, a resident standing in an
-                    // unlisted region still really counts as online. Only
-                    // the displayed region/area stats (totalRegions etc.)
-                    // respect the opt-out.
                     foreach (GridRegion region in aliveRegions)
                         aliveRegionIDs.Add(region.RegionID.ToString());
 
                     List<GridRegion> regions = FilterListedRegions(aliveRegions);
-                    totalRegions = regions.Count;
+                    stats.TotalRegions = regions.Count;
                     foreach (GridRegion region in regions)
                     {
-                        totalAreaSqm += (long)region.RegionSizeX * region.RegionSizeY;
+                        stats.TotalAreaSqm += (long)region.RegionSizeX * region.RegionSizeY;
                         if (region.RegionSizeX == 256 && region.RegionSizeY == 256)
-                            singleRegions++;
+                            stats.SingleRegions++;
                         else
-                            varRegions++;
+                            stats.VarRegions++;
+                        if (m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID))
+                            stats.HgOpenCount++;
                     }
-                    gridServiceOk = true;
+                    stats.GridServiceOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Grid Service check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Grid Service check failed: {0}", e);
+                    stats.ServiceErrors["Grid Service"] = e.Message;
                 }
             }
             if (m_UserAccountService != null)
             {
                 try
                 {
-                    totalAccounts = GetCachedTotalAccountCount();
+                    stats.TotalAccounts = GetCachedTotalAccountCount();
                     long cutoff = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
-                    newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
-                    userAccountsOk = true;
+                    stats.NewAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
+                    stats.UserAccountsOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus User Accounts check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats User Accounts check failed: {0}", e);
+                    stats.ServiceErrors["User Accounts"] = e.Message;
                 }
             }
             if (m_GridUserService != null)
             {
                 try
                 {
-                    // A crashed/killed region never clears the "Online"
-                    // flag for whoever was on it - see FilterOnlineRegions'
-                    // own comment. Only count someone as genuinely online
-                    // if the region they were last on is confirmed alive
-                    // right now, not just flagged online in the DB.
-                    onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
-                    uniqueVisitors30d = GetCachedUniqueVisitorCount(30);
+                    stats.OnlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
+                    stats.UniqueVisitors30d = GetCachedUniqueVisitorCount(30);
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Grid User check failed: {0}", e);
+                    // No corresponding pill in the Service Status table below
+                    // (a pre-existing gap - GridUserService was never folded
+                    // into ServicesOk/the pill table, only Online Now/Unique
+                    // Visitors read from it) - not adding a ServiceErrors
+                    // entry here either, so the Diagnostics section only ever
+                    // shows detail for a pill a viewer can actually see above
+                    // it. Worth a real service-status pill of its own someday,
+                    // but that's a separate change from tonight's admin/
+                    // public parity fix.
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Grid User check failed: {0}", e);
                 }
             }
             if (m_CurrencyService != null)
             {
                 try
                 {
-                    // Cheapest real call available - a zero-width
-                    // transaction-history window still round-trips to the
-                    // currency DB and back, proving it's actually
-                    // reachable rather than just instantiated.
                     m_CurrencyService.GetTransactionHistory(UUID.Zero, UUID.Zero, DateTime.UtcNow, DateTime.UtcNow, null, null);
-                    currencyOk = true;
+                    stats.CurrencyOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Currency check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Currency check failed: {0}", e);
+                    stats.ServiceErrors["Currency"] = e.Message;
                 }
             }
             if (m_SearchService != null)
@@ -6242,107 +6265,171 @@ namespace OpenSim.Server.Handlers.WebInterface
                 try
                 {
                     m_SearchService.GetTrendingQueries(1);
-                    searchOk = true;
+                    stats.SearchOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Search check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Search check failed: {0}", e);
+                    stats.ServiceErrors["Search"] = e.Message;
                 }
             }
             if (m_InventoryService != null)
             {
                 try
                 {
-                    // UUID.Zero has no root folder - a clean null return is
-                    // just as valid a "the service answered" signal as a
-                    // real result, only an exception means it's actually
-                    // unreachable.
                     m_InventoryService.GetRootFolder(UUID.Zero);
-                    inventoryOk = true;
+                    stats.InventoryOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Inventory check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Inventory check failed: {0}", e);
+                    stats.ServiceErrors["Inventory"] = e.Message;
                 }
             }
             if (m_EventsService != null)
             {
                 try
                 {
-                    // Same call RenderUpcomingEvents already makes, reused
-                    // here for both the health probe and a real stat tile
-                    // instead of querying twice.
-                    upcomingEventCount = m_EventsService.GetUpcoming(0, 1000).Count;
-                    eventsOk = true;
+                    stats.UpcomingEventCount = m_EventsService.GetUpcoming(0, 1000).Count;
+                    stats.EventsOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Events check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Events check failed: {0}", e);
+                    stats.ServiceErrors["Events"] = e.Message;
                 }
             }
             if (m_MarketplaceListingsService != null)
             {
                 try
                 {
-                    marketplaceListingCount = m_MarketplaceListingsService.GetListedListings(0, 1000).Count;
-                    marketplaceOk = true;
+                    stats.MarketplaceListingCount = m_MarketplaceListingsService.GetListedListings(0, 1000).Count;
+                    stats.MarketplaceOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Marketplace check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Marketplace check failed: {0}", e);
+                    stats.ServiceErrors["Marketplace"] = e.Message;
                 }
             }
             if (m_StoreService != null)
             {
                 try
                 {
-                    storeItemCount = m_StoreService.GetActiveCatalogItems().Count;
-                    storeOk = true;
+                    stats.StoreItemCount = m_StoreService.GetActiveCatalogItems().Count;
+                    stats.StoreOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Store check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Store check failed: {0}", e);
+                    stats.ServiceErrors["Store"] = e.Message;
                 }
             }
             if (m_FriendsService != null)
             {
                 try
                 {
-                    // UUID.Zero has no friends list - same "empty result is
-                    // still proof it answered" reasoning as Inventory above.
                     m_FriendsService.GetFriends(UUID.Zero);
-                    friendsOk = true;
+                    stats.FriendsOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Friends check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Friends check failed: {0}", e);
+                    stats.ServiceErrors["Friends"] = e.Message;
                 }
             }
             if (m_UserProfilesService != null)
             {
                 try
                 {
-                    // Same call RenderFeaturedClassifieds already makes.
-                    activeClassifiedCount = m_UserProfilesService.GetRecentClassifieds(1000).Count;
-                    profilesOk = true;
+                    stats.ActiveClassifiedCount = m_UserProfilesService.GetRecentClassifieds(1000).Count;
+                    stats.ProfilesOk = true;
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[WEBINTERFACE]: HandleGridStatus Profiles check failed: {0}", e);
+                    m_log.WarnFormat("[WEBINTERFACE]: ComputeGridStatusStats Profiles check failed: {0}", e);
+                    stats.ServiceErrors["Profiles & Classifieds"] = e.Message;
                 }
             }
 
-            bool servicesOk = (m_GridService == null || gridServiceOk)
-                    && (m_UserAccountService == null || userAccountsOk)
-                    && (m_CurrencyService == null || currencyOk)
-                    && (m_SearchService == null || searchOk)
-                    && (m_InventoryService == null || inventoryOk)
-                    && (m_EventsService == null || eventsOk)
-                    && (m_MarketplaceListingsService == null || marketplaceOk)
-                    && (m_StoreService == null || storeOk)
-                    && (m_FriendsService == null || friendsOk)
-                    && (m_UserProfilesService == null || profilesOk);
+            stats.ServicesOk = (m_GridService == null || stats.GridServiceOk)
+                    && (m_UserAccountService == null || stats.UserAccountsOk)
+                    && (m_CurrencyService == null || stats.CurrencyOk)
+                    && (m_SearchService == null || stats.SearchOk)
+                    && (m_InventoryService == null || stats.InventoryOk)
+                    && (m_EventsService == null || stats.EventsOk)
+                    && (m_MarketplaceListingsService == null || stats.MarketplaceOk)
+                    && (m_StoreService == null || stats.StoreOk)
+                    && (m_FriendsService == null || stats.FriendsOk)
+                    && (m_UserProfilesService == null || stats.ProfilesOk);
 
+            return stats;
+        }
+
+        private void AppendGridStatusStatsHtml(StringBuilder sb, GridStatusStats s)
+        {
+            sb.Append("<div class=\"stats-grid\">");
+            AppendStat(sb, "Online Now", s.OnlineNow.ToString("N0"), "residents");
+            AppendStat(sb, "Regions", s.TotalRegions.ToString("N0"), s.VarRegions + " VarRegion, " + s.SingleRegions + " standard");
+            AppendStat(sb, "Hypergrid Open", s.HgOpenCount + " / " + s.TotalRegions, "regions open to visitors");
+            AppendStat(sb, "Accounts", s.TotalAccounts.ToString("N0"), "registered residents");
+            AppendStat(sb, "Unique Visitors", s.UniqueVisitors30d.ToString("N0"), "last 30 days, including hypergrid");
+            AppendStat(sb, "New Accounts", s.NewAccounts7d.ToString("N0"), "last 7 days");
+            AppendStat(sb, "Land Area", (s.TotalAreaSqm / 1000000.0).ToString("N2") + " km" + (char)0xB2, "total across all regions");
+            if (m_EventsService != null)
+                AppendStat(sb, "Upcoming Events", s.UpcomingEventCount.ToString("N0"), "scheduled");
+            if (m_MarketplaceListingsService != null)
+                AppendStat(sb, "Marketplace Listings", s.MarketplaceListingCount.ToString("N0"), "listed for sale");
+            if (m_StoreService != null)
+                AppendStat(sb, "Store Items", s.StoreItemCount.ToString("N0"), "active catalog items");
+            if (m_UserProfilesService != null)
+                AppendStat(sb, "Active Classifieds", s.ActiveClassifiedCount.ToString("N0"), "posted by residents");
+            AppendStat(sb, "OpenSimulator", global::OpenSim.VersionInfo.DisplayVersionNumber, "core version");
+            sb.Append("</div>");
+
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-server\"></i> Service Status</h2><table><tbody>")
+              .Append("<tr><th>Grid</th><td>").Append(Html(s.GridName)).Append("</td></tr>")
+              .Append("<tr><th>Status</th><td>").Append(s.ServicesOk
+                    ? "<span class=\"pill pill-yes\">Operational</span>"
+                    : "<span class=\"pill pill-warn\">Degraded</span>").Append("</td></tr>")
+              .Append("<tr><th>Grid Service</th><td>").Append(AppendServicePill(m_GridService != null, s.GridServiceOk)).Append("</td></tr>")
+              .Append("<tr><th>User Accounts</th><td>").Append(AppendServicePill(m_UserAccountService != null, s.UserAccountsOk)).Append("</td></tr>")
+              .Append("<tr><th>Currency</th><td>").Append(AppendServicePill(m_CurrencyService != null, s.CurrencyOk)).Append("</td></tr>")
+              .Append("<tr><th>Search</th><td>").Append(AppendServicePill(m_SearchService != null, s.SearchOk)).Append("</td></tr>")
+              .Append("<tr><th>Inventory</th><td>").Append(AppendServicePill(m_InventoryService != null, s.InventoryOk)).Append("</td></tr>")
+              .Append("<tr><th>Events</th><td>").Append(AppendServicePill(m_EventsService != null, s.EventsOk)).Append("</td></tr>")
+              .Append("<tr><th>Marketplace</th><td>").Append(AppendServicePill(m_MarketplaceListingsService != null, s.MarketplaceOk)).Append("</td></tr>")
+              .Append("<tr><th>Store</th><td>").Append(AppendServicePill(m_StoreService != null, s.StoreOk)).Append("</td></tr>")
+              .Append("<tr><th>Friends</th><td>").Append(AppendServicePill(m_FriendsService != null, s.FriendsOk)).Append("</td></tr>")
+              .Append("<tr><th>Profiles &amp; Classifieds</th><td>").Append(AppendServicePill(m_UserProfilesService != null, s.ProfilesOk)).Append("</td></tr>")
+              .Append("</tbody></table></div>");
+        }
+
+        // Admin-only companion to AppendGridStatusStatsHtml - the real
+        // exception text behind any red pill in the Service Status table
+        // above. Never called from the public /gridstatus page; a bare
+        // "Error" pill is the right amount of detail for an anonymous
+        // visitor, but the actual message (DB errors, internal paths) is
+        // exactly what an admin needs to actually fix the problem and
+        // exactly what the public page must not leak.
+        private void AppendGridStatusDiagnosticsHtml(StringBuilder sb, GridStatusStats s)
+        {
+            if (s.ServiceErrors.Count == 0)
+                return;
+
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-bug\"></i> Diagnostics</h2>")
+              .Append("<p style=\"color:var(--muted);font-size:13px;\">Admin-only - the real error behind each failing service pill above. Never shown on the public Grid Status page.</p>")
+              .Append("<table><tbody>");
+            foreach (KeyValuePair<string, string> error in s.ServiceErrors)
+            {
+                sb.Append("<tr><th>").Append(Html(error.Key)).Append("</th><td><code>").Append(Html(error.Value)).Append("</code></td></tr>");
+            }
+            sb.Append("</tbody></table></div>");
+        }
+
+        private void HandleGridStatus(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            GridStatusStats s = ComputeGridStatusStats();
             // Machine-readable counterpart to the HTML page below, for grid-list/
             // directory sites - field names match the community "OS_Simple_Stats"
             // stats.php convention (github.com/BillBlight/OS_Simple_Stats) rather
@@ -6363,8 +6450,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // dependency on OSD's own (LLSD-oriented) serialization rules.
                 var statsMap = new Dictionary<string, object>
                 {
-                    ["GridStatus"] = servicesOk ? "ONLINE" : "DEGRADED",
-                    ["Online_Now"] = onlineNow,
+                    ["GridStatus"] = s.ServicesOk ? "ONLINE" : "DEGRADED",
+                    ["Online_Now"] = s.OnlineNow,
                     // Confluence tracks unique 30-day visitors as one combined
                     // total (including hypergrid), not a separate local/HG split
                     // the way OS_Simple_Stats' reference implementation does -
@@ -6373,14 +6460,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // real combined figure goes in Total_Active_Last_30_Days.
                     ["HG_Visitors_Last_30_Days"] = 0,
                     ["Local_Users_Last_30_Days"] = 0,
-                    ["Total_Active_Last_30_Days"] = uniqueVisitors30d,
-                    ["Registered_Users"] = totalAccounts,
-                    ["Regions"] = totalRegions,
-                    ["Var_Regions"] = varRegions,
-                    ["Single_Regions"] = singleRegions,
+                    ["Total_Active_Last_30_Days"] = s.UniqueVisitors30d,
+                    ["Registered_Users"] = s.TotalAccounts,
+                    ["Regions"] = s.TotalRegions,
+                    ["Var_Regions"] = s.VarRegions,
+                    ["Single_Regions"] = s.SingleRegions,
                     // Matches OS_Simple_Stats' own convention: summed sizeX*sizeY
                     // (square meters) divided by 1000, not square kilometres.
-                    ["Total_LandSize"] = (int)(totalAreaSqm / 1000),
+                    ["Total_LandSize"] = (int)(s.TotalAreaSqm / 1000),
                     ["Login_URL"] = m_publicBaseUrl,
                     ["Website"] = m_publicBaseUrl,
                     ["Login_Screen"] = m_publicBaseUrl + BasePath + "/welcome",
@@ -6394,44 +6481,11 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1><i class=\"bi bi-activity\"></i> Grid Status</h1>")
-              .Append("<p>Live snapshot of ").Append(Html(gridName)).Append("'s statistics and service health - ")
+              .Append("<p>Live snapshot of ").Append(Html(s.GridName)).Append("'s statistics and service health - ")
               .Append("every row below is its own real call made just now, not a cached or assumed value. ")
               .Append("Last updated ").Append(Html(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC.</p>");
 
-            sb.Append("<div class=\"stats-grid\">");
-            AppendStat(sb, "Online Now", onlineNow.ToString("N0"), "residents");
-            AppendStat(sb, "Regions", totalRegions.ToString("N0"), varRegions + " VarRegion, " + singleRegions + " standard");
-            AppendStat(sb, "Accounts", totalAccounts.ToString("N0"), "registered residents");
-            AppendStat(sb, "Unique Visitors", uniqueVisitors30d.ToString("N0"), "last 30 days, including hypergrid");
-            AppendStat(sb, "New Accounts", newAccounts7d.ToString("N0"), "last 7 days");
-            AppendStat(sb, "Land Area", (totalAreaSqm / 1000000.0).ToString("N2") + " km" + (char)0xB2, "total across all regions");
-            if (m_EventsService != null)
-                AppendStat(sb, "Upcoming Events", upcomingEventCount.ToString("N0"), "scheduled");
-            if (m_MarketplaceListingsService != null)
-                AppendStat(sb, "Marketplace Listings", marketplaceListingCount.ToString("N0"), "listed for sale");
-            if (m_StoreService != null)
-                AppendStat(sb, "Store Items", storeItemCount.ToString("N0"), "active catalog items");
-            if (m_UserProfilesService != null)
-                AppendStat(sb, "Active Classifieds", activeClassifiedCount.ToString("N0"), "posted by residents");
-            AppendStat(sb, "OpenSimulator", global::OpenSim.VersionInfo.DisplayVersionNumber, "core version");
-            sb.Append("</div>");
-
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-server\"></i> Service Status</h2><table><tbody>")
-              .Append("<tr><th>Grid</th><td>").Append(Html(gridName)).Append("</td></tr>")
-              .Append("<tr><th>Status</th><td>").Append(servicesOk
-                    ? "<span class=\"pill pill-yes\">Operational</span>"
-                    : "<span class=\"pill pill-warn\">Degraded</span>").Append("</td></tr>")
-              .Append("<tr><th>Grid Service</th><td>").Append(AppendServicePill(m_GridService != null, gridServiceOk)).Append("</td></tr>")
-              .Append("<tr><th>User Accounts</th><td>").Append(AppendServicePill(m_UserAccountService != null, userAccountsOk)).Append("</td></tr>")
-              .Append("<tr><th>Currency</th><td>").Append(AppendServicePill(m_CurrencyService != null, currencyOk)).Append("</td></tr>")
-              .Append("<tr><th>Search</th><td>").Append(AppendServicePill(m_SearchService != null, searchOk)).Append("</td></tr>")
-              .Append("<tr><th>Inventory</th><td>").Append(AppendServicePill(m_InventoryService != null, inventoryOk)).Append("</td></tr>")
-              .Append("<tr><th>Events</th><td>").Append(AppendServicePill(m_EventsService != null, eventsOk)).Append("</td></tr>")
-              .Append("<tr><th>Marketplace</th><td>").Append(AppendServicePill(m_MarketplaceListingsService != null, marketplaceOk)).Append("</td></tr>")
-              .Append("<tr><th>Store</th><td>").Append(AppendServicePill(m_StoreService != null, storeOk)).Append("</td></tr>")
-              .Append("<tr><th>Friends</th><td>").Append(AppendServicePill(m_FriendsService != null, friendsOk)).Append("</td></tr>")
-              .Append("<tr><th>Profiles &amp; Classifieds</th><td>").Append(AppendServicePill(m_UserProfilesService != null, profilesOk)).Append("</td></tr>")
-              .Append("</tbody></table></div>");
+            AppendGridStatusStatsHtml(sb, s);
 
             sb.Append("<div class=\"content-card text-center\" style=\"text-align:center;padding-top:20px;\">")
               .Append("<p><a href=\"").Append(BasePath).Append("/worldmap\"><i class=\"bi bi-map\"></i> View the World Map</a> &middot; ")
@@ -7295,7 +7349,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             adminNav.Append("<h2>Grid</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
-            AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions and online totals");
+            AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions, online totals and diagnostics");
             adminNav.Append("</div>");
 
             string body = "<h1>Grid Administration</h1>"
@@ -7495,6 +7549,21 @@ namespace OpenSim.Server.Handlers.WebInterface
         // onto the interface itself (and threaded through the Local/Remote
         // connectors and the /griduser HTTP handler, same as every other
         // interface method) rather than reaching past the service layer.
+        // Used to be its own standalone, much thinner 5-row page that had
+        // quietly fallen behind /gridstatus (found live, 2026-09-30 - an
+        // admin looking at this page saw LESS than any anonymous visitor
+        // already got on /gridstatus). The fix is NOT to merge the two
+        // pages into one - a public transparency page and an admin
+        // operations dashboard genuinely serve different audiences and
+        // should show different amounts of detail (a bare "Error" pill is
+        // right for a stranger on the internet, wrong for the admin who
+        // has to actually fix it). The real relationship is admin ⊇
+        // public, not admin == public: this page renders the exact same
+        // baseline ComputeGridStatusStats/AppendGridStatusStatsHtml output
+        // as /gridstatus (so it structurally can't fall behind again),
+        // plus an admin-only Diagnostics section underneath with the real
+        // exception text for anything currently failing - detail the
+        // public page must never show.
         private void HandleAdminStats(IOSHttpRequest request, IOSHttpResponse response)
         {
             WebSession session = GetSession(request);
@@ -7510,58 +7579,18 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
-            StringBuilder rows = new StringBuilder();
-            rows.Append("<table>");
+            GridStatusStats s = ComputeGridStatusStats();
 
-            if (m_GridService == null)
-            {
-                rows.Append("<tr><th>Regions</th><td>Grid service is not available.</td></tr>");
-            }
-            else
-            {
-                List<GridRegion> regions = m_GridService.GetRegionRange(UUID.Zero, 0, 2000000, 0, 2000000);
-                long totalAreaSqm = 0;
-                int hgOpenCount = 0;
-                foreach (GridRegion region in regions)
-                {
-                    totalAreaSqm += (long)region.RegionSizeX * region.RegionSizeY;
-                    if (m_RegionHGService == null || m_RegionHGService.IsRegionOpen(region.RegionID))
-                        hgOpenCount++;
-                }
+            StringBuilder sb = new StringBuilder();
+            sb.Append("<h1><i class=\"bi bi-bar-chart\"></i> Grid Statistics</h1>")
+              .Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>")
+              .Append("<p>Live snapshot - the same real-time figures the public ")
+              .Append("<a href=\"").Append(BasePath).Append("/gridstatus\">Grid Status</a> page shows, plus admin-only diagnostics below.</p>");
 
-                rows.Append("<tr><th>Total regions</th><td>").Append(regions.Count).Append("</td></tr>");
-                rows.Append("<tr><th>Total land area</th><td>").Append(totalAreaSqm.ToString("N0")).Append(" m&sup2;</td></tr>");
-                rows.Append("<tr><th>Regions open to Hypergrid</th><td>").Append(hgOpenCount).Append(" / ").Append(regions.Count).Append("</td></tr>");
-            }
+            AppendGridStatusStatsHtml(sb, s);
+            AppendGridStatusDiagnosticsHtml(sb, s);
 
-            if (m_UserAccountService == null)
-            {
-                rows.Append("<tr><th>Registered accounts</th><td>User account service is not available.</td></tr>");
-            }
-            else
-            {
-                int totalAccounts = GetCachedTotalAccountCount();
-                rows.Append("<tr><th>Registered accounts</th><td>").Append(totalAccounts).Append("</td></tr>");
-            }
-
-            if (m_GridUserService == null)
-            {
-                rows.Append("<tr><th>Users online</th><td>Grid user service is not available.</td></tr>");
-            }
-            else
-            {
-                int online = m_GridUserService.GetOnlineUserCount();
-                rows.Append("<tr><th>Users online</th><td>").Append(online)
-                        .Append(" <span style=\"font-size:0.85em;color:#666\">(accuracy note: a region that crashes without a clean logout can overcount this; entries older than 5 days are excluded)</span></td></tr>");
-            }
-
-            rows.Append("</table>");
-
-            string body = "<h1>Grid Statistics</h1>"
-                    + "<p><a href=\"" + BasePath + "/admin\">Back to admin</a></p>"
-                    + rows.ToString();
-
-            WritePage(request, response, PageTitle("Statistics"), body);
+            WritePage(request, response, PageTitle("Statistics"), sb.ToString());
         }
 
         // Login-screen/home-page news feed admin (task #23 from the
