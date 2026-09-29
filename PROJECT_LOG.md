@@ -25985,3 +25985,123 @@ during a live self-search test - both proposed but not yet obtained. Everything 
 derivable from source code, live server-side instrumentation, and direct database/config inspection has now
 been checked.
 useful work either project does.
+
+## Find self-search: the exact trigger finally identified, root cause still not found (2026-09-29)
+
+Picks up directly from the entry above. The operator's own methodical in-world testing found what
+months of code review never did: the bug is 100% reproducible by standing at the *exact* region-local
+coordinate **(128, 128)**, at or near ground level, and clears within a few meters or a few tens of
+meters of altitude. This is a real breakthrough in *characterizing* the bug even though the root cause
+remains unfound - it turns "sometimes happens on some regions" into a precise, repeatable trigger
+condition, which is what let tonight's investigation actually rule things out with confidence instead of
+guessing.
+
+**Confirmed reproduction conditions:**
+- Region-local (128, 128) specifically - not the region's true geometric center. Confirmed on both
+  standard 256x256 regions (where 128,128 *is* the center) and on Tangle/UFPGC, which turned out via
+  direct DB query to be genuine 1024x1024 VAR regions (`sizeX=1024, sizeY=1024` in the `regions` table) -
+  meaning their true center is (512,512), yet the bug still fires at local (128,128). The trigger is tied
+  to the literal coordinate, not to "region center" as a concept.
+- A small-radius "bubble," not an infinitely precise point - a ~3m horizontal offset (128,128 -> 125,128)
+  or enough altitude (roughly Z 36+ on Welcome Center, where ground level is ~24.6m) clears it.
+- Requires actual ground/terrain contact - landing on a prim/platform at height avoids it; landing on bare
+  terrain at low altitude triggers it. This was the operator's own observation and is the best remaining
+  clue for whoever picks this up next.
+- Universal across every region tested (confirmed on all 15 Casperia regions, both region sizes, both
+  ubODE and BulletSim physics engines - UFPGC already runs BulletSim, ruling out any single physics
+  engine's own native collision code), both Firestorm and CoolVL Viewer, and two different avatar
+  accounts (rules out anything specific to one avatar's attachments/appearance/account data).
+- Confirmed **absent** on bare vanilla opensim-master, standalone mode, built fresh from real upstream
+  source tonight (not just read - actually built, booted, and tested), across multiple repeated clean
+  tests at the exact same coordinate.
+
+**Exhaustive code-level elimination (direct diffs against a fresh opensim-master checkout, not
+assumption) - everything below is byte-identical to vanilla:**
+- `ScenePresence.cs`: `CompleteMovement`, `RotateToLookAt`, `PhysicsCollisionUpdate`/`CollisionPlane`
+  construction.
+- `EntityTransferModule.cs`: `TeleportAgentWithinRegion`, `CheckAndAdjustLandingPoint_SL`/`_OS`,
+  `CheckAndAdjustTelehub`. Two genuinely Confluence-only additions were found in this file
+  (`GetRegionCrossingVelocity`, `GetTeleportDestinationRegion`/`GetRegionContainingWorldLocation` for
+  VAR-region-aware teleport addressing) but both only execute during actual cross-region movement, not a
+  same-region teleport to coordinates - inapplicable to this repro.
+- `Util.CompareRegionHandles` (all three overloads).
+- `LLClientView.cs`: `SendCoarseLocationUpdate`, `SendMapItemReply`.
+- `WorldMapModule.cs`: the `AgentLocations` case in `HandleMapItemRequest` - also confirmed structurally
+  incapable of revealing the requester's own position when solo (`GetRootAgentCount() <= 1` sends a fixed
+  placeholder dot, never real coordinates), which every test tonight was.
+- Robust-side `GridService.cs` (one small, unrelated admin addition - `SetRegionFlags` - otherwise
+  identical) and `PresenceService.cs` (100% identical, zero differences).
+- `MapSearchModule.cs` in full (this is the file already reverted to vanilla two nights ago after the
+  first fix attempt - re-diffed fresh tonight to confirm the revert really did land byte-for-byte, not
+  just "close").
+
+**Live, real-data eliminations (not code reading):**
+- Added temporary diagnostic logging (since reverted) at every point position/lookAt/rotation data could
+  leave the server: the avatar's own terse-update packing, the `SendLocalTeleport`/`TeleportLocal` packet,
+  `MoveAgentIntoRegion` on login, and a catch-all hook on every outbound packet for the affected client.
+  Result: while stationary at (128,128), the server sends *nothing* position-related at all for the full
+  duration tested (only routine `SimulatorViewerTimeMessage`/`LayerData` background traffic) - and every
+  value captured at the actual moments of teleport and login was completely finite and correct
+  (`position=<128, 128, 26.13>`, `lookAt=<129, 128, 0>`, resulting `Rotation` all clean).
+- Queried the live database directly: zero prims within 100+ meters of (128,128) in any of the four
+  regions checked (even accounting for large prims' full bounding box, not just their recorded root
+  position); exactly one parcel per region, no parcel boundary/corner anywhere near that point; the
+  actual stored terrain heightfield decoded with the real compiled `TerrainData` class - completely
+  finite, flat (24.59m), zero NaN/Infinity anywhere in the entire 256x256 heightmap for Welcome Center.
+- Found a real, substantial Confluence-only addition - `TerrainPerlin.cs`, a full Perlin-noise terrain
+  generator for new regions - but its own math uses proportional centers (`width/2f`), not a hardcoded
+  128, so it doesn't predict a region-size-independent artifact at exactly 128; it also only runs at
+  brand-new region creation, not on any of the long-established regions tested. Ruled out.
+
+**Theories raised and disproven, each with real evidence, not just dismissed:**
+- Four parcels meeting at a corner at (128,128) - false, confirmed one parcel per region via direct query.
+- A corrupted/invisible prim at region center - false, confirmed via direct query (nearest object 100+m
+  away even accounting for scale).
+- An octree/quadtree spatial-partition boundary bug - this codebase doesn't use spatial trees for land or
+  avatar lookup at all; scene entities are tracked in plain dictionaries.
+- A NaN in the stored terrain height data, or a boundary bug in the bilinear height-lookup function - both
+  checked directly (real data decode + hand-traced math); both clean.
+- A physics-engine-specific native collision bug - ruled out by UFPGC (BulletSim) and every other region
+  (ubODE) both showing the identical symptom.
+- A `CoarseLocationUpdate` byte-encoding sign-overflow at raw value 128 (0x80) - mechanically plausible,
+  checked, byte-identical to vanilla.
+- An `EventQueueGet` (`/CE/` capability) HTTP 502 warning appearing in the viewer console at the same
+  coordinate - turned out to be the *same* stale/broken capability session persisting across teleports
+  regardless of position (confirmed via the operator's own follow-up test at 125,128 still showing the
+  identical failing session UUID) - unrelated noise, not position-tied at all.
+- The "LLCoordFrame::setOrigin: Non Finite mOrigin" viewer console warning co-occurring with the Find
+  failure - never proven causally connected, only observed at the same coordinate. Public research
+  tonight (Second Life forum archives, a viewer fork's own issue tracker) confirmed this is a generic,
+  decades-old (traced to at least 2007) viewer warning that many unrelated bugs can trigger - e.g. one
+  documented case is stale sit-parent references surviving a botched region crossing, nothing to do with
+  standing still at a coordinate. Should be treated as a possibly-unrelated, separate symptom until an
+  actual mechanism connects it to the Find bug specifically - not assumed.
+- Checked whether this is a previously-reported, already-diagnosed OpenSim issue: searched GitHub (which
+  OpenSim doesn't actually use for issue tracking) and Mantis (OpenSim's real tracker) for this exact
+  symptom - found nothing matching. Either genuinely undiscovered, or characterized too differently in any
+  existing report to surface via these searches.
+
+**The one genuinely open, unconfirmed lead:** bare vanilla opensim-master in *standalone* mode (single
+process, all services in-process/synchronous) does not reproduce this bug across repeated clean tests.
+Casperia (true grid mode - separate Robust process, real HTTP round-trips between region and grid
+services) does. A third, independent codebase/grid on the same machine (Continuum-TestGrid, also running
+true grid mode with its own separate Robust process) shows *some* form of Find failure too, though it was
+not confirmed tonight whether that's specifically the same flash-then-vanish symptom or a different
+failure mode. An attempt to convert the vanilla test instance to true grid mode tonight to test this
+directly did not produce a clean result - it surfaced a real cluster of unrelated test-rig configuration
+bugs first (vanilla opensim-master's SQLite provider never implements `IRegionData`/`IPresenceData` at all,
+only Null/MySQL/PGSQL do; a naive single shared SQLite file across every Robust service causes real lock
+contention on Windows) that ate the remaining time before a genuine standalone-vs-grid-mode comparison
+could be completed. Those specific fixes are now known and documented above, so a future attempt can set
+up cleanly from the start rather than rediscovering them.
+
+**Status: unresolved.** This supersedes the previous entry's suggestion that Wireshark or per-category
+viewer debug logging was the most promising remaining angle - tonight's live server-side instrumentation
+achieved equivalent visibility (every packet, every value, at the exact moments that matter) and came up
+completely clean, which shifts the likely location of the bug away from "a single function with bad math"
+and toward either something tied to deployment topology (grid vs. standalone, unconfirmed) or something
+client-side that hasn't been identified. **For whoever resumes this**: don't re-walk any of the ruled-out
+list above. The two real next steps are (1) a genuinely clean standalone-vs-grid-mode comparison on
+vanilla, now that the test-rig bugs are known and documented, and (2) getting a real, apples-to-apples read
+on what Continuum-TestGrid actually showed - same exact symptom, or a different failure mode wearing
+similar clothes.

@@ -57,33 +57,36 @@ gap today. For what already exists, see `FEATURES.md`.
   happens, now also noting whether `[GETASSET]` 404s appear for that
   avatar's session.
 - **In-world map "Find" fails when searching for your own current
-  region's name specifically - root cause not found, reverted to
-  vanilla behavior as a deliberate reset (2026-09-28).** Searching
-  Find for the exact region you're standing in flashes then reverts;
-  searching for that same region's name from anywhere else works
-  fine. Reproduced consistently on 10 of 15 regions, confirmed not a
-  viewer bug (tested Nightly/Beta/Release, compared directly against
-  unaltered `opensim-master`, which doesn't have this at all). An
-  exhaustive investigation ruled out, with direct live evidence rather
-  than assumption: server reply content and timing (byte-identical,
-  zero-delay replies captured on both a working and a failing region),
-  the local/remote grid-connector merge (genuinely unmodified vanilla
-  code), every database row field, config (none exists for this
-  module), `Regions.ini` template differences, packet-serialization
-  code (vanilla-identical), estate assignment, composite map-tile
-  staleness (a real, separate bug found and fixed, then ruled out),
-  the full Firestorm-side C++ pipeline (`phoenix-firestorm`, read not
-  edited), viewer cache, and provisioning history. Two real, unrelated
-  bugs were found and fixed along the way (a Find terminator-block
-  false-negative, and a blank-image fallback) but all three
-  map-search/map-tile commits from that session were deliberately
-  reverted together rather than leave a partial, unproven stack of
-  fixes in place - full writeup, including the complete ruled-out
-  list, in `PROJECT_LOG.md` (2026-09-28). Grid currently runs exactly
-  vanilla `opensim-master` behavior for map search and map-tile
-  cleanup; a fresh re-attempt is planned, most likely needing a real
-  packet capture or Firestorm's own "WorldMap" debug-tag logging to
-  get visibility past what server-side instrumentation alone can show.
+  region's name specifically - exact trigger identified, root cause
+  still not found (2026-09-29, updated).** The real breakthrough:
+  this is 100% reproducible by standing at region-local coordinate
+  (128, 128) specifically, at or near ground level - not just "your
+  current region," and not tied to which 10 of 15 regions happen to
+  show it (that was a coincidence of which regions' default landing
+  points happen to sit near that exact spot). Clears with a few
+  meters of horizontal offset or enough altitude. Reproduced on every
+  region tested, both physics engines (ubODE and BulletSim), both
+  Firestorm and CoolVL Viewer, two different avatar accounts.
+  Confirmed absent on bare vanilla `opensim-master` in standalone
+  mode (built fresh and tested directly, not assumed) across repeated
+  clean tests - but a same-codebase grid-mode comparison (separate
+  Robust process, matching Casperia's real architecture) did not
+  reach a clean conclusion due to unrelated test-rig config bugs, so
+  "standalone vs. grid mode" remains a real, open, unconfirmed lead
+  rather than a settled explanation. A second, independent grid on the
+  same machine (Continuum-TestGrid) shows some form of Find failure
+  too, though whether it's the identical symptom wasn't confirmed. An
+  even more exhaustive round of elimination than the first attempt
+  ruled out, with direct live evidence: every server-side code path
+  touching position/lookAt/rotation/collision (byte-identical to
+  vanilla via direct diff), every packet actually sent to the client
+  during a live repro (captured directly, completely clean), the
+  actual stored terrain height data (decoded and checked, clean), and
+  the console's "Non Finite mOrigin" warning some testing had
+  correlated with this bug (now confirmed unproven as a cause - it's
+  a generic, decades-old viewer warning with many unrelated triggers).
+  Full writeup, including the complete ruled-out list and the two real
+  remaining next steps, in `PROJECT_LOG.md` (2026-09-29).
 - **1,536 texture assets stored with zero bytes of data - cause found and
   fixed in code 2026-09-26, awaiting deploy; the existing rows stay
   broken.** Two writers, both storing whatever bytes arrived: (1) the mesh
