@@ -26105,3 +26105,31 @@ list above. The two real next steps are (1) a genuinely clean standalone-vs-grid
 vanilla, now that the test-rig bugs are known and documented, and (2) getting a real, apples-to-apples read
 on what Continuum-TestGrid actually showed - same exact symptom, or a different failure mode wearing
 similar clothes.
+
+## Fixed: "regions to explore" count flapping on the public homepage/welcome page (2026-09-30)
+
+A tester reported the grid's public homepage showing an inconsistent region count on reload - sometimes
+the correct 15, sometimes 3, 5, 6, or 0, with no pattern to which number showed up. Root cause found and
+fixed the same session, not a mystery this time.
+
+**Cause:** `WebInterfaceServiceConnector.cs`'s `FilterOnlineRegions` live-probes every region's TCP port
+on every single page load (no caching) to decide which regions count as "online" for the homepage stat
+strip. Each individual probe (`IsRegionAlive`) can legitimately take up to *two* full timeout windows in
+sequence - it tries the region's loopback address first, and only falls back to trying its public
+`ServerURI` if that fails, each with its own full timeout. But the *aggregate* wait that gates all regions'
+probes in parallel was sized for only 1.67x a single timeout window (`timeoutMs + 1000` against a
+1500ms per-probe timeout), not the full 2x a single region's real worst case could take. Any region whose
+probe hadn't finished when that undersized aggregate deadline hit was silently counted as offline - not
+because it was actually down, but because the outer clock ran out first. A different, arbitrary subset of
+otherwise-healthy regions could "lose" this race on any given page load depending on momentary
+network/CPU jitter, which explains the reload-to-reload inconsistency exactly.
+
+**Fix:** widened the aggregate wait to `(timeoutMs * 2) + 500`, genuinely covering the worst case a single
+region's two-step probe can take, so a slow-but-alive region no longer gets cut off mid-check.
+
+**Deployed and live-verified**: built clean (0 warnings/errors), checksum-verified the copy against the
+build output, stopped Casperia Prime's Robust by its own verified PID (never by process name - the grid
+shares process names with other, unrelated OpenSim-based projects on the same machine), deployed, and
+restarted. `Robust.log` shows a full clean startup sequence with zero new errors since the restart
+timestamp, and all 15 regions were confirmed still running, untouched, throughout. Awaiting the tester's
+own reload-repeatedly confirmation that the count now stays steady.

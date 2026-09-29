@@ -6793,7 +6793,16 @@ namespace OpenSim.Server.Handlers.WebInterface
                 probes[idx] = System.Threading.Tasks.Task.Run(() => IsRegionAlive(regions[idx], timeoutMs));
             }
 
-            System.Threading.Tasks.Task.WaitAll(probes, timeoutMs + 1000);
+            // IsRegionAlive can try TWO endpoints in sequence (loopback,
+            // then the public ServerURI as a fallback), each with its own
+            // full `timeoutMs` - so one genuinely-alive-but-slow region can
+            // legitimately take up to 2x timeoutMs to answer. This budget
+            // must cover that real worst case, or a fast-but-arbitrary
+            // subset of otherwise-healthy regions silently gets counted as
+            // offline every time the outer clock runs out first - found
+            // live as the cause of the "regions to explore" count flapping
+            // between 15 and a random smaller number on every page reload.
+            System.Threading.Tasks.Task.WaitAll(probes, (timeoutMs * 2) + 500);
 
             List<GridRegion> online = new List<GridRegion>();
             for (int i = 0; i < regions.Count; i++)
