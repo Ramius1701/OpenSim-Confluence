@@ -26133,3 +26133,35 @@ shares process names with other, unrelated OpenSim-based projects on the same ma
 restarted. `Robust.log` shows a full clean startup sequence with zero new errors since the restart
 timestamp, and all 15 regions were confirmed still running, untouched, throughout. Awaiting the tester's
 own reload-repeatedly confirmation that the count now stays steady.
+
+## Self-inflicted regression from the restart above: every map tile on the grid went blank (2026-09-30)
+
+The Robust restart used to deploy the region-count fix above had a real, unrelated side effect: the World
+Map admin page started showing every region as a flat solid-color rectangle instead of its actual terrain
+tile. Not a new code bug - a dormant grid setting, `ClearMapTilesOnStartup`, had been left switched on in
+the grid settings store from an earlier session. That setting exists specifically as a one-time cleanup
+toggle (see the code's own comment at `MapImageService.cs` around its startup check) - it deletes the
+*entire* map-tile cache directory the moment Robust starts, on every single restart, not just once. It had
+apparently been flipped on once for a legitimate one-time cleanup and never flipped back off, so it sat
+harmless until the next time anyone restarted Robust for an unrelated reason - which is exactly what
+happened here. Confirmed directly: the whole `maptiles` folder was gone from disk after the restart, and
+every tile request was falling back to `MapImageService`'s generic flat "water" placeholder color, which
+is what a flat rectangle actually is.
+
+**Fix, in two parts, no code change needed since nothing was actually broken in the code:**
+- The operator switched `ClearMapTilesOnStartup` back off via Admin Panel &rarr; Grid Settings &rarr; Map
+  Tiles, so a future Robust restart for any other reason won't silently wipe every tile again.
+- Regenerated every region's tile directly: computed each region's `RegionHandle` from its stored
+  `locX`/`locY` and POSTed to its own `/MAP/Regenerate/<handle>` endpoint (the same call the admin page's
+  per-region "Regenerate maptile" button already makes, and - confirmed by reading
+  `WorldMapModule.HandleRegenerateMaptileRequest` - genuinely unauthenticated at the region side, so this
+  is safe to call directly rather than needing an admin browser session). All 15 regions answered
+  `200 queued`. Each queues its render after a deliberate 180-second delay (existing, unrelated behavior,
+  not something this session added) - confirmed after waiting that out: 127 real tile files, varying sizes
+  matching real rendered content, all freshly timestamped, replaced the placeholder entirely.
+
+**Lesson for later**: a "wipe everything" toggle meant for one-time use is a real hazard sitting on any
+future restart until someone remembers to turn it back off - worth remembering this specific setting
+exists before any future Robust restart, and worth considering whether a future change should make this
+kind of one-shot toggle auto-clear itself after firing once, so it can't silently arm itself for the next
+restart the way it just did here.
