@@ -26328,3 +26328,37 @@ diff first regardless. Then tried to copy while Robust was still running; Window
 immediately, Robust stopped by verified PID, copy completed, all 150 DLLs confirmed matching, restarted
 clean. Zero errors since the corrected restart, all 15 regions untouched, `/gridstatus` re-confirmed all
 10 services genuinely "Online."
+
+## Real bug found live: UUID fields silently zeroed by JSON serialization (2026-09-30)
+
+The operator tried adding themselves to Grid Team through the actual admin page and hit a real bug
+immediately: the new entry showed "Account not found" right after saving. Root cause confirmed with an
+isolated test before touching the real code - `System.Text.Json.JsonSerializer` has no built-in support
+for `OpenMetaverse.UUID` at all. Its internals aren't public settable members the reflection-based
+serializer can see, so a bare `Serialize`/`Deserialize` call silently writes any UUID field as `"{}"` and
+reads it back as all-zeros, every time, with no exception or warning anywhere. This affected both
+Testimonials and Grid Team (both store a UUID `AccountID`); the Homepage Gallery was unaffected since
+`GalleryEntry` has no UUID fields at all - the one difference in exactly how much each of tonight's three
+new features actually got exercised before this surfaced.
+
+**Fixed** with a real `JsonConverter<UUID>` (serializes as the plain string form, parses back with
+`UUID.TryParse`) wired into every `JsonSerializer.Serialize`/`Deserialize` call in this connector that
+touches a class with a UUID field - a shared `SharedJsonOptions` instance rather than four separate ad-hoc
+fixes, so the same mistake can't quietly reappear the next time a new small JSON-backed content type gets
+added. Verified with the same kind of isolated round-trip test that found the bug in the first place,
+confirmed fixed before deploying.
+
+**Real follow-up caught before it could become a second incident**: the already-corrupted "Grid Owner"
+entry sitting in the live database (saved before this fix existed) would have made the converter's naive
+first draft *throw* on load - `reader.GetString()` on a JSON object token (`{}`) rather than a string is an
+exception, not a graceful `null`. Made the converter check `TokenType` first and fall back to `UUID.Zero`
+on anything that isn't a string, so any row written before this fix loads without crashing the whole list
+(same "Account not found" it already effectively showed) instead of taking down `/admin/settings/team` and
+the home page's Grid Team section entirely. The one existing corrupted row itself is unrecoverable (its
+real account link was already lost) - the operator removes it and re-adds themselves once, and it holds
+correctly from then on.
+
+Deployed the same verified, full-diff way as the fix above - 22 DLLs differed again (same dependency set
+both times, confirming this project's own incremental build touches these every time regardless of how
+small the source change), Robust stopped by verified PID first this time, all 150 DLLs confirmed matching
+before restart, zero errors since, all 15 regions untouched, all 10 services confirmed genuinely "Online."

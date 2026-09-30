@@ -18465,6 +18465,46 @@ namespace OpenSim.Server.Handlers.WebInterface
             response.RawBuffer = File.ReadAllBytes(path);
         }
 
+        // System.Text.Json has no built-in support for OpenMetaverse.UUID -
+        // its internals aren't public settable members the reflection-based
+        // serializer can see, so a bare JsonSerializer.Serialize/Deserialize
+        // silently writes any UUID field as "{}" and reads it back as
+        // UUID.Zero. Confirmed live: an admin-added Grid Team entry showed
+        // "Account not found" immediately after saving, because AccountID
+        // round-tripped to all-zeros the moment it went through
+        // SaveGridTeam/LoadGridTeam. Every JsonSerializer call in this file
+        // that touches a class with a UUID field must use SharedJsonOptions
+        // below, not the parameterless overload.
+        private sealed class UuidJsonConverter : System.Text.Json.Serialization.JsonConverter<UUID>
+        {
+            public override UUID Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+            {
+                // Defensive against exactly the data this bug already wrote
+                // live before the fix - a UUID field serialized (by the
+                // absent-converter default) as "{}" is a JSON object token,
+                // not a string, and GetString() throws on that rather than
+                // returning null. Any row saved before this fix must still
+                // load without crashing the whole list - it just reads back
+                // as UUID.Zero, same as it already effectively was.
+                if (reader.TokenType != System.Text.Json.JsonTokenType.String)
+                {
+                    reader.Skip();
+                    return UUID.Zero;
+                }
+                return UUID.TryParse(reader.GetString(), out UUID value) ? value : UUID.Zero;
+            }
+
+            public override void Write(System.Text.Json.Utf8JsonWriter writer, UUID value, System.Text.Json.JsonSerializerOptions options)
+            {
+                writer.WriteStringValue(value.ToString());
+            }
+        }
+
+        private static readonly System.Text.Json.JsonSerializerOptions SharedJsonOptions = new()
+        {
+            Converters = { new UuidJsonConverter() },
+        };
+
         // Homepage showcase gallery - see RenderGridGalleryShowcase's own
         // comment for the design rationale. Same folder-drop convention
         // and traversal-safety discipline as WelcomePhoto* above, in its
@@ -18518,7 +18558,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 try
                 {
-                    stored = System.Text.Json.JsonSerializer.Deserialize<List<GalleryEntry>>(json) ?? new List<GalleryEntry>();
+                    stored = System.Text.Json.JsonSerializer.Deserialize<List<GalleryEntry>>(json, SharedJsonOptions) ?? new List<GalleryEntry>();
                 }
                 catch (Exception e)
                 {
@@ -18547,7 +18587,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private void SaveGalleryEntries(List<GalleryEntry> entries)
         {
-            m_GridSettingsService?.Set("GridGalleryEntries", System.Text.Json.JsonSerializer.Serialize(entries));
+            m_GridSettingsService?.Set("GridGalleryEntries", System.Text.Json.JsonSerializer.Serialize(entries, SharedJsonOptions));
         }
 
         private void HandleGalleryPhoto(IOSHttpRequest request, IOSHttpResponse response, string unsafeName)
@@ -18610,7 +18650,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return new List<TestimonialEntry>();
             try
             {
-                return System.Text.Json.JsonSerializer.Deserialize<List<TestimonialEntry>>(json) ?? new List<TestimonialEntry>();
+                return System.Text.Json.JsonSerializer.Deserialize<List<TestimonialEntry>>(json, SharedJsonOptions) ?? new List<TestimonialEntry>();
             }
             catch (Exception e)
             {
@@ -18621,7 +18661,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private void SaveTestimonials(List<TestimonialEntry> entries)
         {
-            m_GridSettingsService?.Set("GridTestimonials", System.Text.Json.JsonSerializer.Serialize(entries));
+            m_GridSettingsService?.Set("GridTestimonials", System.Text.Json.JsonSerializer.Serialize(entries, SharedJsonOptions));
         }
 
         // /testimonial - a resident's own submission, session-gated same as
@@ -18859,7 +18899,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return new List<TeamMemberEntry>();
             try
             {
-                return System.Text.Json.JsonSerializer.Deserialize<List<TeamMemberEntry>>(json) ?? new List<TeamMemberEntry>();
+                return System.Text.Json.JsonSerializer.Deserialize<List<TeamMemberEntry>>(json, SharedJsonOptions) ?? new List<TeamMemberEntry>();
             }
             catch (Exception e)
             {
@@ -18870,7 +18910,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private void SaveGridTeam(List<TeamMemberEntry> entries)
         {
-            m_GridSettingsService?.Set("GridTeamMembers", System.Text.Json.JsonSerializer.Serialize(entries));
+            m_GridSettingsService?.Set("GridTeamMembers", System.Text.Json.JsonSerializer.Serialize(entries, SharedJsonOptions));
         }
 
         private void HandleAdminSettingsTeam(IOSHttpRequest request, IOSHttpResponse response)
