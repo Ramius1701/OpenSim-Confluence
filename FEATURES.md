@@ -326,6 +326,42 @@ external dependencies:
   services** — the content and configuration backends the admin
   console manages.
 
+## Voice Chat
+
+In-world voice, region and parcel-aware, no per-grid-owner service
+subscription required:
+
+- **os-webrtc-janus** (`OpenSim/Addons/os-webrtc-janus`) — the in-tree
+  WebRTC voice region/service module framework (`WebRtcVoice`/
+  `WebRtcVoiceRegionModule`/`WebRtcVoiceServiceModule`), speaking the
+  same client-side protocol Firestorm/AyaneStorm's built-in WebRTC
+  voice already uses (no viewer plugin needed) via a pluggable
+  `SpatialVoiceService`/`NonSpatialVoiceService` backend connector -
+  its default target (Janus Gateway) needs a Linux host and can't be
+  run or verified on this Windows grid.
+- **ConfluenceVoice** — a purpose-built, Windows-native voice server
+  filling that backend role, so the whole stack runs without Linux
+  infrastructure. Its own separate project
+  (`github.com/Ramius1701/ConfluenceVoice`, own git history, not part
+  of this repo — same relationship OGI has to Confluence), carrying
+  forward the spatial-mixing/Opus-encoding/SDP-handshake engine from
+  the open-source `wolfvoice` project (full attribution retained per
+  Apache-2.0), repackaged to run as an ordinary Windows console
+  program reading a `confluencevoice.toml` instead of a Unix system
+  service. Talks to `WebRtcVoiceServiceConnector`'s plain JSON-RPC
+  client over HTTPS - no Janus/Linux dependency anywhere in the path.
+- **Live status**: configured on all 15 of Casperia Prime's regions
+  (`[WebRtcVoice] WebRtcVoiceServerURI` pointing at a running
+  ConfluenceVoice instance), replacing the grid's previous Vivox-
+  compatible service grid-wide - each region's ini keeps a
+  `.pre-confluencevoice.bak` rollback copy from that migration.
+  Two real gaps remain open, both left as deliberate choices rather
+  than oversights: the HTTPS endpoint still uses a self-signed
+  development certificate (a public deployment needs a CA-issued cert
+  before viewers outside the LAN can trust it), and ConfluenceVoice
+  runs as a plain console program with no Windows Service wrapper yet
+  (so it doesn't start automatically with the host).
+
 ## Moderation & Access Control
 
 - Temporary/timed account bans self-clear on expiry through both the

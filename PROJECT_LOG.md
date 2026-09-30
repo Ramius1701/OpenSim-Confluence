@@ -26454,3 +26454,32 @@ to expect.
 Deployed the same verified way - 22 DLLs differed (same recurring dependency set), Robust stopped by
 verified PID, all matching before restart, zero errors since, all 15 regions untouched, all 11 services
 confirmed genuinely "Online."
+
+## ConfluenceVoice's grid-wide migration found completely undocumented, and FEATURES.md finally gets a Voice Chat section (2026-09-30)
+
+The operator flagged it directly: "Confuence Voice need to be added. features need to be updated." -
+`FEATURES.md` had zero mentions of voice at all, despite the homepage's own "Voice Built In" feature card
+(from earlier tonight's icon-card pass) claiming "In-world voice chat works out of the box... no extra
+setup." Checked what was actually true before writing anything.
+
+**What was actually found, live**: ConfluenceVoice (built 2026-09-13, own repo -
+`github.com/Ramius1701/ConfluenceVoice` - a Windows-native WebRTC voice backend ported from `wolfvoice`'s
+spatial-mixing engine, wired into os-webrtc-janus's pluggable connector so no Janus Gateway/Linux host is
+needed) is not just wired for a dev test - it is live, grid-wide, on all 15 of Casperia's regions. Checked
+directly, not assumed: every region's `OpenSim.ini` has `[WebRtcVoice] Enabled = true` pointing at a running
+ConfluenceVoice instance, `[VivoxVoice] enabled = false`, and a comment dated "ConfluenceVoice grid
+migration (2026-09-27)" with a `.pre-confluencevoice.bak` rollback file kept per region - a genuine cutover,
+not the Sandbox-only test the last PROJECT_LOG mention of this implied. `confluencevoice.exe` was confirmed
+actually running on the host via `Get-Process` (started 2026-09-29).
+
+**This migration was never logged here at all** - no PROJECT_LOG entry, and `FEATURES.md` never got a
+Voice section. Two real gaps from the original 2026-09-13 build are still open and unrevisited: the HTTPS
+endpoint uses a self-signed dev cert (fine for LAN, needs a CA-issued cert for external viewers to trust
+it), and ConfluenceVoice runs as a plain console app with no Windows Service wrapper (won't restart with
+the host).
+
+Added a new "Voice Chat" section to `FEATURES.md` documenting os-webrtc-janus, ConfluenceVoice, and the
+real live/grid-wide status including both open gaps - no code changed this pass, purely closing a
+documentation gap on infrastructure that's already been running for three days. Also corrected two stale
+memory-file entries that still described this as Linux-blocked/excluded from an earlier point in the
+project's history.
