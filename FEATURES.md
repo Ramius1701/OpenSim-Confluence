@@ -38,18 +38,27 @@ alongside the existing support-ticket system.
 
 ### Public pages
 
-- Home/splash with live grid stats, a "Busiest Regions" list naming up
-  to 5 currently-populated regions with direct teleport links (falls
-  back to a single-line mention when only one region has visitors), an
-  admin-curated photo showcase ("See the World" — operator drops image
-  files into a `GridGallery` folder, then captions/orders/enables each
-  one from the admin console, no upload form needed), a staff directory
-  ("Grid Team" — admin picks existing accounts by name, each with a
-  direct in-site Message link), and resident-submitted, admin-approved
-  testimonials (self-service at `/testimonial`; an edit always resets a
-  quote to unpublished so nothing bypasses moderation). All four are
-  empty, theme-agnostic mechanisms any grid owner populates with their
-  own content — Confluence itself never bakes in a specific identity.
+- Home/splash, ordered as a real pitch (stats/activity → trust → the
+  detailed feature pitch → proof of activity → CTA → utility links):
+  a "Busiest Regions" list naming up to 5 currently-populated regions
+  with direct teleport links (admin-togglable — real regions and live
+  avatar counts shown to anonymous visitors is a real privacy tradeoff,
+  not every grid owner may want to make it), an admin-curated photo
+  showcase ("See the World" — operator drops image files into a
+  `GridGallery` folder, then captions/orders/enables each one from the
+  admin console, no upload form needed), a staff directory ("Grid
+  Team" — admin picks existing accounts by name, each with a direct
+  in-site Message link), resident-submitted, admin-approved
+  testimonials (self-service at `/testimonial`; an edit always resets
+  a quote to unpublished so nothing bypasses moderation), and a
+  first-Homestead-free callout (see Store below) that disappears once
+  a logged-in resident has already claimed theirs. The Hypergrid
+  Address box lives at the very bottom now — it's for a different
+  audience (an existing OpenSim user who already has an account
+  elsewhere) than the pitch above it. The gallery/team/testimonials
+  mechanisms are empty and theme-agnostic — any grid owner populates
+  them with their own content; Confluence itself never bakes in a
+  specific identity.
 - Self-service sign-up with a starting-region picker (defaults to the
   grid's `DefaultRegion`-flagged regions) and an optional avatar-
   selection starter-look carousel — admin-curated "model" accounts
@@ -256,10 +265,14 @@ prim-capacity packs and self-service region orders.
   OAuth2 integration — independent of the region-side Gloebit module,
   reusing the same merchant key so it's the same real account either
   way.
-- Homestead/Openspace are one-time purchases; Full Region, Event, Prim
-  Packs, and Max Agents Packs auto-renew every 30 days, charged
-  automatically from the resident's chosen currency. A missed charge
-  gets a grace period, then real suspension — the region is stopped
+- A resident's first-ever Homestead is free — a real acquisition
+  incentive, checked against their actual order history rather than a
+  separate entitlement flag, so it can't drift out of sync with what
+  really happened. Any Homestead after that (or any other item) charges
+  the catalog's normal price. Homestead is otherwise the one genuinely
+  free, one-time purchase type; Openspace, Full Region, Event, Prim
+  Packs, and Max Agents Packs all auto-renew every 30 days, charged
+  automatically from the resident's chosen currency. A missed charge gets a grace period, then real suspension — the region is stopped
   (never deleted) or the specific pack's capacity is clawed back —
   reinstated automatically the moment billing catches up. Admins can
   still manually extend/renew from the Store Orders queue regardless.

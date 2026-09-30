@@ -1501,6 +1501,12 @@ namespace OpenSim.Server.Handlers.WebInterface
         // act on after being convinced by the content below it.
         private void HandleHome(IOSHttpRequest request, IOSHttpResponse response)
         {
+            // Optional - this page stays fully public either way (no
+            // redirect, no gate). Only used to personalize the free-
+            // Homestead callout below for a resident who's already logged
+            // in and already claimed theirs.
+            WebSession session = GetSession(request);
+
             string gridName = GetSetting("GridName", m_gridName);
             string welcomeMessage = GetWebSafeWelcomeMessage();
             string tagline = string.IsNullOrEmpty(welcomeMessage)
@@ -1524,36 +1530,43 @@ namespace OpenSim.Server.Handlers.WebInterface
             // busiest first - a flat "2 online" reads as sparse on a
             // smaller grid; naming specific places people actually are
             // gives a visitor a real reason to click rather than just a
-            // number, and showing several (not just the single busiest)
-            // reads as "there's a real place happening here," not "one
-            // lonely region has one person in it." Unlisted regions are
-            // excluded from this list (respects the same opt-out as the
-            // regions-to-explore count/list above) even though their
-            // occupants still count toward onlineNow itself.
+            // number. Always rendered as a list (even a list of one) -
+            // switching between a one-line sentence and a list depending
+            // on count was inconsistent for no real benefit. Admin-
+            // togglable (ShowBusiestRegions, default on) since advertising
+            // real-time avatar locations to anonymous visitors is a real
+            // privacy tradeoff some grid owners may not want to make.
+            // Unlisted regions are excluded from this list (respects the
+            // same opt-out as the regions-to-explore count/list above)
+            // even though their occupants still count toward onlineNow.
+            bool showBusiestRegions = GetSetting("ShowBusiestRegions", "true") == "true";
             List<(GridRegion Region, int Count)> busiestRegions = new List<(GridRegion, int)>();
             if (m_GridUserService != null)
             {
                 onlineNow = m_GridUserService.GetOnlineUserCount(aliveRegionIDs);
 
-                List<GridUserInfo> onlineUsers = m_GridUserService.GetOnlineUsers(aliveRegionIDs);
-                HashSet<UUID> listedRegionIDs = new HashSet<UUID>(regions.Select(r => r.RegionID));
-                Dictionary<UUID, int> byRegion = new Dictionary<UUID, int>();
-                foreach (GridUserInfo u in onlineUsers)
+                if (showBusiestRegions)
                 {
-                    if (!listedRegionIDs.Contains(u.LastRegionID))
-                        continue;
-                    byRegion.TryGetValue(u.LastRegionID, out int c);
-                    byRegion[u.LastRegionID] = c + 1;
+                    List<GridUserInfo> onlineUsers = m_GridUserService.GetOnlineUsers(aliveRegionIDs);
+                    HashSet<UUID> listedRegionIDs = new HashSet<UUID>(regions.Select(r => r.RegionID));
+                    Dictionary<UUID, int> byRegion = new Dictionary<UUID, int>();
+                    foreach (GridUserInfo u in onlineUsers)
+                    {
+                        if (!listedRegionIDs.Contains(u.LastRegionID))
+                            continue;
+                        byRegion.TryGetValue(u.LastRegionID, out int c);
+                        byRegion[u.LastRegionID] = c + 1;
+                    }
+                    foreach (var kvp in byRegion)
+                    {
+                        GridRegion region = regions.FirstOrDefault(r => r.RegionID == kvp.Key);
+                        if (region != null)
+                            busiestRegions.Add((region, kvp.Value));
+                    }
+                    busiestRegions.Sort((a, b) => b.Count.CompareTo(a.Count));
+                    if (busiestRegions.Count > 5)
+                        busiestRegions.RemoveRange(5, busiestRegions.Count - 5);
                 }
-                foreach (var kvp in byRegion)
-                {
-                    GridRegion region = regions.FirstOrDefault(r => r.RegionID == kvp.Key);
-                    if (region != null)
-                        busiestRegions.Add((region, kvp.Value));
-                }
-                busiestRegions.Sort((a, b) => b.Count.CompareTo(a.Count));
-                if (busiestRegions.Count > 5)
-                    busiestRegions.RemoveRange(5, busiestRegions.Count - 5);
             }
 
             int totalAccounts = 0;
@@ -1565,6 +1578,14 @@ namespace OpenSim.Server.Handlers.WebInterface
                 newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
             }
 
+            // Page order (2026-09-30 restructure): hook (stats, busiest-
+            // right-now, gallery) -> trust (team, testimonials, free-
+            // Homestead offer) -> the detailed pitch (feature cards) ->
+            // proof of activity (classifieds/economy, events, news) ->
+            // CTA -> utility (Hypergrid Address, for a completely
+            // different audience - an existing OpenSim user who doesn't
+            // need convincing - so it no longer interrupts the one
+            // continuous argument being made to a brand-new visitor).
             StringBuilder sb = new StringBuilder();
             sb.Append("<h1>").Append(Html(gridName)).Append("</h1>");
             sb.Append(RenderAnnouncement());
@@ -1581,15 +1602,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<span>+").Append(newAccounts7d.ToString("N0")).Append(" new this week</span>");
             sb.Append("</div>");
 
-            if (busiestRegions.Count == 1)
-            {
-                string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(busiestRegions[0].Region.RegionName) + "/128/128/25";
-                sb.Append("<p class=\"tagline-lead\" style=\"margin-top:-10px;\">")
-                  .Append(busiestRegions[0].Count).Append(busiestRegions[0].Count == 1 ? " person is " : " people are ")
-                  .Append("in <a href=\"").Append(Html(hopUrl)).Append("\">").Append(Html(busiestRegions[0].Region.RegionName))
-                  .Append("</a> right now - join them.</p>");
-            }
-            else if (busiestRegions.Count > 1)
+            if (showBusiestRegions && busiestRegions.Count > 0)
             {
                 sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-people\"></i> Busiest Right Now</h2><ul class=\"busiest-regions-list\">");
                 foreach ((GridRegion region, int count) in busiestRegions)
@@ -1602,28 +1615,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             sb.Append(RenderGridGalleryShowcase());
-
-            // No CTA row here - Log In/Sign Up are already one click away in
-            // the top nav for every logged-out visitor (see WritePage's
-            // navActions), so a second identical pair of buttons right
-            // below the tagline was pure duplication. The bottom "Ready to
-            // join?" CTA further down stays - that one's a re-prompt after
-            // scrolling through the actual pitch, a different, real job.
-
-            // Hypergrid address up front, not buried on /viewers - the
-            // homepage's other real audience besides a brand-new signup is
-            // a Hypergrid traveler from another grid who just wants the
-            // address to paste into their own viewer's map bar, no account
-            // needed. Same loginUri HandleViewers already computes, not a
-            // second value that could drift.
-            string loginUri = string.IsNullOrEmpty(m_publicBaseUrl) ? string.Empty : m_publicBaseUrl + "/";
-            if (!string.IsNullOrEmpty(loginUri))
-            {
-                sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-signpost-2\"></i> Hypergrid Address</h2>")
-                  .Append("<p>Already have a viewer or an account on another OpenSim grid? Paste this into your map/search bar to teleport straight in.</p>")
-                  .Append("<form onsubmit=\"return false;\"><input type=\"text\" value=\"").Append(Html(loginUri))
-                  .Append("\" readonly onclick=\"this.select()\"></form></div>");
-            }
+            sb.Append(RenderGridTeam());
+            sb.Append(RenderTestimonials());
+            sb.Append(RenderFreeHomesteadCallout(session?.PrincipalID ?? UUID.Zero));
 
             sb.Append("<h2>Why ").Append(Html(gridName)).Append("?</h2><div class=\"widget-grid\">");
             AppendFeatureCard(sb, "Built-In Economy", "No setup required",
@@ -1645,9 +1639,6 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendFeatureCard(sb, "We Actually Listen", "Feedback that goes somewhere",
                     "A real suggestion box and support queue an admin reads - not a dead mailbox.");
             sb.Append("</div>");
-
-            sb.Append(RenderGridTeam());
-            sb.Append(RenderTestimonials());
 
             string classifieds = RenderFeaturedClassifieds(6);
             string economy = RenderEconomyStats();
@@ -1677,6 +1668,22 @@ namespace OpenSim.Server.Handlers.WebInterface
                   .Append(Html(gridName)).Append("?</h2><div class=\"cta-row\" style=\"justify-content:center;\">")
                   .Append("<a href=\"").Append(BasePath).Append("/register\" class=\"cta-primary\">Create a Free Account</a>")
                   .Append("</div></div>");
+
+            // Hypergrid address near the bottom, not the middle of the
+            // pitch - this box is for a completely different audience (an
+            // existing OpenSim user who already has a viewer/account
+            // elsewhere and doesn't need convincing), not the brand-new
+            // visitor everything above it is written for. Same loginUri
+            // HandleViewers already computes, not a second value that
+            // could drift.
+            string loginUri = string.IsNullOrEmpty(m_publicBaseUrl) ? string.Empty : m_publicBaseUrl + "/";
+            if (!string.IsNullOrEmpty(loginUri))
+            {
+                sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-signpost-2\"></i> Hypergrid Address</h2>")
+                  .Append("<p>Already have a viewer or an account on another OpenSim grid? Paste this into your map/search bar to teleport straight in.</p>")
+                  .Append("<form onsubmit=\"return false;\"><input type=\"text\" value=\"").Append(Html(loginUri))
+                  .Append("\" readonly onclick=\"this.select()\"></form></div>");
+            }
 
             sb.Append("<p><a href=\"").Append(BasePath).Append("/viewers\">Get a viewer &rarr;</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/features\">See all features &rarr;</a></p>");
@@ -8339,6 +8346,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string gridName = GetSetting("GridName", m_gridName);
             string gridNick = GetSetting("GridNickname", m_gridNick);
             string welcomeMessage = GetWebSafeWelcomeMessage();
+            bool showBusiestRegions = GetSetting("ShowBusiestRegions", "true") == "true";
 
             string body = "<h1>Grid Identity</h1>"
                     + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
@@ -8347,6 +8355,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Grid name<br/><input type=\"text\" name=\"grid_name\" value=\"" + Html(gridName) + "\" required></label><br/>"
                     + "<label>Grid nickname<br/><input type=\"text\" name=\"grid_nickname\" value=\"" + Html(gridNick) + "\"></label><br/>"
                     + "<label>Welcome message<br/><textarea name=\"welcome_message\" rows=\"3\">" + Html(welcomeMessage) + "</textarea></label><br/>"
+                    + "<label><input type=\"checkbox\" name=\"show_busiest_regions\" value=\"true\"" + (showBusiestRegions ? " checked" : "") + " style=\"width:auto;display:inline\"> "
+                    + "Show \"Busiest Right Now\" on the home page (names real regions and live avatar counts to anonymous visitors)</label><br/>"
                     + "<button type=\"submit\">Save</button>"
                     + "</form>";
 
@@ -8366,6 +8376,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string gridName = FormValue(form, "grid_name").Trim();
             string gridNick = FormValue(form, "grid_nickname").Trim();
             string welcomeMessage = FormValue(form, "welcome_message");
+            bool showBusiestRegions = FormValue(form, "show_busiest_regions") == "true";
 
             if (string.IsNullOrEmpty(gridName))
             {
@@ -8377,6 +8388,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             m_GridSettingsService.Set("GridName", gridName);
             m_GridSettingsService.Set("GridNickname", gridNick);
             m_GridSettingsService.Set("WelcomeMessage", welcomeMessage);
+            m_GridSettingsService.Set("ShowBusiestRegions", showBusiestRegions ? "true" : "false");
             if (previousName != gridName)
                 LogAdminAction(session, request, "gridsettings.update", "GridSetting", "GridName", "GridName", previousName, gridName);
 
@@ -13655,6 +13667,25 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 m_StoreService.StoreOrder(order);
 
+                // A free order (today, only ever a resident's first-ever
+                // Homestead - see BuildStoreOrder) never touches a currency
+                // service at all. ICurrencyService.Transfer refuses a
+                // genuine $0 amount by design (EnableAmountZero defaults
+                // off - a real anti-abuse guard, not something to bypass
+                // per-call), and Gloebit has no "charge nothing" concept
+                // either. Skip straight to the same fulfillment a real
+                // payment leads to, regardless of which currency the
+                // resident happened to have selected - it's moot when
+                // nothing is actually being charged.
+                if (order.AmountCharged == 0)
+                {
+                    order.Status = "Paid";
+                    order.Updated = DateTime.UtcNow;
+                    m_StoreService.StoreOrder(order);
+                    ProcessPaidOrder(order, item);
+                    return BasePath + "/store?message=" + Uri.EscapeDataString("Your first Homestead is free - welcome! Your region is being provisioned now.");
+                }
+
                 if (currency == "Confluence")
                 {
                     string message = ChargeConfluenceCurrency(session, order, item);
@@ -13757,6 +13788,24 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 order.IsRecurring = true;
                 order.NextBillingDate = DateTime.UtcNow.AddDays(item.DurationDays);
+            }
+
+            // A resident's first-ever Homestead is free - a real incentive
+            // to actually claim land and get invested in the grid, not a
+            // lifetime cap: a second Homestead (or a third, or any other
+            // region type) charges the catalog's normal price same as
+            // always. Checked against real order history rather than a
+            // separate "has used their freebie" flag, so there's nothing
+            // that can drift out of sync with what actually happened.
+            if (item.ItemType == "RegionOrder" && item.RegionType == "Homestead" && m_StoreService != null)
+            {
+                bool hadHomesteadBefore = m_StoreService.GetOrdersByResident(session.PrincipalID)
+                        .Any(o => o.OrderType == "RegionOrder" && m_StoreService.GetCatalogItem(o.CatalogItemID)?.RegionType == "Homestead");
+                if (!hadHomesteadBefore)
+                {
+                    order.AmountCharged = 0;
+                    order.Notes = "First Homestead - free";
+                }
             }
 
             if (item.ItemType == "PrimPack")
@@ -19123,6 +19172,44 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             sb.Append("</div></div>");
             return sb.ToString();
+        }
+
+        // A real, concrete incentive - a resident's first-ever Homestead is
+        // free (see BuildStoreOrder) - that was never actually advertised
+        // anywhere before this. Checks for an active Homestead SKU rather
+        // than hardcoding the offer, so this callout disappears cleanly if
+        // a grid owner ever removes Homestead from their catalog, instead
+        // of advertising something no longer actually purchasable.
+        //
+        // residentId is UUID.Zero for an anonymous visitor - the offer
+        // always shows for them, since there's no account yet to have
+        // claimed anything against. A logged-in resident who has already
+        // used their free Homestead stops seeing the tile at all - the
+        // same real order-history check BuildStoreOrder itself uses to
+        // decide whether to actually charge for it, not a separate flag
+        // that could drift out of sync with what really happened.
+        private string RenderFreeHomesteadCallout(UUID residentId)
+        {
+            if (m_StoreService == null)
+                return string.Empty;
+
+            bool hasHomestead = m_StoreService.GetActiveCatalogItems()
+                    .Any(i => i.ItemType == "RegionOrder" && i.RegionType == "Homestead");
+            if (!hasHomestead)
+                return string.Empty;
+
+            if (residentId != UUID.Zero)
+            {
+                bool alreadyClaimed = m_StoreService.GetOrdersByResident(residentId)
+                        .Any(o => o.OrderType == "RegionOrder" && m_StoreService.GetCatalogItem(o.CatalogItemID)?.RegionType == "Homestead");
+                if (alreadyClaimed)
+                    return string.Empty;
+            }
+
+            return "<div class=\"content-card\" style=\"border-left:4px solid var(--accent);\">"
+                    + "<h2><i class=\"bi bi-gift\"></i> Your First Homestead Is Free</h2>"
+                    + "<p>New residents get one Homestead region on us - no recurring fee, ever. "
+                    + "<a href=\"" + BasePath + "/store\">Claim yours &rarr;</a></p></div>";
         }
 
         // Real viewer-vs-browser detection, ported from the same mechanism

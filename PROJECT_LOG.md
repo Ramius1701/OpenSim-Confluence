@@ -26362,3 +26362,61 @@ Deployed the same verified, full-diff way as the fix above - 22 DLLs differed ag
 both times, confirming this project's own incremental build touches these every time regardless of how
 small the source change), Robust stopped by verified PID first this time, all 150 DLLs confirmed matching
 before restart, zero errors since, all 15 regions untouched, all 10 services confirmed genuinely "Online."
+
+## Homepage restructure, free-first-Homestead built end to end, and a real Homestead/Openspace doc correction (2026-09-30)
+
+**Homepage reordered** after the operator's own honest read of the live page ("a bit disorganized"): hook
+(stats, Busiest Right Now, gallery) -> trust (Grid Team, Testimonials, the new free-Homestead callout) ->
+the detailed "Why [grid]?" pitch -> proof of activity (classifieds/economy, events, news) -> CTA ->
+utility (Hypergrid Address, moved to the bottom). The Hypergrid Address box - aimed at a completely
+different audience (an existing OpenSim user who already has an account elsewhere and doesn't need
+convincing) - no longer sits in the middle of the one continuous argument the rest of the page is making
+to a brand-new visitor.
+
+**Busiest Right Now redesigned**: always renders as a list now (even a list of one) instead of switching
+between a one-line sentence and a list depending on count. Made admin-togglable (`ShowBusiestRegions`,
+default on, Admin > Grid Settings > Grid Identity) - a real privacy tradeoff, naming actual regions and
+live avatar counts to anonymous visitors, that not every grid owner may want to make.
+
+**A real free-first-Homestead offer, built end to end, not just talked about.** The operator recalled a
+design idea ("first one free, then charged") that turned out to be two separate things tangled together:
+the "one free Homestead per resident, monthly fee for everything else" model from 2026-09-12 (`casperia-
+store-region-type-economy` memory), explicitly logged as a proposal and never built - and what actually
+shipped 2026-09-13, which is simpler (Homestead alone stays a genuinely free one-time SKU; everything
+else, Openspace included, auto-renews). Confirmed directly against the live database that the 2026-09-13
+decision is exactly what's still running today (`Homestead: DurationDays=0/RecurringBilling=0`; every
+other SKU including Openspace: `DurationDays=30/RecurringBilling=1`) - not a bug, a decision the operator
+made and personally corrected once already ("Openspace should be recurring! Only one not recurring is the
+homestead").
+
+The operator then clarified the real intent: residents CAN buy more than one Homestead - only the first
+one is free, as an acquisition incentive, and it wasn't advertised anywhere on the site. Built for real in
+`BuildStoreOrder`: checks the resident's actual order history (any `RegionOrder` whose catalog item's
+`RegionType` is "Homestead") rather than a separate "has used their freebie" flag that could drift out of
+sync with what really happened - first one ever is free, every subsequent one charges the catalog's
+normal price.
+
+**A real landmine caught and fixed before it ever reached a live checkout**: `ICurrencyService.Transfer`
+refuses a genuine $0 amount by design (`EnableAmountZero` defaults off - a real anti-abuse guard from the
+earlier MoneyServer-parity audit, not something to bypass per-call). A naive free-Homestead order would
+have hit this and shown "Payment failed." to a resident trying to claim a free region. Fixed by checking
+`order.AmountCharged == 0` once, before either currency-specific path, and skipping straight to the same
+fulfillment a real payment leads to - moot which currency was selected when nothing is actually being
+charged.
+
+**Advertised on the homepage for real**, not just built - a new callout, shown only when Homestead is
+actually an active, purchasable catalog item (so it disappears cleanly if a grid owner ever removes it,
+rather than advertising something no longer purchasable). Made resident-aware per the operator's own
+follow-up ask ("add a free region tile that won't show once they claim it"): an anonymous visitor always
+sees it; a logged-in resident who has already claimed their free Homestead stops seeing the tile at all,
+checked with the exact same order-history logic the checkout itself uses.
+
+**A real, separate doc bug corrected along the way**: `FEATURES.md` still said "Homestead/Openspace are
+one-time purchases" - stale since the 2026-09-13 correction above, not something this session broke.
+Fixed to name Homestead as the only genuinely free one-time SKU.
+
+Deployed the same verified, full-diff way as every fix above tonight - 22 DLLs differed (same dependency
+set again), Robust stopped by verified PID, all 150 DLLs confirmed matching before restart, zero errors
+since, all 15 regions untouched, all 10 services confirmed genuinely "Online," and the live homepage
+re-checked directly to confirm the actual section order matches the redesign (Free Homestead callout ->
+the pitch -> Classifieds -> CTA -> Hypergrid Address at the very end).
