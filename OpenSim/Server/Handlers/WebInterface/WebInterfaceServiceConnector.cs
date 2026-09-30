@@ -139,6 +139,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private IRecoveryCodeService m_RecoveryCodeService;
         private IGridSettingsService m_GridSettingsService;
         private IStarterLookService m_StarterLookService;
+        private IAdminAuditService m_AdminAuditService;
         private IWebSessionService m_WebSessionService;
         private IUserProfilesService m_UserProfilesService;
         private IFriendsService m_FriendsService;
@@ -303,6 +304,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // ClearSession below for the actual write-through-cache logic.
             m_WebSessionService = LoadReusedPlugin<IWebSessionService>(config, "WebSessionService", args);
             m_StarterLookService = LoadReusedPlugin<IStarterLookService>(config, "StarterLookService", args);
+            m_AdminAuditService = LoadReusedPlugin<IAdminAuditService>(config, "AdminAuditService", args);
             // Same [UserProfilesService] LocalServiceModule the region-side
             // LocalUserProfilesServiceConnector already reuses - backs the
             // splash page's "Featured Classifieds" widget with the real
@@ -1157,6 +1159,9 @@ namespace OpenSim.Server.Handlers.WebInterface
                     case BasePath + "/admin/settings/team/delete":
                         HandleAdminSettingsTeamDelete(request, response);
                         break;
+                    case BasePath + "/admin/audit-log":
+                        HandleAdminAuditLog(request, response);
+                        break;
                     case BasePath + "/admin/settings/features":
                         HandleAdminSettingsFeatures(request, response);
                         break;
@@ -1384,6 +1389,34 @@ namespace OpenSim.Server.Handlers.WebInterface
         private static string GetClientIP(IOSHttpRequest request)
         {
             return request.RemoteIPEndPoint?.Address?.ToString() ?? "unknown";
+        }
+
+        // Records one row in the real admin accountability trail
+        // (admin_audit_log, via IAdminAuditService) - see
+        // OpenSim.Framework.AdminAuditEntry for the design. ActorName is a
+        // snapshot of the acting admin's own real name at the moment of the
+        // action, taken from the session already proving who they are -
+        // never trust a caller-supplied name for this field. oldValue/
+        // newValue are optional; most actions (bans, deletes) only have a
+        // single meaningful state, not a before/after pair.
+        private void LogAdminAction(WebSession session, IOSHttpRequest request, string action,
+                string targetType, string targetId, string targetName, string oldValue = "", string newValue = "")
+        {
+            if (m_AdminAuditService == null || session == null)
+                return;
+
+            m_AdminAuditService.LogAction(new AdminAuditEntry
+            {
+                ActorAccountID = session.PrincipalID,
+                ActorName = session.Name,
+                Action = action,
+                TargetType = targetType,
+                TargetID = targetId ?? string.Empty,
+                TargetName = targetName ?? string.Empty,
+                OldValue = oldValue ?? string.Empty,
+                NewValue = newValue ?? string.Empty,
+                IPAddress = GetClientIP(request),
+            });
         }
 
         private static string ReadCookie(IOSHttpRequest request, string name)
@@ -7388,6 +7421,29 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!string.IsNullOrEmpty(queryMessage))
                 message = "<p>" + Html(queryMessage) + "</p>";
 
+            // At-a-glance KPI row (2026-09-30) - this landing page used to
+            // be a bare grid of links with no numbers at all; a busy admin
+            // had to open every sub-page in turn just to see if anything
+            // needed attention. Every figure here reuses a call another
+            // handler already makes (GetAbuseReports/GetAll/
+            // ComputeGridStatusStats/LoadTestimonials) - real assembly of
+            // existing data, not new plumbing.
+            int openAbuseReports = m_AbuseReportsService?.GetAbuseReports(0, 1000).Count(r => r.Active) ?? 0;
+            int pendingTickets = m_SupportTicketService?.GetAll(0, 1000).Count(t => t.Status != "closed") ?? 0;
+            int pendingTestimonials = LoadTestimonials().Count(e => !e.Enabled);
+            GridStatusStats stats = ComputeGridStatusStats();
+
+            StringBuilder kpis = new StringBuilder();
+            kpis.Append("<div class=\"stats-grid\">");
+            AppendStat(kpis, "Grid Health", stats.ServicesOk ? "Operational" : "Degraded",
+                    stats.ServicesOk ? "all services answering" : "see Grid Statistics > Diagnostics");
+            AppendStat(kpis, "Open Abuse Reports", openAbuseReports.ToString("N0"), "awaiting review");
+            AppendStat(kpis, "Pending Tickets", pendingTickets.ToString("N0"), "not yet closed");
+            AppendStat(kpis, "New Accounts", stats.NewAccounts7d.ToString("N0"), "last 7 days");
+            if (pendingTestimonials > 0)
+                AppendStat(kpis, "Pending Testimonials", pendingTestimonials.ToString("N0"), "awaiting approval");
+            kpis.Append("</div>");
+
             // Sub-page links used to live in a 13-item "Admin" nav-bar
             // dropdown (see WritePage/RenderSidebar) - the sidebar now only
             // links to this one page for admins, so this grid is the real
@@ -7407,8 +7463,10 @@ namespace OpenSim.Server.Handlers.WebInterface
             adminNav.Append("<h2>People &amp; Community</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/users", "bi-people", "User Management", "Search, ban, message and edit accounts");
             AppendDashboardLink(adminNav, BasePath + "/admin/groups", "bi-people-fill", "Groups Management", "Grid-wide group administration");
-            AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "Abuse Reports", "Review reports filed by residents");
-            AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue", "Respond to open support tickets");
+            AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "Abuse Reports",
+                    openAbuseReports > 0 ? openAbuseReports + " open - review reports filed by residents" : "Review reports filed by residents");
+            AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue",
+                    pendingTickets > 0 ? pendingTickets + " pending - respond to open support tickets" : "Respond to open support tickets");
             adminNav.Append("</div>");
 
             adminNav.Append("<h2>Regions &amp; Simulators</h2><div class=\"widget-grid\">");
@@ -7447,10 +7505,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             adminNav.Append("<h2>Grid</h2><div class=\"widget-grid\">");
             AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
             AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions, online totals and diagnostics");
+            AppendDashboardLink(adminNav, BasePath + "/admin/audit-log", "bi-journal-check", "Admin Audit Log", "Who did what, to what, and when - read-only");
             adminNav.Append("</div>");
 
             string body = "<h1>Grid Administration</h1>"
                     + message
+                    + kpis.ToString()
                     + adminNav.ToString();
 
             WritePage(request, response, PageTitle("Admin"), body);
@@ -8305,9 +8365,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                 return;
             }
 
+            string previousName = GetSetting("GridName", m_gridName);
             m_GridSettingsService.Set("GridName", gridName);
             m_GridSettingsService.Set("GridNickname", gridNick);
             m_GridSettingsService.Set("WelcomeMessage", welcomeMessage);
+            if (previousName != gridName)
+                LogAdminAction(session, request, "gridsettings.update", "GridSetting", "GridName", "GridName", previousName, gridName);
 
             response.Redirect(BasePath + "/admin/settings/identity?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
         }
@@ -8352,9 +8415,19 @@ namespace OpenSim.Server.Handlers.WebInterface
             bool allowLogin = FormValue(form, "allow_login") == "true";
             string loginClosedMessage = FormValue(form, "login_closed_message").Trim();
 
+            bool previousAllowLogin = GetSetting("AllowLogin", "true") == "true";
+
             m_GridSettingsService.Set("AllowRegistration", allowRegistration ? "true" : "false");
             m_GridSettingsService.Set("AllowLogin", allowLogin ? "true" : "false");
             m_GridSettingsService.Set("LoginClosedMessage", loginClosedMessage);
+
+            // The one setting here that can lock every ordinary resident
+            // out of the grid - worth its own explicit audit entry beyond
+            // the generic "settings saved," not just folded silently into
+            // routine access-page edits.
+            if (previousAllowLogin != allowLogin)
+                LogAdminAction(session, request, allowLogin ? "gridsettings.loginopen" : "gridsettings.loginclose",
+                        "GridSetting", "AllowLogin", "AllowLogin", previousAllowLogin.ToString(), allowLogin.ToString());
 
             response.Redirect(BasePath + "/admin/settings/access?message=" + Uri.EscapeDataString("Settings saved."), HttpStatusCode.Redirect);
         }
@@ -10106,16 +10179,20 @@ namespace OpenSim.Server.Handlers.WebInterface
                     // account on unban, same bug ClearExpiredBan used to have.
                     if (account != null && userLevelRaw == "UNBAN")
                     {
-                        account.UserLevel = AccountBanHelper.GetPreBanLevel(m_UserProfilesService, principalID) ?? 0;
+                        int restoredLevel = AccountBanHelper.GetPreBanLevel(m_UserProfilesService, principalID) ?? 0;
+                        account.UserLevel = restoredLevel;
                         message = m_UserAccountService.StoreUserAccount(account)
                                 ? "User unbanned."
                                 : "Failed to unban user.";
                         AccountBanHelper.SetBanExpiry(m_UserProfilesService, principalID, null);
                         AccountBanHelper.SetPreBanLevel(m_UserProfilesService, principalID, null);
+                        LogAdminAction(session, request, "user.unban", "UserAccount", principalID.ToString(), account.Name,
+                                AccountBanHelper.BannedUserLevel.ToString(), restoredLevel.ToString());
                     }
                     else if (account != null && int.TryParse(userLevelRaw, out int userLevel))
                     {
                         userLevel = Math.Clamp(userLevel, DeletedUserLevel, 250);
+                        int previousLevel = account.UserLevel;
 
                         // Record the level this account is about to lose,
                         // but only on the transition INTO a ban - re-banning
@@ -10134,6 +10211,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                         {
                             AccountBanHelper.SetBanExpiry(m_UserProfilesService, principalID, DateTime.UtcNow.AddHours(banHours));
                             message = "User banned until " + DateTime.UtcNow.AddHours(banHours).ToString("yyyy-MM-dd HH:mm") + " UTC.";
+                            LogAdminAction(session, request, "user.ban", "UserAccount", principalID.ToString(), account.Name,
+                                    previousLevel.ToString(), "banned until " + DateTime.UtcNow.AddHours(banHours).ToString("yyyy-MM-dd HH:mm") + " UTC");
                         }
                         else
                         {
@@ -10143,6 +10222,8 @@ namespace OpenSim.Server.Handlers.WebInterface
                             // themselves against a later, unrelated ban.
                             AccountBanHelper.SetBanExpiry(m_UserProfilesService, principalID, null);
                             AccountBanHelper.SetPreBanLevel(m_UserProfilesService, principalID, null);
+                            LogAdminAction(session, request, "user.setlevel", "UserAccount", principalID.ToString(), account.Name,
+                                    previousLevel.ToString(), userLevel.ToString());
                         }
                     }
                 }
@@ -10373,6 +10454,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         message = SoftDeleteAccount(account);
                         m_log.InfoFormat("[WEB INTERFACE]: Admin {0} ({1}) soft-deleted account {2} ({3})",
                                 session.Name, session.PrincipalID, account.Name, account.PrincipalID);
+                        LogAdminAction(session, request, "user.softdelete", "UserAccount", principalID.ToString(), account.Name);
                     }
                 }
             }
@@ -10471,6 +10553,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                             m_log.InfoFormat("[WEB INTERFACE]: Admin {0} ({1}) permanently removed account {2} ({3})",
                                     session.Name, session.PrincipalID, account.Name, account.PrincipalID);
+                            LogAdminAction(session, request, "user.remove", "UserAccount", principalID.ToString(), account.Name);
                             message = account.Name + " removed. Assets they uploaded were left untouched.";
                             principalId = string.Empty;
                         }
@@ -18905,6 +18988,66 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             response.Redirect(BasePath + "/admin/settings/team?message=" + Uri.EscapeDataString("Removed."), HttpStatusCode.Redirect);
+        }
+
+        // /admin/audit-log - read-only viewer for the real admin
+        // accountability trail (see LogAdminAction/AdminAuditEntry). No
+        // save/edit/delete on this page by design - a viewable-but-
+        // immutable log is the whole point.
+        private void HandleAdminAuditLog(IOSHttpRequest request, IOSHttpResponse response)
+        {
+            WebSession session = GetSession(request);
+            if (session == null)
+            {
+                response.Redirect(BasePath + "/login", HttpStatusCode.Redirect);
+                return;
+            }
+            if (!session.IsAdmin)
+            {
+                response.StatusCode = (int)HttpStatusCode.Forbidden;
+                WritePage(request, response, PageTitle("Admin Audit Log"), "<h1>Not authorized</h1><p>This page requires a grid administrator account.</p>");
+                return;
+            }
+
+            StringBuilder body = new StringBuilder();
+            body.Append("<h1><i class=\"bi bi-journal-check\"></i> Admin Audit Log</h1>")
+                .Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>")
+                .Append("<p class=\"news-meta\">Every logged admin action, most recent first - who did it, what it targeted, and what changed. Read-only; nothing here can be edited or removed.</p>");
+
+            if (m_AdminAuditService == null)
+            {
+                body.Append("<p>Admin audit service is not available.</p>");
+                WritePage(request, response, PageTitle("Admin Audit Log"), body.ToString());
+                return;
+            }
+
+            List<AdminAuditEntry> entries = m_AdminAuditService.GetRecent(300);
+            if (entries.Count == 0)
+            {
+                body.Append("<p>No admin actions logged yet.</p>");
+            }
+            else
+            {
+                body.Append("<table><thead><tr><th>When (UTC)</th><th>Admin</th><th>Action</th><th>Target</th><th>Change</th><th>IP</th></tr></thead><tbody>");
+                foreach (AdminAuditEntry entry in entries)
+                {
+                    string change = string.Empty;
+                    if (!string.IsNullOrEmpty(entry.OldValue) || !string.IsNullOrEmpty(entry.NewValue))
+                        change = Html(entry.OldValue) + " &rarr; " + Html(entry.NewValue);
+
+                    body.Append("<tr>");
+                    body.Append("<td>").Append(Html(entry.Created.ToString("yyyy-MM-dd HH:mm"))).Append("</td>");
+                    body.Append("<td>").Append(Html(entry.ActorName)).Append("</td>");
+                    body.Append("<td><code>").Append(Html(entry.Action)).Append("</code></td>");
+                    body.Append("<td>").Append(Html(entry.TargetType)).Append(!string.IsNullOrEmpty(entry.TargetName) ? ": " + Html(entry.TargetName) : string.Empty).Append("</td>");
+                    body.Append("<td>").Append(change).Append("</td>");
+                    body.Append("<td>").Append(Html(entry.IPAddress)).Append("</td>");
+                    body.Append("</tr>");
+                }
+                body.Append("</tbody></table>");
+            }
+
+            WritePage(request, response, PageTitle("Admin Audit Log"), body.ToString());
         }
 
         private string RenderGridTeam()

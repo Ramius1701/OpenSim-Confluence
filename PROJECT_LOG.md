@@ -26255,3 +26255,49 @@ audit log, both real gaps on the admin side identified during the same pass.
 batch, with no graceful `[SHUTDOWN]` sequence in `Robust.log` - it just stopped mid-session. All 15
 regions were confirmed unaffected (separate processes). Cause not investigated - flagged to the operator,
 not chased further this session.
+
+## Admin accountability audit log, and a real deploy-caused outage found and fixed the same session (2026-09-30)
+
+The operator asked for a genuine, structured admin accountability trail rather than reusing the existing
+`web_activity_log` table - that table already existed (and was initially proposed as a lighter-weight
+reuse) but turned out, once actually checked, to record only resident self-service events (login,
+registration, avatar import, purchases, suggestions) - zero admin actions of any kind. Built a real,
+separate, purpose-built system instead: a new `admin_audit_log` table (MySQL/PostgreSQL/SQLite, migrated
+the same way every other table in this codebase is), a new `OpenSim.Services.AdminAuditService` project
+(interface, service, base, data layer per backend - the same shape as the existing StarterLookService,
+mirrored file-for-file), and a `LogAdminAction` helper wired into `WebInterfaceServiceConnector.cs` at the
+highest-value admin actions for a first pass: user ban/unban, user level changes, soft-delete, permanent
+account removal, grid name changes, and the grid-wide login toggle. Rows are genuinely append-only - no
+Update, no Delete anywhere in the stack - and `ActorName` is a snapshot at write time, not resolved live,
+so a later rename or account deletion never rewrites history (a deliberate contrast with the Testimonials/
+Grid Team features from earlier this session, which correctly DO resolve live since those display current
+state, not history). A read-only viewer ships at `/admin/audit-log`. Full solution build confirmed clean
+before deploying.
+
+**Real deploy-caused outage, found and fixed the same session.** Adding a brand-new service project meant
+regenerating the whole solution via `prebuild` (`dotnet bin/prebuild.dll /target vs2022 ...`), which was
+necessary to get the new project into the generated `.csproj`/`.sln` files at all (this codebase's
+`*.csproj` files are gitignored; `prebuild.xml` is the real source of truth - see the existing "Repo build
+tooling gotchas" note). That regeneration triggered a full solution rebuild that touched far more than the
+handful of files directly edited - 96 DLLs actually differed from what was on Casperia afterward,
+including shared base assemblies (`OpenSim.Services.Interfaces.dll`, `OpenSim.Data.dll`,
+`OpenSim.Framework.dll` and more), not just the ones this specific feature touched. The deploy only copied
+the 5 files that seemed relevant to the change being made - a real, live outage: Robust restarted into a
+version-mismatched `bin/` directory, `TypeLoadException` on the new `IAdminAuditService` interface (whose
+containing assembly was stale), and that cascaded into UserAccountService, Groups, OfflineIM, and the
+AssetService connector all failing to load. The operator caught it immediately ("tons of red errors in
+Robust").
+
+**Fixed the same way this project's own standing rule already says to** - a full diff of every DLL between
+the build output and Casperia's deployed copy (not a guess at which files "should" have changed), all 96
+mismatches copied together, then a second restart, verified thoroughly this time: zero errors logged after
+the corrected restart (the earlier error block was entirely timestamped during the broken window and never
+recurred), all 15 regions confirmed untouched throughout, and `/gridstatus` re-checked live afterward
+showing every one of the 10 tracked services genuinely "Online," not just a process that didn't crash.
+
+**The real lesson, worth remembering explicitly**: "which files did I directly edit" is the wrong question
+for deciding what to deploy after any `prebuild` regeneration or full solution rebuild - the right question
+is "which files actually differ from what's already deployed," checked directly via a real diff, every
+time, regardless of how small the source change looked. This is the same "full-tree deploys only, never
+partial" principle already established earlier in this project's history, now with a concrete example of
+exactly how a reasonable-looking partial deploy still breaks it.

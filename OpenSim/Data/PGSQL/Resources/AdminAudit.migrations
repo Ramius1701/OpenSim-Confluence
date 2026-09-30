@@ -1,0 +1,20 @@
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+	"ID" varchar(36) NOT NULL PRIMARY KEY,
+	"ActorAccountID" varchar(36) NOT NULL,
+	"ActorName" varchar(128) NOT NULL,
+	"Action" varchar(64) NOT NULL,
+	"TargetType" varchar(64) NOT NULL,
+	"TargetID" varchar(64) NOT NULL,
+	"TargetName" varchar(255) NOT NULL,
+	"OldValue" varchar(1000) NOT NULL,
+	"NewValue" varchar(1000) NOT NULL,
+	"IPAddress" varchar(45) NOT NULL,
+	"Created" int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS admin_audit_log_created ON admin_audit_log ("Created");
+
+COMMIT;

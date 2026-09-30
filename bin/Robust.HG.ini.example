@@ -1026,6 +1026,16 @@
 
     UserAccountService = "OpenSim.Services.UserAccountService.dll:UserAccountService"
 
+[AdminAuditService]
+    ;; Real, structured admin accountability trail (/admin/audit-log) -
+    ;; who did what, to what, and when. Separate from WebAccountService's
+    ;; own web_activity_log, which only ever records a resident's own
+    ;; self-service events (login, registration, purchases), never an
+    ;; admin action.
+    LocalServiceModule = "OpenSim.Services.AdminAuditService.dll:AdminAuditService"
+    ;; Uses the [DatabaseService] storage above (MySQL, PostgreSQL or SQLite). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAdminAuditData"
+
 ;; Admin-managed static pages (About/ToS/DMCA and custom pages) at
 ;; /page/<slug>, editable from /admin/pages. Was missing from this
 ;; example ini entirely despite being a real, shipped WebInterface

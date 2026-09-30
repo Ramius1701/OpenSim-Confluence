@@ -733,6 +733,16 @@
 
     UserAccountService = "OpenSim.Services.UserAccountService.dll:UserAccountService"
 
+[AdminAuditService]
+    ;; Real, structured admin accountability trail (/admin/audit-log) -
+    ;; who did what, to what, and when. Separate from WebAccountService's
+    ;; own web_activity_log, which only ever records a resident's own
+    ;; self-service events (login, registration, purchases), never an
+    ;; admin action.
+    LocalServiceModule = "OpenSim.Services.AdminAuditService.dll:AdminAuditService"
+    ;; Uses the [DatabaseService] storage above (MySQL, PostgreSQL or SQLite). Uncomment the lines below only to keep it in a separate database.
+    ;StorageProvider = "OpenSim.Data.MySQL.dll:MySqlAdminAuditData"
+
 ;; Lets a built-in WebUI login session survive a Robust restart instead
 ;; of force-logging-out every open browser tab with no warning - see
 ;; WebInterfaceServiceConnector.cs's GetSession/CreateSession comments.

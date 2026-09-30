@@ -1,0 +1,22 @@
+# -----------------
+:VERSION 1
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS `admin_audit_log` (
+	`ID` VARCHAR(36) NOT NULL,
+	`ActorAccountID` VARCHAR(36) NOT NULL,
+	`ActorName` VARCHAR(128) NOT NULL,
+	`Action` VARCHAR(64) NOT NULL,
+	`TargetType` VARCHAR(64) NOT NULL,
+	`TargetID` VARCHAR(64) NOT NULL,
+	`TargetName` VARCHAR(255) NOT NULL,
+	`OldValue` VARCHAR(1000) NOT NULL,
+	`NewValue` VARCHAR(1000) NOT NULL,
+	`IPAddress` VARCHAR(45) NOT NULL,
+	`Created` INT NOT NULL,
+	PRIMARY KEY (`ID`) USING BTREE,
+	INDEX `Created` (`Created`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+COMMIT;

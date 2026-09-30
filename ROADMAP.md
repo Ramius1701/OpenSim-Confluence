@@ -389,9 +389,6 @@ Web & Admin UI section rather than here.)*
 - **Admin-action audit log (2026-09-30).** Residents have their own Recent Activity log on the dashboard;
   there's no equivalent for admin accountability (who banned whom, who changed grid settings, who edited
   an estate) on a multi-admin grid.
-- **Verify whether `/store` shows pricing to anonymous visitors (2026-09-30).** Flagged during the same
-  competitive audit (Wolf Territories markets its land pricing publicly, no login wall) but not actually
-  checked against Confluence's current code - confirm one way or the other before assuming it's a gap.
 - **Jolt able to use either mesher (owner requirement; scoped down, paused 2026-09-27).** Confluence's own
   alternative physics engine (Jolt) should work with either mesher (Meshmerizer, ubODEMeshmerizer), the same
   way it can already be paired with either database. A first pass fixed this by patching BulletSim, ubODE,

@@ -147,6 +147,12 @@ alongside the existing support-ticket system.
   enable already-dropped showcase photos; approve, order, or reject
   resident-submitted testimonials; add staff by account name with a
   role and optional bio.
+- `/admin/audit-log` — a real, structured admin accountability trail,
+  separate from residents' own activity history: who did what, to
+  what, and what changed, for bans/unbans, user level changes,
+  account soft-delete/removal, grid name changes, and the grid-wide
+  login toggle. Read-only and append-only by design (no edit, no
+  delete on any row) — an audit log that can be rewritten isn't one.
 - Grid settings, including a grid-wide login toggle (blocks new
   logins server-side at `LLLoginService`, with a configurable closed-
   message shown to anyone who tries) and an opt-in "clear all map
