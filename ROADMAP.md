@@ -382,13 +382,6 @@ Web & Admin UI section rather than here.)*
   downloading and configuring a full viewer. Genuinely large: means a WebGL OpenSim/SL protocol client,
   roughly the scale of the LLPathingLib navmesh-viewer effort elsewhere in this file, or bigger. Not
   scoped in detail yet.
-- **`/admin` landing-page KPI dashboard (2026-09-30).** Today `/admin` is a bare grid of links with no
-  at-a-glance numbers - open abuse reports, pending support tickets, today's new signups, which service is
-  currently failing (the admin Diagnostics section added 2026-09-30). Most of the underlying data already
-  exists in scattered handlers; this is mostly assembly, not new plumbing.
-- **Admin-action audit log (2026-09-30).** Residents have their own Recent Activity log on the dashboard;
-  there's no equivalent for admin accountability (who banned whom, who changed grid settings, who edited
-  an estate) on a multi-admin grid.
 - **Jolt able to use either mesher (owner requirement; scoped down, paused 2026-09-27).** Confluence's own
   alternative physics engine (Jolt) should work with either mesher (Meshmerizer, ubODEMeshmerizer), the same
   way it can already be paired with either database. A first pass fixed this by patching BulletSim, ubODE,

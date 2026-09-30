@@ -131,6 +131,12 @@ alongside the existing support-ticket system.
 
 ### Admin console
 
+- `/admin` landing page — an at-a-glance KPI row (Grid Health, Open
+  Abuse Reports, Pending Tickets, New Accounts, and Pending
+  Testimonials when any exist) instead of a bare grid of links, so a
+  busy admin can see whether anything needs attention without opening
+  every sub-page in turn. Every figure reuses a call another handler
+  already makes, not new plumbing.
 - User management — search, create, edit; ban with optional
   auto-expiry; soft-delete (reversible lockout — scrambles the
   password and marks the account Deleted, recoverable by un-banning
