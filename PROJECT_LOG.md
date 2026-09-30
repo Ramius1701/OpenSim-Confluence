@@ -26483,3 +26483,46 @@ real live/grid-wide status including both open gaps - no code changed this pass,
 documentation gap on infrastructure that's already been running for three days. Also corrected two stale
 memory-file entries that still described this as Linux-blocked/excluded from an earlier point in the
 project's history.
+
+## Voice follow-through: the /features page's own stale claim, an Open Source card, Powered By data, a backwards ini.example default, and icon colors on every AppendIconFeatureCard user (2026-09-30)
+
+Follow-on from the ConfluenceVoice documentation pass above - the operator asked to check `/features` itself
+and anywhere else voice needed adding, then separately asked for the same icon-color treatment already
+applied everywhere else on the site.
+
+**The real bug this pass exists for**: `/features`' own "World & Travel" capability card still said
+`("Voice", false, "Not bundled - a standard Vivox/Mumble config can be added...")` - the exact stale claim
+the whole voice write-up was prompted by, just not yet caught on this specific page. Fixed to `true` with
+honest wording naming ConfluenceVoice.
+
+**Added per the operator's explicit ask ("add it to Open Source and Grid Backend for starters")**:
+- A third Open Source card next to Confluence/Grid Web Interface, linking
+  `github.com/Ramius1701/ConfluenceVoice`.
+- `Grid Backend|mic|ConfluenceVoice|WebRTC Voice` added to the live `PoweredByItems` grid-setting data (a
+  direct, verified DB update - this is admin-editable content, not code) so it renders in the "Powered By"
+  section alongside MariaDB/Robust/OpenSimulator.
+
+**A real, separate bug found while in the area**: `bin/config/os-webrtc-janus.ini.example` shipped the
+Linux-only Janus Gateway connector as the active default, with the portable, ConfluenceVoice-compatible
+`WebRtcVoice.dll:WebRtcVoiceServiceConnector` commented out as the alternative - backwards from this
+project's own "native/portable option active by default, harder-to-run legacy option demoted to a commented
+fallback" standard (see `casperia-templates-must-default-to-native` memory). Swapped the default and named
+ConfluenceVoice explicitly as the reference backend implementation for whoever stands one up. `Enabled`
+stays `false` by default since no backend ships automatically (same relationship OGI has to Confluence) -
+only the connector *choice* changed, not whether voice auto-enables.
+
+**Icon colors, applied to the one remaining un-colored shared helper**: `AppendIconFeatureCard` (used on
+`/features`, `/economy`, and the help/getting-started page - 13 call sites across all three) still rendered
+a plain `<i class="bi bi-...">` with no `.icon-badge`/color treatment, the same gap `AppendFeatureCard`/
+`AppendDashboardLink` had before their own passes earlier tonight. Gave it the identical icon-badge
+signature change and colored all 13 call sites (Manage Your Account=blue, Search/Friends/Regions=cyan,
+Native Currency=green, Gloebit=blue, World & Travel=cyan, Safety & Moderation=blue, Platform Services=
+purple, Administration & Building=amber, VarRegions=amber, Full-Size Regions=cyan, Lighter-Traffic Regions=
+green, Marketplace=pink) - one shared function, so the color treatment now applies consistently on all
+three pages that use it, not just `/features`.
+
+Deployed in two passes tonight (voice-page fixes first, icon colors second, per the operator's own
+sequencing) - 22 DLLs the first time (the recurring dependency set from any rebuild), 1 file the second time
+(`OpenSim.Server.Handlers.dll` alone, since the base assemblies were already synced from the first pass).
+Both verified the established way: Robust stopped by verified PID, files diffed/copied/re-verified, zero
+errors after each restart, all 15 regions untouched, all 11 services confirmed genuinely "Online."

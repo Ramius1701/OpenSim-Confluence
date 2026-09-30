@@ -2253,13 +2253,13 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("assigned automatically.</p>");
 
             sb.Append("<h2><i class=\"bi bi-list-task\"></i> Common Tasks</h2><div class=\"feature-grid-3\">");
-            AppendIconFeatureCard(sb, "person-gear", "Manage Your Account", new[]
+            AppendIconFeatureCard(sb, "person-gear", "ic-blue", "Manage Your Account", new[]
             {
                 ("Password & email", true, "Change both from My Account."),
                 ("Profile", true, "Update your About text, picks and classifieds from your Profile page."),
                 ("Regions", true, "See regions you own or manage from My Account.")
             });
-            AppendIconFeatureCard(sb, "search", "Search, Friends &amp; Regions", new[]
+            AppendIconFeatureCard(sb, "search", "ic-cyan", "Search, Friends &amp; Regions", new[]
             {
                 ("Search", true, "Find places, events, classifieds, people, groups and land for sale."),
                 ("Friends", true, "Manage your friends list from the Friends page or in-world."),
@@ -3845,13 +3845,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             // (rather than arriving via Features) has had no explanation of
             // the currency system yet before hitting a wall of live numbers.
             sb.Append("<h2><i class=\"bi bi-currency-exchange\"></i> What You're Getting</h2><div class=\"feature-grid-3\">");
-            AppendIconFeatureCard(sb, "currency-dollar", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
+            AppendIconFeatureCard(sb, "currency-dollar", "ic-green", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
             {
                 ("Ledger", false, "Built-in transaction history and group treasuries - not a third-party dependency"),
                 ("Web access", false, "Balance and transaction pages from any browser, no separate money-server process"),
                 ("Protocol", false, "Answers the same buy/sell currency.php surface real viewers already expect")
             });
-            AppendIconFeatureCard(sb, "wallet2", "Gloebit <span class=\"pill\" style=\"background:rgba(59,130,246,.15);color:var(--accent-bright)\">Optional</span>", new[]
+            AppendIconFeatureCard(sb, "wallet2", "ic-blue", "Gloebit <span class=\"pill\" style=\"background:rgba(59,130,246,.15);color:var(--accent-bright)\">Optional</span>", new[]
             {
                 ("What it is", false, "A real-money payment gateway, for grids that want a paid economy instead of (or alongside) the native ledger"),
                 ("How it's added", false, "Swappable via the addon-modules Gloebit integration - not required, not enabled by default")
@@ -5374,6 +5374,9 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-layout-text-window-reverse\"></i> Grid Web Interface</h3>")
               .Append("<p>An optional standalone PHP web front-end for the grid - swappable, not required (this built-in WebUI ships by default).</p>")
               .Append("<p><a href=\"https://github.com/Ramius1701/OpenSim-Grid-Interface\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github\"></i> Ramius1701/OpenSim-Grid-Interface</a></p></div>")
+              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-mic\"></i> ConfluenceVoice</h3>")
+              .Append("<p>A Windows-native WebRTC voice backend for this grid's built-in voice chat - no Linux host or Janus Gateway required.</p>")
+              .Append("<p><a href=\"https://github.com/Ramius1701/ConfluenceVoice\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github\"></i> Ramius1701/ConfluenceVoice</a></p></div>")
               .Append("</div>");
 
             AppendPoweredBySection(sb, GetSetting("PoweredByItems", string.Empty));
@@ -5388,27 +5391,26 @@ namespace OpenSim.Server.Handlers.WebInterface
             // section below rather than duplicated in both places.
             sb.Append("<h2><i class=\"bi bi-sliders\"></i> Platform Capabilities</h2><div class=\"feature-grid-3\">");
 
-            AppendIconFeatureCard(sb, "globe-americas", "World & Travel", new[]
+            AppendIconFeatureCard(sb, "globe-americas", "ic-cyan", "World & Travel", new[]
             {
                 ("Hypergrid Travel", true, "Teleport to and from other OpenSim grids"),
                 ("VarRegions", true, "Larger-than-standard regions with no internal sim-crossing stutter"),
                 ("On-Demand Regions", true, "Idle regions sleep until a visitor arrives, then wake automatically"),
-                // Real gap vs. the reference's own "Voice" card - Confluence
-                // has no bundled voice integration (no Vivox/Mumble/WebRTC
-                // anywhere in this codebase, confirmed rather than assumed).
-                // Stated honestly rather than left silent, same standard as
-                // the ban/kick/message-online-user gaps documented earlier.
-                ("Voice", false, "Not bundled - a standard Vivox/Mumble config can be added the same way vanilla OpenSim supports it")
+                // Was a real gap (no bundled voice integration) until
+                // ConfluenceVoice shipped and went live grid-wide
+                // (2026-09-27) - stale "not bundled" wording caught and
+                // fixed 2026-09-30. See FEATURES.md's "Voice Chat" section.
+                ("Voice", true, "Built-in WebRTC voice (ConfluenceVoice) - region and parcel-aware, works with Firestorm/AyaneStorm's native WebRTC voice, no third-party subscription needed")
             });
 
-            AppendIconFeatureCard(sb, "shield-check", "Safety & Moderation", new[]
+            AppendIconFeatureCard(sb, "shield-check", "ic-blue", "Safety & Moderation", new[]
             {
                 ("Native Mute List", true, "Server-side mute list, no addon module required"),
                 ("Grid-Wide Viewer Ban", true, "IP-range and hardware-signature bans enforced at login"),
                 ("Abuse Reports", true, "In-viewer reporting with a web-based admin queue")
             });
 
-            AppendIconFeatureCard(sb, "gear-wide-connected", "Platform Services", new[]
+            AppendIconFeatureCard(sb, "gear-wide-connected", "ic-purple", "Platform Services", new[]
             {
                 ("Native Search", true, "Grid-wide place search, integrated with the viewer's own Search window"),
                 // Corrected wording (2026-09-03) after verifying the real
@@ -5421,7 +5423,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ("Scripted NPCs", true, "osNpc bots with avatar-follow and tag-group management")
             });
 
-            AppendIconFeatureCard(sb, "display", "Administration & Building", new[]
+            AppendIconFeatureCard(sb, "display", "ic-amber", "Administration & Building", new[]
             {
                 ("Web-Based Admin", true, "Full grid administration - users, estates, regions, currency, events - from any browser"),
                 ("Mesh & Scripting", true, "Mesh uploads, LSL and OSSL scripting")
@@ -5436,19 +5438,19 @@ namespace OpenSim.Server.Handlers.WebInterface
             // choices, not an engine-level region type. Framed that way
             // deliberately, matching this page's existing honesty standard.
             sb.Append("<h2><i class=\"bi bi-grid-3x3-gap\"></i> Region Configuration Options</h2><div class=\"feature-grid-3\">");
-            AppendIconFeatureCard(sb, "arrows-fullscreen", "VarRegions", new[]
+            AppendIconFeatureCard(sb, "arrows-fullscreen", "ic-amber", "VarRegions", new[]
             {
                 ("Layout", false, "One region with a larger footprint than standard 256x256 (e.g. 512x512 or 1024x1024), no internal border crossings"),
                 ("Use case", false, "Sailing, aviation, road networks, large landscapes"),
                 ("Experience", false, "No sim-crossing stutter - avatars and vehicles move smoothly across the whole area")
             });
-            AppendIconFeatureCard(sb, "app", "Full-Size Regions", new[]
+            AppendIconFeatureCard(sb, "app", "ic-cyan", "Full-Size Regions", new[]
             {
                 ("Layout", false, "Standard 256x256 footprint, the OpenSim default"),
                 ("Use case", false, "Events, clubs, communities, roleplay hubs"),
                 ("Prim density", false, "Configurable per region/grid policy, same as any standard region")
             });
-            AppendIconFeatureCard(sb, "house-door", "Lighter-Traffic Regions", new[]
+            AppendIconFeatureCard(sb, "house-door", "ic-green", "Lighter-Traffic Regions", new[]
             {
                 ("Common naming", false, "Often called \"Homestead\" or \"Openspace\" style, by SL-era convention - not a distinct Confluence engine feature"),
                 ("Use case", false, "Quiet residential areas, scenic or park-style regions, sky/ocean buffer space"),
@@ -5457,13 +5459,13 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("</div>");
 
             sb.Append("<h2><i class=\"bi bi-currency-exchange\"></i> Economy &amp; Currency</h2><div class=\"feature-grid-3\">");
-            AppendIconFeatureCard(sb, "currency-dollar", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
+            AppendIconFeatureCard(sb, "currency-dollar", "ic-green", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
             {
                 ("Ledger", false, "Built-in transaction history and group treasuries - not a third-party dependency"),
                 ("Web access", false, "Balance and transaction pages from any browser, no separate money-server process"),
                 ("Protocol", false, "Answers the same buy/sell currency.php surface real viewers already expect")
             });
-            AppendIconFeatureCard(sb, "wallet2", "Gloebit <span class=\"pill\" style=\"background:rgba(59,130,246,.15);color:var(--accent-bright)\">Optional</span>", new[]
+            AppendIconFeatureCard(sb, "wallet2", "ic-blue", "Gloebit <span class=\"pill\" style=\"background:rgba(59,130,246,.15);color:var(--accent-bright)\">Optional</span>", new[]
             {
                 ("What it is", false, "A real-money payment gateway, for grids that want a paid economy instead of (or alongside) the native ledger"),
                 ("How it's added", false, "Swappable via the addon-modules Gloebit integration - not required, not enabled by default")
@@ -5473,7 +5475,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // sentence didn't even list "marketplace" among what it
             // covers). See MARKETPLACE.md for the full setup/limitation
             // writeup this card summarizes.
-            AppendIconFeatureCard(sb, "bag", "Marketplace" + (m_MarketplaceListingsService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
+            AppendIconFeatureCard(sb, "bag", "ic-pink", "Marketplace" + (m_MarketplaceListingsService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
             {
                 ("Browse & Buy", false, "Grid-wide storefront at /marketplace, ConfluenceCurrency checkout, unlimited or real finite stock per listing"),
                 ("Listing Management", false, "Create and manage listings entirely from the web at /marketplace/manage - drag an item into a folder, no in-world listing station needed"),
@@ -5594,9 +5596,10 @@ namespace OpenSim.Server.Handlers.WebInterface
         // that describe patterns rather than assert Confluence-specific
         // yes/no claims. titleHtml is trusted raw HTML (not escaped) since
         // callers need to embed a status pill in the heading itself.
-        private static void AppendIconFeatureCard(StringBuilder sb, string icon, string titleHtml, (string Label, bool IsPill, string Text)[] rows)
+        private static void AppendIconFeatureCard(StringBuilder sb, string icon, string colorClass, string titleHtml, (string Label, bool IsPill, string Text)[] rows)
         {
-            sb.Append("<div class=\"feature-card\"><h3><i class=\"bi bi-").Append(icon).Append("\"></i> ").Append(titleHtml).Append("</h3><ul>");
+            sb.Append("<div class=\"feature-card\"><h3><div class=\"icon-badge\"><i class=\"bi bi-").Append(icon).Append(' ').Append(colorClass)
+              .Append("\"></i></div> ").Append(titleHtml).Append("</h3><ul>");
             foreach ((string label, bool isPill, string text) in rows)
             {
                 sb.Append("<li><i class=\"bi bi-check-circle-fill\"></i> ");

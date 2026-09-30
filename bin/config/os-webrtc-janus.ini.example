@@ -1,23 +1,37 @@
 [WebRtcVoice]
     Enabled=false
-    ; Module to use for spatial WebRtcVoice
-    ; The following is for a Janus service just for spatial voice for this region. Config in [JanusWebRtcVoice]
-    SpatialVoiceService = WebRtcJanusService.dll:WebRtcJanusService
-    ; The following is for a grid spatial voice service for this region. Link is WebRtcVoiceServiceURI
-    ; SpatialVoiceService=WebRtcVoice.dll:WebRtcVoiceServiceConnector
-    ; Module to use for non-spatial WebRtcVoice. Local voice service. Config in [JanusWebRtcVoice]
-    NonSpatialVoiceService = WebRtcJanusService.dll:WebRtcJanusService
-    ; The following is for a grid non-spatial voice service. For groups and IMs.  Link is WebRtcVoiceServiceURI
-    ; NonSpatialVoiceService=WebRtcVoice.dll:WebRtcVoiceServiceConnector
-    ; URL for the grid service that is providing the WebRtcVoiceService. Used by WebRtcVoiceServiceConnector.
-    ;WebRtcVoiceServerURI = ${Const|PrivURL}:${Const|PrivatePort}
+    ; Module to use for spatial WebRtcVoice.
+    ; Default here is a plain JSON-RPC client that talks to any grid-wide
+    ; voice backend at WebRtcVoiceServerURI below - this is the option to
+    ; use with ConfluenceVoice (github.com/Ramius1701/ConfluenceVoice), a
+    ; Windows-native voice server built specifically so a grid doesn't need
+    ; a Linux host running Janus Gateway. Config in [JanusWebRtcVoice] below
+    ; is only needed if you use the Janus alternative instead (see below).
+    SpatialVoiceService = WebRtcVoice.dll:WebRtcVoiceServiceConnector
+    ; Alternative: a Janus Gateway service just for spatial voice for this
+    ; region (needs a Linux host running Janus - see [JanusWebRtcVoice]).
+    ; SpatialVoiceService = WebRtcJanusService.dll:WebRtcJanusService
+    ; Module to use for non-spatial WebRtcVoice (groups and IMs) - same choice as above.
+    NonSpatialVoiceService = WebRtcVoice.dll:WebRtcVoiceServiceConnector
+    ; Alternative: local Janus voice service. Config in [JanusWebRtcVoice].
+    ; NonSpatialVoiceService = WebRtcJanusService.dll:WebRtcJanusService
+    ; URL for the grid-wide voice backend (e.g. a ConfluenceVoice instance).
+    ; Used by WebRtcVoiceServiceConnector - required if using that connector above.
+    ;WebRtcVoiceServerURI = https://voice.example.org:9443
     ; Debugging: output to log file messages sent and received from the viewer. Very verbose.
     MessageDetails = false
     ; STUN servers to advertise to the viewer via the region's SimulatorFeatures
-    ; (VoiceStunServers). Comma-separated host:port list.
+    ; (VoiceStunServers). Comma-separated host:port list. Firestorm 7.2.4+
+    ; requires this to be set or the viewer's WebRTC peer connection is refused.
     ; StunServers = stun2.l.google.com:19302,stun.l.google.com:19302
 
 [JanusWebRtcVoice]
+    ; Only needed if SpatialVoiceService/NonSpatialVoiceService above are set
+    ; to WebRtcJanusService.dll:WebRtcJanusService instead of the
+    ; WebRtcVoice.dll:WebRtcVoiceServiceConnector default - Janus Gateway
+    ; itself has no native Windows build, so this path needs a separate
+    ; Linux host to run Janus on (it does not need to be co-located with
+    ; Robust/the regions).
     ; URI to access the Janus Gateway
     JanusGatewayURI = http://janus.example.org:14223/voice
     ; APIKey to access the Janus Gateway. Must be set to the same value as the Janus Gateway.
@@ -28,5 +42,3 @@
     AdminAPIToken = AdminAPITokenToNeverCheckIn
     ; Debugging: output to log file messages sent and received from Janus. Very verbose.
     MessageDetails = false
-    
-
