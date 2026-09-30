@@ -1617,26 +1617,39 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append(RenderGridGalleryShowcase());
             sb.Append(RenderGridTeam());
             sb.Append(RenderTestimonials());
-            sb.Append(RenderFreeHomesteadCallout(session?.PrincipalID ?? UUID.Zero));
 
             sb.Append("<h2>Why ").Append(Html(gridName)).Append("?</h2><div class=\"widget-grid\">");
-            AppendFeatureCard(sb, "Built-In Economy", "No setup required",
+            // The free-Homestead offer leads the grid, not buried after it -
+            // same eligibility check RenderFreeHomesteadOffer's own comment
+            // explains (disappears once Homestead is no longer an active
+            // SKU, or once a logged-in resident has already claimed theirs).
+            // Unlike the other cards here, this one gets a real CTA link,
+            // so it isn't folded into the shared AppendFeatureCard helper.
+            if (ShouldShowFreeHomesteadOffer(session?.PrincipalID ?? UUID.Zero))
+            {
+                sb.Append("<div class=\"widget-card\">")
+                  .Append("<div class=\"icon-badge\"><i class=\"bi bi-gift ic-green\"></i></div>")
+                  .Append("<h3>Your First Homestead Is Free</h3>")
+                  .Append("<div class=\"widget-meta\">New residents get one on us</div>")
+                  .Append("<p>No recurring fee, ever. <a href=\"").Append(BasePath).Append("/store\">Claim yours &rarr;</a></p></div>");
+            }
+            AppendFeatureCard(sb, "bi-cash-coin", "ic-green", "Built-In Economy", "No setup required",
                     "A real currency ledger with buy/sell and group treasuries, ready out of the box.");
-            AppendFeatureCard(sb, "Hypergrid Ready", "Explore beyond this grid",
+            AppendFeatureCard(sb, "bi-globe2", "ic-cyan", "Hypergrid Ready", "Explore beyond this grid",
                     "Open, standards-based teleporting to other OpenSimulator grids.");
-            AppendFeatureCard(sb, "Active Community", "See what's happening",
+            AppendFeatureCard(sb, "bi-people", "ic-pink", "Active Community", "See what's happening",
                     "Live events, classifieds, and grid-wide search across every region.");
-            AppendFeatureCard(sb, "Safe & Moderated", "Built in, not bolted on",
+            AppendFeatureCard(sb, "bi-shield-check", "ic-blue", "Safe & Moderated", "Built in, not bolted on",
                     "Native mute list, grid-wide viewer bans, and in-viewer abuse reporting with a web admin queue.");
-            AppendFeatureCard(sb, "Room to Build", "For creators, not just visitors",
+            AppendFeatureCard(sb, "bi-building", "ic-amber", "Room to Build", "For creators, not just visitors",
                     "Larger-than-standard VarRegions with no sim-crossing stutter, mesh uploads, full LSL/OSSL scripting.");
-            AppendFeatureCard(sb, "Runs From a Browser", "No viewer required for the basics",
+            AppendFeatureCard(sb, "bi-display", "ic-purple", "Runs From a Browser", "No viewer required for the basics",
                     "Search, events, classifieds, your store listings, account and land - all reachable without logging in-world.");
-            AppendFeatureCard(sb, "Voice Built In", "Talk, don't just type",
+            AppendFeatureCard(sb, "bi-mic", "ic-cyan", "Voice Built In", "Talk, don't just type",
                     "In-world voice chat works out of the box, region and parcel-aware, no extra setup.");
-            AppendFeatureCard(sb, "Get Your Own Region", "Land ownership in minutes",
+            AppendFeatureCard(sb, "bi-geo-alt", "ic-amber", "Get Your Own Region", "Land ownership in minutes",
                     "Order a full region self-service from the Store - it's provisioned and online automatically, no waiting on an admin.");
-            AppendFeatureCard(sb, "We Actually Listen", "Feedback that goes somewhere",
+            AppendFeatureCard(sb, "bi-megaphone", "ic-pink", "We Actually Listen", "Feedback that goes somewhere",
                     "A real suggestion box and support queue an admin reads - not a dead mailbox.");
             sb.Append("</div>");
 
@@ -2658,9 +2671,16 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<p><a href=\"").Append(Html(url)).Append("\" target=\"_blank\" rel=\"noopener\">Download &rarr;</a></p></div>");
         }
 
-        private static void AppendFeatureCard(StringBuilder sb, string name, string status, string description)
+        // colorClass matches the shared .ic-* utilities/.icon-badge treatment
+        // AppendDashboardLink already uses for the admin nav - a plain
+        // title/description wall with no icon at all was the same gap the
+        // admin nav had before that pass, just never noticed here until
+        // asked directly.
+        private static void AppendFeatureCard(StringBuilder sb, string icon, string colorClass, string name, string status, string description)
         {
-            sb.Append("<div class=\"widget-card\"><h3>").Append(Html(name)).Append("</h3>")
+            sb.Append("<div class=\"widget-card\">")
+              .Append("<div class=\"icon-badge\"><i class=\"bi ").Append(icon).Append(' ').Append(colorClass).Append("\"></i></div>")
+              .Append("<h3>").Append(Html(name)).Append("</h3>")
               .Append("<div class=\"widget-meta\">").Append(Html(status)).Append("</div>")
               .Append("<p>").Append(Html(description)).Append("</p></div>");
         }
@@ -7272,6 +7292,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashLinkRow(sb, BasePath + "/import-avatar", "bi-box-arrow-in-down", "ic-cyan", "Import Avatar", "Link an existing grid avatar");
             AppendDashLinkRow(sb, BasePath + "/myregions", "bi-arrow-clockwise", "ic-amber", "Restart Region", "Restart one of your regions");
             AppendDashLinkRow(sb, BasePath + "/myevents", "bi-calendar-plus", "ic-green", "Post an Event", "Add an event to the grid calendar");
+            AppendDashLinkRow(sb, BasePath + "/testimonial", "bi-chat-quote", "ic-purple", "Share Your Story", "Submit a testimonial for the homepage");
             AppendDashLinkRow(sb, BasePath + "/support", "bi-headset", "ic-pink", "Submit Support Ticket", "Get help from our team");
             sb.Append("</div>");
 
@@ -19188,28 +19209,25 @@ namespace OpenSim.Server.Handlers.WebInterface
         // same real order-history check BuildStoreOrder itself uses to
         // decide whether to actually charge for it, not a separate flag
         // that could drift out of sync with what really happened.
-        private string RenderFreeHomesteadCallout(UUID residentId)
+        private bool ShouldShowFreeHomesteadOffer(UUID residentId)
         {
             if (m_StoreService == null)
-                return string.Empty;
+                return false;
 
             bool hasHomestead = m_StoreService.GetActiveCatalogItems()
                     .Any(i => i.ItemType == "RegionOrder" && i.RegionType == "Homestead");
             if (!hasHomestead)
-                return string.Empty;
+                return false;
 
             if (residentId != UUID.Zero)
             {
                 bool alreadyClaimed = m_StoreService.GetOrdersByResident(residentId)
                         .Any(o => o.OrderType == "RegionOrder" && m_StoreService.GetCatalogItem(o.CatalogItemID)?.RegionType == "Homestead");
                 if (alreadyClaimed)
-                    return string.Empty;
+                    return false;
             }
 
-            return "<div class=\"content-card\" style=\"border-left:4px solid var(--accent);\">"
-                    + "<h2><i class=\"bi bi-gift\"></i> Your First Homestead Is Free</h2>"
-                    + "<p>New residents get one Homestead region on us - no recurring fee, ever. "
-                    + "<a href=\"" + BasePath + "/store\">Claim yours &rarr;</a></p></div>";
+            return true;
         }
 
         // Real viewer-vs-browser detection, ported from the same mechanism

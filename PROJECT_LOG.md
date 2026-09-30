@@ -26420,3 +26420,37 @@ set again), Robust stopped by verified PID, all 150 DLLs confirmed matching befo
 since, all 15 regions untouched, all 10 services confirmed genuinely "Online," and the live homepage
 re-checked directly to confirm the actual section order matches the redesign (Free Homestead callout ->
 the pitch -> Classifieds -> CTA -> Hypergrid Address at the very end).
+
+## Homestead offer folded into the feature-card pitch, icons added grid-wide, and a real Dashboard gap found by testing (2026-09-30)
+
+The operator's own follow-up on the homepage redesign above: rather than a separate standalone callout
+sitting above the "Why Casperia Prime?" pitch, fold the free-first-Homestead offer directly into that same
+card grid as its own entry, and give the whole section real icons - it was the one remaining spot on the
+homepage still rendering as a plain title/description wall with no icon at all, the same gap the admin nav
+had before its own icon-badge pass earlier tonight.
+
+`RenderFreeHomesteadCallout` (a string-returning HTML renderer) is now `ShouldShowFreeHomesteadOffer` (a
+plain bool) - the eligibility check (active Homestead SKU, not already claimed by this resident) is the
+part worth keeping as shared logic; the actual markup moved inline into `HandleHome` so the offer could
+render as a real `widget-card` inside the same grid as the other nine, first in display order, with its
+own "Claim yours ->" link - `AppendFeatureCard` itself has no link parameter, so this one card is hand-built
+rather than forced through the shared helper.
+
+`AppendFeatureCard`'s signature grew two parameters (icon, colorClass), matching the exact `.icon-badge`
+pattern already used for `AppendDashboardLink` in the admin nav - each of the nine existing cards got its
+own icon and `ic-*` color (Built-In Economy=green, Hypergrid Ready=cyan, Active Community=pink, Safe &
+Moderated=blue, Room to Build=amber, Runs From a Browser=purple, Voice Built In=cyan, Get Your Own
+Region=amber, We Actually Listen=pink).
+
+**A real, separate bug found by tester Jeffery while looking at this section**: the admin Testimonials
+page (`HandleAdminSettingsTestimonials`) tells admins "Residents submit these themselves from their
+dashboard (\"Share Your Story\")" - but the actual resident Dashboard's Quick Links card never had that
+link. "Share Your Story" only ever existed in the sidebar's Community group, one level of navigation away
+from where the admin-facing copy claimed it lived. Fixed by adding it as a sixth Quick Links entry
+(`AppendDashLinkRow`, ic-purple, between "Post an Event" and "Submit Support Ticket") - the sidebar entry
+is unchanged, this just makes the Dashboard itself actually match what the admin page already told admins
+to expect.
+
+Deployed the same verified way - 22 DLLs differed (same recurring dependency set), Robust stopped by
+verified PID, all matching before restart, zero errors since, all 15 regions untouched, all 11 services
+confirmed genuinely "Online."

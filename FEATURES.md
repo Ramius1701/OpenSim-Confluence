@@ -50,15 +50,16 @@ alongside the existing support-ticket system.
   Team" — admin picks existing accounts by name, each with a direct
   in-site Message link), resident-submitted, admin-approved
   testimonials (self-service at `/testimonial`; an edit always resets
-  a quote to unpublished so nothing bypasses moderation), and a
-  first-Homestead-free callout (see Store below) that disappears once
-  a logged-in resident has already claimed theirs. The Hypergrid
-  Address box lives at the very bottom now — it's for a different
-  audience (an existing OpenSim user who already has an account
-  elsewhere) than the pitch above it. The gallery/team/testimonials
-  mechanisms are empty and theme-agnostic — any grid owner populates
-  them with their own content; Confluence itself never bakes in a
-  specific identity.
+  a quote to unpublished so nothing bypasses moderation), and the
+  "Why [grid]?" feature-card pitch, every card with its own icon and
+  color — including a first-Homestead-free card (see Store below)
+  that leads the grid and disappears once a logged-in resident has
+  already claimed theirs. The Hypergrid Address box lives at the very
+  bottom now — it's for a different audience (an existing OpenSim
+  user who already has an account elsewhere) than the pitch above it.
+  The gallery/team/testimonials mechanisms are empty and theme-
+  agnostic — any grid owner populates them with their own content;
+  Confluence itself never bakes in a specific identity.
 - Self-service sign-up with a starting-region picker (defaults to the
   grid's `DefaultRegion`-flagged regions) and an optional avatar-
   selection starter-look carousel — admin-curated "model" accounts
