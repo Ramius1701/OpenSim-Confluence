@@ -7390,10 +7390,17 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<i class=\"bi bi-chevron-right dash-link-chev\"></i></a>");
         }
 
-        private static void AppendDashboardLink(StringBuilder sb, string href, string icon, string title, string description)
+        // colorClass is one of the site's shared .ic-* utilities (ic-blue/
+        // ic-cyan/ic-green/ic-amber/ic-purple/ic-pink) - callers group cards
+        // by color per section (see HandleAdmin) so a busy admin nav reads
+        // as distinct categories at a glance, the same real design detail
+        // the resident Dashboard's own Quick Links (AppendDashLinkRow)
+        // already had that this admin-side card never picked up.
+        private static void AppendDashboardLink(StringBuilder sb, string href, string icon, string colorClass, string title, string description)
         {
             sb.Append("<a class=\"widget-card dashboard-link\" href=\"").Append(href).Append("\">");
-            sb.Append("<h3><i class=\"bi ").Append(icon).Append("\"></i> ").Append(Html(title)).Append("</h3>");
+            sb.Append("<div class=\"icon-badge\"><i class=\"bi ").Append(icon).Append(' ').Append(colorClass).Append("\"></i></div>");
+            sb.Append("<h3>").Append(Html(title)).Append("</h3>");
             sb.Append("<div class=\"widget-meta\">").Append(Html(description)).Append("</div>");
             sb.Append("</a>");
         }
@@ -7461,27 +7468,27 @@ namespace OpenSim.Server.Handlers.WebInterface
             StringBuilder adminNav = new StringBuilder();
 
             adminNav.Append("<h2>People &amp; Community</h2><div class=\"widget-grid\">");
-            AppendDashboardLink(adminNav, BasePath + "/admin/users", "bi-people", "User Management", "Search, ban, message and edit accounts");
-            AppendDashboardLink(adminNav, BasePath + "/admin/groups", "bi-people-fill", "Groups Management", "Grid-wide group administration");
-            AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "Abuse Reports",
+            AppendDashboardLink(adminNav, BasePath + "/admin/users", "bi-people", "ic-pink", "User Management", "Search, ban, message and edit accounts");
+            AppendDashboardLink(adminNav, BasePath + "/admin/groups", "bi-people-fill", "ic-pink", "Groups Management", "Grid-wide group administration");
+            AppendDashboardLink(adminNav, BasePath + "/admin/abuse-reports", "bi-exclamation-triangle", "ic-pink", "Abuse Reports",
                     openAbuseReports > 0 ? openAbuseReports + " open - review reports filed by residents" : "Review reports filed by residents");
-            AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "Support Queue",
+            AppendDashboardLink(adminNav, BasePath + "/admin/support", "bi-headset", "ic-pink", "Support Queue",
                     pendingTickets > 0 ? pendingTickets + " pending - respond to open support tickets" : "Respond to open support tickets");
             adminNav.Append("</div>");
 
             adminNav.Append("<h2>Regions &amp; Simulators</h2><div class=\"widget-grid\">");
-            AppendDashboardLink(adminNav, BasePath + "/admin/regions", "bi-map", "Region Management", "Search regions, Hypergrid, maptiles, backups, restart, create");
-            AppendDashboardLink(adminNav, BasePath + "/admin/estates", "bi-building", "Estate Management", "Edit estate settings and access lists");
-            AppendDashboardLink(adminNav, BasePath + "/admin/simulators", "bi-play-circle", "Simulators", "Start any region process - only Robust needs to be running for this site itself");
-            AppendDashboardLink(adminNav, BasePath + "/admin/regions/ini", "bi-file-earmark-code", "Region Config Files", "View/edit any region's raw .ini file");
-            AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "Region Console", "Run console commands on a region");
+            AppendDashboardLink(adminNav, BasePath + "/admin/regions", "bi-map", "ic-amber", "Region Management", "Search regions, Hypergrid, maptiles, backups, restart, create");
+            AppendDashboardLink(adminNav, BasePath + "/admin/estates", "bi-building", "ic-amber", "Estate Management", "Edit estate settings and access lists");
+            AppendDashboardLink(adminNav, BasePath + "/admin/simulators", "bi-play-circle", "ic-amber", "Simulators", "Start any region process - only Robust needs to be running for this site itself");
+            AppendDashboardLink(adminNav, BasePath + "/admin/regions/ini", "bi-file-earmark-code", "ic-amber", "Region Config Files", "View/edit any region's raw .ini file");
+            AppendDashboardLink(adminNav, BasePath + "/admin/console", "bi-terminal", "ic-amber", "Region Console", "Run console commands on a region");
             adminNav.Append("</div>");
 
             adminNav.Append("<h2>Commerce</h2><div class=\"widget-grid\">");
-            AppendDashboardLink(adminNav, BasePath + "/admin/store", "bi-shop", "Store Catalog", "Manage prim packs and region order listings");
-            AppendDashboardLink(adminNav, BasePath + "/admin/store/orders", "bi-receipt-cutoff", "Store Orders", "Fulfillment queue, renewals, Start Region");
-            AppendDashboardLink(adminNav, BasePath + "/admin/store/create-region", "bi-plus-square", "Create Region", "Provision any region for a resident, no purchase");
-            AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "Purchases & Transactions", "Financial reporting across the grid");
+            AppendDashboardLink(adminNav, BasePath + "/admin/store", "bi-shop", "ic-green", "Store Catalog", "Manage prim packs and region order listings");
+            AppendDashboardLink(adminNav, BasePath + "/admin/store/orders", "bi-receipt-cutoff", "ic-green", "Store Orders", "Fulfillment queue, renewals, Start Region");
+            AppendDashboardLink(adminNav, BasePath + "/admin/store/create-region", "bi-plus-square", "ic-green", "Create Region", "Provision any region for a resident, no purchase");
+            AppendDashboardLink(adminNav, BasePath + "/admin/transactions", "bi-cash-stack", "ic-green", "Purchases & Transactions", "Financial reporting across the grid");
             // Same widget-card look as every AppendDashboardLink tile above,
             // just a <button class="widget-card dashboard-link"> inside a
             // <form> instead of an <a href> - this one POSTs an action
@@ -7490,22 +7497,23 @@ namespace OpenSim.Server.Handlers.WebInterface
             adminNav.Append("<form method=\"post\" action=\"").Append(BasePath).Append("/admin/economy/stipend-paynow\" ")
               .Append("onsubmit=\"return confirm('Trigger a stipend payment cycle right now, outside the normal weekly schedule? This pays every eligible resident immediately.');\">")
               .Append("<button type=\"submit\" class=\"widget-card dashboard-link\">")
-              .Append("<h3><i class=\"bi bi-piggy-bank\"></i> Pay Stipends Now</h3>")
+              .Append("<div class=\"icon-badge\"><i class=\"bi bi-piggy-bank ic-green\"></i></div>")
+              .Append("<h3>Pay Stipends Now</h3>")
               .Append("<div class=\"widget-meta\">Trigger an out-of-cycle stipend payment immediately</div>")
               .Append("</button></form>");
             adminNav.Append("</div>");
 
             adminNav.Append("<h2>Content</h2><div class=\"widget-grid\">");
-            AppendDashboardLink(adminNav, BasePath + "/admin/news", "bi-newspaper", "News Feed", "Post announcements to the splash page");
-            AppendDashboardLink(adminNav, BasePath + "/admin/events", "bi-calendar-event", "Events", "Manage the grid-wide events calendar");
-            AppendDashboardLink(adminNav, BasePath + "/admin/starter-looks", "bi-person-bounding-box", "Starter Looks", "Manage the avatar-selection carousel on /register");
-            AppendDashboardLink(adminNav, BasePath + "/admin/pages", "bi-file-earmark-text", "Static Pages", "Edit About/ToS/DMCA and custom pages");
+            AppendDashboardLink(adminNav, BasePath + "/admin/news", "bi-newspaper", "ic-cyan", "News Feed", "Post announcements to the splash page");
+            AppendDashboardLink(adminNav, BasePath + "/admin/events", "bi-calendar-event", "ic-cyan", "Events", "Manage the grid-wide events calendar");
+            AppendDashboardLink(adminNav, BasePath + "/admin/starter-looks", "bi-person-bounding-box", "ic-cyan", "Starter Looks", "Manage the avatar-selection carousel on /register");
+            AppendDashboardLink(adminNav, BasePath + "/admin/pages", "bi-file-earmark-text", "ic-cyan", "Static Pages", "Edit About/ToS/DMCA and custom pages");
             adminNav.Append("</div>");
 
             adminNav.Append("<h2>Grid</h2><div class=\"widget-grid\">");
-            AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "Grid Settings", "Grid name, welcome message and options");
-            AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "Grid Statistics", "Accounts, regions, online totals and diagnostics");
-            AppendDashboardLink(adminNav, BasePath + "/admin/audit-log", "bi-journal-check", "Admin Audit Log", "Who did what, to what, and when - read-only");
+            AppendDashboardLink(adminNav, BasePath + "/admin/settings", "bi-gear", "ic-purple", "Grid Settings", "Grid name, welcome message and options");
+            AppendDashboardLink(adminNav, BasePath + "/admin/stats", "bi-bar-chart", "ic-purple", "Grid Statistics", "Accounts, regions, online totals and diagnostics");
+            AppendDashboardLink(adminNav, BasePath + "/admin/audit-log", "bi-journal-check", "ic-purple", "Admin Audit Log", "Who did what, to what, and when - read-only");
             adminNav.Append("</div>");
 
             string body = "<h1>Grid Administration</h1>"
@@ -8271,16 +8279,16 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             StringBuilder nav = new StringBuilder();
             nav.Append("<div class=\"widget-grid\">");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/identity", "bi-signpost", "Grid Identity", "Grid name, nickname and welcome message");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/access", "bi-door-open", "Grid Access", "Self-registration and the grid-wide login toggle");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/announcement", "bi-megaphone", "Announcement", "Banner shown on the home page and login splash");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/economy", "bi-cash-coin", "Economy: Banker Avatar", "Where currency fees and charges flow to");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/map-tiles", "bi-map", "Map Tiles", "Clear cached map tiles on Robust's next restart");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/gallery", "bi-images", "Homepage Gallery", "Caption, order and enable showcase photos on the home page");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/testimonials", "bi-chat-quote", "Testimonials", "Approve, order and reject resident-submitted quotes");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/team", "bi-people", "Grid Team", "Staff directory shown on the home page, with a Message link");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/features", "bi-stars", "Features Content", "Powered By list and Membership Perks");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/concierge", "bi-chat-dots", "Concierge", "Default welcome message, rules and switches for every region");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/identity", "bi-signpost", "ic-purple", "Grid Identity", "Grid name, nickname and welcome message");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/access", "bi-door-open", "ic-purple", "Grid Access", "Self-registration and the grid-wide login toggle");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/announcement", "bi-megaphone", "ic-purple", "Announcement", "Banner shown on the home page and login splash");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/economy", "bi-cash-coin", "ic-green", "Economy: Banker Avatar", "Where currency fees and charges flow to");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/map-tiles", "bi-map", "ic-amber", "Map Tiles", "Clear cached map tiles on Robust's next restart");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/gallery", "bi-images", "ic-pink", "Homepage Gallery", "Caption, order and enable showcase photos on the home page");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/testimonials", "bi-chat-quote", "ic-pink", "Testimonials", "Approve, order and reject resident-submitted quotes");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/team", "bi-people", "ic-pink", "Grid Team", "Staff directory shown on the home page, with a Message link");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/features", "bi-stars", "ic-cyan", "Features Content", "Powered By list and Membership Perks");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/concierge", "bi-chat-dots", "ic-cyan", "Concierge", "Default welcome message, rules and switches for every region");
             nav.Append("</div>");
 
             string body = "<h1>Grid Settings</h1>"
@@ -19288,6 +19296,13 @@ namespace OpenSim.Server.Handlers.WebInterface
                 // reuse anywhere else an icon needs to stand out.
                 ".ic-blue{color:#60a5fa;}.ic-cyan{color:#22d3ee;}.ic-green{color:#4ade80;}" +
                 ".ic-amber{color:#fbbf24;}.ic-purple{color:#a78bfa;}.ic-pink{color:#f472b6;}" +
+                // Same colored icon-badge look the resident Dashboard's own
+                // Quick Links (.dash-link-icon) already use, generalized here
+                // so any card grid - the admin nav included - can pick it up
+                // too, instead of every admin card rendering the same flat
+                // single-color icon regardless of what it links to.
+                ".icon-badge{width:38px;height:38px;border-radius:9px;background:var(--input-bg);" +
+                "display:flex;align-items:center;justify-content:center;font-size:1.15em;flex:0 0 auto;margin:0 0 10px;}" +
                 ".site-nav .dropdown-toggle .bi:last-child{font-size:10px;margin-left:2px;color:var(--muted);}" +
                 ".hero{background:linear-gradient(135deg,#000000 0%,#0d1a30 100%);" +
                 "border-bottom:1px solid var(--border);padding:36px 24px;}" +

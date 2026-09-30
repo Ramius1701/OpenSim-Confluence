@@ -26301,3 +26301,30 @@ is "which files actually differ from what's already deployed," checked directly 
 time, regardless of how small the source change looked. This is the same "full-tree deploys only, never
 partial" principle already established earlier in this project's history, now with a concrete example of
 exactly how a reasonable-looking partial deploy still breaks it.
+
+## Admin nav gets the same colored icon badges the resident Dashboard already had (2026-09-30)
+
+The operator's own honest read, after actually browsing the live homepage together: the admin landing page
+felt noticeably less "fancy" than the resident Dashboard, without being able to say exactly why. Checked
+both code paths directly rather than guessing - the resident Dashboard's own Quick Links
+(`AppendDashLinkRow`) wrap each icon in its own colored badge (`ic-blue`/`ic-cyan`/`ic-amber`/`ic-green`/
+`ic-pink`, a different accent per item) plus a trailing chevron; every one of the ~26 admin nav cards
+(`AppendDashboardLink`, across `/admin` and `/admin/settings`) rendered a bare icon with no color parameter
+at all - structurally identical cards differing only in which glyph showed. A real, findable gap, not a
+vague impression.
+
+Generalized the resident Dashboard's own icon-badge look into a shared `.icon-badge` class (previously
+`.dash-link-icon`, scoped only to `/dashboard`'s own inline stylesheet) and gave `AppendDashboardLink` a
+color-class parameter, matching `AppendDashLinkRow`'s existing shape. Assigned one accent color per admin
+category (People & Community: pink, Regions & Simulators: amber, Commerce: green, Content: cyan, Grid:
+purple) so a busy admin nav reads as distinct sections at a glance - arguably a real improvement over the
+resident Dashboard's own per-item-not-per-section coloring, not just parity with it.
+
+**Real near-miss caught mid-deploy, not a repeat of the earlier incident**: diffed every DLL before
+deploying (per the lesson just above) and found 22 differed, not the 1 file this narrow change should have
+touched - confirms the lesson generalizes beyond "after a prebuild regeneration" to any build at all,
+diff first regardless. Then tried to copy while Robust was still running; Windows correctly refused
+("Device or resource busy," file locked by the running process) rather than corrupting anything - caught
+immediately, Robust stopped by verified PID, copy completed, all 150 DLLs confirmed matching, restarted
+clean. Zero errors since the corrected restart, all 15 regions untouched, `/gridstatus` re-confirmed all
+10 services genuinely "Online."
