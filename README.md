@@ -29,7 +29,7 @@ a later phase.
 | Active integration branch | `merge-experiment` (also the repo's default branch) |
 | Windows build | Successful — full solution build verified clean |
 | Web/Admin UI | Live-verified against a running Robust instance (real HTTP sessions, admin actions, database writes) |
-| In-world/viewer testing | Live-verified with a real viewer (Firestorm): login, region crossing, weather, and a full currency/land-purchase transaction |
+| In-world/viewer testing | Live-verified with a real viewer (Firestorm): login, region crossing, weather, a full currency/land-purchase transaction, and spatial WebRTC voice with two real, separately-located participants |
 
 **On "tested" vs. "compiled":** these are two different claims. The
 Web/Admin UI and basic in-world presence (login, region crossing,
