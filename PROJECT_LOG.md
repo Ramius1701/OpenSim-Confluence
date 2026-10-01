@@ -23805,7 +23805,7 @@ found..." above). Only the target changes: `bin/config/os-webrtc-janus.ini`
 `WebRtcVoice.dll:WebRtcVoiceServiceConnector` — a plain JSON-RPC client
 that posts to any URL — instead of `WebRtcJanusService.dll:WebRtcJanusService`,
 pointing `WebRtcVoiceServerURI` at ConfluenceVoice
-(`https://192.168.88.14:9443` for this machine) and disabling
+(its local address on this LAN, port 9443) and disabling
 `[VivoxVoice]` (both modules register the same capability name; last
 registration wins). Confirmed estate/parcel voice need no explicit
 enabling for this: `EstateSettings.AllowVoice` and `LandData`'s default
