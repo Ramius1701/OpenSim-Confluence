@@ -1578,10 +1578,12 @@ namespace OpenSim.Server.Handlers.WebInterface
                 newAccounts7d = m_UserAccountService.GetUserAccountsWhere(UUID.Zero, "Created > " + cutoff).Count;
             }
 
-            // Page order (2026-09-30 restructure): hook (stats, busiest-
-            // right-now, gallery) -> trust (team, testimonials, free-
-            // Homestead offer) -> the detailed pitch (feature cards) ->
-            // proof of activity (classifieds/economy, events, news) ->
+            // Page order (2026-10-01 restructure): hook (stats, free-
+            // Homestead banner, busiest-right-now) -> the pitch (feature
+            // cards - what you're actually getting) -> trust (gallery,
+            // team, testimonials - proof backing up the pitch you just
+            // read, not proof shown before you knew what it was proving)
+            // -> proof of activity (classifieds/economy, events, news) ->
             // CTA -> utility (Hypergrid Address, for a completely
             // different audience - an existing OpenSim user who doesn't
             // need convincing - so it no longer interrupts the one
@@ -1602,9 +1604,31 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<span>+").Append(newAccounts7d.ToString("N0")).Append(" new this week</span>");
             sb.Append("</div>");
 
+            // Pulled out of the feature-card grid (2026-10-01) - this is
+            // the single best acquisition hook on the page and was
+            // getting lost as just tile #1 among nine identically-styled
+            // cards. Now its own banner, right under the live stats,
+            // before a visitor has even reached the pitch. Which region
+            // type (if any) and whether to show it at all are both
+            // grid-owner choices - see GetFreeFirstRegionOfferType's own
+            // comment and Admin > Grid Settings > Economy.
+            var freeRegionOffer = GetFreeFirstRegionOfferType(session?.PrincipalID ?? UUID.Zero);
+            if (freeRegionOffer != null)
+            {
+                string freeRegionType = freeRegionOffer.Value.RegionType;
+                string freeRegionSubtext = freeRegionOffer.Value.IsRecurring
+                        ? "New residents get the first period free - renews at the regular price after that."
+                        : "New residents get one " + freeRegionType + " region on us - no recurring fee, ever.";
+                sb.Append("<div class=\"content-card\" style=\"display:flex;align-items:center;gap:16px;border-left:4px solid var(--accent);\">")
+                  .Append("<div class=\"icon-badge\" style=\"width:52px;height:52px;font-size:1.4em;flex:0 0 auto;\"><i class=\"bi bi-gift ic-green\"></i></div>")
+                  .Append("<div><h2 style=\"margin:0 0 4px;\">Your First ").Append(Html(freeRegionType)).Append(" Is Free</h2>")
+                  .Append("<p style=\"margin:0;\">").Append(Html(freeRegionSubtext)).Append(" ")
+                  .Append("<a href=\"").Append(BasePath).Append("/store\">Claim yours &rarr;</a></p></div></div>");
+            }
+
             if (showBusiestRegions && busiestRegions.Count > 0)
             {
-                sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-people\"></i> Busiest Right Now</h2><ul class=\"busiest-regions-list\">");
+                sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-people ic-pink\"></i> Popular Regions</h2><ul class=\"busiest-regions-list\">");
                 foreach ((GridRegion region, int count) in busiestRegions)
                 {
                     string hopUrl = "secondlife:///app/teleport/" + Uri.EscapeDataString(region.RegionName) + "/128/128/25";
@@ -1614,25 +1638,10 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("</ul></div>");
             }
 
-            sb.Append(RenderGridGalleryShowcase());
-            sb.Append(RenderGridTeam());
-            sb.Append(RenderTestimonials());
-
+            // The pitch - moved up (2026-10-01) to come before the trust
+            // section below, not after it. Proof is more convincing once
+            // the visitor already knows what it's proof OF.
             sb.Append("<h2>Why ").Append(Html(gridName)).Append("?</h2><div class=\"widget-grid\">");
-            // The free-Homestead offer leads the grid, not buried after it -
-            // same eligibility check RenderFreeHomesteadOffer's own comment
-            // explains (disappears once Homestead is no longer an active
-            // SKU, or once a logged-in resident has already claimed theirs).
-            // Unlike the other cards here, this one gets a real CTA link,
-            // so it isn't folded into the shared AppendFeatureCard helper.
-            if (ShouldShowFreeHomesteadOffer(session?.PrincipalID ?? UUID.Zero))
-            {
-                sb.Append("<div class=\"widget-card\">")
-                  .Append("<div class=\"icon-badge\"><i class=\"bi bi-gift ic-green\"></i></div>")
-                  .Append("<h3>Your First Homestead Is Free</h3>")
-                  .Append("<div class=\"widget-meta\">New residents get one on us</div>")
-                  .Append("<p>No recurring fee, ever. <a href=\"").Append(BasePath).Append("/store\">Claim yours &rarr;</a></p></div>");
-            }
             AppendFeatureCard(sb, "bi-cash-coin", "ic-green", "Built-In Economy", "No setup required",
                     "A real currency ledger with buy/sell and group treasuries, ready out of the box.");
             AppendFeatureCard(sb, "bi-globe2", "ic-cyan", "Hypergrid Ready", "Explore beyond this grid",
@@ -1653,50 +1662,63 @@ namespace OpenSim.Server.Handlers.WebInterface
                     "A real suggestion box and support queue an admin reads - not a dead mailbox.");
             sb.Append("</div>");
 
-            string classifieds = RenderFeaturedClassifieds(6);
-            string economy = RenderEconomyStats();
-            if (!string.IsNullOrEmpty(classifieds) || !string.IsNullOrEmpty(economy))
-            {
-                sb.Append("<div class=\"home-2col\">");
-                if (!string.IsNullOrEmpty(classifieds))
-                    sb.Append("<div class=\"content-card home-2col-wide\">").Append(classifieds).Append("</div>");
-                if (!string.IsNullOrEmpty(economy))
-                    sb.Append("<div class=\"content-card\">").Append(economy).Append("</div>");
-                sb.Append("</div>");
-            }
-
-            string events = RenderUpcomingEvents(5);
-            if (!string.IsNullOrEmpty(events))
-                sb.Append("<div class=\"content-card\">").Append(events).Append("</div>");
+            // Trust cluster - moved here (2026-10-01), right after the pitch
+            // instead of before it. Backs up the claims just made with real
+            // proof (what it looks like, who's behind it, what residents
+            // actually say) rather than showing proof before stating a claim.
+            sb.Append(RenderGridGalleryShowcase());
+            sb.Append(RenderGridTeam());
+            sb.Append(RenderTestimonials());
 
             string news = RenderNewsFeed(5);
             if (!string.IsNullOrEmpty(news))
                 sb.Append("<div class=\"content-card\">").Append(news).Append("</div>");
 
-            // Repeated CTA - a visitor who scrolls through Economy/
-            // Classifieds/Events and gets convinced shouldn't have to
-            // scroll back to the top to act on it.
+            // Events + Classifieds paired (2026-10-01) - both are "what's
+            // going on right now" content, same visual treatment as the
+            // Hypergrid/Economy pairing below.
+            string events = RenderUpcomingEvents(5);
+            string classifieds = RenderFeaturedClassifieds(6);
+            if (!string.IsNullOrEmpty(events) || !string.IsNullOrEmpty(classifieds))
+            {
+                sb.Append("<div class=\"home-2col\">");
+                if (!string.IsNullOrEmpty(events))
+                    sb.Append("<div class=\"content-card home-2col-wide\">").Append(events).Append("</div>");
+                if (!string.IsNullOrEmpty(classifieds))
+                    sb.Append("<div class=\"content-card\">").Append(classifieds).Append("</div>");
+                sb.Append("</div>");
+            }
+
+            // Hypergrid Address + Confluence Economy paired (2026-10-01) -
+            // Hypergrid Address itself stays near the bottom, not the
+            // middle of the pitch, since it's for a completely different
+            // audience (an existing OpenSim user who already has a
+            // viewer/account elsewhere and doesn't need convincing), not
+            // the brand-new visitor everything above it is written for.
+            // Same loginUri HandleViewers already computes, not a second
+            // value that could drift.
+            string loginUri = string.IsNullOrEmpty(m_publicBaseUrl) ? string.Empty : m_publicBaseUrl + "/";
+            string economy = RenderEconomyStats();
+            if (!string.IsNullOrEmpty(loginUri) || !string.IsNullOrEmpty(economy))
+            {
+                sb.Append("<div class=\"home-2col\">");
+                if (!string.IsNullOrEmpty(loginUri))
+                    sb.Append("<div class=\"content-card home-2col-wide\"><h2><i class=\"bi bi-signpost-2 ic-cyan\"></i> Hypergrid Address</h2>")
+                      .Append("<p>Already have a viewer or an account on another OpenSim grid? Paste this into your map/search bar to teleport straight in.</p>")
+                      .Append("<form onsubmit=\"return false;\"><input type=\"text\" value=\"").Append(Html(loginUri))
+                      .Append("\" readonly onclick=\"this.select()\"></form></div>");
+                if (!string.IsNullOrEmpty(economy))
+                    sb.Append("<div class=\"content-card\">").Append(economy).Append("</div>");
+                sb.Append("</div>");
+            }
+
+            // CTA - bottom of the page (2026-10-01), after every other
+            // section instead of before Hypergrid Address.
             if (allowRegistration)
                 sb.Append("<div class=\"content-card\" style=\"text-align:center;\"><h2>Ready to join ")
                   .Append(Html(gridName)).Append("?</h2><div class=\"cta-row\" style=\"justify-content:center;\">")
                   .Append("<a href=\"").Append(BasePath).Append("/register\" class=\"cta-primary\">Create a Free Account</a>")
                   .Append("</div></div>");
-
-            // Hypergrid address near the bottom, not the middle of the
-            // pitch - this box is for a completely different audience (an
-            // existing OpenSim user who already has a viewer/account
-            // elsewhere and doesn't need convincing), not the brand-new
-            // visitor everything above it is written for. Same loginUri
-            // HandleViewers already computes, not a second value that
-            // could drift.
-            string loginUri = string.IsNullOrEmpty(m_publicBaseUrl) ? string.Empty : m_publicBaseUrl + "/";
-            if (!string.IsNullOrEmpty(loginUri))
-            {
-                sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-signpost-2\"></i> Hypergrid Address</h2>")
-                  .Append("<p>Already have a viewer or an account on another OpenSim grid? Paste this into your map/search bar to teleport straight in.</p>")
-                  .Append("<form onsubmit=\"return false;\"><input type=\"text\" value=\"").Append(Html(loginUri))
-                  .Append("\" readonly onclick=\"this.select()\"></form></div>");
-            }
 
             sb.Append("<p><a href=\"").Append(BasePath).Append("/viewers\">Get a viewer &rarr;</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/features\">See all features &rarr;</a></p>");
@@ -1910,7 +1932,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     ".gallery-item{border-radius:8px;overflow:hidden;background:var(--card-bg);}" +
                     ".gallery-item img{width:100%;height:160px;object-fit:cover;display:block;}" +
                     ".gallery-item .gallery-caption{padding:8px 10px;font-size:13px;color:var(--muted);}</style>");
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-images\"></i> See the World</h2><div class=\"gallery-grid\">");
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-images ic-pink\"></i> See the World</h2><div class=\"gallery-grid\">");
             foreach (GalleryEntry entry in entries)
             {
                 sb.Append("<div class=\"gallery-item\"><img src=\"").Append(BasePath).Append("/gallery-photos/")
@@ -2239,20 +2261,20 @@ namespace OpenSim.Server.Handlers.WebInterface
             string loginUri = string.IsNullOrEmpty(m_publicBaseUrl) ? "(not configured)" : m_publicBaseUrl + "/";
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-question-circle\"></i> Help &amp; Support</h1>");
+            sb.Append("<h1><i class=\"bi bi-question-circle ic-blue\"></i> Help &amp; Support</h1>");
             sb.Append("<p>Quick help for using ").Append(Html(gridName)).Append(" both in your viewer and on the web.</p>");
 
-            sb.Append("<h2><i class=\"bi bi-box-arrow-in-right\"></i> Logging In</h2>");
+            sb.Append("<h2><i class=\"bi bi-box-arrow-in-right ic-blue\"></i> Logging In</h2>");
             sb.Append("<p>Add ").Append(Html(gridName)).Append(" to your viewer's grid manager using this login URI:</p>");
             sb.Append("<form onsubmit=\"return false;\"><label>Login URI<br/>")
               .Append("<input type=\"text\" value=\"").Append(Html(loginUri)).Append("\" readonly onclick=\"this.select()\"></label></form>");
             sb.Append("<p>Don't have a viewer yet? See <a href=\"").Append(BasePath).Append("/viewers\">Get a Viewer</a>.</p>");
 
-            sb.Append("<h2><i class=\"bi bi-person-plus\"></i> Creating an Account</h2>");
+            sb.Append("<h2><i class=\"bi bi-person-plus ic-purple\"></i> Creating an Account</h2>");
             sb.Append("<p>Sign up for free from the home page. You'll get a full inventory and a home region ")
               .Append("assigned automatically.</p>");
 
-            sb.Append("<h2><i class=\"bi bi-list-task\"></i> Common Tasks</h2><div class=\"feature-grid-3\">");
+            sb.Append("<h2><i class=\"bi bi-list-task ic-amber\"></i> Common Tasks</h2><div class=\"feature-grid-3\">");
             AppendIconFeatureCard(sb, "person-gear", "ic-blue", "Manage Your Account", new[]
             {
                 ("Password & email", true, "Change both from My Account."),
@@ -2267,7 +2289,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             });
             sb.Append("</div>");
 
-            sb.Append("<h2><i class=\"bi bi-search\"></i> Using Search From the Viewer</h2>");
+            sb.Append("<h2><i class=\"bi bi-search ic-blue\"></i> Using Search From the Viewer</h2>");
             sb.Append("<p>Your viewer's Search window uses the same categories as the <a href=\"")
               .Append(BasePath).Append("/search\">Search</a> page in a normal browser:</p><ul>");
             sb.Append("<li><strong>Places</strong> - find regions and parcels by name, description or keyword.</li>");
@@ -2278,7 +2300,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<li><strong>Groups</strong> - look up groups, then join them in-world.</li>");
             sb.Append("</ul>");
 
-            sb.Append("<h2><i class=\"bi bi-tools\"></i> Troubleshooting</h2><ul>");
+            sb.Append("<h2><i class=\"bi bi-tools ic-amber\"></i> Troubleshooting</h2><ul>");
             sb.Append("<li><strong>A search tab shows no results:</strong> that category may simply have nothing ")
               .Append("listed yet - land only appears once a parcel owner sets it For Sale and enables Show in ")
               .Append("Search, and events/classifieds only appear once a resident creates one.</li>");
@@ -2288,7 +2310,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("/forgot-password\">Forgot Password</a> to reset it, then restart your viewer.</li>");
             sb.Append("</ul>");
 
-            sb.Append("<h2><i class=\"bi bi-question-circle\"></i> Common Questions</h2>");
+            sb.Append("<h2><i class=\"bi bi-question-circle ic-blue\"></i> Common Questions</h2>");
             sb.Append("<h3>How do I visit other grids?</h3><p>This grid supports Hypergrid teleporting - use a ")
               .Append("Hypergrid address in your viewer's map or search to visit another open grid.</p>");
             sb.Append("<h3>I need more help.</h3><p>Contact us through the <a href=\"").Append(BasePath)
@@ -2352,7 +2374,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (isViewerPanel)
                 sb.Append(GuideFixedHeightCss);
 
-            sb.Append("<div class=\"guide-header\"><div class=\"guide-brand\"><i class=\"bi bi-compass\"></i> Guide</div>")
+            sb.Append("<div class=\"guide-header\"><div class=\"guide-brand\"><i class=\"bi bi-compass ic-blue\"></i> Guide</div>")
               .Append("<div class=\"guide-nav-tabs\">")
               .Append("<button type=\"button\" class=\"guide-nav-btn active\" id=\"guide-btn-popular\" onclick=\"return guideTab('popular',this)\">Popular</button>")
               .Append("<button type=\"button\" class=\"guide-nav-btn\" id=\"guide-btn-featured\" onclick=\"return guideTab('featured',this)\">Featured</button>")
@@ -2692,7 +2714,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private void HandleDestinations(IOSHttpRequest request, IOSHttpResponse response)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-signpost-2\"></i> Destinations</h1>")
+            sb.Append("<h1><i class=\"bi bi-signpost-2 ic-cyan\"></i> Destinations</h1>")
               .Append("<p>Discover places worth visiting across the grid.</p>");
             AppendDestinationTabs(sb);
             WritePage(request, response, PageTitle("Destinations"), sb.ToString());
@@ -3270,7 +3292,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 if (m_FriendsService != null)
                 {
                     int friendCount = m_FriendsService.GetFriends(userId)?.Length ?? 0;
-                    sb.Append("<p class=\"news-meta\"><i class=\"bi bi-people\"></i> ")
+                    sb.Append("<p class=\"news-meta\"><i class=\"bi bi-people ic-pink\"></i> ")
                       .Append(friendCount).Append(friendCount == 1 ? " friend" : " friends");
                     if (isSelf)
                         sb.Append(" &middot; <a href=\"").Append(BasePath).Append("/friends\">Manage friends</a>");
@@ -3282,35 +3304,35 @@ namespace OpenSim.Server.Handlers.WebInterface
                     UserAccount partner = m_UserAccountService?.GetUserAccount(UUID.Zero, props.PartnerId);
                     if (partner != null)
                     {
-                        sb.Append("<p><i class=\"bi bi-heart-fill\"></i> <strong>Partner:</strong> <a href=\"").Append(BasePath).Append("/profile?id=")
+                        sb.Append("<p><i class=\"bi bi-heart-fill ic-pink\"></i> <strong>Partner:</strong> <a href=\"").Append(BasePath).Append("/profile?id=")
                           .Append(partner.PrincipalID).Append("\">").Append(Html(partner.Name)).Append("</a></p>");
                     }
                 }
 
                 if (!string.IsNullOrEmpty(props.AboutText))
                 {
-                    sb.Append("<h2><i class=\"bi bi-info-circle\"></i> About</h2><p>").Append(Html(props.AboutText).Replace("\n", "<br/>")).Append("</p>");
+                    sb.Append("<h2><i class=\"bi bi-info-circle ic-blue\"></i> About</h2><p>").Append(Html(props.AboutText).Replace("\n", "<br/>")).Append("</p>");
                 }
                 else if (isSelf)
                 {
-                    sb.Append("<h2><i class=\"bi bi-info-circle\"></i> About</h2>")
+                    sb.Append("<h2><i class=\"bi bi-info-circle ic-blue\"></i> About</h2>")
                       .Append("<p class=\"news-meta\">You haven't written an About Me yet. In your viewer: Me &rarr; Profile &rarr; Edit Profile.</p>");
                 }
 
                 if (!string.IsNullOrEmpty(props.FirstLifeText))
                 {
-                    sb.Append("<h2><i class=\"bi bi-person-lines-fill\"></i> First Life</h2><p>").Append(Html(props.FirstLifeText).Replace("\n", "<br/>")).Append("</p>");
+                    sb.Append("<h2><i class=\"bi bi-person-lines-fill ic-purple\"></i> First Life</h2><p>").Append(Html(props.FirstLifeText).Replace("\n", "<br/>")).Append("</p>");
                 }
 
                 if (!string.IsNullOrEmpty(props.WebUrl))
                 {
-                    sb.Append("<p><i class=\"bi bi-link-45deg\"></i> <a href=\"").Append(Html(props.WebUrl)).Append("\" rel=\"noopener\">")
+                    sb.Append("<p><i class=\"bi bi-link-45deg ic-cyan\"></i> <a href=\"").Append(Html(props.WebUrl)).Append("\" rel=\"noopener\">")
                       .Append(Html(props.WebUrl)).Append("</a></p>");
                 }
 
                 if (!string.IsNullOrEmpty(props.Language))
                 {
-                    sb.Append("<p><i class=\"bi bi-translate\"></i> <strong>Languages:</strong> ").Append(Html(props.Language)).Append("</p>");
+                    sb.Append("<p><i class=\"bi bi-translate ic-blue\"></i> <strong>Languages:</strong> ").Append(Html(props.Language)).Append("</p>");
                 }
 
                 // Same skills/want-to bit mapping OpenSim-Grid-Interface's
@@ -3348,7 +3370,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 OSD picksOsd = m_UserProfilesService.AvatarPicksRequest(userId);
                 if (picksOsd is OSDArray picksArray && picksArray.Count > 0)
                 {
-                    sb.Append("<h2><i class=\"bi bi-geo-alt\"></i> Picks</h2><div class=\"widget-grid\">");
+                    sb.Append("<h2><i class=\"bi bi-geo-alt ic-cyan\"></i> Picks</h2><div class=\"widget-grid\">");
                     foreach (OSD entry in picksArray)
                     {
                         if (entry is OSDMap pickMap && UUID.TryParse(pickMap["pickuuid"].AsString(), out UUID pickId))
@@ -3359,12 +3381,12 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                             sb.Append("<div class=\"widget-card\"><h3>");
                             if (pick.TopPick)
-                                sb.Append("<span class=\"pill pill-yes\"><i class=\"bi bi-star-fill\"></i> Top Pick</span> ");
+                                sb.Append("<span class=\"pill pill-yes\"><i class=\"bi bi-star-fill ic-purple\"></i> Top Pick</span> ");
                             sb.Append(Html(pickMap["name"].AsString())).Append("</h3>");
                             if (!string.IsNullOrEmpty(pick.Desc) && pick.Desc != "No description given.")
                                 sb.Append("<div class=\"widget-meta\">").Append(Html(pick.Desc)).Append("</div>");
                             if (!string.IsNullOrEmpty(pick.SimName))
-                                sb.Append("<div class=\"widget-meta\"><i class=\"bi bi-geo-alt\"></i> ").Append(Html(pick.SimName)).Append("</div>");
+                                sb.Append("<div class=\"widget-meta\"><i class=\"bi bi-geo-alt ic-cyan\"></i> ").Append(Html(pick.SimName)).Append("</div>");
                             sb.Append("</div>");
                         }
                     }
@@ -3372,7 +3394,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 else if (isSelf)
                 {
-                    sb.Append("<h2><i class=\"bi bi-geo-alt\"></i> Picks</h2>")
+                    sb.Append("<h2><i class=\"bi bi-geo-alt ic-cyan\"></i> Picks</h2>")
                       .Append("<p class=\"news-meta\">You haven't added any Picks yet. In your viewer: Me &rarr; Profile &rarr; Picks &rarr; the + button, at a place you're standing.</p>");
                 }
 
@@ -3386,7 +3408,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<GridRegion> profileRegions = GetRegionsOwnedBy(userId);
             if (profileRegions.Count > 0)
             {
-                sb.Append("<h2><i class=\"bi bi-hdd-rack\"></i> Regions</h2><table><tr><th>Region</th><th>Size</th></tr>");
+                sb.Append("<h2><i class=\"bi bi-hdd-rack ic-cyan\"></i> Regions</h2><table><tr><th>Region</th><th>Size</th></tr>");
                 foreach (GridRegion region in profileRegions)
                 {
                     sb.Append("<tr><td>").Append(Html(region.RegionName)).Append("</td>")
@@ -3412,7 +3434,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 List<GroupMembershipData> shown = isSelf ? memberships : memberships.FindAll(m => m.ListInProfile);
                 if (shown.Count > 0)
                 {
-                    sb.Append("<h2><i class=\"bi bi-people\"></i> Groups (").Append(shown.Count).Append(")</h2>");
+                    sb.Append("<h2><i class=\"bi bi-people ic-pink\"></i> Groups (").Append(shown.Count).Append(")</h2>");
                     if (isSelf)
                     {
                         sb.Append("<table><tr><th>Group</th><th>Title</th><th>On Public Profile</th><th>Notices</th></tr>");
@@ -3435,7 +3457,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 }
                 else if (isSelf)
                 {
-                    sb.Append("<h2><i class=\"bi bi-people\"></i> Groups</h2>")
+                    sb.Append("<h2><i class=\"bi bi-people ic-pink\"></i> Groups</h2>")
                       .Append("<p class=\"news-meta\">You haven't joined any groups yet. Groups are managed entirely in-world - search for one from your viewer, or find one grid-wide from this site's Search page.</p>");
                 }
             }
@@ -3484,7 +3506,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-envelope-open\"></i> Offline Messages</h1>");
+            sb.Append("<h1><i class=\"bi bi-envelope-open ic-cyan\"></i> Offline Messages</h1>");
             sb.Append("<p>Instant messages sent to you while you were offline, waiting to be delivered next time you log in.</p>");
             sb.Append(flash);
 
@@ -3516,7 +3538,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                       .Append("<td><form method=\"post\" style=\"margin:0\">")
                       .Append("<input type=\"hidden\" name=\"action\" value=\"delete\">")
                       .Append("<input type=\"hidden\" name=\"id\" value=\"").Append(entry.ID).Append("\">")
-                      .Append("<button type=\"submit\"><i class=\"bi bi-trash\"></i></button></form></td></tr>");
+                      .Append("<button type=\"submit\"><i class=\"bi bi-trash ic-pink\"></i></button></form></td></tr>");
                 }
                 sb.Append("</table>");
                 sb.Append("<form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"clear\">")
@@ -3538,9 +3560,9 @@ namespace OpenSim.Server.Handlers.WebInterface
         private string MessagesTabs(string active)
         {
             return "<div class=\"subnav\">"
-                    + "<a href=\"" + BasePath + "/messages\"" + (active == "inbox" ? " class=\"active\"" : "") + "><i class=\"bi bi-inbox\"></i> Inbox</a>"
-                    + "<a href=\"" + BasePath + "/messages/sent\"" + (active == "sent" ? " class=\"active\"" : "") + "><i class=\"bi bi-send\"></i> Sent</a>"
-                    + "<a href=\"" + BasePath + "/messages/compose\"" + (active == "compose" ? " class=\"active\"" : "") + "><i class=\"bi bi-pencil-square\"></i> Compose</a>"
+                    + "<a href=\"" + BasePath + "/messages\"" + (active == "inbox" ? " class=\"active\"" : "") + "><i class=\"bi bi-inbox ic-cyan\"></i> Inbox</a>"
+                    + "<a href=\"" + BasePath + "/messages/sent\"" + (active == "sent" ? " class=\"active\"" : "") + "><i class=\"bi bi-send ic-cyan\"></i> Sent</a>"
+                    + "<a href=\"" + BasePath + "/messages/compose\"" + (active == "compose" ? " class=\"active\"" : "") + "><i class=\"bi bi-pencil-square ic-amber\"></i> Compose</a>"
                     + "</div>";
         }
 
@@ -3554,7 +3576,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-envelope\"></i> Messages</h1>");
+            sb.Append("<h1><i class=\"bi bi-envelope ic-cyan\"></i> Messages</h1>");
             sb.Append(MessagesTabs("inbox"));
 
             if (m_MessagingService == null)
@@ -3582,7 +3604,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                       .Append("<td><a href=\"").Append(BasePath).Append("/messages/view?id=").Append(m.ID).Append("&from=inbox\">")
                       .Append(Html(subject)).Append("</a></td>")
                       .Append("<td>").Append(Html(m.Created.ToString("yyyy-MM-dd HH:mm"))).Append("</td>")
-                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(m.ID).Append("&from=inbox\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash\"></i></a></td></tr>");
+                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(m.ID).Append("&from=inbox\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash ic-pink\"></i></a></td></tr>");
                 }
                 sb.Append("</table>");
             }
@@ -3600,7 +3622,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-envelope\"></i> Messages</h1>");
+            sb.Append("<h1><i class=\"bi bi-envelope ic-cyan\"></i> Messages</h1>");
             sb.Append(MessagesTabs("sent"));
 
             if (m_MessagingService == null)
@@ -3628,7 +3650,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                       .Append("<td><a href=\"").Append(BasePath).Append("/messages/view?id=").Append(m.ID).Append("&from=sent\">")
                       .Append(Html(subject)).Append("</a></td>")
                       .Append("<td>").Append(Html(m.Created.ToString("yyyy-MM-dd HH:mm"))).Append("</td>")
-                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(m.ID).Append("&from=sent\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash\"></i></a></td></tr>");
+                      .Append("<td><a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(m.ID).Append("&from=sent\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash ic-pink\"></i></a></td></tr>");
                 }
                 sb.Append("</table>");
             }
@@ -3651,7 +3673,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             string search = request.QueryString.Get("q") ?? string.Empty;
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-envelope\"></i> Messages</h1>");
+            sb.Append("<h1><i class=\"bi bi-envelope ic-cyan\"></i> Messages</h1>");
             sb.Append(MessagesTabs("compose"));
 
             if (m_MessagingService == null || m_UserAccountService == null)
@@ -3664,7 +3686,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<h2>Compose Message</h2>");
             sb.Append("<form method=\"get\" action=\"").Append(BasePath).Append("/messages/compose\">")
               .Append("<label>Find a resident<br/><input type=\"text\" name=\"q\" value=\"").Append(Html(search)).Append("\" placeholder=\"Type a name to search...\"></label> ")
-              .Append("<button type=\"submit\"><i class=\"bi bi-search\"></i> Search</button></form>");
+              .Append("<button type=\"submit\"><i class=\"bi bi-search ic-blue\"></i> Search</button></form>");
 
             if (!string.IsNullOrEmpty(search))
             {
@@ -3697,7 +3719,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<label>To<br/><input type=\"text\" value=\"").Append(Html(toName != string.Empty ? toName : "Select a resident above")).Append("\" readonly></label><br/>");
             sb.Append("<label>Subject<br/><input type=\"text\" name=\"subject\" maxlength=\"150\"></label><br/>");
             sb.Append("<label>Message<br/><textarea name=\"body\" rows=\"6\"></textarea></label><br/>");
-            sb.Append("<button type=\"submit\"><i class=\"bi bi-send\"></i> Send Message</button>");
+            sb.Append("<button type=\"submit\"><i class=\"bi bi-send ic-cyan\"></i> Send Message</button>");
             sb.Append("</form>");
 
             WritePage(request, response, PageTitle("Compose"), sb.ToString());
@@ -3782,9 +3804,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<p class=\"news-meta\">From: ").Append(Html(fromName)).Append(" &middot; To: ").Append(Html(toName))
               .Append(" &middot; ").Append(Html(message.Created.ToString("yyyy-MM-dd HH:mm"))).Append("</p>");
             sb.Append("<div class=\"content-card\" style=\"white-space:pre-wrap;\">").Append(Html(message.Body)).Append("</div>");
-            sb.Append("<p><a href=\"").Append(BasePath).Append("/messages/compose?to=").Append(message.SenderID).Append("\"><i class=\"bi bi-reply\"></i> Reply</a> &middot; ")
+            sb.Append("<p><a href=\"").Append(BasePath).Append("/messages/compose?to=").Append(message.SenderID).Append("\"><i class=\"bi bi-reply ic-cyan\"></i> Reply</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/messages/delete?id=").Append(message.ID).Append("&from=").Append(fromTab)
-              .Append("\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash\"></i> Delete</a> &middot; ")
+              .Append("\" onclick=\"return confirm('Delete this message?');\"><i class=\"bi bi-trash ic-pink\"></i> Delete</a> &middot; ")
               .Append("<a href=\"").Append(BasePath).Append("/messages").Append(fromTab == "sent" ? "/sent" : string.Empty).Append("\">Back</a></p>");
 
             WritePage(request, response, PageTitle("Message"), sb.ToString());
@@ -3828,7 +3850,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             WebSession session = GetSession(request);
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-wallet2\"></i> Economy</h1>");
+            sb.Append("<h1><i class=\"bi bi-wallet2 ic-green\"></i> Economy</h1>");
             sb.Append("<p>Monitor currency circulation and see where you stand.</p>");
 
             if (m_CurrencyService == null)
@@ -3844,7 +3866,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // here first since a visitor landing directly on /economy
             // (rather than arriving via Features) has had no explanation of
             // the currency system yet before hitting a wall of live numbers.
-            sb.Append("<h2><i class=\"bi bi-currency-exchange\"></i> What You're Getting</h2><div class=\"feature-grid-3\">");
+            sb.Append("<h2><i class=\"bi bi-currency-exchange ic-green\"></i> What You're Getting</h2><div class=\"feature-grid-3\">");
             AppendIconFeatureCard(sb, "currency-dollar", "ic-green", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
             {
                 ("Ledger", false, "Built-in transaction history and group treasuries - not a third-party dependency"),
@@ -3872,14 +3894,14 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             sb.Append(RenderEconomyStats());
 
-            sb.Append("<h2><i class=\"bi bi-globe\"></i> Grid Totals</h2><div class=\"stats-grid\">");
+            sb.Append("<h2><i class=\"bi bi-globe ic-cyan\"></i> Grid Totals</h2><div class=\"stats-grid\">");
             AppendStat(sb, "Money in Circulation", m_currencySymbol + " " + m_CurrencyService.GetTotalCirculation().ToString("N0"), "sum of every resident's balance");
             AppendStat(sb, "Funded Accounts", m_CurrencyService.CountAccountsWithBalance().ToString("N0"), "residents with a non-zero balance");
             AppendStat(sb, "Total Transactions", m_CurrencyService.NumberOfTransactions(UUID.Zero, UUID.Zero).ToString("N0"), "all time");
             sb.Append("</div>");
 
             List<CurrencyBalanceEntry> topBalances = m_CurrencyService.GetTopBalances(10);
-            sb.Append("<h2><i class=\"bi bi-trophy\"></i> Top Balances</h2>");
+            sb.Append("<h2><i class=\"bi bi-trophy ic-green\"></i> Top Balances</h2>");
             if (topBalances == null || topBalances.Count == 0)
             {
                 sb.Append("<p>No funded accounts yet.</p>");
@@ -3904,7 +3926,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             List<CurrencyTransfer> recent = m_CurrencyService.GetTransactionHistory(UUID.Zero, UUID.Zero, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow, 0, 20);
-            sb.Append("<h2><i class=\"bi bi-clock-history\"></i> Recent Transactions</h2>");
+            sb.Append("<h2><i class=\"bi bi-clock-history ic-amber\"></i> Recent Transactions</h2>");
             if (recent == null || recent.Count == 0)
             {
                 sb.Append("<p>No transactions in the last 30 days.</p>");
@@ -4030,13 +4052,13 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             if (localRows.Length > 0)
             {
-                sb.Append("<h2><i class=\"bi bi-people\"></i> This Grid</h2>")
+                sb.Append("<h2><i class=\"bi bi-people ic-pink\"></i> This Grid</h2>")
                   .Append("<table><tr><th>Name</th><th>Status</th><th>Location</th><th>Rights You've Granted</th></tr>")
                   .Append(localRows).Append("</table>");
             }
             if (hgRows.Length > 0)
             {
-                sb.Append("<h2><i class=\"bi bi-globe\"></i> Hypergrid</h2>")
+                sb.Append("<h2><i class=\"bi bi-globe ic-cyan\"></i> Hypergrid</h2>")
                   .Append("<p class=\"news-meta\">Friends visiting from another OpenSim grid - profile links and online status aren't available for these.</p>")
                   .Append("<table><tr><th>Name</th><th>Home Grid</th><th>Rights You've Granted</th></tr>")
                   .Append(hgRows).Append("</table>");
@@ -4180,7 +4202,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-shield-lock\"></i> Recovery Codes</h1>");
+            sb.Append("<h1><i class=\"bi bi-shield-lock ic-purple\"></i> Recovery Codes</h1>");
             sb.Append("<p>One-time backup codes that let you reset this avatar's password without needing your email - useful if your email on file is out of date. ");
             sb.Append("Each code works once. Generating new codes immediately invalidates any old ones.</p>");
 
@@ -4188,7 +4210,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             {
                 List<string> freshCodes = m_RecoveryCodeService.RegenerateCodes(session.PrincipalID);
                 sb.Append("<div class=\"error\" style=\"border-left-color:var(--accent);color:var(--text);\">")
-                  .Append("<strong><i class=\"bi bi-exclamation-triangle-fill\"></i> Save these now - they will not be shown again:</strong>")
+                  .Append("<strong><i class=\"bi bi-exclamation-triangle-fill ic-amber\"></i> Save these now - they will not be shown again:</strong>")
                   .Append("<div style=\"font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;margin-top:10px;letter-spacing:1px;\">");
                 foreach (string code in freshCodes)
                     sb.Append(Html(code)).Append("<br/>");
@@ -5309,7 +5331,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private void HandleFeatures(IOSHttpRequest request, IOSHttpResponse response)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-stars\"></i> Grid Features</h1>");
+            sb.Append("<h1><i class=\"bi bi-stars ic-purple\"></i> Grid Features</h1>");
             sb.Append("<p>Confluence runs on OpenSimulator, extended with a set of natively-built systems ")
               .Append("(not addon modules) covering currency, marketplace, search, moderation, and grid administration.</p>");
 
@@ -5319,7 +5341,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // constant already used elsewhere on this page (VersionInfo) or
             // the same viewer list HandleViewers already publishes, not a
             // second hand-typed copy that could drift out of sync.
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-activity\"></i> Platform Overview</h2>")
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-activity ic-amber\"></i> Platform Overview</h2>")
               .Append("<table><tbody>")
               .Append("<tr><th>Supported Viewers</th><td>").Append(Html(string.Join(", ", DesktopViewers.Select(v => v.Name)))).Append("</td></tr>")
               .Append("<tr><th>Core Platform</th><td>OpenSimulator (Confluence build)</td></tr>")
@@ -5328,7 +5350,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("<tr><th>Physics Engines</th><td>").Append(Html(AvailablePhysicsEngines())).Append("</td></tr>")
               .Append("</tbody></table></div>");
 
-            sb.Append("<h2><i class=\"bi bi-activity\"></i> Live Grid Snapshot</h2><div class=\"stats-grid\">");
+            sb.Append("<h2><i class=\"bi bi-activity ic-amber\"></i> Live Grid Snapshot</h2><div class=\"stats-grid\">");
             if (m_GridService != null)
             {
                 // FilterListedRegions on top of the usual alive-probe -
@@ -5367,16 +5389,16 @@ namespace OpenSim.Server.Handlers.WebInterface
             // drift from the actual project. OGI is credited as the
             // optional swap-out web interface, matching the "not required"
             // framing already used for it in Platform Capabilities below.
-            sb.Append("<h2><i class=\"bi bi-github\"></i> Open Source</h2><div class=\"feature-grid-3\">")
-              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-git\"></i> Confluence</h3>")
+            sb.Append("<h2><i class=\"bi bi-github ic-purple\"></i> Open Source</h2><div class=\"feature-grid-3\">")
+              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-git ic-purple\"></i> Confluence</h3>")
               .Append("<p>The grid engine itself - OpenSimulator core plus every natively-built system on this page (currency, search, moderation, admin).</p>")
-              .Append("<p><a href=\"https://github.com/Ramius1701/OpenSim-Confluence\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github\"></i> Ramius1701/OpenSim-Confluence</a></p></div>")
-              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-layout-text-window-reverse\"></i> Grid Web Interface</h3>")
+              .Append("<p><a href=\"https://github.com/Ramius1701/OpenSim-Confluence\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github ic-purple\"></i> Ramius1701/OpenSim-Confluence</a></p></div>")
+              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-layout-text-window-reverse ic-purple\"></i> Grid Web Interface</h3>")
               .Append("<p>An optional standalone PHP web front-end for the grid - swappable, not required (this built-in WebUI ships by default).</p>")
-              .Append("<p><a href=\"https://github.com/Ramius1701/OpenSim-Grid-Interface\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github\"></i> Ramius1701/OpenSim-Grid-Interface</a></p></div>")
-              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-mic\"></i> ConfluenceVoice</h3>")
+              .Append("<p><a href=\"https://github.com/Ramius1701/OpenSim-Grid-Interface\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github ic-purple\"></i> Ramius1701/OpenSim-Grid-Interface</a></p></div>")
+              .Append("<div class=\"feature-card\"><h3><i class=\"bi bi-mic ic-cyan\"></i> ConfluenceVoice</h3>")
               .Append("<p>A Windows-native WebRTC voice backend for this grid's built-in voice chat - no Linux host or Janus Gateway required.</p>")
-              .Append("<p><a href=\"https://github.com/Ramius1701/ConfluenceVoice\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github\"></i> Ramius1701/ConfluenceVoice</a></p></div>")
+              .Append("<p><a href=\"https://github.com/Ramius1701/ConfluenceVoice\" target=\"_blank\" rel=\"noopener\"><i class=\"bi bi-github ic-purple\"></i> Ramius1701/ConfluenceVoice</a></p></div>")
               .Append("</div>");
 
             AppendPoweredBySection(sb, GetSetting("PoweredByItems", string.Empty));
@@ -5389,7 +5411,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // the reference project's own icon-per-category treatment.
             // Native Currency moved out of this list into its own Economy
             // section below rather than duplicated in both places.
-            sb.Append("<h2><i class=\"bi bi-sliders\"></i> Platform Capabilities</h2><div class=\"feature-grid-3\">");
+            sb.Append("<h2><i class=\"bi bi-sliders ic-amber\"></i> Platform Capabilities</h2><div class=\"feature-grid-3\">");
 
             AppendIconFeatureCard(sb, "globe-americas", "ic-cyan", "World & Travel", new[]
             {
@@ -5437,7 +5459,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // an operator applies to their own region-size/prim-density
             // choices, not an engine-level region type. Framed that way
             // deliberately, matching this page's existing honesty standard.
-            sb.Append("<h2><i class=\"bi bi-grid-3x3-gap\"></i> Region Configuration Options</h2><div class=\"feature-grid-3\">");
+            sb.Append("<h2><i class=\"bi bi-grid-3x3-gap ic-purple\"></i> Region Configuration Options</h2><div class=\"feature-grid-3\">");
             AppendIconFeatureCard(sb, "arrows-fullscreen", "ic-amber", "VarRegions", new[]
             {
                 ("Layout", false, "One region with a larger footprint than standard 256x256 (e.g. 512x512 or 1024x1024), no internal border crossings"),
@@ -5458,7 +5480,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             });
             sb.Append("</div>");
 
-            sb.Append("<h2><i class=\"bi bi-currency-exchange\"></i> Economy &amp; Currency</h2><div class=\"feature-grid-3\">");
+            sb.Append("<h2><i class=\"bi bi-currency-exchange ic-green\"></i> Economy &amp; Currency</h2><div class=\"feature-grid-3\">");
             AppendIconFeatureCard(sb, "currency-dollar", "ic-green", "Native Currency" + (m_CurrencyService != null ? " <span class=\"pill pill-yes\">Active</span>" : " <span class=\"pill pill-no\">Unavailable</span>"), new[]
             {
                 ("Ledger", false, "Built-in transaction history and group treasuries - not a third-party dependency"),
@@ -5494,8 +5516,8 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendMembershipPerksSection(sb, GetSetting("MembershipPerksFree", string.Empty), GetSetting("MembershipPerksExtra", string.Empty));
 
             sb.Append("<div class=\"content-card text-center\" style=\"text-align:center;padding-top:20px;\">")
-              .Append("<p><a href=\"").Append(BasePath).Append("/viewers\"><i class=\"bi bi-display\"></i> Get a viewer to explore</a> &middot; ")
-              .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-map\"></i> See where to go</a></p></div>");
+              .Append("<p><a href=\"").Append(BasePath).Append("/viewers\"><i class=\"bi bi-display ic-amber\"></i> Get a viewer to explore</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-map ic-cyan\"></i> See where to go</a></p></div>");
 
             WritePage(request, response, PageTitle("Features"), sb.ToString());
         }
@@ -5546,7 +5568,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (items.Length == 0)
                 return;
 
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-lightning-charge\"></i> Powered By</h2>")
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-lightning-charge ic-amber\"></i> Powered By</h2>")
               .Append("<div class=\"powered-grid\">").Append(items).Append("</div></div>");
         }
 
@@ -5557,19 +5579,19 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (free.Count == 0 && extra.Count == 0)
                 return;
 
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-gift\"></i> Membership Perks</h2><div class=\"feature-grid-3\">");
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-gift ic-green\"></i> Membership Perks</h2><div class=\"feature-grid-3\">");
             if (free.Count > 0)
             {
-                sb.Append("<div><h3><i class=\"bi bi-check-circle\"></i> Included Free</h3><ul class=\"perks-list\">");
+                sb.Append("<div><h3><i class=\"bi bi-check-circle ic-blue\"></i> Included Free</h3><ul class=\"perks-list\">");
                 foreach (string p in free)
-                    sb.Append("<li><i class=\"bi bi-check2\"></i>").Append(Html(p)).Append("</li>");
+                    sb.Append("<li><i class=\"bi bi-check2 ic-blue\"></i>").Append(Html(p)).Append("</li>");
                 sb.Append("</ul></div>");
             }
             if (extra.Count > 0)
             {
-                sb.Append("<div><h3><i class=\"bi bi-stars\"></i> Community Extras</h3><ul class=\"perks-list\">");
+                sb.Append("<div><h3><i class=\"bi bi-stars ic-purple\"></i> Community Extras</h3><ul class=\"perks-list\">");
                 foreach (string p in extra)
-                    sb.Append("<li><i class=\"bi bi-check2\"></i>").Append(Html(p)).Append("</li>");
+                    sb.Append("<li><i class=\"bi bi-check2 ic-blue\"></i>").Append(Html(p)).Append("</li>");
                 sb.Append("</ul></div>");
             }
             sb.Append("</div></div>");
@@ -5602,7 +5624,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("\"></i></div> ").Append(titleHtml).Append("</h3><ul>");
             foreach ((string label, bool isPill, string text) in rows)
             {
-                sb.Append("<li><i class=\"bi bi-check-circle-fill\"></i> ");
+                sb.Append("<li><i class=\"bi bi-check-circle-fill ic-blue\"></i> ");
                 if (isPill)
                     sb.Append("<strong>").Append(Html(label)).Append("</strong> - ").Append(Html(text));
                 else
@@ -6080,7 +6102,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         private void HandleAuctions(IOSHttpRequest request, IOSHttpResponse response)
         {
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-hammer\"></i> Land Auctions</h1>");
+            sb.Append("<h1><i class=\"bi bi-hammer ic-amber\"></i> Land Auctions</h1>");
             sb.Append("<p>Bid on parcels put up for auction. Bidding happens here on the web, ")
               .Append("not in the viewer - the same way it always worked in Second Life.</p>");
 
@@ -6195,7 +6217,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
             StringBuilder sb = new StringBuilder();
             sb.Append("<p><a href=\"").Append(BasePath).Append("/auctions\">&larr; All Auctions</a></p>");
-            sb.Append("<h1><i class=\"bi bi-hammer\"></i> ").Append(Html(auction.ParcelName)).Append("</h1>");
+            sb.Append("<h1><i class=\"bi bi-hammer ic-amber\"></i> ").Append(Html(auction.ParcelName)).Append("</h1>");
             sb.Append("<p class=\"news-meta\">").Append(Html(auction.RegionName)).Append("</p>");
 
             if (!string.IsNullOrEmpty(error))
@@ -6547,7 +6569,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendStat(sb, "OpenSimulator", global::OpenSim.VersionInfo.DisplayVersionNumber, "core version");
             sb.Append("</div>");
 
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-server\"></i> Service Status</h2><table><tbody>")
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-server ic-purple\"></i> Service Status</h2><table><tbody>")
               .Append("<tr><th>Grid</th><td>").Append(Html(s.GridName)).Append("</td></tr>")
               .Append("<tr><th>Status</th><td>").Append(s.ServicesOk
                     ? "<span class=\"pill pill-yes\">Operational</span>"
@@ -6577,7 +6599,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (s.ServiceErrors.Count == 0)
                 return;
 
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-bug\"></i> Diagnostics</h2>")
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-bug ic-amber\"></i> Diagnostics</h2>")
               .Append("<p style=\"color:var(--muted);font-size:13px;\">Admin-only - the real error behind each failing service pill above. Never shown on the public Grid Status page.</p>")
               .Append("<table><tbody>");
             foreach (KeyValuePair<string, string> error in s.ServiceErrors)
@@ -6640,7 +6662,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-activity\"></i> Grid Status</h1>")
+            sb.Append("<h1><i class=\"bi bi-activity ic-amber\"></i> Grid Status</h1>")
               .Append("<p>Live snapshot of ").Append(Html(s.GridName)).Append("'s statistics and service health - ")
               .Append("every row below is its own real call made just now, not a cached or assumed value. ")
               .Append("Last updated ").Append(Html(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm"))).Append(" UTC.</p>");
@@ -6648,9 +6670,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendGridStatusStatsHtml(sb, s);
 
             sb.Append("<div class=\"content-card text-center\" style=\"text-align:center;padding-top:20px;\">")
-              .Append("<p><a href=\"").Append(BasePath).Append("/worldmap\"><i class=\"bi bi-map\"></i> View the World Map</a> &middot; ")
-              .Append("<a href=\"").Append(BasePath).Append("/search\"><i class=\"bi bi-search\"></i> Search the grid</a> &middot; ")
-              .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-signpost-2\"></i> Destinations</a></p></div>");
+              .Append("<p><a href=\"").Append(BasePath).Append("/worldmap\"><i class=\"bi bi-map ic-cyan\"></i> View the World Map</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/search\"><i class=\"bi bi-search ic-blue\"></i> Search the grid</a> &middot; ")
+              .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-signpost-2 ic-cyan\"></i> Destinations</a></p></div>");
 
             WritePage(request, response, PageTitle("Status"), sb.ToString());
         }
@@ -7233,7 +7255,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     ?.Count(t => t.Status != "closed") ?? 0;
 
             StringBuilder sb = new StringBuilder(DashboardCss);
-            sb.Append("<div class=\"dash-head\"><i class=\"bi bi-speedometer2\"></i><h1>Dashboard</h1></div>");
+            sb.Append("<div class=\"dash-head\"><i class=\"bi bi-speedometer2 ic-purple\"></i><h1>Dashboard</h1></div>");
             sb.Append("<p class=\"dash-sub\">Welcome back, ").Append(Html(session.Name));
             if (!string.IsNullOrEmpty(lastLogin))
                 sb.Append(" &mdash; Last login: ").Append(Html(lastLogin));
@@ -7242,7 +7264,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (unreadMessages > 0 || offlineWaiting > 0 || openTickets > 0)
             {
                 sb.Append("<div class=\"announcement\"><div style=\"font-weight:700;margin-bottom:6px;\">")
-                  .Append("<i class=\"bi bi-bell\"></i> You have new activity:</div><ul style=\"margin:0;padding-left:20px;\">");
+                  .Append("<i class=\"bi bi-bell ic-cyan\"></i> You have new activity:</div><ul style=\"margin:0;padding-left:20px;\">");
                 if (unreadMessages > 0)
                     sb.Append("<li><a href=\"").Append(BasePath).Append("/messages\">").Append(unreadMessages)
                       .Append(unreadMessages == 1 ? " unread message" : " unread messages").Append("</a></li>");
@@ -7272,7 +7294,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // it never actually was; it's now a real stat card in the row
             // above instead, not fixed by resurrecting the old claim.
             sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
-              .Append("<i class=\"bi bi-person-vcard\"></i> Account Information</div></div>");
+              .Append("<i class=\"bi bi-person-vcard ic-purple\"></i> Account Information</div></div>");
             AppendDashInfoRow(sb, "Username", Html(session.Name));
             if (account != null && !string.IsNullOrEmpty(account.Email))
                 AppendDashInfoRow(sb, "Email", Html(account.Email));
@@ -7280,9 +7302,9 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashInfoRow(sb, "Member Since", Html(memberSince));
             sb.Append("<div class=\"dash-card-actions\">")
               .Append("<a class=\"dash-btn-outline\" href=\"").Append(BasePath).Append("/profile?id=").Append(session.PrincipalID)
-              .Append("\"><i class=\"bi bi-pencil\"></i> Edit Profile</a>")
+              .Append("\"><i class=\"bi bi-pencil ic-amber\"></i> Edit Profile</a>")
               .Append("<a class=\"dash-btn-outline muted\" href=\"").Append(BasePath).Append("/change-password\">")
-              .Append("<i class=\"bi bi-gear\"></i> Settings</a>")
+              .Append("<i class=\"bi bi-gear ic-amber\"></i> Settings</a>")
               .Append("</div></div>");
 
             // Quick Links - trimmed to the reference's own 5 actions;
@@ -7290,7 +7312,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // grid search) are still one click away via the sidebar, just no
             // longer competing for space in this specific card.
             sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
-              .Append("<i class=\"bi bi-grid-3x3-gap\"></i> Quick Links</div></div>");
+              .Append("<i class=\"bi bi-grid-3x3-gap ic-purple\"></i> Quick Links</div></div>");
             AppendDashLinkRow(sb, BasePath + "/create-avatar", "bi-person-plus", "ic-blue", "Create Avatar", "Register a new avatar on the grid");
             AppendDashLinkRow(sb, BasePath + "/import-avatar", "bi-box-arrow-in-down", "ic-cyan", "Import Avatar", "Link an existing grid avatar");
             AppendDashLinkRow(sb, BasePath + "/myregions", "bi-arrow-clockwise", "ic-amber", "Restart Region", "Restart one of your regions");
@@ -7302,12 +7324,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             // My Avatars - the same linked-avatar list the sidebar switcher
             // and /my-avatars use, just the compact dashboard-card form of it.
             sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
-              .Append("<i class=\"bi bi-people\"></i> My Avatars</div>")
+              .Append("<i class=\"bi bi-people ic-pink\"></i> My Avatars</div>")
               .Append("<a class=\"dash-btn-outline\" style=\"flex:none;padding:6px 16px;\" href=\"")
               .Append(BasePath).Append("/my-avatars\">View All</a></div>");
             if (linkedAvatars.Count == 0)
             {
-                sb.Append("<div class=\"dash-avatar-row\"><i class=\"bi bi-person-circle\"></i> ")
+                sb.Append("<div class=\"dash-avatar-row\"><i class=\"bi bi-person-circle ic-purple\"></i> ")
                   .Append(Html(session.Name)).Append("<span class=\"pill pill-yes\" style=\"margin-left:auto;\">Active</span></div>");
             }
             else
@@ -7317,7 +7339,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     UserAccount linkedAccount = m_UserAccountService?.GetUserAccount(UUID.Zero, link.AvatarPrincipalID);
                     string linkedName = linkedAccount != null ? linkedAccount.Name : link.AvatarPrincipalID.ToString();
                     bool isActive = link.AvatarPrincipalID == session.PrincipalID;
-                    sb.Append("<div class=\"dash-avatar-row\"><i class=\"bi bi-person-circle\"></i> ").Append(Html(linkedName));
+                    sb.Append("<div class=\"dash-avatar-row\"><i class=\"bi bi-person-circle ic-purple\"></i> ").Append(Html(linkedName));
                     if (isActive)
                         sb.Append("<span class=\"pill pill-yes\" style=\"margin-left:auto;\">Active</span>");
                     sb.Append("</div>");
@@ -7330,7 +7352,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // Online Friends - same online-check HandleFriends already uses
             // (GridUserInfo.Online), just summarized to a short list here.
             sb.Append("<div class=\"dash-card\" style=\"margin:0 0 20px;\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
-              .Append("<i class=\"bi bi-people-fill\"></i> Online Friends</div>");
+              .Append("<i class=\"bi bi-people-fill ic-pink\"></i> Online Friends</div>");
             List<(string Name, UUID Id)> onlineFriends = new List<(string, UUID)>();
             if (m_FriendsService != null && m_GridUserService != null)
             {
@@ -7352,7 +7374,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<span class=\"dash-count-pill\">").Append(onlineFriends.Count).Append("</span></div>");
             if (onlineFriends.Count == 0)
             {
-                sb.Append("<div class=\"dash-empty\"><i class=\"bi bi-person\"></i>You don't have any friends online right now.</div>");
+                sb.Append("<div class=\"dash-empty\"><i class=\"bi bi-person ic-purple\"></i>You don't have any friends online right now.</div>");
             }
             else
             {
@@ -7369,7 +7391,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             // own treatment, since these are meant to read as an audit
             // trail rather than a friendly narrative.
             sb.Append("<div class=\"dash-card\"><div class=\"dash-card-head\"><div class=\"dash-card-title\">")
-              .Append("<i class=\"bi bi-clock-history\"></i> Recent Activity</div></div>");
+              .Append("<i class=\"bi bi-clock-history ic-amber\"></i> Recent Activity</div></div>");
             if (session.WebAccountID == UUID.Zero || m_WebAccountService == null)
             {
                 sb.Append("<div class=\"dash-empty\">Activity tracking starts once you've added an email to your account.</div>");
@@ -7778,7 +7800,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             GridStatusStats s = ComputeGridStatusStats();
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-bar-chart\"></i> Grid Statistics</h1>")
+            sb.Append("<h1><i class=\"bi bi-bar-chart ic-blue\"></i> Grid Statistics</h1>")
               .Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>")
               .Append("<p>Live snapshot - the same real-time figures the public ")
               .Append("<a href=\"").Append(BasePath).Append("/gridstatus\">Grid Status</a> page shows, plus admin-only diagnostics below.</p>");
@@ -8313,7 +8335,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             AppendDashboardLink(nav, BasePath + "/admin/settings/identity", "bi-signpost", "ic-purple", "Grid Identity", "Grid name, nickname and welcome message");
             AppendDashboardLink(nav, BasePath + "/admin/settings/access", "bi-door-open", "ic-purple", "Grid Access", "Self-registration and the grid-wide login toggle");
             AppendDashboardLink(nav, BasePath + "/admin/settings/announcement", "bi-megaphone", "ic-purple", "Announcement", "Banner shown on the home page and login splash");
-            AppendDashboardLink(nav, BasePath + "/admin/settings/economy", "bi-cash-coin", "ic-green", "Economy: Banker Avatar", "Where currency fees and charges flow to");
+            AppendDashboardLink(nav, BasePath + "/admin/settings/economy", "bi-cash-coin", "ic-green", "Economy", "Banker avatar, and the free-first-region incentive");
             AppendDashboardLink(nav, BasePath + "/admin/settings/map-tiles", "bi-map", "ic-amber", "Map Tiles", "Clear cached map tiles on Robust's next restart");
             AppendDashboardLink(nav, BasePath + "/admin/settings/gallery", "bi-images", "ic-pink", "Homepage Gallery", "Caption, order and enable showcase photos on the home page");
             AppendDashboardLink(nav, BasePath + "/admin/settings/testimonials", "bi-chat-quote", "ic-pink", "Testimonials", "Approve, order and reject resident-submitted quotes");
@@ -8380,7 +8402,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     + "<label>Grid nickname<br/><input type=\"text\" name=\"grid_nickname\" value=\"" + Html(gridNick) + "\"></label><br/>"
                     + "<label>Welcome message<br/><textarea name=\"welcome_message\" rows=\"3\">" + Html(welcomeMessage) + "</textarea></label><br/>"
                     + "<label><input type=\"checkbox\" name=\"show_busiest_regions\" value=\"true\"" + (showBusiestRegions ? " checked" : "") + " style=\"width:auto;display:inline\"> "
-                    + "Show \"Busiest Right Now\" on the home page (names real regions and live avatar counts to anonymous visitors)</label><br/>"
+                    + "Show \"Popular Regions\" on the home page (names real regions and live avatar counts to anonymous visitors)</label><br/>"
                     + "<button type=\"submit\">Save</button>"
                     + "</form>";
 
@@ -8536,7 +8558,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
         private void HandleAdminSettingsEconomy(IOSHttpRequest request, IOSHttpResponse response)
         {
-            if (!RequireAdminSettingsSession(request, response, "Economy: Banker Avatar"))
+            if (!RequireAdminSettingsSession(request, response, "Economy"))
                 return;
 
             string bankerAvatarID = GetSetting("BankerAvatarID", string.Empty);
@@ -8548,19 +8570,38 @@ namespace OpenSim.Server.Handlers.WebInterface
                     bankerAvatarName = bankerAccount.Name;
             }
 
-            string body = "<h1>Economy: Banker Avatar</h1>"
+            // Which region type (if any) gets the "first one's free"
+            // incentive, and whether to advertise it on the home page -
+            // both grid-owner choices, not hardcoded to Homestead/on.
+            // See GetFreeFirstRegionOfferType's own comment.
+            string freeFirstRegionType = GetSetting("FreeFirstRegionType", "Homestead");
+            bool showFreeFirstRegionOnHomepage = GetSetting("ShowFreeFirstRegionOnHomepage", "true") == "true";
+
+            string body = "<h1>Economy</h1>"
                     + "<p><a href=\"" + BasePath + "/admin/settings\">Back to settings</a></p>"
                     + SettingsMessageBanner(request)
+                    + "<h2>Banker Avatar</h2>"
                     + "<p class=\"news-meta\">The account ConfluenceCurrency system transfers (fees, currency purchases, upload charges - anything that previously vanished into an untracked void) now flow through, instead of nowhere. "
                     + "Same concept as the classic MoneyServer's own BankerAvatar setting. Leave blank/zero to keep the old untracked behavior. "
                     + "<strong>Fund this account with a real starting balance (\"money set &lt;uuid&gt; &lt;amount&gt;\" on the region console) before setting it</strong> - once set, currency purchases and other system credits draw down this account's real balance and will fail if it runs out.</p>"
                     + (string.IsNullOrEmpty(bankerAvatarName) ? string.Empty : "<p>Currently: " + Html(bankerAvatarName) + "</p>")
                     + "<form method=\"post\" action=\"" + BasePath + "/admin/settings/economy/save\">"
                     + "<label>Banker avatar UUID<br/><input type=\"text\" name=\"banker_avatar_id\" value=\"" + Html(bankerAvatarID) + "\" placeholder=\"00000000-0000-0000-0000-000000000000\"></label><br/>"
+                    + "<h2>Free First Region</h2>"
+                    + "<p class=\"news-meta\">A real acquisition incentive, not a requirement - a resident's first-ever region of the chosen type is free, "
+                    + "every one after that (and every other region type) charges the normal catalog price same as always. Set to \"(none)\" to turn this off entirely - "
+                    + "every region then always charges its normal price. The home page banner can also be hidden independently below, while still honoring the discount at checkout "
+                    + "(e.g. word-of-mouth only, not advertised).</p>"
+                    + "<label>Free region type<br/><select name=\"free_first_region_type\">"
+                    + "<option value=\"\"" + (string.IsNullOrEmpty(freeFirstRegionType) ? " selected" : string.Empty) + ">(none - feature off)</option>"
+                    + string.Join(string.Empty, new[] { "Homestead", "Openspace", "Full Region", "Event" }.Select(t =>
+                            "<option value=\"" + t + "\"" + (freeFirstRegionType == t ? " selected" : string.Empty) + ">" + t + "</option>"))
+                    + "</select></label><br/>"
+                    + "<label><input type=\"checkbox\" name=\"show_free_first_region_on_homepage\" value=\"true\"" + (showFreeFirstRegionOnHomepage ? " checked" : string.Empty) + " style=\"width:auto;display:inline\"> Show this offer as a banner on the home page</label><br/>"
                     + "<button type=\"submit\">Save</button>"
                     + "</form>";
 
-            WritePage(request, response, PageTitle("Economy: Banker Avatar"), body);
+            WritePage(request, response, PageTitle("Economy"), body);
         }
 
         private void HandleAdminSettingsEconomySave(IOSHttpRequest request, IOSHttpResponse response)
@@ -8580,6 +8621,15 @@ namespace OpenSim.Server.Handlers.WebInterface
                 response.Redirect(BasePath + "/admin/settings/economy?message=" + Uri.EscapeDataString("Banker avatar UUID is not valid."), HttpStatusCode.Redirect);
                 return;
             }
+
+            string freeFirstRegionType = FormValue(form, "free_first_region_type").Trim();
+            if (!string.IsNullOrEmpty(freeFirstRegionType) && !new[] { "Homestead", "Openspace", "Full Region", "Event" }.Contains(freeFirstRegionType))
+            {
+                response.Redirect(BasePath + "/admin/settings/economy?message=" + Uri.EscapeDataString("Free region type is not valid."), HttpStatusCode.Redirect);
+                return;
+            }
+            m_GridSettingsService.Set("FreeFirstRegionType", freeFirstRegionType);
+            m_GridSettingsService.Set("ShowFreeFirstRegionOnHomepage", FormValue(form, "show_free_first_region_on_homepage") == "true" ? "true" : "false");
 
             m_GridSettingsService.Set("BankerAvatarID", bankerAvatarID);
 
@@ -11752,7 +11802,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!string.IsNullOrEmpty(queryMessage))
                 message = "<p>" + Html(queryMessage) + "</p>";
 
-            string body = "<h1><i class=\"bi bi-hdd-rack\"></i> My Regions</h1>"
+            string body = "<h1><i class=\"bi bi-hdd-rack ic-cyan\"></i> My Regions</h1>"
                     + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
                     + message
                     + rows.ToString();
@@ -12103,7 +12153,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (!string.IsNullOrEmpty(queryMessage))
                 message = "<p>" + Html(queryMessage) + "</p>";
 
-            string body = "<h1><i class=\"bi bi-signpost-split\"></i> My Land</h1>"
+            string body = "<h1><i class=\"bi bi-signpost-split ic-cyan\"></i> My Land</h1>"
                     + "<p><a href=\"" + BasePath + "/dashboard\">Back to dashboard</a></p>"
                     + message
                     + rows.ToString();
@@ -13316,7 +13366,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_StoreService == null)
             {
                 WritePage(request, response, PageTitle("Store"),
-                        "<h1><i class=\"bi bi-shop\"></i> Store</h1><p>The store is not available on this grid.</p>");
+                        "<h1><i class=\"bi bi-shop ic-green\"></i> Store</h1><p>The store is not available on this grid.</p>");
                 return;
             }
 
@@ -13375,7 +13425,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 ".store-buy-row button.store-buy-secondary:hover{background:var(--accent-tint);border-color:var(--accent);}" +
                 ".store-empty-note{color:var(--muted);font-size:12.5px;font-style:italic;margin:0 0 10px;}" +
                 "</style>");
-            sb.Append("<h1><i class=\"bi bi-shop\"></i> Store</h1>");
+            sb.Append("<h1><i class=\"bi bi-shop ic-green\"></i> Store</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a> | <a href=\"")
               .Append(BasePath).Append("/store/my-purchases\">My Purchases</a></p>");
 
@@ -13563,7 +13613,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                             // secondary action weighting.
                             sb.Append("<div class=\"store-buy-row\">");
                             if (item.PriceConfluence > 0)
-                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Confluence\"><i class=\"bi bi-lightning-charge-fill\"></i> Buy with ")
+                                sb.Append("<button type=\"submit\" name=\"currency\" value=\"Confluence\"><i class=\"bi bi-lightning-charge-fill ic-amber\"></i> Buy with ")
                                   .Append(m_currencySymbol).Append("</button>");
                             if (item.PriceGloebits > 0)
                                 sb.Append("<button type=\"submit\" name=\"currency\" value=\"Gloebit\" class=\"store-buy-secondary\"")
@@ -13584,7 +13634,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 if (regionOrders.Count > 0)
                 {
-                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-map\"></i> Regions</div>");
+                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-map ic-cyan\"></i> Regions</div>");
                     sb.Append("<p class=\"store-section-sub\">Buy your own region, sized and provisioned automatically on checkout.</p>");
                     // Homestead and Openspace are both single-size entry
                     // tiers (no VarRegion variants) - grouped under one
@@ -13613,7 +13663,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 if (primPacks.Count > 0)
                 {
-                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-box-seam\"></i> Prim Packs</div>");
+                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-box-seam ic-amber\"></i> Prim Packs</div>");
                     sb.Append("<p class=\"store-section-sub\">Boost prim capacity on a region you already own.</p>");
                     sb.Append("<div class=\"store-grid\">");
                     foreach (StoreCatalogItem item in primPacks)
@@ -13623,7 +13673,7 @@ namespace OpenSim.Server.Handlers.WebInterface
 
                 if (agentPacks.Count > 0)
                 {
-                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-people-fill\"></i> Capacity Upgrades</div>");
+                    sb.Append("<div class=\"store-section\"><div class=\"store-section-title\"><i class=\"bi bi-people-fill ic-pink\"></i> Capacity Upgrades</div>");
                     sb.Append("<p class=\"store-section-sub\">Raise the max-agents limit on a Full Region you already own.</p>");
                     sb.Append("<div class=\"store-grid\">");
                     foreach (StoreCatalogItem item in agentPacks)
@@ -13814,21 +13864,26 @@ namespace OpenSim.Server.Handlers.WebInterface
                 order.NextBillingDate = DateTime.UtcNow.AddDays(item.DurationDays);
             }
 
-            // A resident's first-ever Homestead is free - a real incentive
-            // to actually claim land and get invested in the grid, not a
-            // lifetime cap: a second Homestead (or a third, or any other
-            // region type) charges the catalog's normal price same as
-            // always. Checked against real order history rather than a
-            // separate "has used their freebie" flag, so there's nothing
-            // that can drift out of sync with what actually happened.
-            if (item.ItemType == "RegionOrder" && item.RegionType == "Homestead" && m_StoreService != null)
+            // A resident's first-ever region of the grid owner's chosen
+            // free-incentive type (Admin > Grid Settings > Economy,
+            // default "Homestead") is free - a real incentive to actually
+            // claim land and get invested in the grid, not a lifetime
+            // cap: a second one (or a third, or any other region type)
+            // charges the catalog's normal price same as always. Checked
+            // against real order history rather than a separate "has
+            // used their freebie" flag, so there's nothing that can drift
+            // out of sync with what actually happened. Empty setting
+            // value disables this entirely for grid owners who don't
+            // want it - every item then just charges its normal price.
+            string freeFirstRegionType = GetSetting("FreeFirstRegionType", "Homestead");
+            if (!string.IsNullOrEmpty(freeFirstRegionType) && item.ItemType == "RegionOrder" && item.RegionType == freeFirstRegionType && m_StoreService != null)
             {
-                bool hadHomesteadBefore = m_StoreService.GetOrdersByResident(session.PrincipalID)
-                        .Any(o => o.OrderType == "RegionOrder" && m_StoreService.GetCatalogItem(o.CatalogItemID)?.RegionType == "Homestead");
-                if (!hadHomesteadBefore)
+                bool hadOneBefore = m_StoreService.GetOrdersByResident(session.PrincipalID)
+                        .Any(o => o.OrderType == "RegionOrder" && m_StoreService.GetCatalogItem(o.CatalogItemID)?.RegionType == freeFirstRegionType);
+                if (!hadOneBefore)
                 {
                     order.AmountCharged = 0;
-                    order.Notes = "First Homestead - free";
+                    order.Notes = "First " + freeFirstRegionType + " - free";
                 }
             }
 
@@ -14372,7 +14427,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_MarketplaceListingsService == null)
             {
                 WritePage(request, response, PageTitle("Marketplace"),
-                        "<h1><i class=\"bi bi-bag\"></i> Marketplace</h1><p>The marketplace is not available on this grid.</p>");
+                        "<h1><i class=\"bi bi-bag ic-green\"></i> Marketplace</h1><p>The marketplace is not available on this grid.</p>");
                 return;
             }
 
@@ -14384,7 +14439,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<MarketplaceListing> listings = m_MarketplaceListingsService.GetListedListings(start, pageSize);
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-bag\"></i> Marketplace</h1>");
+            sb.Append("<h1><i class=\"bi bi-bag ic-green\"></i> Marketplace</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a>");
             if (session != null)
                 sb.Append(" | <a href=\"").Append(BasePath).Append("/marketplace/manage\">My Listings</a>");
@@ -14439,12 +14494,12 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (listing == null || !listing.IsListed)
             {
                 WritePage(request, response, PageTitle("Marketplace"),
-                        "<h1><i class=\"bi bi-bag\"></i> Marketplace</h1><p>Listing not found.</p>");
+                        "<h1><i class=\"bi bi-bag ic-green\"></i> Marketplace</h1><p>Listing not found.</p>");
                 return;
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-bag\"></i> ").Append(Html(listing.Title)).Append("</h1>");
+            sb.Append("<h1><i class=\"bi bi-bag ic-green\"></i> ").Append(Html(listing.Title)).Append("</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/marketplace\">Back to Marketplace</a></p>");
 
             string queryMessage = request.QueryString.Get("message");
@@ -14631,7 +14686,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             if (m_MarketplaceListingsService == null)
             {
                 WritePage(request, response, PageTitle("My Listings"),
-                        "<h1><i class=\"bi bi-bag\"></i> My Listings</h1><p>The marketplace is not available on this grid.</p>");
+                        "<h1><i class=\"bi bi-bag ic-green\"></i> My Listings</h1><p>The marketplace is not available on this grid.</p>");
                 return;
             }
 
@@ -14643,7 +14698,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 editing = null;
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-bag\"></i> My Listings</h1>");
+            sb.Append("<h1><i class=\"bi bi-bag ic-green\"></i> My Listings</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/marketplace\">Back to Marketplace</a></p>");
 
             if (!string.IsNullOrEmpty(queryMessage))
@@ -15137,7 +15192,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<StoreOrder> orders = m_StoreService.GetOrdersByResident(session.PrincipalID).OrderByDescending(o => o.Created).ToList();
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-receipt\"></i> My Purchases</h1>");
+            sb.Append("<h1><i class=\"bi bi-receipt ic-green\"></i> My Purchases</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/store\">Back to Store</a></p>");
 
             if (orders.Count == 0)
@@ -16547,7 +16602,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<(string RegionName, UUID RegionID, string FilePath)> regions = DiscoverRegionIniFiles();
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-file-earmark-code\"></i> Region Config Files</h1>");
+            sb.Append("<h1><i class=\"bi bi-file-earmark-code ic-purple\"></i> Region Config Files</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>");
             sb.Append("<p>Every region's own <code>.ini</code> file, discovered under <code>Simulators\\*\\Regions\\</code> "
                     + "on this host. Editing here writes the raw file directly - no validation, no live effect. "
@@ -16656,7 +16711,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     : null;
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-file-earmark-code\"></i> ").Append(Html(regionName)).Append("</h1>");
+            sb.Append("<h1><i class=\"bi bi-file-earmark-code ic-purple\"></i> ").Append(Html(regionName)).Append("</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/admin/regions/ini\">Back to Region Config Files</a></p>");
             sb.Append("<p><code>").Append(Html(filePath)).Append("</code></p>");
 
@@ -16910,7 +16965,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             List<(string SimulatorFolder, string RegionName, UUID RegionID)> simulators = DiscoverSimulators();
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("<h1><i class=\"bi bi-play-circle\"></i> Simulators</h1>");
+            sb.Append("<h1><i class=\"bi bi-play-circle ic-green\"></i> Simulators</h1>");
             sb.Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>");
             sb.Append("<p>Only Robust needs to be running for this site itself - regions are started separately. "
                     + "This starts a region process directly on this host, the same way a Store region order does.</p>");
@@ -18081,7 +18136,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                         + "<div id=\"sidebarBackdrop\" class=\"sidebar-backdrop\"></div>"
                         + "<div class=\"app-main\">"
                         + "<header class=\"app-topbar\">"
-                        + "<button class=\"sidebar-toggle\" aria-label=\"Menu\"><i class=\"bi bi-list\"></i></button>"
+                        + "<button class=\"sidebar-toggle\" aria-label=\"Menu\"><i class=\"bi bi-list ic-amber\"></i></button>"
                         + "<nav class=\"site-nav\"><a href=\"/\"><i class=\"bi bi-house-door ic-blue\"></i> Home</a>" +
                         "<a href=\"" + BasePath + "/features\"><i class=\"bi bi-stars ic-amber\"></i> Features</a>" +
                         "<a href=\"" + BasePath + "/viewers\"><i class=\"bi bi-display ic-blue\"></i> Get a Viewer</a>" +
@@ -18212,7 +18267,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                 sb.Append("<div class=\"sidebar-user nav-dropdown\">");
                 sb.Append("<a href=\"#\" class=\"dropdown-toggle\" style=\"display:flex;align-items:center;text-decoration:none;color:inherit\">");
                 sb.Append("<div class=\"sidebar-user-avatar\">").Append(Html(initial)).Append("</div><div>");
-                sb.Append("<div class=\"sidebar-user-name\">").Append(Html(session.Name)).Append(" <i class=\"bi bi-caret-down-fill\"></i></div>");
+                sb.Append("<div class=\"sidebar-user-name\">").Append(Html(session.Name)).Append(" <i class=\"bi bi-caret-down-fill ic-blue\"></i></div>");
                 sb.Append("<div class=\"sidebar-user-role\"><span class=\"pill ")
                   .Append(session.IsAdmin ? "pill-yes" : "pill-no").Append("\">")
                   .Append(session.IsAdmin ? "Administrator" : "Resident").Append("</span></div>");
@@ -18235,7 +18290,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                           .Append(Html(linkedName)).Append("</button></form>");
                     }
                 }
-                sb.Append("<a href=\"").Append(BasePath).Append("/my-avatars\"><i class=\"bi bi-gear\"></i> Manage Avatars</a>");
+                sb.Append("<a href=\"").Append(BasePath).Append("/my-avatars\"><i class=\"bi bi-gear ic-amber\"></i> Manage Avatars</a>");
                 sb.Append("</div></div>");
             }
             else
@@ -18283,7 +18338,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
             sb.Append("</nav>");
 
-            sb.Append("<a class=\"sidebar-logout\" href=\"").Append(BasePath).Append("/logout\"><i class=\"bi bi-box-arrow-right\"></i> Log Out</a>");
+            sb.Append("<a class=\"sidebar-logout\" href=\"").Append(BasePath).Append("/logout\"><i class=\"bi bi-box-arrow-right ic-blue\"></i> Log Out</a>");
             sb.Append("</aside>");
             return sb.ToString();
         }
@@ -18314,7 +18369,7 @@ namespace OpenSim.Server.Handlers.WebInterface
         {
             bool groupActive = links.Any(l => currentPath.StartsWith(BasePath + l.Path, StringComparison.OrdinalIgnoreCase));
             sb.Append("<details class=\"sidebar-nav-group\"").Append(groupActive ? " open" : "").Append(">");
-            sb.Append("<summary class=\"sidebar-nav-label\">").Append(Html(groupLabel)).Append(" <i class=\"bi bi-chevron-down\"></i></summary>");
+            sb.Append("<summary class=\"sidebar-nav-label\">").Append(Html(groupLabel)).Append(" <i class=\"bi bi-chevron-down ic-blue\"></i></summary>");
             foreach ((string linkPath, string icon, string label) in links)
             {
                 bool active = currentPath.StartsWith(BasePath + linkPath, StringComparison.OrdinalIgnoreCase);
@@ -18751,7 +18806,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             TestimonialEntry mine = LoadTestimonials().FirstOrDefault(e => e.AccountID == session.PrincipalID);
 
             StringBuilder body = new StringBuilder();
-            body.Append("<h1><i class=\"bi bi-chat-quote\"></i> Share Your Story</h1>")
+            body.Append("<h1><i class=\"bi bi-chat-quote ic-cyan\"></i> Share Your Story</h1>")
                 .Append("<p><a href=\"").Append(BasePath).Append("/dashboard\">Back to dashboard</a></p>")
                 .Append(SettingsMessageBanner(request))
                 .Append("<p class=\"news-meta\">Tell prospective residents what you like about this grid. Shown on the home page under ")
@@ -18931,7 +18986,7 @@ namespace OpenSim.Server.Handlers.WebInterface
                     ".testimonial-card{background:var(--card-bg);border-radius:8px;padding:16px;}" +
                     ".testimonial-card blockquote{margin:0 0 10px;font-style:italic;}" +
                     ".testimonial-card .testimonial-author{font-weight:600;font-size:13px;color:var(--muted);}</style>");
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-chat-quote\"></i> What Residents Say</h2><div class=\"testimonial-grid\">");
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-chat-quote ic-cyan\"></i> What Residents Say</h2><div class=\"testimonial-grid\">");
             foreach (TestimonialEntry entry in entries)
             {
                 UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, entry.AccountID);
@@ -19131,7 +19186,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             }
 
             StringBuilder body = new StringBuilder();
-            body.Append("<h1><i class=\"bi bi-journal-check\"></i> Admin Audit Log</h1>")
+            body.Append("<h1><i class=\"bi bi-journal-check ic-blue\"></i> Admin Audit Log</h1>")
                 .Append("<p><a href=\"").Append(BasePath).Append("/admin\">Back to admin</a></p>")
                 .Append("<p class=\"news-meta\">Every logged admin action, most recent first - who did it, what it targeted, and what changed. Read-only; nothing here can be edited or removed.</p>");
 
@@ -19181,7 +19236,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             sb.Append("<style>.team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}" +
                     ".team-card{background:var(--card-bg);border-radius:8px;padding:16px;}" +
                     ".team-card .team-role{color:var(--muted);font-size:13px;margin:2px 0 8px;}</style>");
-            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-people\"></i> Grid Team</h2><div class=\"team-grid\">");
+            sb.Append("<div class=\"content-card\"><h2><i class=\"bi bi-people ic-pink\"></i> Grid Team</h2><div class=\"team-grid\">");
             foreach (TeamMemberEntry entry in entries)
             {
                 UserAccount account = m_UserAccountService.GetUserAccount(UUID.Zero, entry.AccountID);
@@ -19192,45 +19247,67 @@ namespace OpenSim.Server.Handlers.WebInterface
                 if (!string.IsNullOrEmpty(entry.Blurb))
                     sb.Append("<p>").Append(Html(entry.Blurb)).Append("</p>");
                 sb.Append("<a href=\"").Append(BasePath).Append("/messages/compose?to=").Append(entry.AccountID)
-                  .Append("\"><i class=\"bi bi-envelope\"></i> Message</a></div>");
+                  .Append("\"><i class=\"bi bi-envelope ic-cyan\"></i> Message</a></div>");
             }
             sb.Append("</div></div>");
             return sb.ToString();
         }
 
-        // A real, concrete incentive - a resident's first-ever Homestead is
-        // free (see BuildStoreOrder) - that was never actually advertised
-        // anywhere before this. Checks for an active Homestead SKU rather
-        // than hardcoding the offer, so this callout disappears cleanly if
-        // a grid owner ever removes Homestead from their catalog, instead
-        // of advertising something no longer actually purchasable.
+        // A real, concrete incentive - a resident's first-ever region of a
+        // chosen type is free (see BuildStoreOrder) - that was never
+        // actually advertised anywhere before this. Which region type (if
+        // any) gets this treatment is a grid-owner choice, not hardcoded
+        // to Homestead - see Admin > Grid Settings > Economy. Checks for
+        // an active SKU of that type rather than assuming one exists, so
+        // this callout disappears cleanly if a grid owner removes it from
+        // their catalog, instead of advertising something no longer
+        // actually purchasable.
         //
-        // residentId is UUID.Zero for an anonymous visitor - the offer
-        // always shows for them, since there's no account yet to have
-        // claimed anything against. A logged-in resident who has already
-        // used their free Homestead stops seeing the tile at all - the
-        // same real order-history check BuildStoreOrder itself uses to
-        // decide whether to actually charge for it, not a separate flag
-        // that could drift out of sync with what really happened.
-        private bool ShouldShowFreeHomesteadOffer(UUID residentId)
+        // Returns the configured region type's name (e.g. "Homestead")
+        // and whether its catalog item is itself a recurring SKU, if the
+        // offer should be advertised on the home page right now, or null
+        // if it shouldn't - null covers the feature being disabled
+        // entirely (FreeFirstRegionType empty), the homepage banner
+        // specifically being turned off (ShowFreeFirstRegionOnHomepage=
+        // false, independent of whether BuildStoreOrder still honors it
+        // for checkout), that type no longer being an active catalog
+        // item, or (for a logged-in resident only) already having
+        // claimed one - residentId is UUID.Zero for an anonymous
+        // visitor, who always sees it since there's no account yet to
+        // have claimed anything against.
+        //
+        // IsRecurring matters for honest copy: Homestead happens to be
+        // the one SKU that's genuinely one-time regardless of this
+        // feature, so "no recurring fee, ever" is true for it - but a
+        // grid owner could point this at a normally-recurring type
+        // (Openspace, Full Region) instead, where only the FIRST period
+        // is free and it auto-renews at the regular price after that -
+        // a different, still-honest claim, not the same one reworded.
+        private (string RegionType, bool IsRecurring)? GetFreeFirstRegionOfferType(UUID residentId)
         {
             if (m_StoreService == null)
-                return false;
+                return null;
 
-            bool hasHomestead = m_StoreService.GetActiveCatalogItems()
-                    .Any(i => i.ItemType == "RegionOrder" && i.RegionType == "Homestead");
-            if (!hasHomestead)
-                return false;
+            string regionType = GetSetting("FreeFirstRegionType", "Homestead");
+            if (string.IsNullOrEmpty(regionType))
+                return null;
+            if (GetSetting("ShowFreeFirstRegionOnHomepage", "true") != "true")
+                return null;
+
+            StoreCatalogItem activeItem = m_StoreService.GetActiveCatalogItems()
+                    .FirstOrDefault(i => i.ItemType == "RegionOrder" && i.RegionType == regionType);
+            if (activeItem == null)
+                return null;
 
             if (residentId != UUID.Zero)
             {
                 bool alreadyClaimed = m_StoreService.GetOrdersByResident(residentId)
-                        .Any(o => o.OrderType == "RegionOrder" && m_StoreService.GetCatalogItem(o.CatalogItemID)?.RegionType == "Homestead");
+                        .Any(o => o.OrderType == "RegionOrder" && m_StoreService.GetCatalogItem(o.CatalogItemID)?.RegionType == regionType);
                 if (alreadyClaimed)
-                    return false;
+                    return null;
             }
 
-            return true;
+            return (regionType, activeItem.RecurringBilling && activeItem.DurationDays > 0);
         }
 
         // Real viewer-vs-browser detection, ported from the same mechanism
@@ -19769,7 +19846,7 @@ namespace OpenSim.Server.Handlers.WebInterface
             StringBuilder sb = new StringBuilder();
 
             sb.Append("<div class=\"nav-dropdown\"><a href=\"#\" class=\"dropdown-toggle\">")
-              .Append("<i class=\"bi bi-compass ic-cyan\"></i> Explore <i class=\"bi bi-caret-down-fill\"></i></a>")
+              .Append("<i class=\"bi bi-compass ic-cyan\"></i> Explore <i class=\"bi bi-caret-down-fill ic-blue\"></i></a>")
               .Append("<div class=\"dropdown-menu\">")
               .Append("<a href=\"").Append(BasePath).Append("/search\"><i class=\"bi bi-search ic-blue\"></i> Search</a>")
               .Append("<a href=\"").Append(BasePath).Append("/destinations\"><i class=\"bi bi-signpost-2 ic-green\"></i> Destinations</a>")
@@ -19778,7 +19855,7 @@ namespace OpenSim.Server.Handlers.WebInterface
               .Append("</div></div>");
 
             sb.Append("<div class=\"nav-dropdown\"><a href=\"#\" class=\"dropdown-toggle\">")
-              .Append("<i class=\"bi bi-info-circle ic-purple\"></i> Grid Info <i class=\"bi bi-caret-down-fill\"></i></a>")
+              .Append("<i class=\"bi bi-info-circle ic-purple\"></i> Grid Info <i class=\"bi bi-caret-down-fill ic-blue\"></i></a>")
               .Append("<div class=\"dropdown-menu\">")
               .Append("<a href=\"").Append(BasePath).Append("/gridstatus\"><i class=\"bi bi-activity ic-green\"></i> Status</a>")
               .Append("<a href=\"").Append(BasePath).Append("/help\"><i class=\"bi bi-question-circle ic-cyan\"></i> Help</a>");

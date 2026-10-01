@@ -26526,3 +26526,50 @@ sequencing) - 22 DLLs the first time (the recurring dependency set from any rebu
 (`OpenSim.Server.Handlers.dll` alone, since the base assemblies were already synced from the first pass).
 Both verified the established way: Robust stopped by verified PID, files diffed/copied/re-verified, zero
 errors after each restart, all 15 regions untouched, all 11 services confirmed genuinely "Online."
+
+## Homepage reorder (pitch before trust, event/classifieds and hypergrid/economy paired, CTA at the very bottom), and a real grid-owner-portability gap fixed in the free-first-region feature (2026-10-01)
+
+Two rounds of operator feedback on the homepage, then a direct question that caught a real, Casperia-only
+hardcoding the whole project's own stated mission exists to prevent.
+
+**Reorder #1**: the operator's own read was that showing Gallery/Team/Testimonials (trust/proof) before
+the "Why [grid]?" feature pitch was backwards - proof is more convincing once a visitor already knows what
+it's proof OF, not before. Swapped the two blocks (pitch now leads, trust cluster follows) and pulled the
+free-region-offer out of the feature-card grid into its own banner right under the live stats, since it's
+the single best acquisition hook on the page and was getting lost as tile #1 among nine identical cards.
+
+**Reorder #2**: a follow-up pass - Upcoming Events paired with Featured Classifieds (both "what's going on
+right now"), Hypergrid Address paired with Confluence Economy (both utility/stats, same visual treatment),
+and the "Ready to join?" CTA moved to the very bottom of the page instead of sitting above Hypergrid
+Address. "Busiest Right Now" renamed to "Popular Regions" throughout (homepage heading and the admin
+toggle's own label).
+
+**The real gap, caught by a direct question**: "Did we add the option to hide the free region from the
+homepage... Did we add an admin option to change it to something... Gotta remember we are not just
+thinking about my grid here." Checked the actual code rather than assuming either way - confirmed both
+gaps were real. `ShouldShowFreeHomesteadOffer` had no independent admin toggle at all (the only way to
+hide the banner was to deactivate the Homestead catalog item entirely, which would also break actually
+selling it), and `BuildStoreOrder`'s free-first-order logic hardcoded `RegionType == "Homestead"` as a
+literal string - a grid owner who wanted a different SKU as their own acquisition incentive had no way to
+do that without a code change. Exactly the kind of Casperia-specific hardcoding this project's own mission
+(stay a real, portable product for any grid owner, not just this one) exists to catch.
+
+**Fixed with two new grid settings** (Admin → Grid Settings → Economy, now covering more than just the
+Banker Avatar it used to be scoped to): `FreeFirstRegionType` (a dropdown - Homestead/Openspace/Full
+Region/Event/`(none - feature off)`, default `Homestead` so Casperia's own behavior is unchanged unless the
+operator explicitly changes it) and `ShowFreeFirstRegionOnHomepage` (a checkbox, independent of the first -
+a grid owner can keep the checkout discount active while hiding the homepage advertisement, or vice versa).
+`ShouldShowFreeHomesteadOffer` renamed to `GetFreeFirstRegionOfferType` and now returns the configured
+type's name (or null) instead of a bool, reading both settings instead of a hardcoded string.
+
+**A real honesty bug caught while generalizing, not before**: the homepage banner's copy said "no
+recurring fee, ever" - true only because Homestead happens to be the one SKU that's genuinely non-recurring
+to begin with. A grid owner who points this at a normally-recurring type (Openspace, Full Region) would get
+a free FIRST period that still auto-renews at full price afterward - the old copy would have been a real,
+live false claim on their homepage. Fixed by having `GetFreeFirstRegionOfferType` also return whether the
+matched catalog item is itself a recurring SKU, and branching the banner's wording accordingly ("no
+recurring fee, ever" vs. "first period free, then renews at the regular price after that").
+
+`FEATURES.md` updated in two places: the Store section's free-first-region paragraph (now describes the
+admin-configurable mechanism, not a Homestead-specific one) and the home-page public-pages paragraph
+(reflects the actual current section order after both reorders above).
