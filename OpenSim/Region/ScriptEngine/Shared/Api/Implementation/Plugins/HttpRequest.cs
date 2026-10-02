@@ -26,7 +26,9 @@
  */
 
 using System;
+using System.Collections.Generic;
 using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.CoreModules.Scripting.HttpRequest;
 using OpenSim.Region.ScriptEngine.Shared;
 using OpenSim.Region.ScriptEngine.Interfaces;
@@ -45,10 +47,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
 
         public void CheckHttpRequests()
         {
-            if (m_CmdManager.m_ScriptEngine.World == null)
+            Scene scene = m_CmdManager.m_ScriptEngine.World;
+            if (scene == null)
                 return;
 
-            IHttpRequestModule iHttpReq = m_CmdManager.m_ScriptEngine.World.RequestModuleInterface<IHttpRequestModule>();
+            IHttpRequestModule iHttpReq = scene.RequestModuleInterface<IHttpRequestModule>();
             if(iHttpReq == null)
                 return;
 
@@ -64,23 +67,54 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                 // implemented here yet anyway.  Should be fixed if/when maxsize
                 // is supported
 
-                object[] resobj = new object[]
+                // The region's completed queue is drained by every script engine's pump, and this
+                // pump took the response: the scripts in the prim may run in any engine of the
+                // region. As in SL, every script in the prim gets it: each engine of this region is
+                // offered it once and posts it to its own scripts in that prim. Local ids are per
+                // region, so no other region's engine is offered it - a prim there could share the
+                // same local id.
+                IScriptEngine[] listed = m_CmdManager.ScriptEngines;
+                foreach (IScriptEngine e in RegionScriptEngines(scene))
                 {
-                    new LSL_Types.LSLString(httpInfo.ReqID.ToString()),
-                    new LSL_Types.LSLInteger(httpInfo.Status),
-                    new LSL_Types.list(),
-                    new LSL_Types.LSLString(httpInfo.ResponseBody)
-                };
+                    // Built for each engine: the engines this pump serves get the LSL_Types they
+                    // always got; any other engine of this region gets plain values, as core
+                    // modules post to any engine (UrlModule): string, int, object[].
+                    object[] resobj = Array.IndexOf(listed, e) >= 0
+                        ? new object[]
+                        {
+                            new LSL_Types.LSLString(httpInfo.ReqID.ToString()),
+                            new LSL_Types.LSLInteger(httpInfo.Status),
+                            new LSL_Types.list(),
+                            new LSL_Types.LSLString(httpInfo.ResponseBody)
+                        }
+                        : new object[]
+                        {
+                            httpInfo.ReqID.ToString(),
+                            httpInfo.Status,
+                            new object[0],
+                            httpInfo.ResponseBody
+                        };
 
-                foreach (IScriptEngine e in m_CmdManager.ScriptEngines)
-                {
-                    if (e.PostObjectEvent(httpInfo.LocalID,
+                    e.PostObjectEvent(httpInfo.LocalID,
                             new EventParams("http_response",
-                            resobj, new DetectParams[0])))
-                        break;
+                            resobj, new DetectParams[0]));
                 }
                 httpInfo = (HttpRequestClass)iHttpReq.GetNextCompletedRequest();
             }
+        }
+
+        /// <summary>
+        /// This pump's engine and the region's other script engines, each once.
+        /// </summary>
+        private List<IScriptEngine> RegionScriptEngines(Scene scene)
+        {
+            List<IScriptEngine> engines = new List<IScriptEngine> { m_CmdManager.m_ScriptEngine };
+            foreach (IScriptModule m in scene.RequestModuleInterfaces<IScriptModule>())
+            {
+                if (m is IScriptEngine e && !engines.Contains(e))
+                    engines.Add(e);
+            }
+            return engines;
         }
     }
 }

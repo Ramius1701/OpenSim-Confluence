@@ -26682,3 +26682,62 @@ Full solution build (OpenSim.csproj's complete dependency graph plus PGSQL and S
 Casperia's own MySQL-only build doesn't pull those in) confirmed clean after all three fixes. Not yet
 deployed - the grid is still deliberately down from the security-fix deploy above; these three will go out
 in the same batch whenever the operator restarts.
+
+## Tranquillity review: #221/#222 - region-scoped script responses, one latent race
+
+Reviewed the two remaining items from the same 2026-09-30 Tranquillity batch (#220/#223 above already
+closed).
+
+**#221 - "Deliver script responses to the engine that runs the script, in the request's own region"**:
+Tranquillity's own motivation is multi-engine (YEngine + Phlox sharing one region) and multi-region-per-
+process delivery. Confluence ships YEngine only (no Phlox), so the Phlox half of the motivation doesn't
+apply directly - but the underlying bug is broader than that. `HttpRequest.cs`'s `CheckHttpRequests()` used
+`foreach (IScriptEngine e in m_CmdManager.ScriptEngines) { if (e.PostObjectEvent(...)) break; }`, where
+`m_CmdManager.ScriptEngines` is a **static, process-wide** list of every script engine instance in the
+process - not scoped to the request's own region. `http_response`'s `httpInfo.LocalID` is a `uint`, unique
+only *within* a region, not across a process. On the common OpenSim deployment pattern (several regions
+loaded into one `OpenSim.exe` via `Regions/*.ini`, not Casperia's own one-region-per-process layout), two
+regions can assign the same local id to different prims - the old code could deliver an HTTP response meant
+for one region's prim to a different region's prim sharing that id, and it also never duplicated delivery
+to every script in the prim (SL's actual rule: "triggered in all scripts in the prim, not just the
+requesting script") when the region ran a second engine. Ported the fix: a new `RegionScriptEngines(scene)`
+helper restricts delivery to this pump's engine plus the *request's own region's* other script engines
+(`scene.RequestModuleInterfaces<IScriptModule>()`, cast to `IScriptEngine`), each offered the event once
+(no more `break` after the first success), with a plain-value argument array for any engine this pump
+doesn't natively serve (future-proofing if a second engine type is ever added - YEngine's own scripts see no
+change). Mirrored the same shape in `XmlRequest.cs` for `remote_data` (`PostRemoteData`/`OtherScriptEngines`/
+`PlainValues` helpers) - `PostScriptEvent` keys on a global `UUID itemID` rather than a per-region local id,
+so the cross-region misdelivery risk doesn't apply there, but the "offer to every engine of every region,
+not just this pump's own" structure was kept consistent with `HttpRequest.cs` and with upstream.
+
+Also ported `XMLRPCModule.cs`'s real, independent fix: `GetNextCompletedRequest()`/`GetNextCompletedSRDRequest()`
+returned a pending request without removing it from the pending dictionary, under a lock that was released
+before the caller's own follow-up `RemoveCompletedRequest()`/`RemoveCompletedSRDRequest()` call. Two script-
+engine pumps (again, only possible with more than one region or engine sharing the process) could both read
+the same still-present entry and both attempt delivery before either removal call ran - confirmed the exact
+same code shape in Confluence. Fixed by moving the dictionary entry under the same lock that reads it, and
+changed `RemoveCompletedRequest`'s miss-case to only log the "UNABLE TO REMOVE" warning when the id isn't
+already in the responses dictionary either (since the normal, no-longer-buggy path now moves it there before
+the caller's own removal call runs).
+
+Confirmed via `IScriptModule`/`IScriptEngine`: `Yengine` already implements both interfaces and registers
+itself as `IScriptModule` per scene (`StackModuleInterface<IScriptModule>(this)`), so `is IScriptEngine`
+casts from a `RequestModuleInterfaces<IScriptModule>()` listing work exactly as upstream relies on.
+
+**#222 - "thread-safe null data stores and test scene presence"**: upstream's own stated motivation is
+xUnit's default parallel test-collection execution exposing races in `OpenSim.Data.Null`'s in-memory test
+stores and `SceneHelpers`. Confluence's test suite is still NUnit-based with no `[Parallelizable]` attribute
+anywhere in the tree - tests run sequentially, so none of that race exists here and the bulk of this PR
+(locking in `NullAuthenticationData`/`NullAvatarData`/`NullPresenceData`, the `SceneHelpers` fix, and the new
+test files) doesn't apply. The one piece that is a real, general production fix regardless of test framework:
+`UserAccountService.m_RootInstance`'s check-then-set (`if (m_RootInstance == null) m_RootInstance = this;`)
+had the same unlocked race Tranquillity found - of several `UserAccountService` instances constructed at
+once, more than one could pass the null check and both run the one-time root setup (creating the system
+grid-god account). Confirmed the identical code in Confluence and ported the fix as an
+`Interlocked.CompareExchange(ref m_RootInstance, this, null)`, fully qualified (`System.Threading.Interlocked`)
+rather than a `using System.Threading;` import, since this file already declares its own `Timer` field typed
+against `System.Timers.Timer` and importing both namespaces would make the bare `Timer` type name ambiguous.
+
+Full solution build clean. Region-side only (`OpenSim.Region.ScriptEngine.Shared.dll`, `OpenSim.Region.CoreModules.dll`)
+plus `OpenSim.Services.UserAccountService.dll` (loaded by Robust) - not yet deployed, same reasoning as the
+batch above: the grid is already down, this goes out in the same restart.
