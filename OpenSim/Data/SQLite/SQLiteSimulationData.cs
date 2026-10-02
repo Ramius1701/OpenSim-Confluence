@@ -1336,6 +1336,7 @@ namespace OpenSim.Data.SQLite
             createCol(items, "everyonePermissions", typeof(UInt32));
             createCol(items, "groupPermissions", typeof(UInt32));
             createCol(items, "flags", typeof(UInt32));
+            createCol(items, "experienceID", typeof(String));
 
             items.PrimaryKey = new DataColumn[] { items.Columns["itemID"] };
 
@@ -1849,6 +1850,7 @@ namespace OpenSim.Data.SQLite
             taskItem.EveryonePermissions = Convert.ToUInt32(row["everyonePermissions"]);
             taskItem.GroupPermissions = Convert.ToUInt32(row["groupPermissions"]);
             taskItem.Flags = Convert.ToUInt32(row["flags"]);
+            taskItem.ExperienceID = new UUID((String)row["experienceID"]);
 
             return taskItem;
         }
@@ -2253,6 +2255,7 @@ namespace OpenSim.Data.SQLite
             row["everyonePermissions"] = taskItem.EveryonePermissions;
             row["groupPermissions"] = taskItem.GroupPermissions;
             row["flags"] = taskItem.Flags;
+            row["experienceID"] = taskItem.ExperienceID.ToString();
         }
 
         /// <summary>

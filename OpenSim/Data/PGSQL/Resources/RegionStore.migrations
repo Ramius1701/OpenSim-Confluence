@@ -1314,3 +1314,8 @@ COMMIT;
 BEGIN;
 ALTER TABLE regionsettings ADD COLUMN "TerrainPBROverrides" TEXT NOT NULL DEFAULT '';
 COMMIT;
+
+:VERSION 60         #----- add script experience link to primitems
+BEGIN;
+ALTER TABLE primitems ADD COLUMN "experienceID" uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+COMMIT;

@@ -2753,8 +2753,12 @@ namespace OpenSim.Region.Framework.Scenes
             {
                 if (ParentPart != null && !ParentPart.AllowUnsit)
                 {
-                    // Check that the experience still has permission to keep the user seated
-                    if(Scene.ExperienceModule.GetExperiencePermission(remoteClient.AgentId, ParentPart.ExperienceUsedForSit) == ExperiencePermission.Allowed)
+                    // Check that the experience still has permission to keep the user seated.
+                    // ExperienceModule is off by default - no module means nothing is holding this seat,
+                    // so the avatar stands, rather than throwing a NullReferenceException here and leaving
+                    // them stuck seated with no way to stand.
+                    if (Scene.ExperienceModule != null &&
+                        Scene.ExperienceModule.GetExperiencePermission(remoteClient.AgentId, ParentPart.ExperienceUsedForSit) == ExperiencePermission.Allowed)
                     {
                         ControllingClient.SendAgentAlertMessage(string.Format("'{0}' will not allow you to stand at this time.", ParentPart.Name), false);
                         return;
@@ -3533,7 +3537,10 @@ namespace OpenSim.Region.Framework.Scenes
 
                 if (!ParentPart.AllowUnsit)
                 {
-                    if (Scene.ExperienceModule.GetExperiencePermission(this.UUID, ParentPart.ExperienceUsedForSit) == ExperiencePermission.Allowed)
+                    // Same null-safety as HandleAgentSit's stand check - no module means nothing is
+                    // holding this seat.
+                    if (Scene.ExperienceModule != null &&
+                        Scene.ExperienceModule.GetExperiencePermission(this.UUID, ParentPart.ExperienceUsedForSit) == ExperiencePermission.Allowed)
                     {
                         ControllingClient.SendAgentAlertMessage(string.Format("'{0}' will not allow you to change your seat at this time.", ParentPart.Name), false);
                         return;

@@ -606,3 +606,8 @@ ALTER TABLE `primitems`
 	MODIFY COLUMN `name` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,
 	MODIFY COLUMN `description` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL;
 COMMIT;
+
+:VERSION 72         #----- add script experience link to primitems
+BEGIN;
+ALTER TABLE `primitems` ADD COLUMN `experienceID` char(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+COMMIT;

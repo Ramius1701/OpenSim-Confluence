@@ -527,6 +527,12 @@ forks use:
   Experience — no repeated per-object prompts, whether a script calls
   `llRequestExperiencePermissions` directly or the generic
   `llRequestPermissions`.
+- A script's compiled-in Experience link survives region restart, OAR
+  load, take-and-rez, and region crossing — persisted as a real
+  database column and object-XML field, not just held in memory
+  (previously only YEngine's own saved-script-state happened to paper
+  over the gap on a simple relog; nothing restored it otherwise).
+  Copying a script prim-to-prim keeps its Experience link too.
 
 ### Bot/NPC framework
 

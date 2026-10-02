@@ -376,6 +376,31 @@ Web & Admin UI section rather than here.)*
 
 ## Planned, not started
 
+- **Object-crossed-parcel and owner/group-changed `EventManager` events (found 2026-10-02/03, reviewing
+  Tranquillity's #217).** Raises `OnGroupCrossedToNewParcel` whenever an object's position lands on a
+  different parcel than last recorded (checked in the `AbsolutePosition` setter, on physics terse updates,
+  after a failed crossing clamps the object back, and on `AddSceneObject`/`DuplicateObject`), and
+  `OnObjectOwnerOrGroupChanged` whenever `SceneObjectGroup.SetOwnerId`/`SetOwner`/`SetGroup` actually
+  changes something (god set owner, deed, set group, buy original, `llAttachToAvatarTemp`). Real, 920 lines
+  across 10 files including a new `ScenePresenceSitTests`-style test suite. Its real motivating use case in
+  Tranquillity is deferring the parcel-script-rules check to a Phlox-aware engine
+  (`IParcelScriptPolicyEngine`, letting an engine that enforces the rule itself opt out of the default
+  check) - doesn't apply here, no Phlox in Confluence - and it changes the `OnRunScript` permission
+  delegate's own signature to `OnRunScriptWithEngine`, a real interface change rather than a narrow fix.
+  The two new events themselves could have standalone value (a region module wanting to react to an object
+  crossing parcel lines, or an ownership/group change, without polling) independent of the Phlox angle -
+  not scoped in detail, available on request.
+- **Offline IM-to-email forwarding (found 2026-10-02, reviewing GuduleLapointe/opensim-helpers).** That
+  project (a mature, actively-maintained PHP helper toolkit, formerly "Flexible Helper Scripts") offers an
+  opt-in "forward offline IMs to email" feature. Confirmed by code, not assumed: Confluence's own native
+  `OfflineIMService.StoreMessage` (`OpenSim/Addons/OfflineIM/Service/OfflineIMService.cs`) - the actual save
+  path for an offline IM - has no email-notification hook at all. The infrastructure this needs already
+  exists and is used elsewhere (the same MailKit/SMTP sending code `WebInterfaceServiceConnector.cs` already
+  uses for email verification and password reset), so this is additive, not new plumbing. Natural shape: an
+  opt-in per-resident preference (fits the account-settings area already built out this session) checked
+  inside `StoreMessage` before persisting, sending via the existing mail helper if enabled. Not scoped in
+  detail yet - exact preference storage key, email template, and whether to batch multiple offline IMs into
+  one email vs. one-per-message are still open.
 - **In-browser, no-viewer-download world exploration (2026-09-30).** The single highest-ceiling item found
   during a competitive audit of real OpenSim grid websites (Wolf Territories' "WolfStorm," which launches
   directly in Chrome/Edge/Brave, no install) - lets a curious visitor look around before committing to

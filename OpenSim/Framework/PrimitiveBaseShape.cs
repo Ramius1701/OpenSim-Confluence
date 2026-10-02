@@ -1356,7 +1356,10 @@ namespace OpenSim.Framework
             {
                 ReflectionProbe = new Primitive.ReflectionProbe
                 {
-                    Ambiance = Utils.Clamp(Utils.BytesToFloat(data, pos), 0, 1.0f),
+                    // SL's PRIM_REFLECTION_PROBE range is 0..100 (the same range the ExtraParams writer and
+                    // LSL_Api's set path already use) - clamping the reader to 0..1 meant an ambiance above 1
+                    // worked live but read back as 1 after any save and reload.
+                    Ambiance = Utils.Clamp(Utils.BytesToFloat(data, pos), 0, 100f),
                     ClipDistance = Utils.Clamp(Utils.BytesToFloat(data, pos + 4), 0, 1024f),
                     Flags = data[pos + 8]
                 };

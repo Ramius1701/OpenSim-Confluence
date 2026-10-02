@@ -31,8 +31,10 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Security;
+using System.Reflection;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
+using log4net;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
@@ -65,7 +67,7 @@ namespace OpenSim.Region.CoreModules.Scripting.HttpRequest
             public float control;
         }
 
-        // private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private static HttpClient VeriFyCertClient = null;
         private static HttpClient VeriFyNoCertClient = null;
@@ -381,6 +383,15 @@ namespace OpenSim.Region.CoreModules.Scripting.HttpRequest
                             break;
 
                         case (int)HttpRequestConstants.HTTP_MIMETYPE:
+                            // Sent as the Content-Type line without validation (SendRequest), so a line break
+                            // here would inject header lines. Refused as an initial-check failure, before
+                            // anything is queued.
+                            if (!HttpRequestMimeType.IsValid(parameters[i + 1]))
+                            {
+                                m_log.WarnFormat("[HTTP REQUEST MODULE]: request from item {0} refused: {1}",
+                                        itemID, HttpRequestMimeType.InvalidMessage);
+                                return UUID.Zero;
+                            }
                             htc.HttpMIMEType = parameters[i + 1];
                             break;
 

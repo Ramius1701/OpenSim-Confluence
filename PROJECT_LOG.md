@@ -26573,3 +26573,112 @@ recurring fee, ever" vs. "first period free, then renews at the regular price af
 `FEATURES.md` updated in two places: the Store section's free-first-region paragraph (now describes the
 admin-configurable mechanism, not a Homestead-specific one) and the home-page public-pages paragraph
 (reflects the actual current section order after both reorders above).
+
+## Real, live outbound-URL-filter bypass found and fixed, porting a same-day Tranquillity security fix (2026-10-02)
+
+Resumed the donor-repo review's systematic pass, now fetching real activity data (push dates, archived
+flags, actual recent commits - not just old memory notes) rather than trusting prior conclusions blind.
+Confirmed several forks are genuinely far more active than the old "done" framing implied - most notably
+Tranquillity, which pushed substantive work literally the day before this check.
+
+**Found a real, live, exploitable security gap on Casperia, confirmed by code before anything was ported.**
+Tranquillity's `f13a855182` (landed the day before) fixes three things in the exact vulnerability class
+this project's own ICan disclosure remediation already covered - checked whether Confluence had the same
+gaps rather than assuming either way:
+
+- **`XMLRPCModule.cs`'s `llSendRemoteData`** sent its destination through `WebUtil.GetNewGlobalHttpClient`
+  with zero `OutboundUrlFilter` check - a script could reach any address, including internal/private
+  network IPs, completely bypassing `[Network] OutboundDisallowForUserScripts`. Confirmed real: `llHTTPRequest`
+  (a sibling function) already goes through the filter; `llSendRemoteData` never did.
+- **`VectorRenderModule.cs`'s Image-draw command** used a raw `HttpWebRequest.Create(url)` - no filter check
+  at all, and `HttpWebRequest` follows redirects automatically by .NET default. Same SSRF vector via dynamic
+  texture rendering instead of XML-RPC.
+- **`ScriptsHttpRequests.cs`'s `HTTP_MIMETYPE` parameter** was written into the `Content-Type` header via
+  `TryAddWithoutValidation` with zero validation - a script could inject arbitrary header lines through a
+  line break in this one LSL parameter.
+
+**One real thing Confluence already had right, confirmed rather than assumed**: `ScriptsHttpRequests.cs`'s
+own `llHTTPRequest` redirect-following logic (`HttpRequestClass.SendRequest`) already calls
+`RequestModule.CheckAllowed(locationUri)` on every redirect hop before following it - built independently,
+different mechanism (hand-rolled per-hop check vs. Tranquillity's reusable `DelegatingHandler`), same
+protection. That specific file only needed the `HTTP_MIMETYPE` fix, not a redirect-handling change.
+
+**Ported cleanly, every piece verified against Confluence's actual current code first, not assumed
+compatible**: new `OutboundUrlFilterRedirectHandler.cs` (verbatim logic, converted from Tranquillity's
+file-scoped namespace style to this codebase's braced convention - zero other changes needed, Confluence's
+`OutboundUrlFilter.CheckAllowed(Uri)` and constructor signatures already matched exactly);
+`HttpRequestMimeType` validator added to `IHttpRequests.cs`; `XMLRPCModule`/`VectorRenderModule` each gained
+their own `OutboundUrlFilter` instance (constructed the same way `ScriptsHttpRequests.cs` already does) and
+now check the destination before sending, using the new redirect handler instead of a plain `HttpClient`/
+`HttpWebRequest`; `LSL_Api.cs`'s `llSendRemoteData`/`llHTTPRequest` both now report a real "disallowed by
+filter" error instead of silently returning empty. `VectorRenderModule.cs` needed an extra step Tranquillity's
+own version didn't: their copy had already been modernized to `HttpClient` at some earlier point, while
+Confluence's still used the legacy `HttpWebRequest` API - ported to `HttpClient` as part of the same change
+rather than bolting the filter onto the old API.
+
+`OpenSim.Framework.csproj` updated directly (one new `<Compile Include>` line) rather than regenerating via
+prebuild - `prebuild.xml`'s own `OpenSim.Framework` entry already globs `*.cs` in that directory, so no
+`prebuild.xml` change was needed and no wider rebuild was triggered.
+
+Full solution build confirmed clean (CoreModules, Shared.Api, OpenSim.csproj's own full dependency graph) -
+not yet deployed to live Casperia, pending the operator's go-ahead given the severity.
+
+**Deployed later the same night**: the operator shut the entire grid (Robust + all 15 regions) down
+deliberately, with nobody online, specifically to apply this cleanly. All 29 differing DLLs/PDBs copied to
+both the grid root and every one of the 15 per-region `bin/` directories (per-region binary isolation - the
+fix needs to be in place for a currently-stopped region too, whenever it's next started), verified
+byte-for-byte against the fresh build afterward. Not yet restarted - deliberately left down to continue the
+donor-repo review further while idle overnight.
+
+## Three more real Tranquillity fixes found and ported continuing the same review, idle overnight with the grid down (2026-10-02/03)
+
+With the grid down anyway (per the operator's own call above) and nothing else blocking, continued
+systematically through Tranquillity's same 2026-09-30 commit batch rather than stopping at the one security
+fix. Re-fetched first - confirmed no new commits landed since the last check, so this was the same already-
+identified batch, not a fresh pull.
+
+**Three real, independently-confirmed fixes ported, each checked against Confluence's actual current code
+first, not assumed applicable:**
+
+1. **Reflection probe ambiance clamped to 0..1 instead of SL's real 0..100 range** (`PrimitiveBaseShape.
+   ReadReflectionProbe`) - confirmed the identical bug, same line, in `OpenSim/Framework/PrimitiveBaseShape.cs`.
+   An ambiance above 1 worked live but silently reset to 1 after any save/reload (OAR, region restart, take
+   and rez) - the ExtraParams writer and `LSL_Api`'s own `PRIM_REFLECTION_PROBE` set path already used the
+   correct 0..100 range, only the reader was wrong. One-line fix.
+
+2. **A manually-seated avatar on an `ALLOW_UNSIT false` prim could get permanently stuck, unable to stand** -
+   `ScenePresence.cs`'s stand-up and change-seat paths both called `Scene.ExperienceModule.GetExperiencePermission(...)`
+   with no null check. The Experience module is off by default, so this was a live
+   `NullReferenceException` waiting to fire the first time a resident sat on (or built) an `ALLOW_UNSIT`
+   prim without Experience Tools enabled - confirmed via direct code read, both call sites, identical to
+   Tranquillity's. Fixed with a null check (`Scene.ExperienceModule != null && ...`) at both sites - no
+   module means nothing is holding the seat, so the avatar stands, matching Tranquillity's own stated intent.
+   Tranquillity's fuller fix also adds `SCRIPTED_SIT_ONLY` manual-sit refusal and experience-seat tracking
+   across stand/sit - deliberately **not** ported this pass (an additive feature change, not a bug fix,
+   touching more of the sit-target code than the crash fix needed) - flagged for a future pass instead of
+   risking a half-tested change at this hour.
+
+3. **A script's compiled-in Experience link (`TaskInventoryItem.ExperienceID`) was never persisted** - only
+   kept in memory (or restored by YEngine's own saved script state, which happens to paper over the gap on
+   a simple relog but not on OAR load/take-and-rez/a state-less region restart). Confirmed the exact same
+   gap: the field already exists on `TaskInventoryItem`, already gets set at compile time
+   (`Scene.Inventory.cs`), but nothing wrote it to any of the three DB backends or the object XML. Ported in
+   full: a new `primitems.experienceID` column across MySQL (migration 72), PostgreSQL (60), and SQLite (45)
+   - version numbers bumped to the next free slot in each backend since Confluence's own migration history
+   had already diverged from Tranquillity's numbering (57/58/59 and 43/44 already used here for unrelated
+   work); all three data classes' read/write paths; `SceneObjectSerializer.cs`'s XML read/write (written only
+   when set, old XML without the element reads as zero, matching every other optional UUID field's pattern
+   here); and the two prim-to-prim copy paths (`MoveTaskInventoryItem`, `RezScriptFromPrim`) that were
+   dropping the Experience link on `llGiveInventory`/`osGiveLinkInventory`/`llRemoteLoadScriptPin`.
+
+**One large item from the same batch deliberately not ported**: object-crossed-parcel and owner/group-
+changed `EventManager` events (#217, 920 lines across 10 files) - its real motivating use case is deferring
+the parcel-script-rules check to a Phlox-aware engine (`IParcelScriptPolicyEngine`), which doesn't apply
+here (no Phlox in Confluence), and it changes the `OnRunScript` permission delegate's own signature to
+`OnRunScriptWithEngine` - a real interface change, not a narrow fix. Flagged for `ROADMAP.md` as a real,
+available candidate rather than built blind against core permission plumbing overnight.
+
+Full solution build (OpenSim.csproj's complete dependency graph plus PGSQL and SQLite explicitly, since
+Casperia's own MySQL-only build doesn't pull those in) confirmed clean after all three fixes. Not yet
+deployed - the grid is still deliberately down from the security-fix deploy above; these three will go out
+in the same batch whenever the operator restarts.

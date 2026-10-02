@@ -32,9 +32,11 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using Nini.Config;
 using OpenMetaverse;
 using OpenMetaverse.Imaging;
+using OpenSim.Framework;
 using OpenSim.Region.CoreModules.Scripting.DynamicTexture;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
@@ -62,6 +64,8 @@ namespace OpenSim.Region.CoreModules.Scripting.VectorRender
         private IDynamicTextureManager m_textureManager;
 
         private string m_fontName = "Arial";
+
+        private OutboundUrlFilter m_outboundUrlFilter;
 
         public VectorRenderModule()
         {
@@ -146,6 +150,10 @@ namespace OpenSim.Region.CoreModules.Scripting.VectorRender
                 m_fontName = cfg.GetString("font_name", m_fontName);
             }
             m_log.DebugFormat("[VECTORRENDERMODULE]: using font \"{0}\" for text rendering.", m_fontName);
+
+            // The Image command fetches a URL the script chose, so it gets llHTTPRequest's filter: same
+            // [Network] keys, same defaults.
+            m_outboundUrlFilter = new OutboundUrlFilter("Script vector render module", config);
 
             // We won't dispose of these explicitly since this module is only removed when the entire simulator
             // is shut down.
@@ -868,16 +876,28 @@ namespace OpenSim.Region.CoreModules.Scripting.VectorRender
         {
             try
             {
-                WebRequest request = HttpWebRequest.Create(url);
-
-                using (HttpWebResponse response = (HttpWebResponse)(request).GetResponse())
+                // A refused URL is drawn as the same error box as an unreachable one.
+                if (Uri.TryCreate(url, UriKind.Absolute, out Uri uri) && !m_outboundUrlFilter.CheckAllowed(uri))
                 {
-                    if (response.StatusCode == HttpStatusCode.OK)
+                    m_log.WarnFormat("[VECTORRENDERMODULE]: Image {0} disallowed by filter", url);
+                    return null;
+                }
+
+                // Redirects are followed by the filtering handler (the default handler's 50 hops, each one
+                // checked) instead of by HttpClientHandler, which would follow them unchecked.
+                HttpMessageHandler handler = new OutboundUrlFilterRedirectHandler(
+                        m_outboundUrlFilter, new HttpClientHandler { AllowAutoRedirect = false }, 50);
+                using (HttpClient client = new HttpClient(handler))
+                {
+                    using (HttpResponseMessage response = client.GetAsync(url).Result)
                     {
-                        using (Stream s = response.GetResponseStream())
+                        if (response.StatusCode == HttpStatusCode.OK)
                         {
-                            Bitmap image = new Bitmap(s);
-                            return image;
+                            using (Stream s = response.Content.ReadAsStream())
+                            {
+                                Bitmap image = new Bitmap(s);
+                                return image;
+                            }
                         }
                     }
                 }

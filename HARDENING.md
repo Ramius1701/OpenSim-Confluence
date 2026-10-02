@@ -153,6 +153,28 @@ groups overview built on it) failed with a SQL error, and the two-week clean-up 
 and notices never ran on PostgreSQL 12 or newer (it used a column type that release removed), so they
 accumulated without limit.
 
+## Scripted outbound HTTP
+
+Three gaps let a script reach addresses `[Network] OutboundDisallowForUserScripts` is meant to block,
+found reviewing a same-day upstream Tranquillity fix and confirmed present here before porting:
+
+- `llSendRemoteData`'s destination was never checked against the outbound filter at all - only
+  `llHTTPRequest` was. A script could reach any address, including your own internal network, through
+  `llSendRemoteData` alone.
+- The `Image` dynamic-texture draw command (`llSetPrimitiveParams`/`osSetDynamicTextureURL`-style texture
+  rendering) fetched its URL with no filter check either, and followed redirects automatically with no
+  check on the redirect target.
+- `HTTP_MIMETYPE` on `llHTTPRequest` was written into the outgoing `Content-Type` header with no
+  validation - a line break in that one parameter could inject arbitrary header lines.
+
+All three are fixed: `llSendRemoteData` and the `Image` draw command now go through the same
+`OutboundUrlFilter` `llHTTPRequest` already used, including every redirect hop, not just the first URL;
+`HTTP_MIMETYPE` is validated as a real media type before being sent, and an invalid one refuses the
+request instead of sending it. No configuration changes - the same `[Network]
+OutboundDisallowForUserScripts`/`OutboundDisallowForUserScriptsExcept` keys already cover all three paths
+now. Replace the binaries and restart (scripts using these three paths get the same "disallowed by
+filter" error `llHTTPRequest` already gives for a blocked destination).
+
 ## Deployment checklist
 
 1. Back up the database (Gloebit migrations).
