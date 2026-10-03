@@ -26781,5 +26781,59 @@ coexisting with YEngine in one region. With only YEngine installed, that "other 
 so this fix would be a correct no-op on Confluence today - nothing to port, confirmed by reading the actual
 diff rather than assuming from the title.
 
-Full solution build clean after the two `llGetEnv`/`GetScriptErrors` changes. Not yet committed or deployed -
-awaiting direction.
+Full solution build clean after the two `llGetEnv`/`GetScriptErrors` changes. Committed (`f110e67dba`) and pushed.
+
+## Deploying #224 onto a partially-live grid
+
+Unlike every earlier deploy this session, the grid was not fully down when this one started: Robust and 7 of
+15 regions (Ranchero, Sandbox, Section_31, Starbase Andromeda, SVC, UFPGC, Welcome_Center) were up with real
+residents online, 8 regions were already stopped. A full-tree diff against the deployed copy again showed
+~200+ files differing (the same rebuild-MVID noise documented in the 2026-09-30 deploy-drift entry, not real
+content changes beyond the two touched files) - copied the whole set everywhere per the standing full-tree-diff
+rule, not just the two edited files.
+
+Copying to the 8 already-stopped regions and to grid root succeeded cleanly. Copying to the 7 **live** regions'
+`bin/` mostly failed with "The process cannot access the file" - confirmed this is real Windows file-locking on
+a running .NET process's loaded assemblies, not a transient error: tested a single file copy against a live
+region before committing to the full attempt. Root also partially failed for Robust's own loaded dependencies
+(log4net, MySql.Data, OpenSim.Services.*, Robust.dll itself, etc.) - expected and harmless, since neither of
+this session's two fixes touch Robust-loaded code at all. The two files that actually matter (`OpenSim.Region.
+ScriptEngine.Shared.Api.dll`, `OpenSim.Region.ScriptEngine.YEngine.dll`) copied clean to root and the 8 stopped
+regions; they stayed locked (and therefore stale in memory) on all 7 live regions until each one's process
+actually exited and relaunched - confirmed again that a graceful `region restart <seconds>` would not have been
+enough on its own (same "Region restart ≠ DLL reload" lesson as before).
+
+Found a real, already-built safety net while reading `OpenSim/Region/Application/OpenSim.cs` to plan the
+restart: `Shutdown()` is overridden to call `WarnConnectedResidentsBeforeShutdown()` before the real shutdown -
+if anyone is actually connected to that region, it broadcasts "<region> is shutting down in 30 seconds" via
+`IDialogModule.SendNotificationToUsersInRegion` and blocks 30s before proceeding; an empty region exits at
+once. This means the plain console `shutdown` command (posted to each region's own `/consoleweb` with the
+`X-Console-Secret` header, same REST pattern established earlier this session) already satisfies the "warn
+residents first" rule on its own, with no separate `region restart <seconds>` countdown needed first.
+
+Restarted UFPGC and Sandbox this way (shutdown via consoleweb -> wait for the process to actually exit -> copy
+the now-unlocked files -> relaunch with the same `-inifile=Simulators\<region>\OpenSim.ini -background=true
+-console=rest` args captured from the running process's own command line -> wait for the port to listen again)
+- both came back clean, confirmed via `OpenSim.log`'s own "Startup complete, serving 1 region" line. The attempt
+on a third region (Section_31) was refused twice in a row by the Claude Code permission classifier ("Remote
+Shell Writes") with no code-side explanation - the exact same intermittent live-process-action classifier
+inconsistency recorded in `casperia-live-process-stop-permission-inconsistency` from 2026-09-13. Stopped
+rather than retry or route around it, and asked the operator directly instead of guessing.
+
+**Operator's call**: rather than keep working around the classifier region by region, shut the entire remaining
+grid down manually and have it redeployed properly while fully stopped, then restart everything at once. Once
+confirmed fully down (`Get-Process -Name Robust,OpenSim` empty), redid the same full-tree copy to root and all
+15 regions with zero lock errors this time, then re-verified every file's MD5 against the source build at root
+and all 15 regions - "ALL VERIFIED MATCHING - ROOT + ALL 15 REGIONS". Operator restarted the grid themselves.
+
+**Post-restart check**: confirmed via `Get-CimInstance Win32_Process` that Robust + all 15 region processes
+were running (16 total, matched by `ExecutablePath` to each expected region). Spot-checked Starbase Andromeda's
+and Farm's `OpenSim.log` for a clean "Startup complete" line and a normally-reconnecting resident (Gloebit
+module responded to the new client normally). Then scanned every region's `OpenSim.log` for ERROR/WARN lines
+after their own most-recent "Startup complete" marker, and `Robust.log` (13.7M lines - scanned with a
+line-streaming `Select-String`, not a full in-memory read) for ERROR/FATAL since the restart window: 13 of 15
+regions and Robust itself came back with zero errors. GFC (2) and Welcome_Center (1) logged pre-existing
+"Failed to decode mesh asset"/"invalid degenerated mesh" warnings for already-known broken content, and Tangle
+logged its already-known batch of "Couldn't start script ... asset ID could not be found" lines (same missing-
+asset pattern seen on UFPGC during an earlier test restart this session) - none of these are new, and none are
+caused by tonight's code changes.

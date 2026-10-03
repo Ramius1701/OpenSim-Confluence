@@ -466,6 +466,8 @@ Treated as core, not an optional add-on:
 - `llIsExperienceTrusted`, `llGetExperiencePermissions`,
   `llExperienceCanAutoGrant`, `llGetExperienceKeyValueStoreStats`.
 - `osPerlinNoise2D`.
+- `llGetEnv("grid")` — the grid's configured name, with no OSSL
+  permission needed (previously only reachable via `osGetGridName()`).
 - In-world partnering: `osProposePartnership`, `osRespondToPartnershipProposal`,
   `osCancelPartnershipProposal`, `osEndPartnership`, `osGetPartnerId` -
   lets a scripted object (a ring, a chapel altar, anything a resident
