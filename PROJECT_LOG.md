@@ -26837,3 +26837,33 @@ regions and Robust itself came back with zero errors. GFC (2) and Welcome_Center
 logged its already-known batch of "Couldn't start script ... asset ID could not be found" lines (same missing-
 asset pattern seen on UFPGC during an earlier test restart this session) - none of these are new, and none are
 caused by tonight's code changes.
+
+## Log rotation: Robust.log had grown to 1.9GB, unbounded
+
+While reading those logs, found `Robust.log` had reached 1.9GB (region logs were smaller, 2-21MB, but still
+unbounded) - about five weeks of continuous `DEBUG`-level logging into one plain `log4net.Appender.FileAppender`
+with `appendToFile=true` and no cap. Both `bin/Robust.exe.config` and `bin/OpenSim.exe.config` already had a
+commented-out `RollingFileAppender` example sitting right above the real appender, never enabled.
+
+Operator asked whether logs should just be deleted on shutdown. Recommended against it: a delete-on-exit policy
+would erase the exact evidence needed after an unplanned crash, and this session's own restart-verification
+method (diffing each region's log against its last "Startup complete" marker) depends on history surviving
+across at least one restart. Rotation with retention is the standard fix instead, and it was already half-set-up
+in the very same config files.
+
+Switched `LogFileAppender` in both configs from `FileAppender` to `RollingFileAppender` with `rollingStyle=
+Composite` (rolls over at midnight **or** past `maxFileSize=100MB`, whichever comes first - the size cap is a
+safety valve for an unusually heavy day, not the normal trigger) and `maxSizeRollBackups=14` (oldest backup
+deleted once there are more than 14). `staticLogFileName=true` keeps the live file always named plain
+`Robust.log`/`OpenSim.log` - older content rotates out to `.log.1`, `.log.2`, etc., rather than the live file
+changing name, so nothing that reads the live path by its plain name (including this session's own log-sweep
+scripts) needs to change. Kept `OpenSim.exe.config`'s existing `MinimalLock` locking model and its explanatory
+comment intact - `RollingFileAppender` inherits the same `LockingModel` property from `FileAppender`, so the
+per-region multi-process-safe locking fix from earlier in this grid's life still applies unchanged.
+
+Both `bin/*.exe.config` files are real tracked source (not gitignored, not generated at build time), so this is
+a plain two-file edit, no build needed. Validated both as well-formed XML, then copied to grid root and all 15
+regions' `bin/` the same way as every other config deploy this session, confirmed byte-identical via `diff`.
+log4net only reads this file once at process startup, so - like every other binary/config change tonight - it
+takes effect on each process's *next* restart, not immediately; no restart was forced for this since it's not
+urgent and the grid had just come back up clean.
