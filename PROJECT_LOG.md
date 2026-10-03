@@ -26739,5 +26739,47 @@ rather than a `using System.Threading;` import, since this file already declares
 against `System.Timers.Timer` and importing both namespaces would make the bare `Timer` type name ambiguous.
 
 Full solution build clean. Region-side only (`OpenSim.Region.ScriptEngine.Shared.dll`, `OpenSim.Region.CoreModules.dll`)
-plus `OpenSim.Services.UserAccountService.dll` (loaded by Robust) - not yet deployed, same reasoning as the
-batch above: the grid is already down, this goes out in the same restart.
+plus `OpenSim.Services.UserAccountService.dll` (loaded by Robust). Committed (`054cd83d83`), pushed, and
+deployed to the grid root and all 15 region `bin/` directories, verified byte-for-byte via MD5 sweep.
+
+## Tranquillity review: #224/#225 - llGetEnv("grid"), a YEngine deadlock, and more Phlox-only hooks
+
+Fetched `tranquillity/develop` fresh (2026-10-04): four new commits since #223 - #224 and #225 touch core,
+shared files; #226 and #227 are pure Phlox script-engine code and test vectors (73k and 13k lines, entirely
+new `InWorldz.Phlox.*` projects and golden-vector test data) - no shared files touched, out of scope outright.
+
+**#224 - "Core hooks for the Phlox script engine (part 1 of 3)"**: despite the title, three of its six real
+changes are Phlox-exclusive plumbing with zero callers outside `Phlox.ScriptEngine` (confirmed by grepping
+every caller in Tranquillity's own tree, not assumed): `IFriendsModule.IsFriendInService`, `IProfileModule.
+GetUserPreferences(UUID)`, and `IWorldComm.OnMessageDelivered` all exist solely so Phlox's own `LSLSystemAPI.cs`/
+`PhloxEngine.cs` can call them - porting them here would add real interface surface with nothing in Confluence
+ever calling it. Skipped all three, plus the `TestClient` script-question helpers (only exercised by Phlox's
+own new tests) and the `IBotManager`/comment-wording changes (cosmetic).
+
+Ported the two genuinely engine-independent fixes from the same commit:
+- **`llGetEnv("grid")`**: previously fell through to the default case and returned `""` - no grid-name lookup
+  existed in `llGetEnv` at all, only via the OSSL-gated `osGetGridName()`. Added the same `EnvGridName(Scene)`
+  helper Tranquillity uses (reads `Scene.SceneGridInfo.GridName`, filters out `GridInfo`'s own "Another bad
+  configured grid" stand-in the same way `osGetGridName()` already does) and wired it into `LSL_Api.cs`'s
+  `llGetEnv` switch. A plain LSL builtin now gives scripts the grid name without needing OSSL permission at all.
+- **YEngine `GetScriptErrors(itemID)` deadlock**: `Monitor.Wait(m_ScriptErrors)` looped forever if `itemID`
+  never got an entry in `m_ScriptErrors` - normally impossible on a single-engine region since `OnRezScript()`
+  always posts one, but Tranquillity's own fix notes `SceneObjectPartInventory.GetScriptErrors()` asks every
+  engine of the region in turn, so a region running more than one engine type would hang on the first non-owning
+  engine forever (the caller - a script save from the viewer - and every engine after it would never get a
+  response). Confluence only ships YEngine today, so this exact multi-engine trigger can't occur, but the fix
+  itself is a strict improvement with no engine-count dependency: an item this engine never compiled now returns
+  an empty list immediately instead of blocking indefinitely. Ported as a defensive hardening fix.
+
+**#225 - "Deliver dataserver answers and osMessageObject to every script in the prim, in every engine"**:
+checked carefully since it's the same *shape* of fix as #221 (which had a real, non-Phlox cross-region bug) -
+but this one is different. `Dataserver.cs`'s old code already called `m_CmdManager.m_ScriptEngine.PostObjectEvent`
+(the *calling* engine only, scoped correctly to its own region from the start - no process-wide static list
+involved, unlike #221's `HttpRequest.cs`). The fix adds delivery to *other script engines of the same region*
+via `own.World.RequestModuleInterfaces<IScriptModule>()` - purely to reach a second engine type (Phlox)
+coexisting with YEngine in one region. With only YEngine installed, that "other engines" list is always empty,
+so this fix would be a correct no-op on Confluence today - nothing to port, confirmed by reading the actual
+diff rather than assuming from the title.
+
+Full solution build clean after the two `llGetEnv`/`GetScriptErrors` changes. Not yet committed or deployed -
+awaiting direction.
