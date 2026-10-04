@@ -34,6 +34,7 @@ using System.Net.Security;
 using System.Reflection;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
+using System.Threading.Tasks;
 using log4net;
 using Nini.Config;
 using OpenMetaverse;
@@ -176,6 +177,9 @@ namespace OpenSim.Region.CoreModules.Scripting.HttpRequest
                             shhnc.Proxy = proxy;
                             shhnc.UseProxy = true;
                         }
+                        // Connect only to addresses the filter allows, on every request and redirect; a
+                        // connection to the proxy is left alone.
+                        shhnc.ConnectCallback = ConnectToAllowedAddress;
 
                         VeriFyNoCertClient = new HttpClient(shhnc)
                         {
@@ -214,6 +218,7 @@ namespace OpenSim.Region.CoreModules.Scripting.HttpRequest
                             shh.Proxy = proxy;
                             shh.UseProxy = true;
                         }
+                        shh.ConnectCallback = ConnectToAllowedAddress;
                         VeriFyCertClient = new HttpClient(shh)
                         {
                             Timeout = TimeSpan.FromMilliseconds(httpTimeout),
@@ -466,6 +471,14 @@ namespace OpenSim.Region.CoreModules.Scripting.HttpRequest
             return m_outboundUrlFilter.CheckAllowed(url);
         }
 
+        /// <summary>
+        /// The connect step of the shared clients: only to an address the current filter allows.
+        /// </summary>
+        private static ValueTask<Stream> ConnectToAllowedAddress(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+        {
+            return m_outboundUrlFilter.ConnectToAllowedAddress(context, cancellationToken);
+        }
+
         public void StopHttpRequest(uint localID, UUID m_itemID)
         {
             List<UUID> toremove = new();
@@ -705,9 +718,9 @@ namespace OpenSim.Region.CoreModules.Scripting.HttpRequest
                 }
             }
             catch (HttpRequestException e)
-            {              
+            {
                 Status = e.StatusCode is null ? 499 : (int)e.StatusCode;
-                ResponseBody = e.Message;
+                ResponseBody = OutboundUrlFilterRefusedException.Unwrap(e).Message;
             }
             catch (Exception e)
             {

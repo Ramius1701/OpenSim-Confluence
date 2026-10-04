@@ -171,6 +171,9 @@ namespace OpenSim.Data.PGSQL
             es.EstateManagers = LoadUUIDList(es.EstateID, "estate_managers");
             es.EstateAccess = LoadUUIDList(es.EstateID, "estate_users");
             es.EstateGroups = LoadUUIDList(es.EstateID, "estate_groups");
+            es.AllowedExperiences = LoadUUIDList(es.EstateID, "estate_allowed_experiences");
+            es.KeyExperiences = LoadUUIDList(es.EstateID, "estate_key_experiences");
+            es.BlockedExperiences = LoadUUIDList(es.EstateID, "estate_blocked_experiences");
 
             //Set event
             es.OnSave += StoreEstateSettings;
@@ -191,6 +194,9 @@ namespace OpenSim.Data.PGSQL
             es.EstateManagers = LoadUUIDList(es.EstateID, "estate_managers");
             es.EstateAccess = LoadUUIDList(es.EstateID, "estate_users");
             es.EstateGroups = LoadUUIDList(es.EstateID, "estate_groups");
+            es.AllowedExperiences = LoadUUIDList(es.EstateID, "estate_allowed_experiences");
+            es.KeyExperiences = LoadUUIDList(es.EstateID, "estate_key_experiences");
+            es.BlockedExperiences = LoadUUIDList(es.EstateID, "estate_blocked_experiences");
 
             return es;
         }
@@ -274,6 +280,9 @@ namespace OpenSim.Data.PGSQL
             SaveUUIDList(es.EstateID, "estate_managers", es.EstateManagers);
             SaveUUIDList(es.EstateID, "estate_users", es.EstateAccess);
             SaveUUIDList(es.EstateID, "estate_groups", es.EstateGroups);
+            SaveUUIDList(es.EstateID, "estate_allowed_experiences", es.AllowedExperiences);
+            SaveUUIDList(es.EstateID, "estate_key_experiences", es.KeyExperiences);
+            SaveUUIDList(es.EstateID, "estate_blocked_experiences", es.BlockedExperiences);
         }
 
         #endregion
@@ -439,6 +448,9 @@ namespace OpenSim.Data.PGSQL
             es.EstateManagers = LoadUUIDList(es.EstateID, "estate_managers");
             es.EstateAccess = LoadUUIDList(es.EstateID, "estate_users");
             es.EstateGroups = LoadUUIDList(es.EstateID, "estate_groups");
+            es.AllowedExperiences = LoadUUIDList(es.EstateID, "estate_allowed_experiences");
+            es.KeyExperiences = LoadUUIDList(es.EstateID, "estate_key_experiences");
+            es.BlockedExperiences = LoadUUIDList(es.EstateID, "estate_blocked_experiences");
 
             //Set event
             es.OnSave += StoreEstateSettings;

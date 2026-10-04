@@ -165,7 +165,8 @@ namespace OpenSim.Region.Framework.Scenes
                 CreatorID = item.CreatorIdAsUuid,
                 Type = item.AssetType,
                 InvType = item.InvType,
-                Flags = item.Flags
+                Flags = item.Flags,
+                ExperienceID = item.ExperienceID
             };
 
             if (agentID.NotEqual(part.OwnerID) && m_scene.Permissions.PropagatePermissions())
@@ -581,7 +582,18 @@ namespace OpenSim.Region.Framework.Scenes
                 XmlElement stateE = (XmlElement)n;
                 UUID itemID = new(stateE.GetAttribute("UUID"));
 
-                scriptModule.SetXMLState(itemID, n.OuterXml);
+                // One script's state must not cost the object's other scripts theirs: an engine that
+                // throws on a malformed or unexpected state is skipped, not allowed to abort the rest.
+                try
+                {
+                    scriptModule.SetXMLState(itemID, n.OuterXml);
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat(
+                        "[SCENE OBJECT GROUP]: Script engine {0} failed to take the state of script {1} in object {2} id {3}: {4}",
+                        scriptModule.ScriptEngineName, itemID, Name, UUID, e.Message);
+                }
             }
         }
 

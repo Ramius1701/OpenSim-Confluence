@@ -402,6 +402,17 @@ namespace OpenSim.Framework
         }
         protected UUID m_thumbnail;
 
+        /// <value>
+        /// The Experience a script item was compiled into, or UUID.Zero. The same link as
+        /// TaskInventoryItem.ExperienceID, kept while the script is in a user's inventory.
+        /// </value>
+        public UUID ExperienceID
+        {
+            get { return m_experienceID; }
+            set { m_experienceID = value; }
+        }
+        protected UUID m_experienceID = UUID.Zero;
+
         public InventoryItemBase()
         {
         }

@@ -225,7 +225,7 @@ namespace OpenSim.Services.Connectors
                 {
                     var items = (Dictionary<string, object>)oitems;
                     foreach (object o in items.Values) // getting the values directly, we don't care about the keys item_i
-                        inventory.Items.Add(BuildItem((Dictionary<string, object>)o));
+                        inventory.Items.Add(ReadItem((Dictionary<string, object>)o));
                 }
             }
             catch (Exception e)
@@ -304,7 +304,7 @@ namespace OpenSim.Services.Connectors
                         {
                             foreach (object o in items.Values) // getting the values directly, we don't care about the keys item_i
                             {
-                                inventory.Items.Add(BuildItem((Dictionary<string, object>)o));
+                                inventory.Items.Add(ReadItem((Dictionary<string, object>)o));
                             }
                         }
                         inventoryArr[i] = inventory;
@@ -336,7 +336,7 @@ namespace OpenSim.Services.Connectors
             Dictionary<string, object> items = (Dictionary<string, object>)ret["ITEMS"];
             List<InventoryItemBase> fitems = new(items.Count);
             foreach (object o in items.Values) // getting the values directly, we don't care about the keys item_i
-                fitems.Add(BuildItem((Dictionary<string, object>)o));
+                fitems.Add(ReadItem((Dictionary<string, object>)o));
 
             return fitems;
         }
@@ -424,7 +424,8 @@ namespace OpenSim.Services.Connectors
                         { "SalePrice", item.SalePrice.ToString() },
                         { "SaleType", item.SaleType.ToString() },
                         { "Flags", item.Flags.ToString() },
-                        { "CreationDate", item.CreationDate.ToString() }
+                        { "CreationDate", item.CreationDate.ToString() },
+                        { "ExperienceID", item.ExperienceID.ToString() }
                     });
 
             return CheckReturn(ret);
@@ -456,7 +457,8 @@ namespace OpenSim.Services.Connectors
                         { "SalePrice", item.SalePrice.ToString() },
                         { "SaleType", item.SaleType.ToString() },
                         { "Flags", item.Flags.ToString() },
-                        { "CreationDate", item.CreationDate.ToString() }
+                        { "CreationDate", item.CreationDate.ToString() },
+                        { "ExperienceID", item.ExperienceID.ToString() }
                     });
 
             bool result = CheckReturn(ret);
@@ -522,7 +524,7 @@ namespace OpenSim.Services.Connectors
                 if (!CheckReturn(ret))
                     return null;
 
-                retrieved = BuildItem((Dictionary<string, object>)ret["item"]);
+                retrieved = ReadItem((Dictionary<string, object>)ret["item"]);
             }
             catch (Exception e)
             {
@@ -582,7 +584,7 @@ namespace OpenSim.Services.Connectors
                     {
                         if (kvp.Value is Dictionary<string, object> dic)
                         {
-                            item = BuildItem(dic);
+                            item = ReadItem(dic);
                             m_ItemCache.AddOrUpdate(item.ID, item, CACHE_EXPIRATION_SECONDS);
                             itemArr[i++] = item;
                         }
@@ -633,7 +635,7 @@ namespace OpenSim.Services.Connectors
             List<InventoryItemBase> items = new(itemsDict.Count);
 
             foreach (object o in itemsDict.Values)
-                items.Add(BuildItem((Dictionary<string, object>)o));
+                items.Add(ReadItem((Dictionary<string, object>)o));
 
             return items;
         }
@@ -705,6 +707,21 @@ namespace OpenSim.Services.Connectors
             return new InventoryFolderBase();
         }
 
+        /// <summary>
+        /// False for a connector to another grid's inventory server. That server cannot vouch for a script's
+        /// Experience link (a script in a prim runs in its Experience), so items read through this connector
+        /// have none.
+        /// </summary>
+        public bool AcceptsExperienceLinks { get; set; } = true;
+
+        private InventoryItemBase ReadItem(Dictionary<string,object> data)
+        {
+            InventoryItemBase item = BuildItem(data);
+            if (!AcceptsExperienceLinks)
+                item.ExperienceID = UUID.Zero;
+            return item;
+        }
+
         private static InventoryItemBase BuildItem(Dictionary<string,object> data)
         {
             try
@@ -734,6 +751,9 @@ namespace OpenSim.Services.Connectors
                 };
                 if (data.TryGetValue("CreatorData", out object oCreatorData))
                     item.CreatorData = (string)oCreatorData;
+                // Absent from a server that predates the field: no Experience.
+                if (data.TryGetValue("ExperienceID", out object oExperienceID) && UUID.TryParse(oExperienceID as string, out UUID experienceID))
+                    item.ExperienceID = experienceID;
                 return item;
             }
             catch (Exception e)

@@ -214,3 +214,8 @@ alter table inventoryfolders add column "thumbnail" uuid NOT NULL DEFAULT '00000
 
 Commit;
 
+:VERSION 12         #----- add script experience link to inventoryitems
+BEGIN;
+ALTER TABLE inventoryitems ADD COLUMN "experienceID" uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+COMMIT;
+

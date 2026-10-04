@@ -3275,20 +3275,13 @@ namespace OpenSim.Region.Framework.Scenes
                 PrevSitOffset = m_pos; // Save sit offset
                 UnRegisterSeatControls(part.ParentGroup.UUID);
 
-                TaskInventoryDictionary taskIDict = part.TaskInventory;
-                if (taskIDict != null)
-                {
-                    lock (taskIDict)
-                    {
-                        foreach (UUID taskID in taskIDict.Keys)
-                        {
-                            UnRegisterControlEventsToScript(LocalId, taskID);
-                            taskIDict[taskID].PermsMask &= ~(
-                                2048 | //PERMISSION_CONTROL_CAMERA
-                                4); // PERMISSION_TAKE_CONTROLS
-                        }
-                    }
-                }
+                // SL llSetCameraParams: "The PERMISSION_CONTROL_CAMERA permission is automatically revoked when
+                // the avatar stands up from or detaches the object". Every prim of the object, and only grants
+                // this avatar made: a script holds permissions "for only one agent at a time"
+                // (llRequestPermissions) - a second sitter's grant in the sat-on prim is left alone.
+                part.ParentGroup.RemoveScriptsPermissions(this,
+                        2048 | //PERMISSION_CONTROL_CAMERA
+                        4); // PERMISSION_TAKE_CONTROLS
 
                 ControllingClient.SendClearFollowCamProperties(part.ParentUUID);
 
@@ -3564,7 +3557,10 @@ namespace OpenSim.Region.Framework.Scenes
 
             if (ParentID != 0)
             {
-                if (agent_id.Equals(ParentPart.UUID))
+                // SL llSitOnLink: "The avatar specified by agent_id is forced to sit on the sit target of the
+                // prim indicated by the link parameter." An avatar already there has nothing to do - compare
+                // the target prim, not the avatar's own id against a prim id (which is never equal).
+                if (part.UUID.Equals(ParentPart.UUID))
                     return; // already sitting here, ignore
                 StandUp();
             }
@@ -6100,14 +6096,30 @@ namespace OpenSim.Region.Framework.Scenes
             }
         }
 
+        /// <summary>
+        /// Same null-safety and rule as the stand-up and change-seat checks: ExperienceModule is off by default,
+        /// so no module means nothing is holding this seat.
+        /// </summary>
+        private bool ExperienceHoldsSeat()
+        {
+            return ParentPart != null && !ParentPart.AllowUnsit &&
+                    Scene.ExperienceModule != null &&
+                    Scene.ExperienceModule.GetExperiencePermission(this.UUID, ParentPart.ExperienceUsedForSit) == ExperiencePermission.Allowed;
+        }
+
         public void HandleForceReleaseControls(IClientAPI remoteClient, UUID agentID)
         {
+            List<SceneObjectGroup> holders = new();
             lock (scriptedcontrols)
             {
                 foreach (ScriptControllers c in scriptedcontrols.Values)
                 {
                     SceneObjectGroup sog = m_scene.GetSceneObjectGroup(c.objectID);
-                    if(sog != null && !sog.IsDeleted && sog.RootPart.PhysActor != null)
+                    if (sog == null || sog.IsDeleted)
+                        continue;
+                    if (!holders.Contains(sog))
+                        holders.Add(sog);
+                    if (sog.RootPart.PhysActor != null)
                         sog.RootPart.PhysActor.OnPhysicsRequestingCameraData -= physActor_OnPhysicsRequestingCameraData;
                 }
 
@@ -6115,6 +6127,16 @@ namespace OpenSim.Region.Framework.Scenes
                 scriptedcontrols.Clear();
             }
             ControllingClient.SendTakeControls(int.MaxValue, false, false);
+
+            // SL llTakeControls: PERMISSION_TAKE_CONTROLS "can be revoked ... if the user chooses Release Keys
+            // from the viewer".
+            foreach (SceneObjectGroup sog in holders)
+                sog.RemoveScriptsPermissions(this, 4); // PERMISSION_TAKE_CONTROLS
+
+            // A forced release also stands the avatar up, as SL does (Halcyon's own comment: "SL stands up the
+            // user on a forced controls release"), unless PRIM_ALLOW_UNSIT holds it in its seat.
+            if (IsSatOnObject && !ExperienceHoldsSeat())
+                StandUp();
         }
 
         public void HandleRevokePermissions(UUID objectID, uint permissions )

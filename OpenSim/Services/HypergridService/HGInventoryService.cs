@@ -65,6 +65,9 @@ namespace OpenSim.Services.HypergridService
             if (configName != string.Empty)
                 m_ConfigName = configName;
 
+            // Regions of other grids write here; they cannot vouch for a script's Experience link.
+            m_AcceptsExperienceLinks = false;
+
             //
             // Try reading the [InventoryService] section, if it exists
             //

@@ -884,9 +884,14 @@ namespace OpenSim.Region.CoreModules.Scripting.VectorRender
                 }
 
                 // Redirects are followed by the filtering handler (the default handler's 50 hops, each one
-                // checked) instead of by HttpClientHandler, which would follow them unchecked.
+                // checked) instead of by the handler itself, which would follow them unchecked. A connection
+                // straight to the target goes only to an address the filter allows; one to the default proxy
+                // is left alone.
+                if (uri is null)
+                    return null;
+
                 HttpMessageHandler handler = new OutboundUrlFilterRedirectHandler(
-                        m_outboundUrlFilter, new HttpClientHandler { AllowAutoRedirect = false }, 50);
+                        m_outboundUrlFilter, m_outboundUrlFilter.CreateHandler(HttpClient.DefaultProxy), 50);
                 using (HttpClient client = new HttpClient(handler))
                 {
                     using (HttpResponseMessage response = client.GetAsync(url).Result)

@@ -5207,9 +5207,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             if ((ownerPowers & (ulong)GroupPowers.Invite) == 0)
                 return ScriptBaseClass.FALSE;
 
-            m_groupsModule.InviteGroup(null, m_host.OwnerID, m_host.GroupID, agent, UUID.Zero);
+            bool invited = m_groupsModule.InviteGroup(null, m_host.OwnerID, m_host.GroupID, agent, UUID.Zero);
 
-            return ScriptBaseClass.TRUE;
+            return invited ? ScriptBaseClass.TRUE : ScriptBaseClass.FALSE;
         }
 
         /// <summary>
@@ -5237,9 +5237,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             if ((ownerPowers & (ulong)GroupPowers.Eject) == 0)
                 return ScriptBaseClass.FALSE;
 
-            m_groupsModule.EjectGroupMember(null, m_host.OwnerID, m_host.GroupID, agent);
+            bool ejected = m_groupsModule.EjectGroupMember(null, m_host.OwnerID, m_host.GroupID, agent);
 
-            return ScriptBaseClass.TRUE;
+            return ejected ? ScriptBaseClass.TRUE : ScriptBaseClass.FALSE;
         }
 
         /// <summary>

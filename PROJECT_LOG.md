@@ -26914,3 +26914,410 @@ meant Robust was running with no file logging at all until fixed. Corrected both
 15 regions' `bin/`. The operator restarted Robust a second time to pick it up; `Robust.log` immediately rolled
 over on that restart (the pre-existing file was already far past 100MB), confirming the corrected config
 actually works, not just that it parses.
+
+---
+
+## Checking Tranquillity's open PRs, not just `develop` - a real gap in the review process
+
+Realized the standing review habit ("fetch `tranquillity/develop`, diff against the last reviewed commit")
+only ever sees work *after* it merges. A user mentioned getting GitHub PR notifications, which prompted
+actually listing Tranquillity's open pull requests - 19 of them, almost entirely from `JohnLegionH` plus two
+older ones from `playsimgrid`, none merged into `develop` yet. The donor-repo review process from here on
+needs to check open PRs too, not just `develop` - this had been a real blind spot for the last several
+"nothing new on develop" conclusions.
+
+Added two fork-author remotes to fetch every PR branch at once rather than one GitHub CLI call per PR:
+`tranquillity-johnlegionh` (`github.com/JohnLegionH/OpenSim-Tranquillity`, ~30 branches) and
+`tranquillity-playsim` (`github.com/playsimgrid/OpenSim-Tranquillity`, the one branch behind PR #208).
+
+Triaged all 19: 12 are real, Phlox-independent fixes worth porting; the rest are either Phlox-only (same
+multi-engine-delivery pattern as #221/#225 - #228, #229, half of #233, and #243, whose "fix" changes nothing
+because YEngine only ever writes the one exact mask it already special-cased), a regression specific to
+Tranquillity's own SkiaSharp migration that Confluence never underwent (#204 - confirmed Confluence's
+`LegacyMap/MapImageModule.cs` already wires up `terrainRenderer.Initialise`/`TerrainToBitmap` correctly), or
+not code (#237 docs reorg, #236 comment cleanup, #231 test-project plumbing for their own xUnit setup, #238
+Phlox follow-up).
+
+**The 12 to port, roughly in priority order**: #234 (DNS-rebinding TOCTOU in `OutboundUrlFilter`, directly
+extending the #220 security work), #230 (7 real sitting bugs against the SL wiki and Halcyon), #232 (PostgreSQL
+`prims` migration uses MySQL backtick quoting; SQLite reads a NULL task-item description as a hard cast
+failure), #242 (estate Experience lists persist on MySQL only), #241 (IMs aren't checked against the mute
+list), #245 (a script's Experience link is lost the moment it's taken into inventory), #244 (Experience links
+aren't stripped from Hypergrid-foreign object/attachment data), #240 (`InviteGroup`/`EjectGroupMember` return
+nothing; no way to read a user's partner from region code), #239 (`PRIM_REFLECTION_PROBE` flags returned as
+float, not integer, per the SL wiki), #235 (new `BlockedOwnerModule` - an estate ban doesn't stop a banned
+owner's existing objects from continuing to rez), and #233's other half (malformed saved script-state XML
+currently fails the whole rez instead of just that one script).
+
+### #234 ported - OutboundUrlFilter DNS-rebinding fix
+
+`OutboundUrlFilter.CheckAllowed` resolves and judges a host once, at script-call time; the actual connection
+(`HttpClient`/`SocketsHttpHandler`, with no connect callback) resolves the SAME host again when it actually
+connects. A host that answers differently between those two lookups (DNS rebinding) reaches whatever address
+it returns the second time, regardless of what the first lookup was judged against. Confirmed the exact same
+gap in every one of Confluence's own outbound-script-HTTP paths: `ScriptsHttpRequests.cs` (`llHTTPRequest`'s
+shared `VeriFyCertClient`/`VeriFyNoCertClient`), `VectorRenderModule.cs` (dynamic-texture image fetch),
+`XMLRPCModule.cs` (`llSendRemoteData`), and `LoadImageURLModule.cs` (a separate dynamic-texture URL loader) -
+the same four paths the earlier #220 security pass hardened against the *destination* being disallowed, none
+of which pinned the *connection* to the address that was actually checked.
+
+**Fix** (ported from Tranquillity's `fix/outbound-http-address-check`, three commits on top of #223): added a
+`SocketsHttpHandler.ConnectCallback` (`OutboundUrlFilter.ConnectToAllowedAddress`/`CreateConnectCallback`/
+`ApplyTo`/`CreateHandler`) that re-resolves the host at actual connection time and connects only to an address
+`IsAddressAllowed` accepts - the address used is the address judged, every time, including on every redirect
+hop (the callback fires again on each one). A connection that's going to a proxy rather than straight to the
+target is left alone (the proxy does its own resolution; there's no target address here to judge). Also fixed
+along the way: an IPv4-mapped IPv6 answer (`::ffff:a.b.c.d`) was being treated as a bare IPv6 address (always
+refused) instead of the IPv4 address it actually carries.
+
+Preserved a Confluence-specific carve-out that doesn't exist upstream: `CheckAllowed` never lets a scripted
+`/lslhttp/` callback URL use the exception list to slip past the blacklist. Threaded an `allowExceptions` flag
+through the new `IsAddressAllowed`/`ConnectToAllowedAddress` so the connect-time check enforces the exact same
+carve-out the call-time check already did, worked out from the connection's own `InitialRequestMessage.RequestUri`
+when one is available (unknown defaults to the ordinary, exceptions-allowed case - the callback only ever
+narrows what `CheckAllowed` already approved, never approves more).
+
+**`LoadImageURLModule.cs` needed a bigger change than the other three**: unlike `VectorRenderModule.cs` and
+`XMLRPCModule.cs` (already `HttpClient`-based from the #220 port), this one was still on the legacy
+`HttpWebRequest`/`WebRequest.Create` API with its own manual 301/302/303/307 redirect-following loop. No
+`ConnectCallback` equivalent exists on `HttpWebRequest`. Modernized it to `HttpClient` + `OutboundUrlFilterRedirectHandler`
+(mirroring the exact precedent from the #220 port, where `VectorRenderModule.cs` got the same treatment for the
+same reason) - converted the async-callback flow (`BeginGetResponse`/`EndGetResponse`/`IAsyncResult`) to
+`GetAsync(...).ContinueWith(...)`, and dropped the now-redundant manual redirect loop since the new handler
+follows redirects (and checks each one) itself. The `System.Drawing.Bitmap`-based image decode/resize/OpenJPEG-
+encode logic is untouched.
+
+`XMLRPCModule.cs` needed one more adjustment beyond the #220-era code: the shared process-wide
+`WebUtil.SharedSocketsHttpHandlerNoRedir` can't have its `ConnectCallback` set directly (many unrelated callers
+share that one handler instance; pinning it to this filter would wrongly apply to all of them). Built a new
+`SocketsHttpHandler` per call instead, copying the shared handler's timeout/proxy/pooling/TLS settings, with
+`UrlFilter.ApplyTo(...)` applied only to the new instance - matching Tranquillity's own fix exactly.
+
+Build clean, 0 warnings. All four files are region-side (`OpenSim.Region.CoreModules.dll`); `OutboundUrlFilter.cs`/
+`OutboundUrlFilterRedirectHandler.cs` are in `OpenSim.Framework.dll`, loaded by both regions and Robust (Robust
+doesn't run scripts, so the fix has no Robust-side effect, but the DLL still needs to match everywhere for the
+full-tree-diff deploy discipline).
+
+### #230 ported - 7 real sitting bugs, cross-checked against the SL wiki and Halcyon
+
+Each of the 7 items was verified against Confluence's actual current code before touching anything, not
+assumed from the PR body.
+
+1. **Standing left other prims' camera/controls grants in place.** `ScenePresence.StandUp`'s manual loop over
+   `part.TaskInventory` only ever touched the sat-on prim, and stripped every grant in it regardless of who
+   granted it (bug 2, a second sitter on a multi-seat object lost their grant when the first sitter stood).
+   Confluence already has the exact right helper for this - `SceneObjectGroup`/`SceneObjectPartInventory`'s
+   `RemoveScriptsPermissions(ScenePresence sp, int permissions)` overload, which filters by `PermsGranter`,
+   clears the granter when the mask hits zero, and unregisters control events - the same helper
+   `AttachmentsModule.cs`'s two detach paths already use. Replaced the manual loop with
+   `part.ParentGroup.RemoveScriptsPermissions(this, 2048 | 4)`, fixing both bugs with Confluence's own
+   existing code, not new code.
+2. (fixed by the same change as 1.)
+3. **Release Keys didn't stand the avatar up or revoke `PERMISSION_TAKE_CONTROLS`.** Matches Halcyon's own
+   comment ("SL stands up the user on a forced controls release"). Added a `holders` list collected while
+   clearing `scriptedcontrols`, called `RemoveScriptsPermissions(this, 4)` per holder, then stand up unless a
+   new `ExperienceHoldsSeat()` helper says an Experience is holding the seat - the exact same null-safe
+   `ExperienceModule != null && GetExperiencePermission(...) == Allowed` pattern already duplicated at the
+   stand-button and change-seat call sites, extracted once rather than duplicated a third time. **Not ported**:
+   upstream's version of this fix also raises `EventManager.OnScriptControlsReleased` with the released item
+   ids - that event and its `released` array come from Tranquillity's own PR #218, which turns out to have
+   never been ported here (it's not in the PR backlog; it must have been missed in an earlier pass, since it
+   sits chronologically between #217 and #220 in `develop`'s own history - worth checking next, separately).
+4. **Detach/drop didn't clear the scripted camera.** `AttachmentsModule.cs`'s two detach paths already revoke
+   the permissions but never sent a follow-camera clear, unlike `StandUp`'s own `SendClearFollowCamProperties`
+   call. Added the same call via a new small `ClearScriptedCamera` helper at both sites.
+5. **A sit target couldn't be active at a zero offset.** `SceneObjectPart.IsSitTargetSet` was computed purely
+   from the offset/rotation values, so `<0,0,0>` could never read as "set" even though SL explicitly allows
+   it. Added the real fix: a nullable `m_sitTargetActive` backing field, a `SitTargetActive` property, a
+   `SetSitTarget(active, offset, rotation)` setter, and `SitTargetActiveIsExplicit` so the XML serializer only
+   writes the new element when it would actually change the answer (every other object round-trips
+   byte-for-byte as before). `SitTargetPosition`/`SitTargetOrientation`'s existing setters reset the flag to
+   null (back to derived) when set directly - confirmed the three DB backends' region-load path uses the
+   *other*, LL-suffixed sibling properties (`SitTargetPositionLL`/`SitTargetOrientationLL`, which don't touch
+   the flag), so a DB-loaded object correctly keeps the old derived rule exactly as upstream intends (no DB
+   column in this PR) and only an XML-loaded object (crossing, take-and-rez, OAR/IAR) gets the new explicit
+   state. `llGetLinkPrimitiveParams`'s own raw `SitTargetOrientationLL == Identity && SitTargetPosition ==
+   Zero` check replaced with `!IsSitTargetSet`. `PRIM_SIT_TARGET`'s setter: any nonzero `active` now sets the
+   target (was `== 1` only), with the existing 1e-5m-offset workaround kept since the region stores still
+   don't persist the new flag.
+6. **`llSitOnLink` onto the avatar's own seat wrongly stood it up and re-sat it.** `ScenePresence.ScriptedSit`
+   had `if (agent_id.Equals(ParentPart.UUID))` - comparing an avatar id against a prim id, never true. Fixed
+   to `part.UUID.Equals(ParentPart.UUID)`, matching the already-correct comparison in the manual-sit path a
+   few hundred lines above it in the same file.
+7. **Not ported** - `SceneObjectPart.ExperienceUsedForSit` is upstream's dead field (nothing in *their* tree
+   reads or writes it; they moved the Experience-that-seated-you state onto `ScenePresence` instead). Checked
+   Confluence's own code before touching this: `ExperienceUsedForSit` is very much alive here - read at both
+   the stand-button and change-seat Experience-permission checks (`ScenePresence.cs`, the
+   `ExperienceModule.GetExperiencePermission(..., ParentPart.ExperienceUsedForSit)` calls). Removing it would
+   have broken Confluence's own Experience-seat-holding feature. Left untouched.
+
+Build clean, 0 warnings. All region-side (`OpenSim.Region.Framework.dll`, `OpenSim.Region.CoreModules.dll`,
+`OpenSim.Region.ScriptEngine.Shared.dll`).
+
+### #232 - only the SQLite half applies; PostgreSQL's doesn't
+
+Checked both halves against Confluence's actual migration files before porting anything - this one turned
+out to be partly inapplicable.
+
+**PostgreSQL half does not apply.** The PR's claim is that `RegionStore.migrations` versions 53 and 58 quote
+identifiers with MySQL backticks, which PostgreSQL rejects, silently failing and leaving `prims` without a
+`linksetdata`/`StartStr` column. Confluence's own PGSQL migration history diverged from Tranquillity's well
+before this point: our version 53 is a *different* migration entirely (`lnkstBinData bytea`, a binary
+linkset-data format, not Tranquillity's `linksetdata varchar`), and our version 58 already reads
+`ALTER TABLE prims ADD COLUMN "StartStr" TEXT;` - correctly double-quoted, no backticks anywhere. Confirmed
+`PGSQLSimulationData.cs` references `lnkstBinData`/`StartStr` consistently with what the migration actually
+creates. Nothing to fix here; whatever introduced Confluence's PGSQL support for these columns already got
+the quoting right.
+
+**SQLite half is real and was ported.** `SQLiteSimulationData.cs`'s task-item load does
+`taskItem.Description = (String)row["description"];` with no null guard - confirmed `StorePrimInventory`
+writes a null `Description` as a DB NULL, and the column is nullable. The cast throws, `LoadObjects` catches
+it after the object was already added to the scene, and the prim comes back with an empty inventory - a
+real, silent data-loss bug on reload. Fixed to read a NULL description as an empty string, matching the
+column's actual nullability instead of assuming every row has one.
+
+Build clean, 0 warnings. `OpenSim.Data.SQLite.dll` only.
+
+### #242 ported - estate Experience lists missing from SQLite and PostgreSQL
+
+An Experience allowed, made key, or blocked on an estate only ever persisted on MySQL - SQLite and PostgreSQL
+loaded and saved the managers/access/groups lists but never the three Experience lists, so they vanished on
+every region restart. Confirmed both stores already had a generic `LoadUUIDList(estateID, table)`/
+`SaveUUIDList(estateID, table, data)` helper pair doing exactly this for the other three lists - adding the
+Experience lists was three more calls at each existing call site (three load sites and one save site in
+`PGSQLEstateData.cs`, two load sites and one save site in `SQLiteEstateData.cs`), no new code.
+
+New migration tables (`estate_allowed_experiences`/`estate_key_experiences`/`estate_blocked_experiences`,
+same shape as the existing lists: `EstateID` + `uuid`, indexed on `EstateID`) at SQLite version 14 and
+PostgreSQL version 17 - **not** the PR's own 13/16, since Confluence's estate migration history had already
+diverged (SQLite 13 and PGSQL 16 are both Confluence's own `DenyNewAccounts` column, part of the Trial
+Member throwaway-account protection). Checked the actual last version in each file before assigning a
+number, same lesson as every other migration-numbering mismatch this session.
+
+Build clean, 0 warnings. `OpenSim.Data.SQLite.dll` and `OpenSim.Data.PGSQL.dll`.
+
+### #241 ported - IMs weren't checked against the mute list at all
+
+Neither `MessageTransferModule` nor `HGMessageTransferModule` read the recipient's mute list before
+delivering a person's IM or an object's `llInstantMessage` - a muted sender's message reached the recipient
+exactly as an unmuted one would. New `InstantMessageMuteCheck.cs` (ported close to verbatim, converted from
+`Microsoft.Extensions.Logging` to log4net, a plain nested class instead of a C# `record` for the cache entry -
+no behavior difference): drops a `MessageFromAgent`/`MessageFromObject` IM when the recipient's mute list has
+a row for the sender (or, for an object's IM, the object's owner or the object's root prim - a viewer mutes
+an object by its root), unless that row has LL's text-chat-exempt flag set (`flagTextChat = 0x1`). A dropped
+message still reports delivered, so no offline copy is stored and the sender is told nothing - matching what
+muting already does for every other interaction.
+
+The list read is bounded at 3 seconds total and cached 60 seconds per recipient, process-wide - needed a new
+`IMuteListService.MuteListRequest(agent, crc, timeoutSeconds)` overload (default-interface-method falling
+back to the existing one, so no other implementer needs touching) that throws on failure/timeout instead of
+swallowing it, unlike the existing overload. Wired through `RemoteMuteListServiceConnector` and
+`MuteListServicesConnector` (the new overload's HTTP call has no try/catch, deliberately - letting it throw
+is what lets `InstantMessageMuteCheck` tell "no list" apart from "the read failed" and log a warning at most
+once a minute instead of silently delivering every message unchecked forever). `MuteListModule.cs` feeds the
+cache from the recipient's own viewer-initiated mute-list reads (`Remember`) and drops it the moment the
+recipient adds or removes a mute through this simulator (`Forget`), so a change is never stale for longer
+than it takes to click.
+
+**New file needed a manual `.csproj` edit**: `OpenSim.Region.CoreModules.csproj`'s generated `<Compile>` list
+is explicit (prebuild.xml gives this project a `<Match pattern="*.cs">` with a `Tests` exclusion, which
+prebuild materializes as a fixed file list, not SDK-style default globbing) - a new file in this project
+needs a manual `<Compile Include>` added, the same situation `OpenSim.Framework.csproj` was in for the
+`OutboundUrlFilterRedirectHandler.cs` port a few days ago. Worth remembering CoreModules is in this group too,
+not just the five already-documented ones (Framework/Data/Data.MySQL/PGSQL/SQLite).
+
+Build clean, 0 warnings. All region-side (`OpenSim.Region.CoreModules.dll`); the two connector files are
+`OpenSim.Services.Connectors.dll`/`OpenSim.Services.Interfaces.dll`, loaded by both regions and Robust
+(standalone mode runs the mute list service in-process).
+
+### #245 ported - a script's Experience link was lost the moment it entered inventory
+
+`TaskInventoryItem.ExperienceID` (stored since #223) only exists on a script *in a prim*. The moment it's
+taken into a resident's inventory, given to someone else, or copied, nothing carried the link onto
+`InventoryItemBase` - rezzing it back into a prim always produced a script with no Experience.
+
+Added `InventoryItemBase.ExperienceID`/`IXInventoryData.XInventoryItem.experienceID`, a new
+`inventoryitems.experienceID` column on all three inventory-store backends, and wired the link through
+every copy path: prim → inventory (`Scene.Inventory.cs`'s prim-to-inventory extraction), inventory → prim
+(`SceneObjectGroup.Inventory.cs`), give-to-another-resident, and both "copy an inventory item" overloads
+(split `CreateNewInventoryItem`'s plain `creationDate` overload into a public wrapper forwarding `UUID.Zero`
+plus a new private overload carrying the real `experienceID` parameter, so the one `bool assetUpload`
+overload above it - unrelated to scripts, untouched - keeps compiling against the same public signature).
+The grid-service wire format (`XInventoryServicesConnector`/`XInventoryInConnector`) carries it as
+`ExperienceID`; a caller or server that predates the field reads it as zero, so a mixed-version grid degrades
+safely rather than breaking.
+
+**Links from outside this grid are not trusted**, matching the same principle #244 (below) applies on the
+object side: a new `IXInventoryData`-level `AcceptsExperienceLinks` flag (default true) is turned off on
+`HGInventoryService`/`HGSuitcaseInventoryService` (regions of *other* grids write here) and on
+`RemoteXInventoryServicesConnector`/`XInventoryServicesConnector` when used as a Hypergrid broker's connector
+to another grid's inventory server (`HGInventoryBroker.cs`) - an item added through either path has its link
+zeroed, and an update keeps whatever link this grid already stored rather than accepting a foreign one.
+
+Migration version numbers again didn't match upstream's own (MySQL 10, not 8; PostgreSQL 12, not 11; SQLite
+XInventoryStore 4, not 3 - Confluence's own thumbnail-column migrations already occupy the slots upstream
+used), checked against each file's actual last version before assigning.
+
+Build clean, 0 warnings. Touches `OpenSim.Framework.dll`, `OpenSim.Data.dll` + all three `OpenSim.Data.*.dll`
+backends, `OpenSim.Region.Framework.dll`, `OpenSim.Region.CoreModules.dll`, `OpenSim.Services.Connectors.dll`,
+`OpenSim.Services.InventoryService.dll`, `OpenSim.Services.HypergridService.dll`, and `OpenSim.Server.Handlers.dll`
+- effectively every tier between a script and the inventory database, on both regions and Robust.
+
+### #244 ported - Experience links weren't stripped from Hypergrid-foreign object data
+
+A script's Experience link lives in two places: its task item (`TaskInventoryItem.ExperienceID`) and
+YEngine's own saved script state (an `ExperienceKey` element, restored when the script starts). Neither was
+cleared when object data arrived from *another* grid - a visitor's rezzed object, a gift to a resident here,
+or their own attachments on Hypergrid arrival could carry a link to an Experience that only means something
+on their home grid.
+
+New `ForeignExperienceLinks.cs` (ported verbatim, no logging framework to convert - this one doesn't log at
+all): `ClearInObjectXml` strips `//TaskInventoryItem/ExperienceID` and zeros every `//ExperienceKey` in a
+block of object XML (one object or a coalesced set); `ClearInScriptState` does the same for a bare script-state
+snapshot; `ClearInObject` clears the in-memory `TaskInventoryItem.ExperienceID` directly on an already-loaded
+`SceneObjectGroup`. Wired into the two places foreign object data actually enters this grid:
+
+- `RegionAssetConnectorModule.GetFromForeign` - an object asset fetched from another grid's asset server
+  (covers a visitor rezzing from their home inventory, a gift to a resident here, and their attachments'
+  assets) gets `ClearInObjectXml` applied before it's stored or cached locally. An asset already on this
+  grid is found first and never reaches this path.
+- `AttachmentsModule`'s attachment-rez-on-login path - checks the arriving circuit's `teleportFlags` for
+  `ViaHGLogin` (confirmed this is how Confluence already distinguishes an HG arrival elsewhere) and, only
+  then, clears both the live `TaskInventoryItem` (`ClearInObject`) and the carried script-state string
+  (`ClearInScriptState`) before `SetState` hands it to YEngine - preserved Confluence's own existing
+  null/bounds guard around `AttachmentObjectStates` rather than assuming upstream's unconditional indexing.
+
+Independent of #245 (same base commit, neither depends on the other) - this clears links that already exist
+on `TaskInventoryItem`/script state today; #245 is about *keeping* a link that enters a user's inventory. New
+file needed the same manual `.csproj` `<Compile>` addition as #241's new file, this time in
+`OpenSim.Region.Framework.csproj`.
+
+Build clean, 0 warnings. All region-side (`OpenSim.Region.Framework.dll`, `OpenSim.Region.CoreModules.dll`).
+
+### #240 ported - group invite/eject couldn't report their result; no way to read a user's partner
+
+**Group invite/eject.** `IGroupsModule.InviteGroup`/`EjectGroupMember` (the 5-arg overloads) returned `void`,
+so `osInviteToGroup`/`osEjectFromGroup` always returned `TRUE` regardless of whether the groups service
+actually did anything - a real, live bug (confirmed both OSSL functions unconditionally return
+`ScriptBaseClass.TRUE` right after the call, ignoring any outcome). Changed both to `bool` on the interface
+and both real implementers (`Addons/Groups/GroupsModule.cs`, the V2 module, and
+`OptionalModules/Avatar/XmlRpcGroups/GroupsModule.cs`, the XML-RPC one - confirmed these are the only two
+`IGroupsModule` implementers in the solution; a third `CoreModules/Avatar/Groups/GroupsModule.cs` doesn't
+implement the interface at all). `InviteGroup`'s 5-arg overload in both modules already delegated to a
+richer overload Confluence has that upstream's own `develop` doesn't (a `(..., message, inviteID)` form with
+real invite-ID tracking) - just added `return`. `EjectGroupMember` needed upstream's actual fix: the groups
+connector interface reports nothing about whether the removal succeeded, so success is read back afterward
+via `GetAgentGroupMembership(...) == null`. Wired the real result into `osInviteToGroup`/`osEjectFromGroup`
+so they finally return what happened instead of an unconditional `TRUE`.
+
+**Partner lookup.** `IProfileModule` had no way for region code to read a user's partner - added
+`TryGetUserPartner(userID, out partnerID)` as a default interface method (`false`/`UUID.Zero` by default, so
+no other `IProfileModule` implementer needs touching) and implemented it on `UserProfileModule`: refuses for
+a foreign (non-local-grid) user, since their home grid is never asked, otherwise reads the profile and
+returns `PartnerId`. Directly useful for the in-world partnering OSSL work scoped earlier this session
+(`osGetPartnerId` was planned to read from the web dashboard's own state; this gives region code the same
+read without a second storage path). Confluence's `IProfileModule.cs` didn't have the `GetUserPreferences`
+method upstream's own diff adds this next to - correctly skipped during #224's review (Phlox-only, no
+callers) - so this is a clean standalone addition, not inserted next to something that doesn't exist here.
+
+Build clean, 0 warnings. `OpenSim.Region.Framework.dll`, `OpenSim.Addons.Groups.dll`,
+`OpenSim.Region.OptionalModules.dll`, `OpenSim.Region.CoreModules.dll`, `OpenSim.Region.ScriptEngine.Shared.dll`.
+
+### #239 ported - two small YEngine fixes
+
+`PRIM_REFLECTION_PROBE`'s flags were returned as a float; the SL wiki gives `[integer boolean, float ambiance,
+float clip_distance, integer flags]` - the fourth value is an integer, and the setter already reads it as
+one. Fixed at all three getter sites (`llGetPrimitiveParams`/`llGetLinkPrimitiveParams` for a probe, for a
+non-probe prim, and for a seated avatar's link).
+
+`AllowGodFunctions` was documented under `[LL-Functions]` in `OpenSimDefaults.ini`, but confirmed in code
+(`LSL_Api.cs`'s `seConfig.GetBoolean("AllowGodFunctions", false)`, the same `seConfig` that reads every other
+YEngine-specific tunable like `ScriptDelayFactor`) that it's actually read from `[YEngine]` - a value set
+under `[LL-Functions]` was silently never read. Moved the real, documented, commented-out default to
+`[YEngine]`; `[LL-Functions]` now just says where it's actually read. No value changes.
+
+Build clean, 0 warnings. `OpenSim.Region.ScriptEngine.Shared.dll`; the ini change is config-only, no rebuild
+needed for it.
+
+### #235 ported - new `BlockedOwnerModule`
+
+An estate ban stops a banned owner from entering, but never touches objects they already rezzed or scripts
+they already left running - a banned owner's builds and scripts keep rezzing/duplicating/crossing in
+normally forever. Ported Tranquillity's `fix/rez-owner-guard` (merge-base on top of #223): a small new
+region module, `BlockedOwnerModule` (`OpenSim/Region/CoreModules/World/Objects/BlockedOwners/BlockedOwnerModule.cs`)
+implementing a new `IBlockedOwnerModule` interface
+(`OpenSim/Region/Framework/Interfaces/IBlockedOwnerModule.cs`), that refuses rezzing and object entry by
+owners on an in-memory blocked list.
+
+It hooks the same three permission events every rez/entry path in the region already asks:
+`Scene.Permissions.OnRezObject` (viewer rez, prim-inventory rez, uploads, script rez in any engine, detach
+to ground, NPC creation), `OnDuplicateObject`, and `OnObjectEntry` (gated on `enteringRegion`, so an object
+just moving around inside the region is never touched - only one arriving from another region via a
+crossing or object teleport). Handlers are only registered while the module can actually block someone
+(list non-empty, or the estate-ban option on) - a region that blocks no one runs the exact same code path it
+ran before this module existed.
+
+New console commands: `block owner <UUID>`, `unblock owner <UUID>`, `show blocked owners` - scoped to the
+console's selected region, or every region when none is selected (`MainConsole.Instance.ConsoleScene`, the
+same per-region console-scoping idiom `RegionCommandsModule.cs` already uses throughout). The list is kept
+in memory only and is empty again after a restart, same as the PR's own design. New `[BlockedOwners]
+BlockEstateBanned` ini option (default `false`) additionally treats anyone the estate itself bans as
+blocked too - `EstateSettings.IsBanned(UUID)` already exists and never reports an estate owner/manager as
+banned, so that exclusion comes for free.
+
+Two real adaptations from Tranquillity's current tree, not a verbatim port:
+- Tranquillity has since moved to a separate `PluginRegistration.cs`/`.addin.xml` module-registration
+  scheme that doesn't exist in Confluence at all - Confluence still registers region modules with the
+  `[Extension(Path = "/OpenSim/RegionModules", ...)]` attribute directly on the class (confirmed against
+  `ObjectCommandsModule.cs`), so the module was registered that way instead; no `PluginRegistration.cs`/
+  `addin.xml` changes were needed or made.
+- The PR's file uses `Microsoft.Extensions.Logging`/`LoggerProvider.CreateLogger` - converted to this
+  codebase's `log4net`/`ILog`/`LogManager.GetLogger`, matching every other CoreModules file (same
+  conversion already done for #241's `InstantMessageMuteCheck.cs`).
+
+Both new files (`BlockedOwnerModule.cs` in `OpenSim.Region.CoreModules`, `IBlockedOwnerModule.cs` in
+`OpenSim.Region.Framework`) needed manual `<Compile Include>` additions to their respective `.csproj` files
+- the now-familiar explicit-Compile-list issue, confirmed again on a second project (Framework, not just
+CoreModules).
+
+Documented the new `[BlockedOwners]` section in `bin/OpenSimDefaults.ini` (the only copy of that file in
+this repo - there's no separate committed template distinct from the deployed one).
+
+Build clean, 0 warnings, 0 errors.
+
+### #233's second half ported - malformed saved script state no longer fails the whole rez
+
+#233 has two independent fixes against `SceneObjectGroup.Inventory.cs`'s `SetState` (used for region
+crossings and attachment teleports) and `SceneObjectPartInventory.cs`'s `RestoreSavedScriptState` (used
+for rez/attach). Item 1 - offering a crossing/teleport's script states to every script engine in turn,
+not just the region's default one - is a multi-script-engine coexistence fix (relevant only when a region
+runs two engines, e.g. YEngine + Phlox side by side) and was already correctly excluded earlier in this
+batch as Phlox-only, same as #221/#225/#228/#229. Only item 2 - a malformed saved state failing the whole
+rez instead of just that one script - is a real gap on a YEngine-only grid too, and was ported now.
+
+Two call sites, both genuinely unguarded in Confluence's current code (checked directly, not assumed from
+upstream):
+
+- `SceneObjectPartInventory.RestoreSavedScriptState` (`:535-599`): `doc.LoadXml(m_part.ParentGroup.
+  m_savedScriptState[stateID])` had no guard at all - malformed state XML in an object asset throws
+  straight out of `CreateScriptInstance`, failing the rez for every script on the object, not just the
+  broken one. Wrapped in try/catch for `XmlException`: a bad state is dropped (removed from
+  `m_savedScriptState`, same as the success path already does) with one warning, and the method returns
+  `stateID` exactly as it would if nothing further happened - that script starts fresh, every other
+  script's state in the same object is untouched since each item ID gets its own call into this method.
+- `SceneObjectGroup.Inventory.SetState` (`:531-592`): the per-state loop called `scriptModule.
+  SetXMLState(itemID, n.OuterXml)` with no guard - an engine throwing on one script's state (as opposed to
+  the whole-object XML blob failing to parse at all, which this method already caught higher up) would
+  abort the loop and lose every remaining script's state in the object. Wrapped the call in try/catch,
+  logging a warning and moving to the next state on failure. Deliberately kept the existing single
+  `scriptModule` variable and did not adopt the PR's `List<IScriptModule> scriptModules` priority-ordered
+  handoff list - that structural change is item 1's multi-engine mechanism, out of scope here.
+
+Did not port the "state without a valid item id" guard from the PR's `SetState` diff: Confluence's
+`UUID itemID = new(stateE.GetAttribute("UUID"))` already can't throw on a missing/malformed attribute
+(OpenMetaverse's `UUID(string)` constructor parses leniently, defaulting to `UUID.Zero` rather than
+throwing) - there was no crash there to guard against, just a silently-ignored bad ID, so adding a second
+warning path for it would be new behavior for its own sake, not a fix.
+
+Build clean, 0 warnings, 0 errors. This closes out all 12 items from the Tranquillity open-PR batch
+(#234, #230, #232, #242, #241, #245, #244, #240, #239, #235, #233).

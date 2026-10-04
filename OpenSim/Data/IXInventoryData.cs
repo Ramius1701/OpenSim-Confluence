@@ -71,6 +71,7 @@ namespace OpenSim.Data
         public UUID parentFolderID;
         public int inventoryGroupPermissions;
         public UUID thumbnail;
+        public UUID experienceID;
 
         public XInventoryItem Clone()
         {

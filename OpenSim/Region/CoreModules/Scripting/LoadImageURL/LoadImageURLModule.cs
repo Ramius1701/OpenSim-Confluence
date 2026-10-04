@@ -29,6 +29,8 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
 using Nini.Config;
 using OpenMetaverse;
 using OpenMetaverse.Imaging;
@@ -172,39 +174,44 @@ namespace OpenSim.Region.CoreModules.Scripting.LoadImageURL
                 return false;
             }
 
-            if (!m_outboundUrlFilter.CheckAllowed(new Uri(url)))
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri) || !m_outboundUrlFilter.CheckAllowed(uri))
                 return false;
 
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.AllowAutoRedirect = false;
-
-            if(m_proxy is not null)
-                request.Proxy = m_proxy;
-
-            RequestState state = new RequestState(request, requestID);
-            // IAsyncResult result = request.BeginGetResponse(new AsyncCallback(HttpRequestReturn), state);
-            request.BeginGetResponse(HttpRequestReturn, state);
+            // Every redirect hop is checked by the filtering handler (the default handler's 50 hops, each one
+            // checked) instead of by HttpClientHandler, which would follow them unchecked. A connection straight
+            // to the target goes only to an address the filter allows; one to the default proxy is left alone.
+            HttpClient client = new(new OutboundUrlFilterRedirectHandler(
+                    m_outboundUrlFilter, m_outboundUrlFilter.CreateHandler(m_proxy), 50));
+            RequestState state = new RequestState(uri, requestID);
+            client.GetAsync(uri).ContinueWith((task) =>
+            {
+                try
+                {
+                    HttpRequestReturn(task, state);
+                }
+                finally
+                {
+                    client.Dispose();
+                }
+            });
             return true;
         }
 
-        private void HttpRequestReturn(IAsyncResult result)
+        private void HttpRequestReturn(Task<HttpResponseMessage> task, RequestState state)
         {
             if (m_textureManager == null)
                 return;
 
-            RequestState state = (RequestState) result.AsyncState;
-            WebRequest request = (WebRequest) state.Request;
-            Stream stream = null;
             byte[] imageJ2000 = Array.Empty<byte>();
             Size newSize = new Size(0, 0);
-            HttpWebResponse response = null;
+            HttpResponseMessage response = null;
 
             try
             {
-                response = (HttpWebResponse)request.EndGetResponse(result);
+                response = task.Result;
                 if (response != null && response.StatusCode == HttpStatusCode.OK)
                 {
-                    stream = response.GetResponseStream();
+                    using Stream stream = response.Content.ReadAsStream();
                     if (stream != null)
                     {
                         try
@@ -263,8 +270,9 @@ namespace OpenSim.Region.CoreModules.Scripting.LoadImageURL
                     }
                 }
             }
-            catch (WebException)
+            catch (HttpRequestException e)
             {
+                m_log.DebugFormat("[LOADIMAGEURLMODULE]: request failed: {0}", OutboundUrlFilterRefusedException.Unwrap(e).Message);
             }
             catch (Exception e)
             {
@@ -272,31 +280,16 @@ namespace OpenSim.Region.CoreModules.Scripting.LoadImageURL
             }
             finally
             {
-                if (stream != null)
-                    stream.Close();
-
                 if (response != null)
                 {
-                    if (response.StatusCode == HttpStatusCode.MovedPermanently
-                            || response.StatusCode == HttpStatusCode.Found
-                            || response.StatusCode == HttpStatusCode.SeeOther
-                            || response.StatusCode == HttpStatusCode.TemporaryRedirect)
-                    {
-                        string redirectedUrl = response.Headers["Location"];
+                    m_log.DebugFormat("[LOADIMAGEURLMODULE]: Returning {0} bytes of image data for request {1}",
+                                      imageJ2000.Length, state.RequestID);
 
-                        MakeHttpRequest(redirectedUrl, state.RequestID);
-                    }
-                    else
-                    {
-                        m_log.DebugFormat("[LOADIMAGEURLMODULE]: Returning {0} bytes of image data for request {1}",
-                                          imageJ2000.Length, state.RequestID);
-
-                        m_textureManager.ReturnData(
-                            state.RequestID,
-                            new OpenSim.Region.CoreModules.Scripting.DynamicTexture.DynamicTexture(
-                            request.RequestUri, null, imageJ2000, newSize, false));
-                    }
-                    response.Close();
+                    m_textureManager.ReturnData(
+                        state.RequestID,
+                        new OpenSim.Region.CoreModules.Scripting.DynamicTexture.DynamicTexture(
+                        state.Uri, null, imageJ2000, newSize, false));
+                    response.Dispose();
                 }
             }
         }
@@ -305,13 +298,13 @@ namespace OpenSim.Region.CoreModules.Scripting.LoadImageURL
 
         public class RequestState
         {
-            public HttpWebRequest Request = null;
+            public Uri Uri = null;
             public UUID RequestID = UUID.Zero;
             public int TimeOfRequest = 0;
 
-            public RequestState(HttpWebRequest request, UUID requestID)
+            public RequestState(Uri uri, UUID requestID)
             {
-                Request = request;
+                Uri = uri;
                 RequestID = requestID;
                 TimeOfRequest = Util.UnixTimeSinceEpoch();
             }

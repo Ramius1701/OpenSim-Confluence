@@ -1304,12 +1304,16 @@ namespace OpenSim.Groups
             EjectGroupMember(remoteClient, GetRequestingAgentID(remoteClient), groupID, ejecteeID);
         }
 
-        public void EjectGroupMember(IClientAPI remoteClient, UUID agentID, UUID groupID, UUID ejecteeID)
+        public bool EjectGroupMember(IClientAPI remoteClient, UUID agentID, UUID groupID, UUID ejecteeID)
         {
             if (m_debugEnabled) m_log.DebugFormat("[Groups]: {0} called", System.Reflection.MethodBase.GetCurrentMethod().Name);
 
             // Todo: Security check?
             m_groupData.RemoveAgentFromGroup(agentID.ToString(), ejecteeID.ToString(), groupID);
+
+            // The connector does not say whether the service refused (it refuses without the Eject power),
+            // so read the membership back.
+            bool removed = m_groupData.GetAgentGroupMembership(agentID.ToString(), ejecteeID.ToString(), groupID) == null;
 
             string agentName;
             RegionInfo regionInfo;
@@ -1349,7 +1353,7 @@ namespace OpenSim.Groups
 
             GroupRecord groupInfo = m_groupData.GetGroupRecord(agentID.ToString(), groupID, null);
             if ((groupInfo == null))
-                return;
+                return removed;
 
             UserData udata = m_sceneList[0].UserManagementModule.GetUserData(ejecteeID);
             IClientAPI ejecteeClient = GetActiveRootClient(ejecteeID);
@@ -1416,6 +1420,8 @@ namespace OpenSim.Groups
             msg.RegionID = regionInfo.RegionID.Guid;
             msg.binaryBucket = Array.Empty<byte>();
             OutgoingInstantMessage(msg, agentID);
+
+            return removed;
         }
 
         public void InviteGroupRequest(IClientAPI remoteClient, UUID groupID, UUID invitedAgentID, UUID roleID)
@@ -1423,9 +1429,9 @@ namespace OpenSim.Groups
             InviteGroup(remoteClient, GetRequestingAgentID(remoteClient), groupID, invitedAgentID, roleID);
         }
 
-        public void InviteGroup(IClientAPI remoteClient, UUID agentID, UUID groupID, UUID invitedAgentID, UUID roleID)
+        public bool InviteGroup(IClientAPI remoteClient, UUID agentID, UUID groupID, UUID invitedAgentID, UUID roleID)
         {
-            InviteGroup(remoteClient, agentID, groupID, invitedAgentID, roleID, null, UUID.Random());
+            return InviteGroup(remoteClient, agentID, groupID, invitedAgentID, roleID, null, UUID.Random());
         }
 
         public void InviteGroup(IClientAPI remoteClient, UUID agentID, UUID groupID, UUID invitedAgentID, UUID roleID, string message)

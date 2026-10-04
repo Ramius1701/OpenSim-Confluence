@@ -725,11 +725,30 @@ namespace OpenSim.Region.CoreModules.Scripting.XMLRPC
             HttpClient hclient = null;
             try
             {
-                // The shared no-redirect handler behind a handler that follows redirects itself and filters
-                // every hop; otherwise as WebUtil.GetNewGlobalHttpClient(-1), whose handler follows up to 10
-                // unfiltered. Neither handler is disposed with the client: the inner one is shared.
-                hclient = new HttpClient(
-                        new OutboundUrlFilterRedirectHandler(UrlFilter, WebUtil.SharedSocketsHttpHandlerNoRedir, 10), false)
+                // A handler that follows redirects itself and filters every hop, over a handler that connects
+                // only to addresses the filter allows; otherwise as WebUtil.GetNewGlobalHttpClient(-1), whose
+                // handler follows up to 10 unfiltered. The new handler takes the shared no-redirect handler's
+                // proxy and options, so a proxy carries the same requests as before. It is not the shared
+                // handler itself: that one is used by many callers, and its ConnectCallback must not be pinned
+                // to this one filter instance.
+                SocketsHttpHandler sharedNoRedir = WebUtil.SharedSocketsHttpHandlerNoRedir;
+                SocketsHttpHandler filteredInner = new()
+                {
+                    AllowAutoRedirect = false,
+                    AutomaticDecompression = DecompressionMethods.None,
+                    ConnectTimeout = sharedNoRedir.ConnectTimeout,
+                    PreAuthenticate = false,
+                    UseCookies = false,
+                    UseProxy = sharedNoRedir.UseProxy,
+                    MaxConnectionsPerServer = sharedNoRedir.MaxConnectionsPerServer,
+                    PooledConnectionIdleTimeout = sharedNoRedir.PooledConnectionIdleTimeout,
+                    PooledConnectionLifetime = sharedNoRedir.PooledConnectionLifetime,
+                    SslOptions = sharedNoRedir.SslOptions,
+                };
+                if (sharedNoRedir.UseProxy)
+                    filteredInner.Proxy = sharedNoRedir.Proxy;
+                UrlFilter.ApplyTo(filteredInner);
+                hclient = new HttpClient(new OutboundUrlFilterRedirectHandler(UrlFilter, filteredInner, 10), true)
                 {
                     Timeout = TimeSpan.FromMilliseconds(30000),
                     MaxResponseContentBufferSize = 250 * 1024 * 1024,

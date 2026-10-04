@@ -44,6 +44,13 @@ namespace OpenSim.Services.InventoryService
 
         protected IXInventoryData m_Database;
         protected bool m_AllowDelete = true;
+
+        /// <summary>
+        /// False for a service that regions of other grids write to (the Hypergrid inventory services). Such a
+        /// caller cannot vouch for a script's Experience link, so an item it adds has none and an item it
+        /// updates keeps the link this grid stored.
+        /// </summary>
+        protected bool m_AcceptsExperienceLinks = true;
         protected string m_ConfigName = "InventoryService";
 
         public XInventoryService(IConfigSource config)
@@ -531,6 +538,9 @@ namespace OpenSim.Services.InventoryService
 //            m_log.DebugFormat(
 //                "[XINVENTORY SERVICE]: Adding item {0} {1} to folder {2} for {3}", item.Name, item.ID, item.Folder, item.Owner);
 
+            if (!m_AcceptsExperienceLinks)
+                item.ExperienceID = UUID.Zero;
+
             return m_Database.StoreItem(ConvertFromOpenSim(item));
         }
 
@@ -582,6 +592,9 @@ namespace OpenSim.Services.InventoryService
                 item.CreatorIdentification = retrievedItem.CreatorIdentification;
                 item.Owner = retrievedItem.Owner;
             }
+
+            if (!m_AcceptsExperienceLinks)
+                item.ExperienceID = retrievedItem.ExperienceID;
 
             return m_Database.StoreItem(ConvertFromOpenSim(item));
         }
@@ -742,7 +755,8 @@ namespace OpenSim.Services.InventoryService
                 SaleType = (byte)item.saleType,
                 Flags = (uint)item.flags,
                 CreationDate = item.creationDate,
-                Thumbnail = item.thumbnail
+                Thumbnail = item.thumbnail,
+                ExperienceID = item.experienceID
             };
         }
 
@@ -770,7 +784,8 @@ namespace OpenSim.Services.InventoryService
                 saleType = (int)item.SaleType,
                 flags = (int)item.Flags,
                 creationDate = item.CreationDate,
-                thumbnail = item.Thumbnail
+                thumbnail = item.Thumbnail,
+                experienceID = item.ExperienceID
             };
         }
 

@@ -116,6 +116,13 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.MuteList
         #endregion
 
         #region IMuteListService
+        public Byte[] MuteListRequest(UUID agentID, uint crc, int timeoutSeconds)
+        {
+            if (!m_Enabled)
+                return null;
+            return m_remoteConnector.MuteListRequest(agentID, crc, timeoutSeconds);
+        }
+
         public Byte[] MuteListRequest(UUID agentID, uint crc)
         {
             if (!m_Enabled)

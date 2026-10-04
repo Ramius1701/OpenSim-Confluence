@@ -70,6 +70,9 @@ namespace OpenSim.Services.HypergridService
             if (configName != string.Empty)
                 m_ConfigName = configName;
 
+            // Regions of other grids write here; they cannot vouch for a script's Experience link.
+            m_AcceptsExperienceLinks = false;
+
             if (m_Database == null)
                 m_log.ErrorFormat("[HG SUITCASE INVENTORY SERVICE]: m_Database is null!");
 

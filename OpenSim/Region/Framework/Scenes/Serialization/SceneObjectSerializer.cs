@@ -539,7 +539,8 @@ namespace OpenSim.Region.Framework.Scenes.Serialization
 
             {"SitActRange", ProcessSitActRange },
             {"AllowUnsit", ProcessAllowUnsit },
-            {"ScriptedSitOnly", ProcessScriptedSitOnly }
+            {"ScriptedSitOnly", ProcessScriptedSitOnly },
+            {"SitTargetActive", ProcessSitTargetActive }
         }.ToFrozenDictionary();
 
         private static readonly FrozenDictionary<string, Action<TaskInventoryItem, XmlReader>> m_TaskInventoryXmlProcessors = new Dictionary<string, Action<TaskInventoryItem, XmlReader>>()
@@ -848,6 +849,12 @@ namespace OpenSim.Region.Framework.Scenes.Serialization
         private static void ProcessScriptedSitOnly(SceneObjectPart obj, XmlReader reader)
         {
             obj.ScriptedSitOnly = Util.ReadBoolean(reader);
+        }
+
+        // Written after SitTargetPosition and SitTargetOrientation, whose setters reset the state to derived.
+        private static void ProcessSitTargetActive(SceneObjectPart obj, XmlReader reader)
+        {
+            obj.SitTargetActive = Util.ReadBoolean(reader);
         }
 
         private static void ProcessVehicle(SceneObjectPart obj, XmlReader reader)

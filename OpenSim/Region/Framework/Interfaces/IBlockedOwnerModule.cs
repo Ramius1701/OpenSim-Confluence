@@ -27,24 +27,26 @@
 
 using OpenMetaverse;
 
-namespace OpenSim.Framework
+namespace OpenSim.Region.Framework.Interfaces
 {
-    public interface IProfileModule
+    /// <summary>
+    /// A region-wide list of owners whose rezzing the region refuses. An owner on the list cannot rez,
+    /// create or duplicate objects in the region by any path: viewer, script (any engine) or capability,
+    /// and their objects arriving from another region (other than worn attachments) are refused entry.
+    /// The list starts empty; only a region operator adds to it.
+    /// </summary>
+    public interface IBlockedOwnerModule
     {
-        void RequestAvatarProperties(IClientAPI remoteClient, UUID avatarID);
+        /// <summary>True if the region refuses rezzing by this owner.</summary>
+        bool IsBlocked(UUID owner);
 
-        /// <summary>
-        /// The partner named on a user's profile, as the profiles service holds it.
-        /// </summary>
-        /// <remarks>
-        /// This is a service call: do not make it on a thread the region cannot afford to block.
-        /// </remarks>
-        /// <returns>false if the profile cannot be read; partnerID is then UUID.Zero. true with UUID.Zero when
-        /// the user has no partner.</returns>
-        bool TryGetUserPartner(UUID userID, out UUID partnerID)
-        {
-            partnerID = UUID.Zero;
-            return false;
-        }
+        /// <summary>Adds an owner to the region's list. False if the owner was already on it or is UUID.Zero.</summary>
+        bool Block(UUID owner);
+
+        /// <summary>Removes an owner from the region's list. False if the owner was not on it.</summary>
+        bool Unblock(UUID owner);
+
+        /// <summary>The owners on the region's list (not those blocked only through an estate ban).</summary>
+        UUID[] GetBlockedOwners();
     }
 }

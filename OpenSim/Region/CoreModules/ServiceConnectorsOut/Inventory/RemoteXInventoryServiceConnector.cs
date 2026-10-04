@@ -93,6 +93,13 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Inventory
             m_RemoteConnector = new XInventoryServicesConnector(url);
         }
 
+        /// <summary>False for a connector to another grid's inventory server: see XInventoryServicesConnector.</summary>
+        public bool AcceptsExperienceLinks
+        {
+            get { return m_RemoteConnector.AcceptsExperienceLinks; }
+            set { m_RemoteConnector.AcceptsExperienceLinks = value; }
+        }
+
         public RemoteXInventoryServicesConnector(IConfigSource source)
         {
             Init(source);
