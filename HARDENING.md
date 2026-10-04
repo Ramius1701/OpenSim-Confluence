@@ -89,8 +89,13 @@ therefore be seen as the proxy's address.
 
 ## Hypergrid behavior
 
-- **Returning home** to this grid is refused unless it comes from a fresh login;
-  users must log in again. A visited grid could otherwise replay an avatar circuit.
+- **Returning home** to this grid over Hypergrid (not a fresh login) is allowed only
+  when the caller presents the `ServiceSessionID` token this grid minted the last
+  time it legitimately sent that avatar out - the same token check used to
+  authenticate every inbound Hypergrid agent. A grid that never genuinely hosted
+  the avatar can't produce it; a captured request can't be replayed after the real
+  one lands, since the token is replaced on every hop. Without a matching token
+  (or on a fresh login, which needs no token), you're asked to log in again.
 - **Egress filtering**: caller-supplied Hypergrid HomeURI/gatekeeper URLs are
   refused before any outbound verification or agent transfer if they resolve to
   loopback, private, link-local, CGNAT, unique-local, multicast or reserved

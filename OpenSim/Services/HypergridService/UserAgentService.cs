@@ -251,17 +251,23 @@ namespace OpenSim.Services.HypergridService
 
             string gridName = gatekeeper.ServerURI.ToLowerInvariant();
 
-            // A server-to-server (non-fresh-login) call asking to send an
-            // agent back to THIS grid's own gatekeeper is exactly the
-            // return-home session-minting path the disclosure flags -
-            // nothing here proves the caller is the real user rather than
-            // a foreign grid replaying/forging a travel request to mint a
-            // session for them. Returning home must always go through a
-            // fresh login instead. See PROJECT_LOG.md, 2026-09-23.
-            if (!fromLogin && IsLocalGridURI(m_GridName, gridName))
+            // A server-to-server (non-fresh-login) call asking to send an agent back to THIS
+            // grid's own gatekeeper is exactly the return-home session-minting path the
+            // disclosure flags - a caller with no prior relationship to this agent could claim
+            // any (userID, sessionID) and ask to be let in as them. A blanket refusal here
+            // (2026-09-23) closed that, but it also broke the ordinary, very common case: a
+            // resident standing on a foreign grid clicking "home," which is this exact call with
+            // no fresh login either. The real distinguishing fact isn't fromLogin - it's whether
+            // the caller holds the ServiceSessionID this grid itself minted the last time it
+            // legitimately sent this agent out (VerifyAgent is the same token check this file
+            // already uses to authenticate inbound agents elsewhere): a foreign grid that never
+            // hosted this agent can't produce it, and the token is replaced below on every
+            // successful hop, so a captured request can't be replayed after the real one lands.
+            if (!fromLogin && IsLocalGridURI(m_GridName, gridName) &&
+                !VerifyAgent(agentCircuit.SessionID, agentCircuit.ServiceSessionID))
             {
                 reason = "Please log in again to return home";
-                m_log.InfoFormat("[USER AGENT SERVICE]: Refusing Hypergrid return-home login for user {0} {1}; return-home requires a fresh login.",
+                m_log.InfoFormat("[USER AGENT SERVICE]: Refusing Hypergrid return-home login for user {0} {1}; no matching outbound session token.",
                     agentCircuit.firstname, agentCircuit.lastname);
                 return false;
             }

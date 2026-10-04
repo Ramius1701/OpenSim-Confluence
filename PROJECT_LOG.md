@@ -26867,3 +26867,50 @@ regions' `bin/` the same way as every other config deploy this session, confirme
 log4net only reads this file once at process startup, so - like every other binary/config change tonight - it
 takes effect on each process's *next* restart, not immediately; no restart was forced for this since it's not
 urgent and the grid had just come back up clean.
+
+## Hypergrid return-home was completely broken - the 2026-09-23 fix was too broad
+
+A resident reported they could Hypergrid out fine but couldn't get back - "Teleport failed. Please log in again
+to return home." Traced it straight to the 2026-09-23 ICan disclosure remediation
+(`UserAgentService.LoginAgentToGrid`): `if (!fromLogin && IsLocalGridURI(m_GridName, gridName))` refused
+**every** non-fresh-login return to this grid, no exceptions. That's not a narrow fix - it's the core,
+constantly-used "click Home from a foreign grid" path, and it was dead for every resident, every time, since
+the moment that fix went live. Ported faithfully from Tranquillity's own upstream commit, so this wasn't a
+porting mistake - the upstream fix itself is this blunt.
+
+**Re-read what the disclosure actually requires**: proof that the caller is someone this grid already trusts
+with that agent, not proof of a fresh login specifically. This codebase already has exactly that proof
+mechanism, used everywhere else in this same file: `agentCircuit.ServiceSessionID`, a per-hop secret this grid
+mints fresh every time it legitimately hands an agent to a grid (`region.ServerURI + ";" + UUID.Random()`,
+right where the old blanket-refusal sat), and verified via `VerifyAgent(sessionID, token)` - the same check
+`GatekeeperService.Authenticate` already calls on every *inbound* Hypergrid agent, confirmed by reading that
+call site before touching anything. A grid that never genuinely hosted this avatar never received that token
+and can't produce it; a grid that's replaying an old captured request can't either, because the token is
+overwritten on every successful hop (including the very return-home call being authorized).
+
+**Fix**: the blanket refusal now additionally requires `!VerifyAgent(agentCircuit.SessionID,
+agentCircuit.ServiceSessionID)` - i.e. still refuses when there's no fresh login *and* no matching token, but
+now lets through a non-login return that presents the real, current token. No new storage, no new interface
+method, no schema change - reused `VerifyAgent`, which already existed on this class for exactly this kind of
+check. Updated `HARDENING.md`'s "Returning home" bullet, which had flatly stated the wrong (overly strict)
+behavior.
+
+Build clean. This lives in `OpenSim.Services.HypergridService.dll`, loaded by Robust only (no region restart
+needed). Deployed with residents online: Robust in this deployment runs as an interactive `LocalConsole` (no
+`-console=rest`), so there is no safe remote-shutdown path for it the way there is for regions' `/consoleweb` -
+asked the operator to type `shutdown` in Robust's own console window, watched for the process to exit, then
+copied the full differing-file set (same rebuild-MVID situation as every other deploy tonight) and relaunched
+immediately. Total Robust downtime was seconds; no region was touched, so no resident lost their region
+session during this.
+
+**Self-inflicted follow-up bug**: the earlier log-rotation config change (`maxFileSize` as the XML element
+name) was wrong - log4net's `RollingFileAppender` property is `MaximumFileSize`, not `MaxFileSize`. First
+redeploy of Robust came up with `log4net:ERROR Could not create Appender [LogFileAppender]... FormatException:
+The input string '100MB' was not in a correct format` - log4net had resolved `maxFileSize` to some other
+numeric-typed member and tried to parse the unit-suffixed string as a plain integer. Not fatal (log4net
+disables the broken appender and keeps running on Console logging alone; no resident-facing impact), but it
+meant Robust was running with no file logging at all until fixed. Corrected both `bin/Robust.exe.config` and
+`bin/OpenSim.exe.config` to `<maximumFileSize value="100MB" />`, validated as XML, redeployed to root and all
+15 regions' `bin/`. The operator restarted Robust a second time to pick it up; `Robust.log` immediately rolled
+over on that restart (the pre-existing file was already far past 100MB), confirming the corrected config
+actually works, not just that it parses.
