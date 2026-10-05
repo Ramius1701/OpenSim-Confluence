@@ -27398,3 +27398,96 @@ full-grid outage, exactly the thing that rule exists to prevent. The operator ca
 For next time: when a code deploy needs more than one running region stopped, say explicitly "stop them one
 at a time, with the warning on each" rather than leaving the sequencing to chance - this applies even when
 asking the operator to do the stopping by hand, not just when driving it through the WebUI/console myself.
+
+---
+
+## Six more Tranquillity PRs (#246-251), opened right after the previous batch closed
+
+Checked `gh pr list` again right after finishing the 12-item batch and found 6 brand-new open PRs, all from
+`JohnLegionH`, all opened 2026-10-04, numbered immediately after the batch just closed (#245 was the highest
+reviewed). No new merged commits on `develop` beyond the already-known Phlox merges (#224/#226/#227, plus
+#225 now merged too - all already triaged in the #224/#225 entry above). All 6 explicitly state "No script
+engine's code changes," so none needed the Phlox-applicability check that excluded several items from the
+previous batch.
+
+### #246 - already fully implemented, no-op
+
+"Send an estate's blocked Experiences in the setexperience reply." Checked `LLClientView.SendEstateExperiences`
+expecting to need this fix - it's already there, byte-for-byte identical to the PR's proposed fix, including
+the same viewer-parser-derived protocol-layout comment (`LLClientView.cs:6506-6558`), with matching signatures
+already threaded through `IClientAPI`, `IRCClientView`, `NPCAvatar`, `TestClient`, and the
+`EstateManagementModule.cs` call site already passing `es.BlockedExperiences`. This must have been fixed in an
+earlier Confluence session (likely during this session's own earlier Experience Tools audit work) without a
+cross-reference back to this specific upstream PR. Nothing to port.
+
+### #247 ported - Xfer downloads now send 1000-byte pieces, matching LL's sender
+
+`XferModule.XferDownLoad` sent 1024-byte pieces (bit-shift arithmetic, `Data.Length >> 10`); LL's own sender
+uses 1000-byte pieces (`LL_XFER_CHUNK_SIZE` in `llxfer.cpp`). LL's viewer reads either size correctly, but
+LibreMetaverse-based clients (which place piece N at a fixed `1000 * N` offset rather than reading the size
+the sender used) misassemble any transfer longer than one piece - a prim's inventory listing, the mute list,
+or an estate file. Added a named `PacketPayload = 1000` constant and switched the piece-count/last-piece/
+offset arithmetic from bit-shift-by-1024 to the constant (`XferModule.cs`). No behavior change for LL's own
+viewer; fixes assembly for any LibreMetaverse-derived client.
+
+### #248 ported - an estate manager's allowed-access change no longer reports a false failure
+
+`EstateManagementModule`'s owner-only guard (`CanIssueEstateCommand(agentID, true)`) ran unconditionally after
+every access-delta request, regardless of which bits were actually set - so an estate manager (not the owner)
+adding/removing an allowed resident, group or ban had the change applied and the lists sent back, and was
+then also told "Method EstateAccess Failed, you don't have permissions." Scoped the guard to only the bits
+that are genuinely owner-only: manager add/remove (256, 512). Matches LL's viewer, which only gates the
+estate-manager-list controls to the owner (`LLPanelEstateAccess::updateControls`); the allowed-user/group/ban
+controls are already enabled for a manager there.
+
+### #249 ported - SQLite estate list saves are now transactional
+
+`SQLiteEstateStore.SaveBanList`/`SaveUUIDList` ran their delete-then-insert-per-row sequence with no
+transaction - a failure partway (process crash, disk full, etc.) left a partially-written list, and every row
+cost its own commit. Wrapped each method's delete+inserts in one `SQLiteTransaction`, committed once at the
+end (mirroring the transaction pattern this same file already uses in `LinkRegion`). A thrown exception now
+rolls back to the list's prior state instead of leaving it half-written.
+
+### #250 ported - named-Experience console commands
+
+`create experience <first> <last>` makes an Experience with an empty name, and both the in-world Experience
+search and the estate's Experience picker find Experiences by name (`FindExperienceByName`, `LIKE '%text%'`)
+- so a console-created Experience was effectively unfindable by anyone but its owner, and had no way to be
+named short of direct database editing. Added `create named experience`, `show experiences`/`show experience`,
+and `set experience name`/`description`/`state`, all in `ExperienceService.cs`, alongside the existing
+`create experience`/`suspend experience`/`set experience scope` commands (the last of which is a
+Confluence-native addition the upstream PR doesn't have and isn't part of this port).
+
+Name uniqueness (case-insensitive) is enforced on create and rename, matching the PR's stated rationale: no
+rule against duplicate names exists in the SL wiki or LL's viewer source, but operators and the estate picker
+both find Experiences by name, so refusing a collision avoids two Experiences becoming indistinguishable by
+name. Column-width limits (name 42, description 128) were verified against Confluence's own
+`Experience.migrations` (all three backends - MySQL, PostgreSQL, SQLite - share the same widths) rather than
+assumed from upstream.
+
+Added `ExperienceSetup.md` at the repo root (matching the PR's `Docs/ExperienceSetup.md`, placed at root
+instead since this repo has no `Docs/` tree and already keeps single-topic reference docs like
+`HARDENING.md`/`MARKETPLACE.md` there) - with one real correction before porting the content: the PR's doc
+says "Experiences are stored only by the MySQL data plugin; there is no SQLite or PostgreSQL Experience
+store," which is true upstream but false here - Confluence has `MySQLExperienceData.cs`, `PGSQLExperienceData.cs`
+and `SQLiteExperienceData.cs` all implemented. Corrected that line and added the `set experience scope`
+command (Confluence-native, not in the upstream PR) to the command table. Also verified the ini snippets
+against Casperia's actual live `Robust.HG.ini` (`[ExperienceService] UserAccountService` and the
+`[ServiceList] ExperienceServiceConnector` line are both genuinely present and active there, not just in the
+PR's example) rather than copying them from the PR unchecked.
+
+`System.Linq` needed adding to `ExperienceService.cs`'s usings for the new commands' `.Where`/`.OrderBy`/
+`.FirstOrDefault` calls - the file had never used LINQ before.
+
+### #251 ported - ScenePresence.Rotation now rejects non-finite or near-zero rotations
+
+`ScenePresence.Rotation`'s setter stored whatever it was given, with no validation - a NaN, infinite, or
+all-zero-length quaternion from a viewer's agent update, a neighbouring region's child-agent data, or a
+script (`PRIM_ROTATION`/`PRIM_ROT_LOCAL` on a seated avatar, `osNpcSetRot`) was stored as-is and then sent to
+every other viewer, carried into a region crossing's agent data, and passed to the physics actor. Added a new
+`IsUsableRotation` check (non-finite component, or squared length below 1e-6 - the same bound
+`LLClientView`'s own avatar-update serializer already uses for "too short to normalize") that silently keeps
+the previous rotation instead of storing a bad one. Not logged deliberately, since a bad value can arrive on
+every single agent update.
+
+All five real ports (#247-251) build clean, 0 warnings, 0 errors, verified with a full solution rebuild.
