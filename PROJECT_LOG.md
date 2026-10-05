@@ -27491,3 +27491,54 @@ the previous rotation instead of storing a bad one. Not logged deliberately, sin
 every single agent update.
 
 All five real ports (#247-251) build clean, 0 warnings, 0 errors, verified with a full solution rebuild.
+
+---
+
+## PR #208's own design broke real open-Hypergrid travel - fixed with an IP fallback
+
+Live-tested the #208 deploy right after it went live: a resident hypergridded out to a genuinely foreign
+grid (`hg.neverworldgrid.com`, running "OpenSim-NGC Tranquillity 0.9.3.9037" - a release build from before
+PR #208 existed upstream) and could not return - "Teleport failed. Unauthorized," stuck on every retry until
+a full log-out/log-in. `Robust.log` showed exactly why: `RefuseWrongToken: session ... presented an EMPTY
+token (origin region did not forward it), stored token was issued for http://hg.neverworldgrid.com:8002/`.
+
+**Checked whether this was a regression before touching anything.** Compared the new `HomeLaunchAuthorization`
+check against the narrower fix it replaced (`f26ddf80f1`, deployed and working before tonight): both compare
+the presented `ServiceSessionID` against the stored one with the same exact-match logic, no tolerance for
+empty either way. If `neverworldgrid` presented an empty token, the OLD code would have refused this exact
+case identically - this was not a comparison I weakened or a call site I broke.
+
+**Confirmed from PR #208's own body, not guessed**: its "Upgrade note" says this outright - "A patched home
+grid will refuse a return from a region that does not forward the token - correctly, since that region
+presents an empty one. Grids running this should expect residents to be unable to return from **unpatched**
+remote grids until those update." PR #208's own production evidence (PlaySim, 190 regions) only ever
+exercised round trips between grids that had ALL adopted the same patch - a closed, coordinated federation.
+Casperia hypergrids to the open, uncoordinated metaverse, where expecting every foreign grid to carry this
+exact mechanism is not realistic. The refusal is working exactly as PR #208's author designed and documented
+it; that design is simply incompatible with how Casperia actually uses Hypergrid.
+
+**Fix**: in `UserAgentService.LoginAgentToGrid`, when `HomeLaunchAuthorization.Decide` returns
+`RefuseWrongToken` specifically because the presented token is **empty** (not merely wrong), fall back to
+`VerifyClient(sessionID, agentCircuit.IPAddress)` - the same IP-based check this class already uses
+elsewhere, comparing the resident's current client IP against the one recorded at their original login
+(which the existing `old.ClientIPAddress` carry-forward logic, lines 370-373, already propagates into every
+new travel row on every hop specifically so this kind of check keeps working across a multi-hop trip). If
+the IP matches, admit the return (logged as `AllowedByIPFallback`) instead of refusing. A **non-empty but
+wrong** token is left as a hard refusal - that's a real mismatch signal, not an uncooperative grid, and
+weakening it would reopen the forgery hole this whole effort exists to close. The other three refusal cases
+(`RefuseNoSession`, `RefuseUserMismatch`, `RefuseAlreadyHome`) are untouched - IP-matching doesn't meaningfully
+address any of those, and loosening `RefuseUserMismatch` in particular would let two residents behind the same
+NAT impersonate each other's travel sessions.
+
+This also fixes the "stuck until relog" symptom as a side effect: since every retry re-evaluates the same
+fallback, a resident can simply try the teleport again instead of needing a fresh login.
+
+Build clean, 0 warnings, 0 errors. Lives entirely in `OpenSim.Services.HypergridService.dll` (Robust-side
+only - no region needed touching). Deployed to Casperia's root once Robust was stopped, verified 0 mismatches
+across all build artifacts.
+
+**Open question, not yet resolved**: the Place Profile panel showing "Loading..." indefinitely during the
+failed teleport is very likely a downstream UI symptom of the teleport itself failing (the viewer's async
+parcel/place-info lookup for the destination probably depends on the teleport completing or the destination
+being reachable), not a separate bug - but this wasn't independently verified against viewer source, so it's
+left as a question to revisit if it persists once the actual teleport succeeds.

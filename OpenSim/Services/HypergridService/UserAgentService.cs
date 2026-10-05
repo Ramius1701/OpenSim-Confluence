@@ -291,30 +291,54 @@ namespace OpenSim.Services.HypergridService
 
                 if (decision != HomeLaunchDecision.Allow)
                 {
-                    switch (decision)
+                    // Open-Hypergrid compatibility fallback. An EMPTY presented token is not evidence of
+                    // forgery - it is the signature of an origin grid that simply does not forward our
+                    // rotated ServiceSessionID (true of effectively every grid on the open Hypergrid that
+                    // has not adopted this exact mechanism; Tranquillity's own PR #208 says so directly:
+                    // "A patched home grid will refuse a return from a region that does not forward the
+                    // token - correctly... Grids running this should expect residents to be unable to
+                    // return from unpatched remote grids"). That tradeoff is fine for a closed, mutually
+                    // patched federation; it is not acceptable for a grid that hypergrids to the open
+                    // metaverse, where we cannot and should not expect every foreign grid to carry this
+                    // field. Fall back to the IP-based check VerifyClient already uses: if the resident's
+                    // current client IP matches what was recorded when they left (preserved across hops,
+                    // see the ClientIPAddress carry-forward below), treat this as legitimate travel. A
+                    // non-empty but WRONG token is a real mismatch signal and stays a hard refusal.
+                    if (decision == HomeLaunchDecision.RefuseWrongToken
+                            && string.IsNullOrEmpty(presentedToken)
+                            && VerifyClient(agentCircuit.SessionID, agentCircuit.IPAddress))
                     {
-                        case HomeLaunchDecision.RefuseNoSession:
-                            m_log.WarnFormat("[USER AGENT SERVICE]: RefuseNoSession: no travel session for {0} ({1} {2})",
-                                agentCircuit.SessionID, agentCircuit.firstname, agentCircuit.lastname);
-                            break;
-                        case HomeLaunchDecision.RefuseUserMismatch:
-                            m_log.WarnFormat("[USER AGENT SERVICE]: RefuseUserMismatch: session {0} belongs to {1}, not {2}",
-                                agentCircuit.SessionID, existingTravel.UserID, agentCircuit.AgentID);
-                            break;
-                        case HomeLaunchDecision.RefuseWrongToken:
-                            m_log.WarnFormat("[USER AGENT SERVICE]: RefuseWrongToken: session {0} presented {1}, stored token was issued for {2}",
-                                agentCircuit.SessionID,
-                                HomeLaunchAuthorization.TokenProblem(presentedToken),
-                                existingTravel.GridExternalName);
-                            break;
-                        case HomeLaunchDecision.RefuseAlreadyHome:
-                            m_log.WarnFormat("[USER AGENT SERVICE]: RefuseAlreadyHome: session {0} is already on this grid",
-                                agentCircuit.SessionID);
-                            break;
+                        m_log.InfoFormat(
+                            "[USER AGENT SERVICE]: AllowedByIPFallback: session {0} presented an empty token (origin grid {1} does not forward it), but client IP matched - admitting as a legitimate return",
+                            agentCircuit.SessionID, existingTravel.GridExternalName);
                     }
+                    else
+                    {
+                        switch (decision)
+                        {
+                            case HomeLaunchDecision.RefuseNoSession:
+                                m_log.WarnFormat("[USER AGENT SERVICE]: RefuseNoSession: no travel session for {0} ({1} {2})",
+                                    agentCircuit.SessionID, agentCircuit.firstname, agentCircuit.lastname);
+                                break;
+                            case HomeLaunchDecision.RefuseUserMismatch:
+                                m_log.WarnFormat("[USER AGENT SERVICE]: RefuseUserMismatch: session {0} belongs to {1}, not {2}",
+                                    agentCircuit.SessionID, existingTravel.UserID, agentCircuit.AgentID);
+                                break;
+                            case HomeLaunchDecision.RefuseWrongToken:
+                                m_log.WarnFormat("[USER AGENT SERVICE]: RefuseWrongToken: session {0} presented {1}, stored token was issued for {2}",
+                                    agentCircuit.SessionID,
+                                    HomeLaunchAuthorization.TokenProblem(presentedToken),
+                                    existingTravel.GridExternalName);
+                                break;
+                            case HomeLaunchDecision.RefuseAlreadyHome:
+                                m_log.WarnFormat("[USER AGENT SERVICE]: RefuseAlreadyHome: session {0} is already on this grid",
+                                    agentCircuit.SessionID);
+                                break;
+                        }
 
-                    reason = HomeLaunchAuthorization.ReasonFor(decision);
-                    return false;
+                        reason = HomeLaunchAuthorization.ReasonFor(decision);
+                        return false;
+                    }
                 }
             }
 
