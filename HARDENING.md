@@ -90,12 +90,24 @@ therefore be seen as the proxy's address.
 ## Hypergrid behavior
 
 - **Returning home** to this grid over Hypergrid (not a fresh login) is allowed only
-  when the caller presents the `ServiceSessionID` token this grid minted the last
-  time it legitimately sent that avatar out - the same token check used to
-  authenticate every inbound Hypergrid agent. A grid that never genuinely hosted
-  the avatar can't produce it; a captured request can't be replayed after the real
-  one lands, since the token is replaced on every hop. Without a matching token
-  (or on a fresh login, which needs no token), you're asked to log in again.
+  when a travel session already exists for that circuit, belongs to the same
+  user, and presents exactly the `ServiceSessionID` token this grid minted the
+  last time it legitimately sent that avatar out - the same token check used to
+  authenticate every inbound Hypergrid agent, now also checked against the travel
+  row's own agent id rather than just "some session is travelling home." A grid
+  that never genuinely hosted the avatar can't produce the token; a captured
+  request can't be replayed after the real one lands, since the token is rotated
+  on every hop and the rotated value is carried back through every region the
+  trip passes through. A launch that's already on this grid, or a call with no
+  travel session, is also refused. Only a password login - which never arrives
+  this way - is exempt. `/homeagent` itself is never treated as a login, even
+  from an address that matches the login server's, closing a path that let a
+  caller skip every one of these checks by claiming to be the login server.
+- **A UDP circuit's source address** can optionally be required to match the one
+  recorded when the agent was authorised (`RejectCircuitIPMismatch`, default
+  `false` - opt-in, since the failure mode reads as a network fault rather than
+  a policy decision). Private, loopback and link-local addresses are always
+  exempt, since NAT and local proxies legitimately change the source address.
 - **Egress filtering**: caller-supplied Hypergrid HomeURI/gatekeeper URLs are
   refused before any outbound verification or agent transfer if they resolve to
   loopback, private, link-local, CGNAT, unique-local, multicast or reserved

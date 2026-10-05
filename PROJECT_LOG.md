@@ -27321,3 +27321,66 @@ warning path for it would be new behavior for its own sake, not a fix.
 
 Build clean, 0 warnings, 0 errors. This closes out all 12 items from the Tranquillity open-PR batch
 (#234, #230, #232, #242, #241, #245, #244, #240, #239, #235, #233).
+
+---
+
+## Hypergrid return-home, the real fix: full #208 session-binding model (supersedes the 2026-09-23/24 patch)
+
+The `VerifyAgent`-only fix committed and deployed earlier (the "Hypergrid return-home was completely
+broken" entry above) closed the immediate forgery gap but was a narrower stand-in for Tranquillity's
+actual PR #208 (`hg_homeagent_session_bind`). Ported the full model now, found already written and
+build-clean from earlier in this session but never logged or committed.
+
+**`HomeLaunchAuthorization`** (new, `OpenSim/Services/HypergridService/HomeLaunchAuthorization.cs`): a
+pure, static decision function lifted out of `UserAgentService.LoginAgentToGrid` specifically so a
+fail-closed rule is testable in isolation. The rule: a password login may launch an agent from nothing
+(it reaches this method in-process, by definition with no prior trip); anything else - every hypergrid
+hop, including the final one home - needs a travel session that **already exists**, belonging to **this
+user**, holding **exactly** the token this grid last issued, and **not already sitting on this grid**.
+Each refusal is its own named case (`RefuseNoSession`/`RefuseUserMismatch`/`RefuseWrongToken`/
+`RefuseAlreadyHome`) so the log line always says which one fired, while the reason handed back to the
+caller stays deliberately vaguer.
+
+Two bugs fixed along the way that the narrower patch didn't touch:
+- `HomeAgentHandlers.cs`'s `/homeagent` handler inferred `fromLogin` from the caller's IP matching the
+  configured login-server address. `/homeagent` is a simulator-to-simulator HTTP call; a password login
+  reaches `LoginAgentToGrid` in-process and never arrives this way at all. Treating an IP match as "this
+  is a login" meant anything behind a local proxy, or simply able to present that address, skipped every
+  travel-session check entirely. Now hardcoded to `false`.
+- `UserAgentService.VerifyClientSession`'s IP check compared `travel.ClientIPAddress == reportedIP` with
+  no guard for an empty stored value - a travel row created by any path other than a login (where
+  `ClientIPAddress` is never filled) passed this check against any `reportedIP` that also happened to be
+  empty. Now fails closed when no client IP was ever recorded.
+- `IsAgentComingHome`/`VerifyAgent` gained user-aware overloads (`GatekeeperService.cs` calls them when
+  running against the local `UserAgentService`) that also check the travel row's own agent id - the
+  session-only versions only ever asked "is *some* agent on this session coming home," not "is *this*
+  agent."
+
+**The token has to actually survive the trip, or the stricter check breaks ordinary multi-hop travel**:
+the home grid rotates `ServiceSessionID` on every authorised hop, so the full round-trip needed wiring,
+not just the authorization function:
+`AgentHandlers.cs` (both `CreateAgent` response builders) now hands the rotated token back to the caller
+as `service_session_id` → `SimulationServiceConnector.cs`'s new `ApplyCreateAgentResponse` reads it onto
+the live `AgentCircuitData` → `EntityTransferModule.cs` (5 call sites) and `HGEntityTransferModule.cs`
+forward `ServiceSessionID` the same way they already forward `IPAddress`/`Viewer`/`Channel` when building
+the next hop's circuit → `LLClientView.cs`'s `AgentData` builder pulls it back from the stored circuit
+(`AuthenticateHandler.GetAgentCircuitData`) so a region crossing still has it available. Without every
+link in this chain, a resident passing through more than one region on the way home would present a
+stale token and be refused by `HomeLaunchAuthorization`'s own `RefuseWrongToken` case - a self-inflicted
+break the narrower patch never risked, since it only ever checked the token, it never required the
+travel row to exist at all.
+
+**New opt-in hardening, off by default**: `LLUDPServer.cs` gained `[ClientStack.LindenUDP]
+RejectCircuitIPMismatch` (default `false`) - refuses a UDP circuit whose source address doesn't match the
+one recorded at authorization, exempting loopback/private/link-local addresses (`IsPrivateOrLoopback`) so
+NAT and local proxies aren't affected. Left off by default deliberately: the failure symptom (`UseCircuitCode`
+refused) reads as a network fault, not a policy decision, so a region updated to this build must not start
+enforcing it on its next restart without an operator choosing to.
+
+Updated `HARDENING.md`'s "Returning home" bullet, which still described the narrower token-only model,
+and added a new bullet for `RejectCircuitIPMismatch`.
+
+Touches `OpenSim.Services.HypergridService.dll` and `OpenSim.Server.Handlers.dll` (Robust-side) and
+`OpenSim.Region.CoreModules.dll`/`OpenSim.Region.ClientStack.LindenUDP.dll`/`OpenSim.Services.Connectors.dll`
+(region-side) - both sides need the matching build for a multi-hop trip to work, since the token-forwarding
+chain spans both. Build clean, 0 warnings, 0 errors across the full solution.

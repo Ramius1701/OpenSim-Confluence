@@ -144,11 +144,17 @@ namespace OpenSim.Server.Handlers.Simulation
 
             bool result = CreateAgent(source, gatekeeper, destination, aCircuit, data.flags, data.fromLogin, ctx, out string reason);
 
-            OSDMap resp = new OSDMap(3);
+            OSDMap resp = new OSDMap(4);
             resp["reason"] = OSD.FromString(reason);
             resp["success"] = OSD.FromBoolean(result);
             // Let's also send out the IP address of the caller back to the caller (HG 1.5)
             resp["your_ip"] = remoteAddress;
+            // The home grid rotates ServiceSessionID on every authorised hop. Hand the rotated value
+            // back so the calling region can store it on the live circuit; without it that region
+            // presents a stale token on the NEXT hop and is refused. Ported from Tranquillity's
+            // hg_homeagent_session_bind, PR #208.
+            if (result && !string.IsNullOrEmpty(aCircuit.ServiceSessionID))
+                resp["service_session_id"] = OSD.FromString(aCircuit.ServiceSessionID);
 
             response.StatusCode = (int)HttpStatusCode.OK;
             response.RawBuffer = OSDParser.SerializeJsonToBytes(resp);
@@ -543,7 +549,7 @@ namespace OpenSim.Server.Handlers.Simulation
                     source.RawServerURI = null;
             }
 
-            OSDMap resp = new OSDMap(2);
+            OSDMap resp = new OSDMap(3);
             string reason = string.Empty;
 
             bool result = CreateAgent(source, gatekeeper, destination, aCircuit, data.flags, ctx, out reason);
@@ -552,6 +558,10 @@ namespace OpenSim.Server.Handlers.Simulation
             resp["success"] = OSD.FromBoolean(result);
             // Let's also send out the IP address of the caller back to the caller (HG 1.5)
             resp["your_ip"] = OSD.FromString(httpRequest.RemoteIPEndPoint.Address.ToString());
+            // See the matching comment in the other response builder above - ported from
+            // Tranquillity's hg_homeagent_session_bind, PR #208.
+            if (result && !string.IsNullOrEmpty(aCircuit.ServiceSessionID))
+                resp["service_session_id"] = OSD.FromString(aCircuit.ServiceSessionID);
 
             httpResponse.StatusCode = (int)HttpStatusCode.OK;
             httpResponse.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeJsonString(resp));

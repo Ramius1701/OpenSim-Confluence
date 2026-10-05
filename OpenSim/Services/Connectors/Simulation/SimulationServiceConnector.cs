@@ -99,6 +99,23 @@ namespace OpenSim.Services.Connectors.Simulation
             args["teleport_flags"] = OSD.FromString(flags.ToString());
         }
 
+        // The home grid rotates ServiceSessionID on every authorised hop and hands the rotated
+        // value back in the create-agent response (AgentHandlers.cs). Apply it to the live circuit
+        // so the NEXT hop - including the trip home - presents the current token, not a stale one.
+        // Ported from Tranquillity's hg_homeagent_session_bind, PR #208.
+        protected static void ApplyCreateAgentResponse(OSDMap data, AgentCircuitData aCircuit, bool success)
+        {
+            if (!success || data is null || aCircuit is null)
+                return;
+
+            if (data.TryGetValue("service_session_id", out OSD rotated))
+            {
+                string token = rotated.AsString();
+                if (!string.IsNullOrEmpty(token))
+                    aCircuit.ServiceSessionID = token;
+            }
+        }
+
         // A response that never reached the peer (dropped connection, DNS blip, momentary
         // timeout) comes back from WebUtil as a generic ErrorResponseMap, which never carries
         // the lowercase "success" key - every real reply from AgentHandlers.cs sets that key
@@ -158,6 +175,7 @@ namespace OpenSim.Services.Connectors.Simulation
                     OSDMap data = (OSDMap)tmpOSD;
                     reason = data["reason"].AsString();
                     success = data["success"].AsBoolean();
+                    ApplyCreateAgentResponse(data, aCircuit, success);
                     return success;
                 }
 
@@ -172,6 +190,7 @@ namespace OpenSim.Services.Connectors.Simulation
                         OSDMap data = (OSDMap)tmpOSD;
                         reason = data["reason"].AsString();
                         success = data["success"].AsBoolean();
+                        ApplyCreateAgentResponse(data, aCircuit, success);
 
                         m_log.WarnFormat(
                             "[REMOTE SIMULATION CONNECTOR]: Remote simulator {0} did not accept compressed transfer, suggest updating that simulator.", destination.RegionName);

@@ -428,10 +428,15 @@ namespace OpenSim.Services.HypergridService
                 account = m_UserAccountService.GetUserAccount(m_ScopeID, aCircuit.AgentID);
                 if (account is not null)
                 {
-                    // Make sure this is the user coming home, and not a foreign user with same UUID as a local user
+                    // Make sure this is the user coming home, and not a foreign user with same UUID as a local user.
+                    // The user-aware overload (ported from Tranquillity's hg_homeagent_session_bind, PR #208)
+                    // also checks the travel row's own agent id, not just that some session is travelling home.
                     if (m_UserAgentService is not null)
                     {
-                        if (!m_UserAgentService.IsAgentComingHome(aCircuit.SessionID, m_gatekeeperURL))
+                        bool comingHome = m_UserAgentService is UserAgentService localHomeService
+                                ? localHomeService.IsAgentComingHome(aCircuit.SessionID, aCircuit.AgentID, m_gatekeeperURL)
+                                : m_UserAgentService.IsAgentComingHome(aCircuit.SessionID, m_gatekeeperURL);
+                        if (!comingHome)
                         {
                             // Can't do, sorry
                             reason = "Unauthorized";
@@ -684,7 +689,11 @@ namespace OpenSim.Services.HypergridService
 
             if (m_gatekeeperHost.Equals(userHomeHost))
             {
-                return m_UserAgentService.VerifyAgent(aCircuit.SessionID, aCircuit.ServiceSessionID);
+                // User-aware overload (ported from Tranquillity's hg_homeagent_session_bind, PR #208)
+                // also checks the travel row's own agent id, not just that the token matches.
+                return m_UserAgentService is UserAgentService localVerifyService
+                        ? localVerifyService.VerifyAgent(aCircuit.SessionID, aCircuit.AgentID, aCircuit.ServiceSessionID)
+                        : m_UserAgentService.VerifyAgent(aCircuit.SessionID, aCircuit.ServiceSessionID);
             }
             else
             {

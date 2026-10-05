@@ -930,6 +930,9 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
             if (currentAgentCircuit is not null)
             {
                 agentCircuit.ServiceURLs = currentAgentCircuit.ServiceURLs;
+                // Forward the HG travel token: the home grid authorises each hop against it and rotates it on
+                // every authorised hop, so a circuit that drops it presents an EMPTY token on the next hop.
+                agentCircuit.ServiceSessionID = currentAgentCircuit.ServiceSessionID;
                 agentCircuit.IPAddress = currentAgentCircuit.IPAddress;
                 agentCircuit.Viewer = currentAgentCircuit.Viewer;
                 agentCircuit.Channel = currentAgentCircuit.Channel;
@@ -1819,6 +1822,9 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
             if (currentAgentCircuit is not null)
             {
                 agentCircuit.ServiceURLs = currentAgentCircuit.ServiceURLs;
+                // Forward the HG travel token: the home grid authorises each hop against it and rotates it on
+                // every authorised hop, so a circuit that drops it presents an EMPTY token on the next hop.
+                agentCircuit.ServiceSessionID = currentAgentCircuit.ServiceSessionID;
                 agentCircuit.IPAddress = currentAgentCircuit.IPAddress;
                 agentCircuit.Viewer = currentAgentCircuit.Viewer;
                 agentCircuit.Channel = currentAgentCircuit.Channel;
@@ -2161,6 +2167,9 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
             if (currentAgentCircuit != null)
             {
                 agent.ServiceURLs = currentAgentCircuit.ServiceURLs;
+                // Forward the HG travel token: the home grid authorises each hop against it and rotates it on
+                // every authorised hop, so a circuit that drops it presents an EMPTY token on the next hop.
+                agent.ServiceSessionID = currentAgentCircuit.ServiceSessionID;
                 agent.IPAddress = currentAgentCircuit.IPAddress;
                 agent.Viewer = currentAgentCircuit.Viewer;
                 agent.Channel = currentAgentCircuit.Channel;
@@ -2328,6 +2337,9 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                 if (currentAgentCircuit is not null)
                 {
                     agent.ServiceURLs = currentAgentCircuit.ServiceURLs;
+                    // Forward the HG travel token: the home grid authorises each hop against it and rotates it on
+                    // every authorised hop, so a circuit that drops it presents an EMPTY token on the next hop.
+                    agent.ServiceSessionID = currentAgentCircuit.ServiceSessionID;
                     agent.IPAddress = currentAgentCircuit.IPAddress;
                     agent.Viewer = currentAgentCircuit.Viewer;
                     agent.Channel = currentAgentCircuit.Channel;
@@ -2467,6 +2479,9 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                 if (currentAgentCircuit is not null)
                 {
                     agent.ServiceURLs = currentAgentCircuit.ServiceURLs;
+                    // Forward the HG travel token: the home grid authorises each hop against it and rotates it on
+                    // every authorised hop, so a circuit that drops it presents an EMPTY token on the next hop.
+                    agent.ServiceSessionID = currentAgentCircuit.ServiceSessionID;
                     agent.IPAddress = currentAgentCircuit.IPAddress;
                     agent.Viewer = currentAgentCircuit.Viewer;
                     agent.Channel = currentAgentCircuit.Channel;

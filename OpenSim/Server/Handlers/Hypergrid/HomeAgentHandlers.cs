@@ -89,10 +89,13 @@ namespace OpenSim.Server.Handlers.Hypergrid
                 m_log.ErrorFormat("[HOME AGENT HANDLER]: Problem in UnpackData");
             }
 
-            // Verify if this call came from the login server
-            if (remoteAddress == m_LoginServerIP)
-                data.fromLogin = true;
-
+            // SECURITY: /homeagent is ALWAYS a simulator-originated launch, never a first login.
+            // Password logins reach LoginAgentToGrid in-process with fromLogin: true; they do not
+            // arrive over HTTP. Inferring fromLogin from the caller's IP meant that anything behind
+            // a local proxy - or able to present the login server's address - was treated as a first
+            // login and skipped the travel-session checks entirely.
+            // Ported from Tranquillity's hg_homeagent_session_bind, PR #208.
+            data.fromLogin = false;
         }
 
         protected override GridRegion ExtractGatekeeper(AgentDestinationData d)
