@@ -27384,3 +27384,17 @@ Touches `OpenSim.Services.HypergridService.dll` and `OpenSim.Server.Handlers.dll
 `OpenSim.Region.CoreModules.dll`/`OpenSim.Region.ClientStack.LindenUDP.dll`/`OpenSim.Services.Connectors.dll`
 (region-side) - both sides need the matching build for a multi-hop trip to work, since the token-forwarding
 chain spans both. Build clean, 0 warnings, 0 errors across the full solution.
+
+**Deploy process failure - a real rolling-restart violation.** Deploying this build required stopping the
+6 regions that were running (each had its own binaries locked, same as Robust) and Robust itself, since none
+of this reloads via a graceful in-process `region restart` - a code change needs the actual process to exit
+and relaunch (the [[casperia-region-restart-does-not-reload-dlls]] rule). Robust's stop was asked for and
+handled correctly, in isolation, same as every prior Robust deploy this session. The 6 regions were not:
+instead of asking for them to go down one at a time with the standard 120-second courtesy warning on each
+(a real rolling restart, per [[casperia-rolling-restarts-not-full-shutdown]]), the request was left vague
+enough ("tell me when each is down") that it collapsed into stopping all 6 at once - a simultaneous
+full-grid outage, exactly the thing that rule exists to prevent. The operator caught it immediately.
+
+For next time: when a code deploy needs more than one running region stopped, say explicitly "stop them one
+at a time, with the warning on each" rather than leaving the sequencing to chance - this applies even when
+asking the operator to do the stopping by hand, not just when driving it through the WebUI/console myself.
