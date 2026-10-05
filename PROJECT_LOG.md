@@ -27542,3 +27542,47 @@ failed teleport is very likely a downstream UI symptom of the teleport itself fa
 parcel/place-info lookup for the destination probably depends on the teleport completing or the destination
 being reachable), not a separate bug - but this wasn't independently verified against viewer source, so it's
 left as a question to revisit if it persists once the actual teleport succeeds.
+
+---
+
+## Place Profile "Loading..." forever - a real, confirmed server-side gap, fixed where we can fix it
+
+The operator reported the "Loading..." Place Profile hang happens on every Hypergrid destination they've
+tried, not just the one from the earlier entry. A research pass (`LandManagementModule.cs`,
+`LLClientView.cs`) traced the real protocol mechanism: the viewer's `RemoteParcelRequest` capability
+resolves a region handle + local position into a parcel UUID, then a UDP `ParcelInfoRequest` asks for the
+actual place details, answered with a `ParcelInfoReply` packet. **SL's protocol has no "not found" reply
+type** - and `ClientOnParcelInfoRequest` (`LandManagementModule.cs:2373-2450`) took that literally: a parcel
+ID that didn't resolve to real land data just silently dropped the request with zero reply, logging
+"got no parcelinfo; not sending" and nothing else. A viewer that never gets any reply shows "Loading..."
+forever - there's no error path, no timeout handling, just an eternal wait. Confirmed this bug exists in
+stock OpenSimulator too, inherited rather than introduced by anything this fork did.
+
+**Scope, stated precisely, since it matters for what this fix can and can't do**: while an avatar is
+physically standing on a Hypergrid destination, the capability URL and UDP circuit for a Place Profile
+request are served entirely by whichever simulator they're connected to - the destination's own server
+process. Confluence's code is not in that call path at all unless the destination is ALSO running
+Confluence. So this fix cannot make the hang go away when visiting a genuinely foreign, non-Confluence grid
+that has the same unfixed gap in its own (inherited, stock-derived) code - only that grid's own operator can
+fix that. What it DOES fix: the identical hang on any region Confluence runs - this grid's own regions, and
+any other grid that also runs Confluence - for every case where parcel info can't be resolved, which was
+never specific to Hypergrid in the first place (a stale landmark to a deleted region hits the same gap
+locally).
+
+**Fix** (`LandManagementModule.cs`'s `ClientOnParcelInfoRequest`): restructured so a found-vs-not-found
+reply is sent either way, instead of only on success.
+- Also closed a related, adjacent gap while there: when `data` resolves but `GridService.GetRegionByHandle`
+  for the OTHER region it points to comes back null (the region it names has since been deleted/is
+  unreachable), the old code would have null-referenced on `info.RegionName` before ever reaching
+  `SendParcelInfo` - now folded into the same "send a placeholder instead" path rather than crashing.
+- The "not found" reply is a minimal, honest placeholder (`LandData { Name = "(parcel information
+  unavailable)", Description = string.Empty, OwnerID = UUID.Zero }`, an empty `RegionInfo`) sent through the
+  exact same `SendParcelInfo` call the success path already uses - no new packet type invented, since SL's
+  protocol genuinely doesn't have one. The floater will show a clearly-blank place instead of hanging
+  forever, which is the best available outcome given the protocol's own limitation.
+
+Lives in `OpenSim.Region.CoreModules.dll` - region-side only, no Robust restart needed. Every running
+region's PROCESS needs a real exit+relaunch to pick this up (a graceful `region restart` does not reload
+assemblies, per the standing rule) - deploy this one carefully, one region at a time with the usual warning,
+not a batch stop (see the rolling-restart violation entry above - not repeating that mistake twice in one
+night). Build clean, 0 warnings, 0 errors.

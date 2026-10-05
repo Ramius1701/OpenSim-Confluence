@@ -2416,9 +2416,9 @@ namespace OpenSim.Region.CoreModules.World.Land
                 m_parcelInfoCache.Add(parcelID, data, 30000);
             }
 
-            if (data is not null)  // if we found some data, send it
+            GridRegion info = null;
+            if (data is not null)
             {
-                GridRegion info;
                 if (data.RegionHandle == m_scene.RegionInfo.RegionHandle)
                 {
                     info = new GridRegion(m_scene.RegionInfo);
@@ -2431,6 +2431,10 @@ namespace OpenSim.Region.CoreModules.World.Land
                     // most likely still cached from building the extLandData entry
                     info = m_scene.GridService.GetRegionByHandle(m_scene.RegionInfo.ScopeID, data.RegionHandle);
                 }
+            }
+
+            if (data is not null && info is not null)  // if we found some data, send it
+            {
                 // we need to transfer the fake parcelID, not the one in landData, so the viewer can match it to the landmark.
                 //m_log.DebugFormat("[LAND MANAGEMENT MODULE]: got parcelinfo for parcel {0} in region {1}; sending...",
                 //                  data.LandData.Name, data.RegionHandle);
@@ -2446,7 +2450,24 @@ namespace OpenSim.Region.CoreModules.World.Land
                 remoteClient.SendParcelInfo(r, data.LandData, parcelID, data.X, data.Y);
             }
             else
-                m_log.Debug("[LAND MANAGEMENT MODULE]: got no parcelinfo; not sending");
+            {
+                // SL's protocol has no "parcel not found" reply - dropping the request here (as this
+                // method used to, unconditionally) left the viewer's Place Profile floater showing
+                // "Loading..." forever with no way to ever clear it. Send an empty placeholder reply
+                // instead, covering both real failure cases: the lookup above found nothing (a stale
+                // landmark, a region that's gone), or data was found but GridService has no record of
+                // the region it points to (data is not null, info is null - e.g. a region deleted since
+                // the landmark was made).
+                m_log.Debug("[LAND MANAGEMENT MODULE]: got no parcelinfo; sending an empty reply instead of dropping it");
+                LandData placeholder = new()
+                {
+                    Name = "(parcel information unavailable)",
+                    Description = string.Empty,
+                    OwnerID = UUID.Zero
+                };
+                RegionInfo placeholderRegion = new() { RegionName = string.Empty };
+                remoteClient.SendParcelInfo(placeholderRegion, placeholder, parcelID, 0, 0);
+            }
         }
 
         public void SetParcelOtherCleanTime(IClientAPI remoteClient, int localID, int otherCleanTime)
