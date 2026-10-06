@@ -27586,3 +27586,29 @@ region's PROCESS needs a real exit+relaunch to pick this up (a graceful `region 
 assemblies, per the standing rule) - deploy this one carefully, one region at a time with the usual warning,
 not a batch stop (see the rolling-restart violation entry above - not repeating that mistake twice in one
 night). Build clean, 0 warnings, 0 errors.
+
+## Tranquillity develop +25 (#228-252): the open-PR backlog merged, one new PR, nothing to port (2026-10-06)
+
+`tranquillity/develop` moved `7f909e1fc9..ecc858070a`, 25 squash commits. 24 of them (#228-251) are the open
+PRs already triaged and ported in the two entries above. Checked each merged PR's final `headRefOid` against the
+`tranquillity-johnlegionh` branch tip we reviewed: all 24 are byte-identical heads, so no review-round changes
+landed after our port. No new work is hiding behind the merge.
+
+- **#252 (J2K layer boundaries for UDP texture sends) - not applicable.** It fixes a regression from
+  Tranquillity's own CoreJ2K migration (#130), after which `DoJ2KDecode` returned the guessed 50/20/5/2% layer
+  table for every texture (blurry bakes at discard levels 1-4). Confluence never migrated: `J2KDecoderModule`
+  still calls `CSJ2K.J2kImage.GetLayerBoundaries` and only falls back to `CreateDefaultLayers` on failure, and our
+  `"j2k"`-prefixed layer-cache entries hold real tables, so the cache-prefix change isn't needed either.
+- **Hypergrid: nothing in this batch touches it further.** The only HG-adjacent item is #244 (strip Experience
+  links from HG-foreign object data), ported earlier and keyed off `ViaHGLogin`. PR #208 is still open upstream
+  with head `05c71aae33` unchanged since 2026-09-28, so our ported model + IP fallback for unpatched foreign grids
+  stays as-is.
+- **Not yet proposed, watching:** `JohnLegionH` branches `fix/region-store-sit-target-active` / `-state` (two
+  near-duplicates) persist `SitTargetActive` in a new nullable `prims` column (MySQL 70 / PGSQL 61 / SQLite 45
+  upstream numbering). It's the persistence half of #230's zero-offset sit targets, which we ported, so Confluence
+  has the same gap (an active zero-offset sit target reverts after a region restart). A `ci/store-checks` branch
+  says it's being readied for a PR. We're holding off until it's actually proposed: it's a schema migration, our
+  migration step numbers differ, and the branch is still in flux. The playsim branches (`upstream-j2k-fixes`,
+  `upstream-maptile-renderer` = #204, `upstream-webrtc-regionserver` = #203) are previously triaged or CoreJ2K/
+  SkiaSharp-specific. The Jolt `pr/`/`pr2/` series is a physics-backend upstreaming effort to review separately
+  against our own JoltPhysics port.
