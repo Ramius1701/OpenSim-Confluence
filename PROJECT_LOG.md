@@ -27612,3 +27612,55 @@ landed after our port. No new work is hiding behind the merge.
   `upstream-maptile-renderer` = #204, `upstream-webrtc-regionserver` = #203) are previously triaged or CoreJ2K/
   SkiaSharp-specific. The Jolt `pr/`/`pr2/` series is a physics-backend upstreaming effort to review separately
   against our own JoltPhysics port.
+
+---
+
+## Two more Tranquillity PRs ported (#253, #258); four Phlox-only PRs confirmed not applicable (#254-257)
+
+Checked Tranquillity again: #246-251 (last batch) are confirmed merged into `develop`; six new ones landed
+(#253-258), plus #259 ("Feature/warning cleanup," a compiler-warning cleanup batch, not a bug fix - skipped,
+not code). Of the six, two are real and applicable; four are Phlox-only, confirmed by diff scope (not just
+title) - #254 (`osMakeNotecard` for Phlox), #255 (Phlox event-queue log spam + `llRequestUserKey` pause -
+YEngine already does the pause correctly, the PR's own reference point), #256 (Phlox catching up to core
+features already in Confluence: BlockedOwnerModule, zero-offset sit target, Experience-block grant end,
+estate-partner-ban-refusal - "no core file changes" per its own body), #257 (Phlox llCastRay/llPushObject
+fixes, verified via diff to touch only `Source/Phlox.ScriptEngine/`).
+
+### #258 ported - PostgreSQL estate ban list save was broken, and differently than upstream's own bug
+
+Upstream's bug: `PGSQLEstateStore.SaveBanList` named `:banningUUID`/`:banTime` in its insert but never added
+those parameters, throwing `ArgumentException`. **Confluence's actual code had a different, equally-broken
+shape** (checked directly, not assumed): the loop called `cmd.Parameters.Clear()` on every iteration, then
+immediately indexed into the now-empty collection (`cmd.Parameters["EstateID"].Value = ...`) - throwing on
+the very first ban, every time, for a different reason than upstream's missing-parameter bug but with the
+same net effect (an estate with any ban could never save its ban list, or anything saved after it in the
+same `StoreEstateSettings` call). Fixed by moving all four parameters to be added once before the loop
+(matching the pattern the DELETE statement right above it already uses), removing the per-iteration
+`Clear()`, and - the other half of the real bug, present in both codebases - using `(int)es.EstateID` (the
+estate actually being saved) instead of `b.EstateID` (a loaded ban's own field, never set on load, so it
+defaults to 1 and files every re-saved ban under estate 1 regardless of its real estate).
+
+### #253 ported - SitTargetActive now survives a region restart, extending tonight's own #230 work
+
+#230 added `SceneObjectPart.SitTargetActive`/`SetSitTarget` so a sit target can be explicitly active at a
+zero offset (SL `PRIM_SIT_TARGET`: "unlike llLinkSitTarget(), an offset of <0,0,0> may be explicitly set").
+The XML serializer already keeps this state across crossings/take-and-rez/archives
+(`SceneObjectSerializer.cs`, already handled in #230's port) - the region stores never did, so a region
+restart silently reverted any such target back to "no target," since a loaded prim's state is always
+re-derived from its offset and rotation alone.
+
+Added a new nullable `SitTargetActive` column to `prims` in all three region stores - MySQL (version 73,
+Confluence's last was 72), PostgreSQL (version 61, Confluence's last was 60), SQLite (version 46,
+Confluence's last was 45; upstream's own version numbers for this don't match ours at all, same recurring
+divergence as every other migration this session). NULL for every row saved before this (and for any prim
+whose state is already implied by its own offset/rotation - the same `SitTargetActiveIsExplicit` rule the
+XML serializer uses) so an ordinary prim's row is completely unchanged.
+
+Made `SceneObjectPart.SitTargetActiveIsExplicit` `public` (was `internal`) so the Data-layer store classes -
+separate assemblies - can read it. Each store's save path writes 1/0 only when explicit, `DBNull` otherwise;
+each load path only overrides the offset/rotation-derived state when the column is non-NULL. PostgreSQL
+needed its own explicit `NpgsqlParameter(..., NpgsqlDbType.Smallint)` construction (confirmed via this
+session's own established gotcha: `_Database.CreateParameter` turns a null value into an empty string,
+which Npgsql would then refuse to write to a `smallint` column).
+
+Build clean, 0 warnings, 0 errors across both ports.

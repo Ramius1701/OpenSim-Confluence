@@ -361,10 +361,20 @@ namespace OpenSim.Data.PGSQL
 
                     //Insert after
                     cmd.CommandText = "insert into estateban (\"EstateID\", \"bannedUUID\",\"bannedIp\", \"bannedIpHostMask\", \"bannedNameMask\", \"banningUUID\",\"banTime\" ) values ( :EstateID, :bannedUUID, '','','', :banningUUID, :banTime )";
+                    // Parameters are added ONCE, before the loop, then only their .Value is updated per
+                    // row - clearing them inside the loop (as this used to) left "EstateID" undefined on
+                    // the very next iteration's lookup, throwing before any ban could ever be saved.
+                    // EstateID comes from the estate being SAVED (es.EstateID), not the loaded ban's own
+                    // EstateID (b.EstateID) - a loaded ban never has that set, so it defaults to 1, and
+                    // saving a loaded estate again filed its bans under estate 1 instead of its own.
+                    cmd.Parameters.Clear();
+                    cmd.Parameters.AddWithValue("EstateID", (int)es.EstateID);
+                    cmd.Parameters.AddWithValue("bannedUUID", Guid.Empty);
+                    cmd.Parameters.AddWithValue("banningUUID", Guid.Empty);
+                    cmd.Parameters.AddWithValue("banTime", 0);
                     foreach (EstateBan b in es.EstateBans)
                     {
-                        cmd.Parameters.Clear();
-                        cmd.Parameters["EstateID"].Value = b.EstateID;
+                        cmd.Parameters["EstateID"].Value = (int)es.EstateID;
                         cmd.Parameters["bannedUUID"].Value = _Database.CreateParameter("bannedUUID", b.BannedUserID).Value;
                         cmd.Parameters["banningUUID"].Value = _Database.CreateParameter("banningUUID", b.BanningUserID).Value;
                         cmd.Parameters["banTime"].Value = b.BanTime;

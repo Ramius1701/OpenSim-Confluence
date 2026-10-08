@@ -195,8 +195,10 @@ namespace OpenSim.Region.Framework.Scenes
         /// assigning it records the state explicitly, so a target at a zero offset can be active.
         /// </summary>
         /// <remarks>
-        /// The XML serializer keeps it (crossings, take and rez, archives). The region stores do not save it
-        /// yet: an object loaded from the region database has the state derived from its offset and rotation.
+        /// The XML serializer keeps it (crossings, take and rez, archives). The region stores save it too,
+        /// in the nullable SitTargetActive column on prims - NULL for every prim whose state is already
+        /// implied by its offset and rotation (see SitTargetActiveIsExplicit), so an ordinary prim's row is
+        /// unchanged.
         /// </remarks>
         [XmlIgnore]
         public bool SitTargetActive
@@ -207,11 +209,11 @@ namespace OpenSim.Region.Framework.Scenes
 
         /// <summary>
         /// True when SitTargetActive was set explicitly to a state the offset and rotation alone would not
-        /// give (an active target at a zero offset and identity rotation). Only then does the serializer
-        /// write it.
+        /// give (an active target at a zero offset and identity rotation). Only then does the serializer,
+        /// and the region stores, write it - public so the Data-layer store classes can read it too.
         /// </summary>
         [XmlIgnore]
-        internal bool SitTargetActiveIsExplicit
+        public bool SitTargetActiveIsExplicit
         {
             get
             {
